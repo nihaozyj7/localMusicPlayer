@@ -381,6 +381,27 @@ main().catch((err) => {
   toast(`启动失败：${err.message}`, { tone: "error", duration: 6000 });
 });
 
+/* --------------------------------------------------------------------------
+   兜底错误提示
+   --------------------------------------------------------------------------
+   界面里大量 async 点击处理（添加文件夹、扫描、主题切换…）一旦抛出异常，
+   默认只会是一条无人看见的 unhandled rejection —— 用户表现为「点了没反应」。
+   这里统一兜住并弹提示，让失败原因可见。
+   -------------------------------------------------------------------------- */
+window.addEventListener("unhandledrejection", (e) => {
+  const reason = e.reason;
+  const msg = reason?.message || String(reason || "未知错误");
+  // 后端不可用是预览模式的正常情况，不打扰用户
+  if (/no backend|preview:/i.test(msg)) return;
+  console.error("[app] 未处理的异步错误", reason);
+  toast(msg.length > 120 ? `${msg.slice(0, 120)}…` : msg, { tone: "error", duration: 6000 });
+});
+
+window.addEventListener("error", (e) => {
+  if (!e.message) return;
+  console.error("[app] 运行时错误", e.error || e.message);
+});
+
 /* 便于调试 */
 window.__app = {
   state,

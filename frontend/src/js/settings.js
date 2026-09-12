@@ -463,7 +463,27 @@ export async function handleSettingsAction(actEl, ctx = {}) {
     case "add-folder": {
       // 后端模式：由 Go 弹出系统目录选择器，选完直接写配置并开始扫描
       if (isWails()) {
-        const res = await backend.addFolder("");
+        let res = null;
+        try {
+          res = await backend.addFolder("");
+        } catch (err) {
+          // 系统选择器打不开时（少见，但确实发生过）退化为手动输入，
+          // 否则用户只会看到「点了没反应」。
+          toast(`系统目录选择器不可用：${err?.message ?? err}`, { tone: "warning", duration: 5000 });
+          res = null;
+        }
+
+        if (res === null) {
+          const manual = await promptPath({ manual: true });
+          if (!manual) return;
+          try {
+            res = await backend.addFolder(manual);
+          } catch (err) {
+            toast(`添加失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
+            return;
+          }
+        }
+
         if (res?.cancelled) return;
         if (res?.duplicated) {
           toast(`该文件夹已在曲库中：${res.path}`, { tone: "warning" });
@@ -473,24 +493,27 @@ export async function handleSettingsAction(actEl, ctx = {}) {
           state.folders = [...state.folders.filter((f) => f.id !== res.folder.id), res.folder];
           ctx.commit?.();
           toast(`已添加并开始扫描：${res.folder.path}`, { tone: "success" });
-          ctx.rescan?.({ manual: false });
+          // 扫描结果由后端 scan:done 事件推回来，这里不再重复触发 rescan，
+          // 避免出现两次并发扫描（曲库会排队，但没必要让用户多等一轮）
+        } else {
+          toast("添加文件夹失败：后端没有返回结果", { tone: "error", duration: 6000 });
         }
         return;
       }
 
       // 预览模式：手动输入路径（无后端可用）
-      const res = await promptPath();
-      if (!res) return;
+      const manual = await promptPath();
+      if (!manual) return;
       state.folders.push({
         id: uid("folder"),
-        path: res,
+        path: manual,
         trackCount: 0,
         status: "ok",
         watching: state.config.watchFolders,
         addedAt: Date.now(),
       });
       ctx.commit?.();
-      toast(`已添加文件夹：${res}`, { tone: "success" });
+      toast(`已添加文件夹：${manual}`, { tone: "success" });
       ctx.rescan?.();
       break;
     }
@@ -633,12 +656,14 @@ export async function handleSettingsAction(actEl, ctx = {}) {
   }
 }
 
-function promptPath() {
+function promptPath({ manual = false } = {}) {
   return new Promise((resolve) => {
     openModal({
       title: "添加音乐文件夹",
-      desc: "浏览器预览模式下无法调用系统目录选择器，请手动输入路径。",
-      body: `<input class="input" data-field="path" type="text" placeholder="D:\\Music\\音乐库" />`,
+      desc: manual
+        ? "系统目录选择器没能打开，请直接粘贴文件夹完整路径。"
+        : "浏览器预览模式下无法调用系统目录选择器，请手动输入路径。",
+      body: `<input class="input" data-field="path" type="text" placeholder="C:\\Users\\Example\\Music" />`,
       okText: "添加",
       onOk: (values) => {
         const p = String(values.path || "").trim();

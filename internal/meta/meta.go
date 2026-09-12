@@ -376,6 +376,16 @@ func wavDuration(path string) durationInfo {
    MP4 / M4A：遍历 atom 找 moov/mvhd
    -------------------------------------------------------------------------- */
 
+// mp4Duration 解析 MP4/M4A 的时长与采样率。
+//
+// mvhd box 结构（body 从 "mvhd" 之后的 4 字节开始）：
+//
+//	version(1) flags(3)
+//	[v0] creation(4) modification(4) timescale(4) duration(4)
+//	[v1] creation(8) modification(8) timescale(4) duration(8)
+//
+// 采样率不能用 timescale —— 那是时间刻度（常见 1000 / 44100 / 90000），
+// 与音频采样率不是一回事。真正的采样率在 stsd → mp4a 采样描述里。
 func mp4Duration(path string) durationInfo {
 	f, err := os.Open(path)
 	if err != nil {
@@ -383,46 +393,266 @@ func mp4Duration(path string) durationInfo {
 	}
 	defer f.Close()
 
-	head := make([]byte, 1<<20) // mvhd 一般在文件头部 1MB 内
+	head := make([]byte, 2<<20) // mvhd 一般在文件头部；必要时下面会扩大读取
 	n, _ := io.ReadFull(f, head)
 	head = head[:n]
 
-	idx := bytes.Index(head, []byte("mvhd"))
-	if idx < 0 || idx+4+20 > n {
-		return durationInfo{}
-	}
-	body := idx + 4
-	version := head[body]
-	if version == 1 {
-		if body+4+8+8+4 > n {
-			return durationInfo{}
-		}
-		timescale := be32(head[body+4+8+8 : body+4+8+8+4])
-		duration := be64(head[body+4+8+8+4 : body+4+8+8+4+8])
-		if timescale == 0 {
-			return durationInfo{}
-		}
-		ms := int64(duration) * 1000 / int64(timescale)
-		return finishMP4(path, ms, int(timescale))
-	}
-	if body+4+4+4+4 > n {
-		return durationInfo{}
-	}
-	timescale := be32(head[body+4+4+4 : body+4+4+4+4])
-	duration := be32(head[body+4+4+4+4 : body+4+4+4+4+4])
-	if timescale == 0 {
-		return durationInfo{}
-	}
-	ms := int64(duration) * 1000 / int64(timescale)
-	return finishMP4(path, ms, int(timescale))
-}
+	ms := mp4DurationFromMvhd(head)
+	sampleRate := mp4SampleRate(head)
 
-func finishMP4(path string, ms int64, sampleRate int) durationInfo {
+	// mvhd 不在头部 2MB 内（少数文件 moov 在尾部）：整体再读一次
+	if ms == 0 {
+		if st, err := os.Stat(path); err == nil && st.Size() > int64(len(head)) && st.Size() <= 64<<20 {
+			whole := make([]byte, st.Size())
+			if _, err := f.ReadAt(whole, 0); err == nil {
+				ms = mp4DurationFromMvhd(whole)
+				if sampleRate == 0 {
+					sampleRate = mp4SampleRate(whole)
+				}
+			}
+		}
+	}
+
 	bitrate := 0
 	if st, err := os.Stat(path); err == nil && ms > 0 {
 		bitrate = int(st.Size() * 8 / (ms / 1000))
 	}
 	return durationInfo{durationMS: ms, sampleRate: sampleRate, bitrate: bitrate}
+}
+
+// mp4DurationFromMvhd 从 mvhd box 计算时长（毫秒）；失败返回 0
+func mp4DurationFromMvhd(buf []byte) int64 {
+	// 遍历所有 mvhd（正常只有一个，避免误命中其它数据里的同名字节）
+	for offset := 0; ; {
+		rel := bytes.Index(buf[offset:], []byte("mvhd"))
+		if rel < 0 {
+			return 0
+		}
+		body := offset + rel + 4 // 指向 version 字节
+		offset = body
+
+		if body+4 > len(buf) {
+			return 0
+		}
+		version := buf[body]
+
+		var timescale uint32
+		var duration uint64
+		switch version {
+		case 0:
+			// version/flags(4) + creation(4) + modification(4) = 12
+			p := body + 12
+			if p+8 > len(buf) {
+				return 0
+			}
+			timescale = be32(buf[p : p+4])
+			duration = uint64(be32(buf[p+4 : p+8]))
+		case 1:
+			// version/flags(4) + creation(8) + modification(8) = 20
+			p := body + 20
+			if p+12 > len(buf) {
+				return 0
+			}
+			timescale = be32(buf[p : p+4])
+			duration = be64(buf[p+4 : p+12])
+		default:
+			continue
+		}
+
+		// 合理性校验：时间刻度过小/过大都说明偏移不对
+		if timescale < 100 || timescale > 1_000_000 || duration == 0 {
+			continue
+		}
+		ms := int64(duration) * 1000 / int64(timescale)
+		if ms <= 0 || ms > 24*3600*1000 {
+			continue
+		}
+		return ms
+	}
+}
+
+// mp4SampleRate 取音频采样率。
+//
+// 不能只读 AudioSampleEntry 里那个 16.16 定点字段：实测有一批 m4a
+// （iTunes/HE-AAC 封装）那里填的是 0，真实采样率只存在于 esds →
+// DecoderConfigDescriptor → AudioSpecificConfig 里。
+// 因此优先级为：AudioSpecificConfig（权威）→ AudioSampleEntry（兜底）。
+func mp4SampleRate(buf []byte) int {
+	if rate := aacSampleRate(buf); rate > 0 {
+		return rate
+	}
+	return sampleEntryRate(buf)
+}
+
+// aacSampleRateTable AAC 采样率索引表（AudioSpecificConfig 用）
+var aacSampleRateTable = [16]int{
+	96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050,
+	16000, 12000, 11025, 8000, 7350, 0, 0, 0,
+}
+
+// aacSampleRate 解析 esds 描述符链，从 AudioSpecificConfig 取采样率。
+//
+// 关键点：esds 的每个描述符长度是「变长」的，最高位为续读标志，
+// 例如 DecoderSpecificInfo 常见写作 05 80 80 80 25（长度 0x25）。
+// 只读一个长度字节会让指针偏 3 字节，从而解出完全错误的 ASC
+// （实测会把 44100 的曲子读成 96000）。
+func aacSampleRate(buf []byte) int {
+	idx := bytes.Index(buf, []byte("esds"))
+	if idx < 0 {
+		return 0
+	}
+	body := idx + 4
+	end := body + 512
+	if end > len(buf) {
+		end = len(buf)
+	}
+	if body >= end {
+		return 0
+	}
+	return walkESDS(buf[body:end])
+}
+
+// walkESDS 逐层进入 ES_Descriptor → DecoderConfigDescriptor → DecoderSpecificInfo
+func walkESDS(b []byte) int {
+	// ES_Descriptor(0x03)
+	payload, ok := findDescriptor(b, 0x03)
+	if !ok {
+		return 0
+	}
+	// 跳过 ES_ID(2) + flags(1)
+	if len(payload) < 3 {
+		return 0
+	}
+	payload = payload[3:]
+
+	// DecoderConfigDescriptor(0x04)
+	dc, ok := findDescriptor(payload, 0x04)
+	if !ok {
+		return 0
+	}
+	// 跳过 objectTypeIndication(1) + streamType/bufferSizeDB(4) + maxBitrate(4) + avgBitrate(4)
+	if len(dc) < 13 {
+		return 0
+	}
+	dc = dc[13:]
+
+	// DecoderSpecificInfo(0x05) —— 内容就是 AudioSpecificConfig
+	asc, ok := findDescriptor(dc, 0x05)
+	if !ok || len(asc) < 2 {
+		return 0
+	}
+	return parseAudioSpecificConfig(asc)
+}
+
+// findDescriptor 在 b 中定位 tag 描述符并返回其负载。
+// 描述符长度是最多 4 字节的变长整数（每字节低 7 位有效，最高位为续读标志）。
+func findDescriptor(b []byte, tag byte) ([]byte, bool) {
+	for i := 0; i < len(b); i++ {
+		if b[i] != tag {
+			continue
+		}
+		length := 0
+		j := i + 1
+		for k := 0; k < 4; k++ {
+			if j >= len(b) {
+				return nil, false
+			}
+			length = length<<7 | int(b[j]&0x7F)
+			j++
+			if b[j-1]&0x80 == 0 {
+				break
+			}
+		}
+		if length < 0 || j+length > len(b) {
+			continue
+		}
+		return b[j : j+length], true
+	}
+	return nil, false
+}
+
+// parseAudioSpecificConfig 解析 AudioSpecificConfig 的采样率
+func parseAudioSpecificConfig(b []byte) int {
+	if len(b) < 2 {
+		return 0
+	}
+	// 前 2 字节 = 5 位 audioObjectType + 4 位 samplingFrequencyIndex + 3 位 channelConfiguration
+	v := uint16(b[0])<<8 | uint16(b[1])
+	objType := int(v >> 11)
+	freqIndex := int(v>>7) & 0x0F
+
+	if objType == 31 {
+		// 扩展 objectType：再占 6 位，采样率索引随之后移
+		if len(b) < 3 {
+			return 0
+		}
+		v3 := uint32(b[0])<<16 | uint32(b[1])<<8 | uint32(b[2])
+		freqIndex = int(v3>>9) & 0x0F
+	}
+
+	if freqIndex == 0x0F {
+		// 显式频率：索引之后直接跟 24 位真实频率
+		if len(b) < 5 {
+			return 0
+		}
+		shift := uint(1)
+		if objType == 31 {
+			shift = 0
+		}
+		rate := int(uint32(b[1]&byte(0x7F>>(3-shift)))<<17 | uint32(b[2])<<9 | uint32(b[3])<<1 | uint32(b[4])>>7)
+		if rate >= 8000 && rate <= 384_000 {
+			return rate
+		}
+		return 0
+	}
+
+	if freqIndex < len(aacSampleRateTable) {
+		return aacSampleRateTable[freqIndex]
+	}
+	return 0
+}
+
+// sampleEntryRate 从 AudioSampleEntry 的 16.16 / 32.32 定点字段兜底取采样率
+func sampleEntryRate(buf []byte) int {
+	candidates := []struct {
+		off   int
+		shift uint
+		size  int
+	}{
+		{24, 16, 4}, // 标准：reserved(6)+dataRef(2)+ver/rev/vendor(8)+ch/size/pre/res(8)
+		{28, 16, 4}, // 少数封装省略 pre_defined/reserved
+		{40, 32, 8}, // QuickTime version 1/2 的 32.32
+	}
+	for _, tag := range [][]byte{[]byte("mp4a"), []byte("alac")} {
+		for idx := 0; ; {
+			rel := bytes.Index(buf[idx:], tag)
+			if rel < 0 {
+				break
+			}
+			body := idx + rel + 4
+			idx = body
+			for _, c := range candidates {
+				p := body + c.off
+				if p+c.size > len(buf) {
+					continue
+				}
+				var raw uint64
+				if c.size == 4 {
+					raw = uint64(be32(buf[p : p+4]))
+				} else {
+					raw = be64(buf[p : p+8])
+				}
+				if rate := int(raw >> c.shift); rate >= 8000 && rate <= 384_000 {
+					return rate
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func be16(b []byte) uint16 {
+	return uint16(b[0])<<8 | uint16(b[1])
 }
 
 func be32(b []byte) uint32 {

@@ -34,6 +34,9 @@ type LibraryService struct {
 	app   *application.App
 
 	scanMu sync.Mutex
+
+	// OnScanFinished 每次后台扫描结束时调用（仅用于测试同步，生产环境为 nil）
+	OnScanFinished func()
 }
 
 // NewLibraryService 构造服务（app 由 main 在创建应用后注入）
@@ -73,31 +76,41 @@ func (s *LibraryService) Folders() []bootstrap.Folder {
 
 // Scan 扫描指定文件夹（folderIds 为空表示全部）。
 // 立即返回是否成功启动，实际进度通过 scan:progress / scan:done 事件推送。
+// Scan 启动一次异步全量扫描。
+// 返回 started=true 表示本次调用确实会跑一次扫描并最终发出 scan:done 事件。
+// 注意：曲库内部会把并发的扫描请求排队（而不是丢弃），因此这里恒为 true，
+// 前端只需等 scan:done 即可，不会出现「等不到事件」的情况。
 func (s *LibraryService) Scan(folderIDs []string) map[string]any {
-	if s.lib.IsScanning() {
-		return map[string]any{"started": false, "reason": "already-scanning"}
-	}
 	s.emit("scan:start", map[string]any{"folderIds": folderIDs})
 	s.lib.SetProgressFunc(func(phase string, current, total int) {
 		s.emit("scan:progress", map[string]any{"phase": phase, "current": current, "total": total})
 	})
 
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
-		res, err := s.lib.Scan(ctx, false)
-		if err != nil {
-			s.emit("scan:failed", map[string]any{"message": err.Error()})
-			return
-		}
-		s.emit("scan:done", res)
-	}()
+	go s.runScan(30 * time.Minute)
 
 	return map[string]any{"started": true}
 }
 
-// AddFolder 弹出系统目录选择器并添加；用户取消时返回 nil。
-// manualPath 非空时直接使用该路径（用于浏览器预览或手输路径）。
+// runScan 在后台跑一次全量扫描并广播结果（供 Scan / AddFolder 共用）
+func (s *LibraryService) runScan(timeout time.Duration) {
+	defer func() {
+		if s.OnScanFinished != nil {
+			s.OnScanFinished()
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	res, err := s.lib.Scan(ctx, false)
+	if err != nil {
+		s.emit("scan:failed", map[string]any{"message": err.Error()})
+		return
+	}
+	s.emit("scan:done", res)
+}
+
+// AddFolder 弹出系统目录选择器并添加；用户取消时返回 cancelled=true。
+// manualPath 非空时直接使用该路径（用于手输路径或自动化测试）。
 func (s *LibraryService) AddFolder(manualPath string) (map[string]any, error) {
 	path := strings.TrimSpace(manualPath)
 
@@ -138,15 +151,14 @@ func (s *LibraryService) AddFolder(manualPath string) (map[string]any, error) {
 		return nil, err
 	}
 
-	// 立刻生效：重新登记监听 + 扫描一次
+	// 让曲库立刻看到新文件夹（Manager 自己缓存了一份 folders 副本）
+	s.lib.ReloadFolders()
+
+	// 立刻生效：重新登记监听 + 走和「重新扫描」完全一致的扫描流程，
+	// 这样前端收到的 scan:start / scan:progress / scan:done 事件顺序一致。
 	s.refreshWatcher()
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		defer cancel()
-		if _, err := s.lib.Scan(ctx, false); err != nil {
-			s.emit("scan:failed", map[string]any{"message": err.Error()})
-		}
-	}()
+	s.emit("scan:start", map[string]any{"folderIds": []string{folder.ID}})
+	go s.runScan(10 * time.Minute)
 
 	return map[string]any{"folder": folder}, nil
 }

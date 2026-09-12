@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 /* --------------------------------------------------------------------------
@@ -183,8 +185,9 @@ func defaultDataDir() string {
 
 // Store 配置存储，带读写锁
 type Store struct {
-	mu  sync.RWMutex
-	cfg *Config
+	mu     sync.RWMutex
+	cfg    *Config
+	tmpSeq uint64 // 临时文件名序号，避免并发写互相覆盖
 }
 
 // NewStore 加载配置；文件不存在或损坏时落回默认值（不会覆盖坏文件，先备份）
@@ -327,14 +330,35 @@ func (s *Store) saveLocked() error {
 	if err != nil {
 		return fmt.Errorf("序列化配置失败: %w", err)
 	}
-	tmp := s.cfg.ConfigPath + ".tmp"
+
+	// 用带序号的临时文件：即使上一次写入残留了 .tmp，也不会互相覆盖
+	tmp := fmt.Sprintf("%s.%d.tmp", s.cfg.ConfigPath, atomic.AddUint64(&s.tmpSeq, 1))
+
 	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
 		return fmt.Errorf("写入配置失败: %w", err)
 	}
-	if err := os.Rename(tmp, s.cfg.ConfigPath); err != nil {
-		return fmt.Errorf("替换配置失败: %w", err)
+
+	// Windows 上 os.Rename 覆盖已存在文件时，若目标正被杀毒软件 / 索引器
+	// 或另一个写者短暂占用，会返回 ERROR_SHARING_VIOLATION。
+	// 这里做几次退避重试，避免「扫描回写文件夹状态」这种后台写入偶发失败。
+	var lastErr error
+	for attempt := 0; attempt < 8; attempt++ {
+		if err := os.Rename(tmp, s.cfg.ConfigPath); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		time.Sleep(time.Duration(5*(attempt+1)) * time.Millisecond)
 	}
-	return nil
+
+	// 兜底：直接覆盖写入。会有极短的「非原子」窗口，但比整个操作失败更可取。
+	if err := os.WriteFile(s.cfg.ConfigPath, raw, 0o644); err == nil {
+		_ = os.Remove(tmp)
+		return nil
+	}
+
+	_ = os.Remove(tmp)
+	return fmt.Errorf("替换配置失败: %w", lastErr)
 }
 
 // Path 返回配置文件路径

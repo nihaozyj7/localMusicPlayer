@@ -16,8 +16,8 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails
 import * as bootstrap$0 from "./internal/bootstrap/models.js";
 
 /**
- * AddFolder 弹出系统目录选择器并添加；用户取消时返回 nil。
- * manualPath 非空时直接使用该路径（用于浏览器预览或手输路径）。
+ * AddFolder 弹出系统目录选择器并添加；用户取消时返回 cancelled=true。
+ * manualPath 非空时直接使用该路径（用于手输路径或自动化测试）。
  * @param {string} manualPath
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
@@ -70,6 +70,10 @@ export function RevealInExplorer(path) {
 /**
  * Scan 扫描指定文件夹（folderIds 为空表示全部）。
  * 立即返回是否成功启动，实际进度通过 scan:progress / scan:done 事件推送。
+ * Scan 启动一次异步全量扫描。
+ * 返回 started=true 表示本次调用确实会跑一次扫描并最终发出 scan:done 事件。
+ * 注意：曲库内部会把并发的扫描请求排队（而不是丢弃），因此这里恒为 true，
+ * 前端只需等 scan:done 即可，不会出现「等不到事件」的情况。
  * @param {string[] | null} folderIDs
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
