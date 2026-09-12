@@ -57,16 +57,19 @@ $env:MUSICPLAYER_FFMPEG_DIR = "D:\mp-bin"              # 改内置版本的解�
 目标响度（默认 **-16 LUFS**），切换歌曲音量保持稳定。
 
 - 在 **设置 → 响度均衡** 里选择模式：`关闭` / `逐曲均衡` / `同专辑统一`
-- 点「测量全部歌曲」批量分析（后台进行，有进度条，可随时停止）
-- 播放某首歌时若还没测过，会自动后台补测，测好立即生效
-- 测量结果缓存在 `%APPDATA%\MusicPlayer\loudness-cache.json`，每首歌只测一次
+- **不需要预先扫描**：播到哪首就算哪首，算好的补偿会缓存下来，之后播放零延迟
+- 改了 **目标响度** 后旧补偿会自动失效，并按新标准重算
+- 「预先把全部歌曲算好」只是可选的批量预热，正常使用不需要点
 
 实现要点：
 
-- 用 ffmpeg 的 `loudnorm` 滤镜按 **EBU R128** 测出整合响度（LUFS）与真峰值（dBTP）
+- 整合响度与真峰值由**纯 Go 实现**的 ITU-R BS.1770-4 / EBU R128 计算
+  （K 加权 + 400ms 门限块 + 真峰值 4 倍过采样），与 ffmpeg 的 `loudnorm`
+  在真实曲库上平均偏差 0.040 LU、最大 0.066 LU，在标准允差内
 - 补偿采用**静态线性增益**（`目标响度 − 实测响度`）而不是动态归一化：
   保留原始动态范围，且结果是个恒定 dB，前端可以用 GainNode 实时套用、切歌零延迟
 - **真峰值保护**：增益后真峰值不超过 -1 dBTP，避免抬升导致削波
+- 缓存有效性 = 文件未变 && 算法版本未变 && **补偿标准未变**
 - 回放链路：`<audio>` → `MediaElementSource` → `GainNode`（用户音量 × 响度补偿）→ 输出
 
 > **音频必须与页面同源。** 实测（Windows 11 + WebView2 152）从
@@ -77,11 +80,48 @@ $env:MUSICPLAYER_FFMPEG_DIR = "D:\mp-bin"              # 改内置版本的解�
 > 由 `main.go` 里的 asset middleware 转发到 `internal/media`。
 > 同源后 CORS / `crossorigin` / Web Audio 跨源取数限制都不再是问题。
 
+### 关于内置 ffmpeg 的体积
+
+内置的是通用静态构建（155MB，故产物约 168MB），用 `go:embed` 打进 exe。
+**它目前无法完全去掉**，原因是解码：
+
+| 用途 | 能否纯 Go | 说明 |
+| --- | --- | --- |
+| 响度测量（LUFS / 真峰值） | ✅ 已实现 | `internal/loudness/bs1770.go` |
+| WAV / FLAC / MP3 / OGG / Opus 解码 | ✅ 有成熟纯 Go 库 | go-audio/wav、mewkiz/flac、hajimehoshi/go-mp3、jfreymuth/oggvorbis、pion/opus |
+| **AAC / M4A 解码** | ❌ 没有纯 Go 实现 | 而本机曲库全是 .m4a |
+| ape / wma / dsf 转码 | ❌ | 依赖 ffmpeg 的对应解码器 |
+
+所以要彻底去掉 ffmpeg，下一步得走 **Windows Media Foundation**
+（系统自带 AAC 解码，COM 调用，不增加分发体积，但是 Windows 专有且实现量大），
+或者自己精简编译一个只带必要解码器的 ffmpeg。
+
+### 标题栏拖动（Wails v3 的写法）
+
+v3 不再读 `-webkit-app-region`，而是读 CSS 自定义属性：
+
+```css
+.titlebar        { --wails-draggable: drag; }
+.titlebar__btn   { --wails-draggable: no-drag; }
+```
+
+运行时判定是 `getComputedStyle(el).getPropertyValue("--wails-draggable").trim() === "drag"`，
+所以按钮区域必须显式 `no-drag`，否则点击会变成拖窗口。
+
 ### 播放排查工具
 
 ```powershell
 # 在真实应用里点歌播放并确认 currentTime 真的在推进、无解码错误
 node tools/playtest.mjs --exe bin/musicplayer.exe --query "星月神话"
+
+# 验证「按需响度补偿」：播放时算出来、进入增益表、改标准后失效
+node tools/loudtest.mjs --exe bin/musicplayer.exe
+
+# 核对标题栏拖拽的 CSS 契约（是否 drag / no-drag）
+node tools/tiltest.mjs --exe bin/musicplayer.exe
+
+# 纯 Go 响度算法 vs ffmpeg loudnorm 的逐首对比
+go run tools/loudcompare.go "C:\Users\Example\Music" 8
 
 # 接入真实 WebView2，抓页面报错 + 网络事件（定位「请求有没有发出去」）
 node tools/netprobe.mjs
@@ -192,6 +232,8 @@ tools/
   fetch-ffmpeg.mjs            下载内置 ffmpeg（静态构建）
   cdp-check.js                场景化自检（CDP，14 个场景）
   playtest.mjs                真实应用里点歌播放并确认真的在出声
+  loudtest.mjs                真实应用里验证按需响度补偿与改标准失效
+  tiltest.mjs                 核对标题栏拖拽的 CSS 契约
   netprobe.mjs                接入真实 WebView2 抓报错与网络事件
   appinspect.mjs              接入真实应用读取页面状态 / DOM / 控制台
   origin-check.mjs            地址空间矩阵测试（哪种跨源组合会被允许）
@@ -199,6 +241,7 @@ tools/
   probe-audio.mjs             媒体事件细粒度追踪（播放卡住时用）
   realcheck.go                真实曲库全链路验收
   loudcheck.go                真实曲库响度测量验收
+  loudcompare.go              纯 Go 响度算法 vs ffmpeg loudnorm 逐首对比
   screenshots.ps1             批量截图
   ui-probe.ps1                探针的 PowerShell 版（备用）
 ```
