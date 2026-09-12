@@ -754,14 +754,12 @@ export async function hydrateFromBackend() {
   }
   if (Array.isArray(folders)) state.folders = folders;
   if (cfg) {
-    // 后端配置为准，但保留界面上的临时视图状态
-    const keep = { view: state.view, playlistId: state.playlistId, pvMode: state.pvMode };
+    // 后端配置为准（后端是唯一真源），视图类临时状态不受影响
     Object.assign(state.config, cfg);
-    Object.assign(keep, {});
     state.playMode = cfg.playMode || state.playMode;
     state.volume = typeof cfg.volume === "number" ? cfg.volume : state.volume;
     state.muted = Boolean(cfg.muted);
-    if (Array.isArray(cfg.filterRules)) state.filterRules = cfg.filterRules;
+    if (Array.isArray(cfg.filterRules) && cfg.filterRules.length) state.filterRules = cfg.filterRules;
   }
   if (Array.isArray(playlists) && playlists.length) {
     state.playlists = playlists.map((p) => ({
