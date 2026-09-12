@@ -1,0 +1,94 @@
+/* ==========================================================================
+   utilities.css — 极少量原子类（不承载主题视觉）
+   ========================================================================== */
+
+.u-hidden {
+  display: none !important;
+}
+
+.u-invisible {
+  visibility: hidden;
+}
+
+.u-drag {
+  -webkit-app-region: drag;
+}
+
+.u-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.u-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.u-ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.u-num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+.u-fs-xs {
+  font-size: var(--fs-xs);
+}
+
+.u-dim {
+  opacity: 0.6;
+}
+
+.u-wrap {
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+/* 主题色卡的小色块：具体颜色由运行时生成的样式表按 data-swatch 填充 */
+[data-swatch] {
+  display: block;
+  background: var(--surface-3);
+}
+
+.u-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.u-spacer {
+  flex: 1 1 auto;
+}
+
+.u-selectable {
+  user-select: text;
+}
+
+.u-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 骨架屏（扫描/加载时用） */
+.u-skeleton {
+  border-radius: var(--r-xs);
+  background-image: linear-gradient(
+    90deg,
+    var(--surface-1) 0%,
+    var(--surface-3) 40%,
+    var(--surface-1) 80%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.4s linear infinite;
+}

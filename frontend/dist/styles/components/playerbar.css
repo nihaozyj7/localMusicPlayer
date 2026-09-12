@@ -1,0 +1,503 @@
+/* ==========================================================================
+   playerbar.css — 底部常驻播放控件
+   左（封面/信息/爱心） · 中（控制 + 进度） · 右（音量/循环/播放页）
+   ========================================================================== */
+
+.playerbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 2fr) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-4);
+  height: var(--h-playerbar);
+  padding: 0 var(--sp-4);
+  background: var(--glass-bg-strong);
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  border-top: var(--hairline);
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
+  position: relative;
+}
+
+.playerbar::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--glass-highlight);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* —— 左区：当前曲目 —— */
+.playerbar__now {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.playerbar__cover {
+  position: relative;
+  flex: none;
+  width: var(--size-cover-bar);
+  height: var(--size-cover-bar);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--surface-2);
+  border: var(--hairline);
+  cursor: pointer;
+  transition: transform var(--dur) var(--ease);
+}
+
+.playerbar__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.playerbar__cover:hover {
+  transform: scale(1.04);
+}
+
+.playerbar__cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--immersive-veil);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.playerbar__cover:hover::after {
+  opacity: 0.6;
+}
+
+.playerbar__cover-icon {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 18px;
+  height: 18px;
+  color: var(--text-1);
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+  z-index: 1;
+}
+
+.playerbar__cover:hover .playerbar__cover-icon {
+  opacity: 1;
+  transform: none;
+}
+
+.playerbar__meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.playerbar__title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playerbar__sub {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playerbar__heart {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-full);
+  color: var(--heart-off);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.playerbar__heart svg {
+  width: 16px;
+  height: 16px;
+}
+
+.playerbar__heart:hover {
+  background: var(--surface-2);
+  color: var(--heart);
+}
+
+.playerbar__heart:active {
+  transform: scale(0.88);
+}
+
+.playerbar__heart[aria-pressed="true"] {
+  color: var(--heart);
+}
+
+.playerbar__heart[aria-pressed="true"] svg {
+  fill: currentColor;
+}
+
+/* —— 中区：控制 + 进度 —— */
+.playerbar__center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.transport__btn {
+  display: grid;
+  place-items: center;
+  width: var(--btn-md);
+  height: var(--btn-md);
+  border-radius: var(--r-full);
+  color: var(--text-2);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.transport__btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.transport__btn:hover {
+  color: var(--text-1);
+  background: var(--surface-hover);
+}
+
+.transport__btn:active {
+  transform: scale(0.94);
+}
+
+.transport__btn[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+.transport__btn--main {
+  width: var(--btn-lg);
+  height: var(--btn-lg);
+  background: var(--accent);
+  color: var(--accent-text);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+
+.transport__btn--main svg {
+  width: 19px;
+  height: 19px;
+}
+
+.transport__btn--main:hover {
+  background: var(--accent);
+  color: var(--accent-text);
+  filter: brightness(0.92);
+}
+
+/* —— 进度条 / 音量条（共用 .slider）—— */
+.progress {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  max-width: 620px;
+}
+
+.progress__time {
+  flex: none;
+  width: 40px;
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.progress__time--total {
+  text-align: right;
+}
+
+.slider {
+  --track-h: 4px;
+  --thumb-size: 12px;
+  --fill: 0%;
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  height: 20px;
+  min-width: 0;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.slider__rail {
+  position: relative;
+  width: 100%;
+  height: var(--track-h);
+  border-radius: var(--r-full);
+  background: var(--surface-3);
+  overflow: visible;
+  transition: height var(--dur-fast) var(--ease);
+}
+
+/* 填充与滑块位置由 JS 写入具体属性（width / left），不用自定义属性，
+   因为 CSP style-src 'self' 会拦截 CSSOM 写自定义属性 */
+.slider__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  transition: width 80ms linear;
+}
+
+/* 缓冲进度（可选，二者不冲突） */
+.slider__buffer {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: var(--r-full);
+  background: var(--border-2);
+}
+
+.slider__thumb {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: var(--thumb-size);
+  height: var(--thumb-size);
+  margin-left: calc(var(--thumb-size) / -2);
+  border-radius: var(--r-full);
+  background: var(--accent);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+  transform: translateY(-50%) scale(0);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.slider:hover {
+  --track-h: 6px;
+}
+
+.slider:hover .slider__thumb,
+.slider:focus-visible .slider__thumb,
+.slider[data-dragging="true"] .slider__thumb {
+  transform: translateY(-50%) scale(1);
+}
+
+.slider[data-dragging="true"] {
+  --track-h: 6px;
+}
+
+.slider[data-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.slider[data-disabled="true"] .slider__thumb {
+  display: none;
+}
+
+/* 悬停时间气泡（JS 定位 left） */
+.slider__bubble {
+  position: absolute;
+  bottom: 22px;
+  transform: translateX(-50%);
+  padding: 2px 7px;
+  border-radius: var(--r-xs);
+  background: var(--glass-bg-strong);
+  border: var(--hairline);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--text-1);
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+  white-space: nowrap;
+}
+
+.slider:hover .slider__bubble,
+.slider[data-dragging="true"] .slider__bubble {
+  opacity: 1;
+}
+
+/* —— 右区：音量 / 循环 / 播放页 —— */
+.playerbar__tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.volume {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.volume__btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-full);
+  color: var(--text-2);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+
+.volume__btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.volume__btn:hover {
+  color: var(--text-1);
+  background: var(--surface-hover);
+}
+
+.volume__slider {
+  width: 96px;
+  flex: none;
+}
+
+.playerbar__tools .slider {
+  --thumb-size: 11px;
+}
+
+/* 循环方式按钮：显示当前模式 */
+.mode-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-full);
+  color: var(--text-2);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+
+.mode-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.mode-btn:hover {
+  color: var(--text-1);
+  background: var(--surface-hover);
+}
+
+.mode-btn[data-mode="sequence"] {
+  color: var(--text-2);
+}
+
+.mode-btn[data-mode="loop-all"],
+.mode-btn[data-mode="loop-one"],
+.mode-btn[data-mode="shuffle"] {
+  color: var(--accent);
+}
+
+.mode-btn__badge {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  display: none;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-family: var(--font-num);
+  font-size: 9px;
+  font-weight: var(--fw-bold);
+  line-height: 1;
+}
+
+.mode-btn[data-mode="loop-one"] .mode-btn__badge {
+  display: grid;
+}
+
+/* 播放页样式切换 */
+.viewmode {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-full);
+  background: var(--surface-1);
+  border: var(--hairline);
+}
+
+.viewmode__btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 26px;
+  border-radius: var(--r-full);
+  color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+
+.viewmode__btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.viewmode__btn:hover {
+  color: var(--text-1);
+  background: var(--surface-hover);
+}
+
+.viewmode__btn[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+/* —— 窄窗口 —— */
+@media (max-width: 1240px) {
+  .volume__slider {
+    width: 64px;
+  }
+}
+
+@media (max-width: 1060px) {
+  .playerbar {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 1.6fr) auto;
+  }
+
+  .viewmode {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .volume__slider {
+    display: none;
+  }
+
+  .playerbar__heart {
+    display: none;
+  }
+}

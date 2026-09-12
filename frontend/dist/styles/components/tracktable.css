@@ -1,0 +1,535 @@
+/* ==========================================================================
+   tracktable.css — 曲目表格（所有歌曲 / 播放列表 / 歌单 共用）
+   ========================================================================== */
+
+.tracks {
+  --col-handle: 26px;
+  --col-index: 38px;
+  --col-cover: 48px;
+  --col-album: 22%;
+  --col-time: 68px;
+  --col-heart: 44px;
+  --col-more: 40px;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+/* —— 表头 —— */
+.tracks__head {
+  display: grid;
+  grid-template-columns:
+    var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 2.2fr)
+    minmax(0, 1fr) var(--col-time) var(--col-heart) var(--col-more);
+  align-items: center;
+  gap: var(--sp-3);
+  height: 34px;
+  padding: 0 var(--sp-4);
+  border-bottom: var(--hairline);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  position: sticky;
+  top: 0;
+  background: var(--glass-bg);
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  z-index: 2;
+}
+
+.tracks__head[data-mode="library"] {
+  grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 2.2fr) minmax(0, 1fr)
+    var(--col-time) var(--col-heart) var(--col-more);
+}
+
+.tracks__head[data-mode="library"] .col-handle,
+.tracks[data-mode="library"] .col-handle {
+  display: none;
+}
+
+.tracks__head[data-mode="playlist"] {
+  grid-template-columns: var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 2.2fr)
+    minmax(0, 1fr) var(--col-time) var(--col-heart) var(--col-more);
+}
+
+.tracks__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+
+.tracks__sort:hover {
+  color: var(--text-1);
+}
+
+.tracks__sort svg {
+  width: 11px;
+  height: 11px;
+  opacity: 0;
+}
+
+.tracks__sort[data-dir] svg {
+  opacity: 1;
+}
+
+/* 升序时箭头翻转（由 JS 切换 class，不用行内样式，保持 CSP 干净） */
+.tracks__sort.is-asc svg {
+  transform: rotate(180deg);
+}
+
+/* —— 行 —— */
+.track {
+  display: grid;
+  grid-template-columns:
+    var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 2.2fr)
+    minmax(0, 1fr) var(--col-time) var(--col-heart) var(--col-more);
+  align-items: center;
+  gap: var(--sp-3);
+  height: var(--row-h);
+  padding: 0 var(--sp-4);
+  border-radius: var(--r-sm);
+  cursor: default;
+  position: relative;
+  transition: background-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.tracks[data-mode="library"] .track {
+  grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 2.2fr) minmax(0, 1fr)
+    var(--col-time) var(--col-heart) var(--col-more);
+}
+
+.track + .track::before {
+  content: "";
+  position: absolute;
+  left: var(--sp-4);
+  right: var(--sp-4);
+  top: 0;
+  height: 1px;
+  background: var(--divider);
+}
+
+.track:hover {
+  background: var(--surface-hover);
+}
+
+.track:hover::before,
+.track:hover + .track::before {
+  opacity: 0;
+}
+
+.track[aria-current="true"] {
+  background: var(--accent-weak);
+}
+
+.track[aria-current="true"] .track__title {
+  color: var(--accent);
+}
+
+.track[aria-current="true"]::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 22px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+}
+
+.track[data-selected="true"] {
+  background: var(--surface-active);
+}
+
+/* —— 拖拽 —— */
+.track__handle {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--text-3);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.track:hover .track__handle {
+  opacity: 1;
+}
+
+.track__handle:active {
+  cursor: grabbing;
+}
+
+.track__handle:hover {
+  color: var(--text-1);
+}
+
+.track__handle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.track.is-dragging {
+  opacity: 0.35;
+}
+
+.track.is-drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.track.is-drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* —— 序号 / 播放态 —— */
+.track__index {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  font-family: var(--font-num);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  position: relative;
+}
+
+.track__play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-xs);
+  color: var(--text-1);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.track__play svg {
+  width: 15px;
+  height: 15px;
+}
+
+.track:hover .track__index .track__num {
+  opacity: 0;
+}
+
+.track:hover .track__play {
+  opacity: 1;
+}
+
+.track__play:hover {
+  color: var(--accent);
+}
+
+/* 正在播放：音柱动画 */
+.track__bars {
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  height: 14px;
+}
+
+.track__bars span {
+  width: 2px;
+  height: 100%;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  transform-origin: bottom;
+  animation: bar-bounce 900ms var(--ease) infinite;
+}
+
+.track__bars span:nth-child(2) {
+  animation-delay: 180ms;
+}
+
+.track__bars span:nth-child(3) {
+  animation-delay: 360ms;
+}
+
+.track__bars span:nth-child(4) {
+  animation-delay: 90ms;
+}
+
+.track[aria-current="true"] .track__num {
+  display: none;
+}
+
+.track[aria-current="true"] .track__bars {
+  display: flex;
+}
+
+.track[aria-current="true"] .track__play {
+  display: none;
+}
+
+.track[data-playing="false"][aria-current="true"] .track__bars span {
+  animation-play-state: paused;
+}
+
+/* —— 封面 —— */
+.track__cover {
+  position: relative;
+  width: var(--size-cover-sm);
+  height: var(--size-cover-sm);
+  border-radius: var(--r-xs);
+  overflow: hidden;
+  background: var(--surface-2);
+  border: var(--hairline);
+}
+
+.track__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* —— 标题 / 歌手 —— */
+.track__main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.track__title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track__sub {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track__artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track__tag {
+  flex: none;
+  padding: 0 5px;
+  height: 15px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-family: var(--font-num);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* —— 专辑 —— */
+.track__album {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* —— 时长 —— */
+.track__time {
+  font-family: var(--font-num);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  text-align: right;
+  padding-right: var(--sp-1);
+}
+
+/* —— 爱心 —— */
+.track__heart {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  justify-self: center;
+  border-radius: var(--r-full);
+  color: var(--heart-off);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.track__heart svg {
+  width: 16px;
+  height: 16px;
+}
+
+.track__heart:hover {
+  background: var(--surface-2);
+  color: var(--heart);
+}
+
+.track__heart:active {
+  transform: scale(0.88);
+}
+
+.track__heart[aria-pressed="true"] {
+  color: var(--heart);
+}
+
+.track__heart[aria-pressed="true"] svg {
+  fill: currentColor;
+}
+
+/* 未收藏时爱心默认淡出，悬停/已收藏时显示 */
+.tracks[data-mode="library"] .track__heart[aria-pressed="false"] {
+  opacity: 0;
+}
+
+.tracks[data-mode="library"] .track:hover .track__heart,
+.tracks[data-mode="library"] .track__heart:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .tracks[data-mode="library"] .track__heart[aria-pressed="false"] {
+    opacity: 1;
+  }
+}
+
+/* —— 更多 —— */
+.track__more {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  justify-self: center;
+  border-radius: var(--r-full);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
+}
+
+.track__more svg {
+  width: 15px;
+  height: 15px;
+}
+
+.track:hover .track__more,
+.track__more:focus-visible,
+.track__more[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.track__more:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+/* —— 紧凑密度 —— */
+.tracks[data-density="compact"] .track {
+  height: var(--row-h-compact);
+}
+
+.tracks[data-density="compact"] .track__cover {
+  --size-cover-sm: 30px;
+}
+
+/* ==========================================================================
+   窄窗口适配：按优先级逐列隐藏（专辑 → 拖拽手柄 → 更多）
+   行内用 0 宽度列而不是 display:none，保证表头与数据行始终对齐
+   ========================================================================== */
+
+/* 第一级：隐藏专辑列 */
+@media (max-width: 1180px) {
+  .tracks {
+    --col-album: 0px;
+  }
+
+  .tracks__head,
+  .track,
+  .tracks__head[data-mode="library"],
+  .tracks[data-mode="library"] .track,
+  .tracks__head[data-mode="playlist"] {
+    grid-template-columns: var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 1fr)
+      var(--col-time) var(--col-heart) var(--col-more);
+  }
+
+  .tracks[data-mode="library"] .track,
+  .tracks__head[data-mode="library"] {
+    grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 1fr) var(--col-time)
+      var(--col-heart) var(--col-more);
+  }
+
+  .track__album,
+  .col-album {
+    display: none;
+  }
+}
+
+/* 第二级：隐藏拖拽手柄列（队列仍可用「更多」菜单中的移除与上下移动） */
+@media (max-width: 1040px) {
+  .tracks {
+    --col-handle: 0px;
+    --col-more: 0px;
+    --col-cover: 44px;
+  }
+
+  .tracks__head,
+  .track,
+  .tracks__head[data-mode="playlist"] {
+    grid-template-columns: var(--col-index) minmax(0, 1fr) var(--col-time) var(--col-heart);
+  }
+
+  .tracks__head[data-mode="library"],
+  .tracks[data-mode="library"] .track {
+    grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 1fr) var(--col-time)
+      var(--col-heart);
+  }
+
+  .track__handle,
+  .col-handle,
+  .track__more,
+  .col-more {
+    display: none;
+  }
+}
+
+/* 第三级：极窄时连封面与爱心一起收起 */
+@media (max-width: 900px) {
+  .tracks {
+    --col-cover: 0px;
+    --col-heart: 0px;
+  }
+
+  .tracks__head,
+  .track,
+  .tracks__head[data-mode="library"],
+  .tracks[data-mode="library"] .track,
+  .tracks__head[data-mode="playlist"] {
+    grid-template-columns: var(--col-index) minmax(0, 1fr) var(--col-time);
+  }
+
+  .track__cover,
+  .col-cover,
+  .track__heart,
+  .col-heart {
+    display: none;
+  }
+}
+

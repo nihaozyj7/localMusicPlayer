@@ -1,0 +1,73 @@
+version: '3'
+
+# ============================================================================
+#  公共构建任务（按本项目的「零构建前端」改写）
+#  · 前端不经过 Vite/npm：tools/build-frontend.mjs 负责同步 frontend/dist
+#  · 绑定由 wails3 generate bindings -b -i 生成（bundled runtime，无需 npm 包）
+# ============================================================================
+
+tasks:
+  go:mod:tidy:
+    summary: Runs `go mod tidy`
+    internal: true
+    run: once
+    cmds:
+      - go mod tidy
+
+  generate:bindings:
+    summary: 生成前端可用的 Go 绑定（frontend/bindings）
+    run: once
+    deps:
+      - task: go:mod:tidy
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - frontend/bindings/**/*
+    cmds:
+      - wails3 generate bindings -b -i -clean=true
+
+  build:frontend:
+    summary: 同步静态前端到 frontend/dist（不使用打包器）
+    run: once
+    sources:
+      - frontend/src/**/*
+      - tools/build-frontend.mjs
+    generates:
+      - frontend/dist/**/*
+    deps:
+      - task: generate:bindings
+    cmds:
+      - node tools/build-frontend.mjs
+
+  dev:frontend:
+    summary: 启动界面预览服务器（浏览器里调试界面用）
+    cmds:
+      - node tools/dev-server.js {{.VITE_PORT}}
+
+  generate:icons:
+    summary: 由 build/appicon.png 生成 Windows .ico 与 macOS .icns
+    run: once
+    dir: build
+    sources:
+      - appicon.png
+    generates:
+      - windows/icon.ico
+    cmds:
+      # 注意：任务在 build/ 目录下执行，因此 macfilename 必须显式指定相对路径，
+      # 否则 wails3 会去 build/build/darwin/icon.icns 找文件而报错。
+      - wails3 generate icons -input appicon.png -windowsfilename windows/icon.ico -macfilename darwin/icon.icns
+
+  update:build-assets:
+    summary: 依据 build/config.yml 重新生成打包资源
+    dir: build
+    cmds:
+      - wails3 update build-assets -name "{{.APP_NAME}}" -binaryname "{{.APP_NAME}}" -config config.yml -dir .
+
+  # 预留：把前端与后端一起跑起来的「真·开发模式」（需先构建一次 dist）
+  dev:app:
+    summary: 构建前端并直接运行应用（改 Go 代码后重跑本任务）
+    cmds:
+      - task: build:frontend
+      - task: run

@@ -1,0 +1,306 @@
+/* ==========================================================================
+   content.css — 主内容区头部与通用容器
+   ========================================================================== */
+
+.content-header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  height: var(--h-header);
+  padding: 0 var(--sp-5);
+  background: var(--glass-bg);
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  border-bottom: var(--hairline);
+}
+
+.content-header__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.content-header__title {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.content-header__subtitle {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.content-header__tools {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  min-width: 0;
+  gap: var(--sp-2);
+  margin-left: auto;
+}
+
+/* —— 按钮 —— */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--btn-md);
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
+}
+
+.btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.btn:hover {
+  background: var(--surface-2);
+  border-color: var(--border-2);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-text);
+}
+
+.btn--primary:hover {
+  background: var(--accent);
+  filter: brightness(0.92);
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-2);
+}
+
+.btn--ghost:hover {
+  background: var(--surface-hover);
+  color: var(--text-1);
+  border-color: transparent;
+}
+
+.btn--danger {
+  color: var(--danger);
+}
+
+.btn--danger:hover {
+  background: var(--surface-2);
+}
+
+.btn--icon {
+  width: var(--btn-md);
+  padding: 0;
+  justify-content: center;
+}
+
+.btn--sm {
+  height: var(--btn-sm);
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-sm);
+}
+
+/* —— 加载中的旋转图标 —— */
+.btn.is-busy svg {
+  animation: spin 900ms linear infinite;
+}
+
+/* —— 搜索框 —— */
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search__icon {
+  position: absolute;
+  left: var(--sp-3);
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.search__input {
+  width: 200px;
+  height: var(--btn-md);
+  padding: 0 var(--sp-3) 0 32px;
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font-size: var(--fs-md);
+  transition: width var(--dur) var(--ease), background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.search__input::placeholder {
+  color: var(--text-3);
+}
+
+.search__input:focus {
+  width: 260px;
+  background: var(--surface-2);
+  border-color: var(--border-2);
+  box-shadow: none;
+}
+
+/* —— 下拉框 —— */
+.select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.select__icon {
+  position: absolute;
+  right: var(--sp-2);
+  width: 13px;
+  height: 13px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.select__field {
+  height: var(--btn-md);
+  padding: 0 26px 0 var(--sp-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--surface-1);
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  appearance: none;
+  cursor: pointer;
+}
+
+.select__field:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.select__field option {
+  background: var(--bg-app);
+  color: var(--text-1);
+}
+
+/* —— 页面容器 —— */
+.page {
+  padding: var(--sp-5) var(--sp-5) var(--sp-7);
+  animation: fade-in var(--dur) var(--ease);
+}
+
+/* —— 空态 —— */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  min-height: 46vh;
+  padding: var(--sp-6);
+  text-align: center;
+}
+
+.empty__art {
+  width: 88px;
+  height: 88px;
+  color: var(--text-3);
+  opacity: 0.7;
+}
+
+.empty__title {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+
+.empty__desc {
+  max-width: 420px;
+  font-size: var(--fs-md);
+  color: var(--text-3);
+}
+
+.empty__actions {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+/* ==========================================================================
+   窄窗口适配
+   窗口最小尺寸为 1000×680，工具栏需要逐级让步，避免出现横向溢出
+   ========================================================================== */
+
+/* 中等宽度：搜索框收窄 */
+@media (max-width: 1320px) {
+  .search__input {
+    width: 150px;
+  }
+
+  .search__input:focus {
+    width: 200px;
+  }
+}
+
+@media (max-width: 1180px) {
+  /* 排序下拉改为受控宽度，播放全部只留图标 */
+  .select__field {
+    max-width: 104px;
+  }
+
+  .content-header {
+    gap: var(--sp-3);
+    padding: 0 var(--sp-4);
+  }
+}
+
+@media (max-width: 1060px) {
+  .search__input,
+  .search__input:focus {
+    width: 116px;
+  }
+
+  .btn--label-hide span {
+    display: none;
+  }
+}
+
+/* 极窄：搜索框与排序整体隐藏，只保留最必要的操作 */
+@media (max-width: 940px) {
+  .content-header__tools .search,
+  .content-header__tools .select {
+    display: none;
+  }
+}
+

@@ -1,0 +1,64 @@
+version: '3'
+
+# ============================================================================
+#  音乐播放器 · Wails3 构建入口
+#  常用：
+#    wails3 task build          构建 exe 到 bin/
+#    wails3 task run            构建并运行
+#    wails3 task package        打 Windows 安装包（NSIS）
+#    wails3 task dev:frontend   只启动界面预览服务器（浏览器，无需编译 Go）
+#    wails3 task test           运行后端测试
+# ============================================================================
+
+vars:
+  APP_NAME: "musicplayer"
+  BIN_DIR: "bin"
+  VITE_PORT: '{{.WAILS_VITE_PORT | default 5173}}'
+  GOOS: '{{.GOOS | default OS}}'
+
+includes:
+  common: ./build/Taskfile.yml
+  windows: ./build/windows/Taskfile.yml
+  darwin: ./build/darwin/Taskfile.yml
+  linux: ./build/linux/Taskfile.yml
+
+tasks:
+  build:
+    summary: 构建应用
+    cmds:
+      - task: "{{.GOOS}}:build"
+
+  package:
+    summary: 打包安装程序
+    cmds:
+      - task: "{{.GOOS}}:package"
+
+  run:
+    summary: 运行应用
+    cmds:
+      - task: "{{.GOOS}}:run"
+
+  dev:frontend:
+    summary: 界面预览（浏览器）
+    cmds:
+      - task: common:dev:frontend
+
+  bindings:
+    summary: 只重新生成前端绑定
+    cmds:
+      - task: common:generate:bindings
+
+  frontend:
+    summary: 只同步前端产物到 frontend/dist
+    cmds:
+      - task: common:build:frontend
+
+  tidy:
+    summary: go mod tidy
+    cmds:
+      - task: common:go:mod:tidy
+
+  test:
+    summary: 运行后端测试
+    cmds:
+      - go test ./...

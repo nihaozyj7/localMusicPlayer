@@ -1,0 +1,101 @@
+/* ==========================================================================
+   titlebar.css — 无边框窗口自绘标题栏
+   ========================================================================== */
+
+.titlebar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: var(--h-titlebar);
+  padding: 0 0 0 var(--sp-4);
+  background: var(--glass-bg-weak);
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  border-bottom: var(--hairline);
+  -webkit-app-region: drag;
+}
+
+.titlebar::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--glass-highlight);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.titlebar__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.titlebar__logo {
+  width: 16px;
+  height: 16px;
+  color: var(--text-1);
+}
+
+.titlebar__sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border-2);
+  opacity: 0.8;
+}
+
+.titlebar__caption {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.titlebar__drag {
+  flex: 1 1 auto;
+  height: 100%;
+  min-width: var(--sp-4);
+}
+
+.titlebar__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar__btn {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: var(--h-titlebar);
+  color: var(--text-2);
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.titlebar__btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.titlebar__btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-1);
+}
+
+.titlebar__btn--close:hover {
+  background: var(--danger);
+  color: var(--text-inverse);
+}
+
+.titlebar__btn[aria-pressed="true"] {
+  color: var(--text-1);
+  background: var(--surface-active);
+}

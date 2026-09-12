@@ -1,0 +1,117 @@
+/* ==========================================================================
+   layout.css — 固定窗口骨架
+   三区固定：标题栏 / （侧边栏 + 主内容）/ 底部常驻播放控件
+   ========================================================================== */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--w-sidebar) minmax(0, 1fr);
+  grid-template-rows: var(--h-titlebar) minmax(0, 1fr) var(--h-playerbar);
+  grid-template-areas:
+    "titlebar titlebar"
+    "sidebar  main"
+    "playerbar playerbar";
+  height: 100vh;
+  width: 100vw;
+  min-width: 0;
+  overflow-x: hidden;
+  position: relative;
+  z-index: var(--z-content);
+}
+
+/* 播放界面打开时：主内容区被 PlayerView 覆盖，侧边栏隐藏但骨架不变 */
+.app[data-view="player"] {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.app[data-view="player"] .sidebar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-12px);
+}
+
+/* —— ① 标题栏 —— */
+.titlebar {
+  grid-area: titlebar;
+  z-index: var(--z-titlebar);
+}
+
+/* —— ② 侧边栏 —— */
+.sidebar {
+  grid-area: sidebar;
+  z-index: var(--z-content);
+  min-width: 0;
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+/* —— ③ 主内容区 —— */
+.main {
+  grid-area: main;
+  display: grid;
+  grid-template-rows: var(--h-header) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+.content-header {
+  z-index: 5;
+}
+
+.content-body {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+}
+
+/* —— ④ 底部常驻播放控件 —— */
+.playerbar {
+  grid-area: playerbar;
+  z-index: var(--z-playerbar);
+}
+
+/* —— 播放界面：覆盖主内容区（不含标题栏与底栏，因此底栏天然常驻）—— */
+.playerview {
+  position: fixed;
+  top: var(--h-titlebar);
+  right: 0;
+  bottom: var(--h-playerbar);
+  left: var(--w-sidebar);
+  z-index: var(--z-playerview);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  transition: left var(--dur) var(--ease);
+}
+
+.app[data-view="player"] .playerview {
+  left: 0;
+}
+
+.playerview[hidden] {
+  display: none;
+}
+
+/* —— 窄窗口：收窄侧边栏，不改变结构 —— */
+@media (max-width: 1120px) {
+  :root {
+    --w-sidebar: 196px;
+  }
+}
+
+/* 接近窗口最小宽度（1000px）：侧边栏只留图标 */
+@media (max-width: 1040px) {
+  :root {
+    --w-sidebar: 72px;
+    --h-playerbar: 80px;
+  }
+}
+
+/* 低于设计最小宽度时（例如浏览器预览窗口缩得很小）也不允许横向溢出 */
+@media (max-width: 900px) {
+  :root {
+    --sp-5: 16px;
+    --h-playerbar: 80px;
+  }
+}

@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark-minimal">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data: blob: file:; media-src 'self' blob: file:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws:"
+    />
+    <title>音乐播放器</title>
+    <link rel="stylesheet" href="./styles/index.css" />
+    <!--
+      运行时样式表（空即可）：
+      主题切换、毛玻璃强度、用户自定义主题都通过 CSSOM 往这两个 <style> 里 insertRule。
+      预置在 HTML 里而不是用 JS 创建，可以避免被 CSP 判为「动态内联样式」。
+    -->
+    <style id="runtime-tokens"></style>
+    <style id="swatch-styles"></style>
+  </head>
+  <body>
+    <!-- ==================================================================
+         图标精灵（全部 stroke 型，颜色继承 currentColor，尺寸由 CSS 控制）
+         ================================================================== -->
+    <svg class="u-hidden" aria-hidden="true" focusable="false">
+      <defs>
+        <g id="i-base"></g>
+
+        <symbol id="i-music" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 18V5.5a1 1 0 0 1 .8-1l9-1.8a1 1 0 0 1 1.2 1V16" />
+          <circle cx="6.5" cy="18" r="2.5" />
+          <circle cx="17.5" cy="16" r="2.5" />
+        </symbol>
+
+        <symbol id="i-playlist" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 7h11M4 12h8M4 17h6" />
+          <path d="M17 15V7.5l3-.6V13" />
+          <circle cx="15.5" cy="15.5" r="1.8" />
+          <circle cx="18.5" cy="13" r="1.8" />
+        </symbol>
+
+        <symbol id="i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20s-7.5-4.6-7.5-9.6A4.4 4.4 0 0 1 12 7.3a4.4 4.4 0 0 1 7.5 3.1C19.5 15.4 12 20 12 20Z" />
+        </symbol>
+
+        <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-3-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 2.9 14H2.7a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-3l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 2.9-1.2V2.7a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.6 1.2Z" />
+        </symbol>
+
+        <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 5v14M5 12h14" />
+        </symbol>
+
+        <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.6-3.6" />
+        </symbol>
+
+        <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 12a8 8 0 1 1-2.6-5.9" />
+          <path d="M20 4v4.5h-4.5" />
+        </symbol>
+
+        <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m6 9 6 6 6-6" />
+        </symbol>
+
+        <symbol id="i-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m9 6 6 6-6 6" />
+        </symbol>
+
+        <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 12H5m0 0 6-6m-6 6 6 6" />
+        </symbol>
+
+        <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 6l12 12M18 6 6 18" />
+        </symbol>
+
+        <symbol id="i-minimize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <path d="M5 12h14" />
+        </symbol>
+
+        <symbol id="i-maximize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">
+          <rect x="5" y="5" width="14" height="14" rx="2" />
+        </symbol>
+
+        <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+          <path d="M8 5.2a.7.7 0 0 1 1.06-.6l9.1 5.6a.75.75 0 0 1 0 1.28l-9.1 5.6A.7.7 0 0 1 8 16.5Z" />
+        </symbol>
+
+        <symbol id="i-pause" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+          <rect x="7" y="5" width="3.6" height="14" rx="1.2" />
+          <rect x="13.4" y="5" width="3.6" height="14" rx="1.2" />
+        </symbol>
+
+        <symbol id="i-prev" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+          <path d="M18 6.6v10.8a.6.6 0 0 1-.93.5l-7.3-5.4a.62.62 0 0 1 0-1l7.3-5.4a.6.6 0 0 1 .93.5Z" />
+          <rect x="5" y="5.4" width="2.2" height="13.2" rx="1.1" />
+        </symbol>
+
+        <symbol id="i-next" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+          <path d="M6 6.6v10.8a.6.6 0 0 0 .93.5l7.3-5.4a.62.62 0 0 0 0-1L6.93 6.1A.6.6 0 0 0 6 6.6Z" />
+          <rect x="16.8" y="5.4" width="2.2" height="13.2" rx="1.1" />
+        </symbol>
+
+        <symbol id="i-shuffle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 4h4v4M20 4l-6.2 6.2M8 20H4v-4M4 20l6.2-6.2M16 20h4v-4M20 20l-5-5M4 4l5 5" />
+        </symbol>
+
+        <symbol id="i-repeat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 3l3 3-3 3" />
+          <path d="M20 6H8a4 4 0 0 0-4 4v1" />
+          <path d="M7 21l-3-3 3-3" />
+          <path d="M4 18h12a4 4 0 0 0 4-4v-1" />
+        </symbol>
+
+        <symbol id="i-repeat-one" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 3l3 3-3 3" />
+          <path d="M20 6H8a4 4 0 0 0-4 4v1" />
+          <path d="M7 21l-3-3 3-3" />
+          <path d="M4 18h12a4 4 0 0 0 4-4v-1" />
+          <path d="M12 10.6l1.2-.8V15" />
+        </symbol>
+
+        <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14m0 0-6-6m6 6-6 6" />
+        </symbol>
+
+        <symbol id="i-list-order" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 6h12M8 12h12M8 18h12" />
+          <path d="M4 6h.01M4 12h.01M4 18h.01" />
+        </symbol>
+
+        <symbol id="i-volume-high" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 5 6.5 9H3v6h3.5L11 19Z" />
+          <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" />
+        </symbol>
+
+        <symbol id="i-volume-low" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 5 6.5 9H3v6h3.5L11 19Z" />
+          <path d="M15.5 9.5a4 4 0 0 1 0 5" />
+        </symbol>
+
+        <symbol id="i-volume-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 5 6.5 9H3v6h3.5L11 19Z" />
+          <path d="m16 10 4 4m0-4-4 4" />
+        </symbol>
+
+        <symbol id="i-headphones" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 15v-3a8 8 0 0 1 16 0v3" />
+          <rect x="2.5" y="14" width="4.5" height="7" rx="2" />
+          <rect x="17" y="14" width="4.5" height="7" rx="2" />
+        </symbol>
+
+        <symbol id="i-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15" />
+        </symbol>
+
+        <symbol id="i-disc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <circle cx="12" cy="12" r="3.2" />
+          <path d="M12 3v2.6M12 18.4V21M3 12h2.6M18.4 12H21" />
+        </symbol>
+
+        <symbol id="i-immersive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2.5" y="5" width="19" height="14" rx="2.5" />
+          <path d="M6 14.5 10 10l4 4 2-2 2 2.5" />
+          <circle cx="8.5" cy="9" r="1.2" fill="currentColor" stroke="none" />
+        </symbol>
+
+        <symbol id="i-minimal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 8h14M8 12h8M6 16h12" />
+        </symbol>
+
+        <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5Z" />
+        </symbol>
+
+        <symbol id="i-folder-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7.5A1.5 1.5 0 0 1 17.5 19h-13A1.5 1.5 0 0 1 3 17.5Z" />
+          <path d="M11 12v5m-2.5-2.5h5" />
+        </symbol>
+
+        <symbol id="i-grip" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+          <circle cx="9" cy="6" r="1.5" />
+          <circle cx="15" cy="6" r="1.5" />
+          <circle cx="9" cy="12" r="1.5" />
+          <circle cx="15" cy="12" r="1.5" />
+          <circle cx="9" cy="18" r="1.5" />
+          <circle cx="15" cy="18" r="1.5" />
+        </symbol>
+
+        <symbol id="i-more" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+          <circle cx="12" cy="5.5" r="1.7" />
+          <circle cx="12" cy="12" r="1.7" />
+          <circle cx="12" cy="18.5" r="1.7" />
+        </symbol>
+
+        <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 7h16M9 7V4.8A.8.8 0 0 1 9.8 4h4.4a.8.8 0 0 1 .8.8V7M6 7l1 12.2a1.5 1.5 0 0 0 1.5 1.3h7a1.5 1.5 0 0 0 1.5-1.3L18 7" />
+        </symbol>
+
+        <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 20h4l10-10a2.5 2.5 0 0 0-3.5-3.5L4 16.5Z" />
+          <path d="m13.5 7 3.5 3.5" />
+        </symbol>
+
+        <symbol id="i-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 5h18l-7 8.5V20l-4-2v-4.5Z" />
+        </symbol>
+
+        <symbol id="i-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3a9 9 0 1 0 0 18c1.2 0 2-.9 2-2 0-1.4-1.2-1.7-1.2-3 0-1 .8-1.8 1.8-1.8H16a5 5 0 0 0 5-5c0-3.6-4-6.2-9-6.2Z" />
+          <circle cx="7.5" cy="12" r="1.2" fill="currentColor" stroke="none" />
+          <circle cx="10" cy="8" r="1.2" fill="currentColor" stroke="none" />
+          <circle cx="15" cy="8.5" r="1.2" fill="currentColor" stroke="none" />
+        </symbol>
+
+        <symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13 3 5 14h5l-1 7 8-11h-5Z" />
+        </symbol>
+
+        <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5.5M12 7.8h.01" />
+        </symbol>
+
+        <symbol id="i-lyrics" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 6h9M5 10h14M5 14h11M5 18h6" />
+        </symbol>
+
+        <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4" />
+        </symbol>
+
+        <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
+        </symbol>
+
+        <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m5 12.5 5 5L19 7" />
+        </symbol>
+
+        <symbol id="i-album" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3.5" y="3.5" width="17" height="17" rx="3" />
+          <circle cx="12" cy="12" r="3.4" />
+        </symbol>
+
+        <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7.5V12l3 1.8" />
+        </symbol>
+
+        <symbol id="i-queue" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 6h11M4 11h11M4 16h7" />
+          <path d="m17 15 4 2.5-4 2.5Z" />
+        </symbol>
+
+        <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13 3H7.5A1.5 1.5 0 0 0 6 4.5v15A1.5 1.5 0 0 0 7.5 21h9a1.5 1.5 0 0 0 1.5-1.5V8Z" />
+          <path d="M13 3v5h5" />
+        </symbol>
+
+        <symbol id="i-scale" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v18M5 8h14M8 8l-3 6h6ZM16 8l-3 6h6Z" />
+        </symbol>
+
+        <symbol id="i-regex" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 16.5 9.5 13M9.5 13 6 9.5M9.5 13H3" />
+          <circle cx="15" cy="15.5" r="1.6" />
+          <path d="M18.5 5v7M15.5 6.5l6 3.5M21.5 6.5l-6 3.5" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <!-- ==================================================================
+         应用骨架（固定：标题栏 / 侧边栏 + 主内容 / 底部播放控件）
+         ================================================================== -->
+    <div class="app" id="app" data-view="library" data-resolved-theme="dark-minimal">
+      <!-- ① 标题栏 -->
+      <header class="titlebar" id="titlebar">
+        <div class="titlebar__brand">
+          <svg class="titlebar__logo"><use href="#i-music" /></svg>
+          <span>音乐播放器</span>
+        </div>
+        <span class="titlebar__sep"></span>
+        <span class="titlebar__caption" id="titlebar-caption">所有歌曲</span>
+        <div class="titlebar__drag"></div>
+        <div class="titlebar__actions">
+          <button class="titlebar__btn" id="btn-theme-toggle" type="button" data-tip="切换深浅色" aria-label="切换深浅色">
+            <svg><use href="#i-moon" /></svg>
+          </button>
+          <button class="titlebar__btn" id="btn-win-min" type="button" aria-label="最小化">
+            <svg><use href="#i-minimize" /></svg>
+          </button>
+          <button class="titlebar__btn" id="btn-win-max" type="button" aria-label="最大化">
+            <svg><use href="#i-maximize" /></svg>
+          </button>
+          <button class="titlebar__btn titlebar__btn--close" id="btn-win-close" type="button" aria-label="关闭">
+            <svg><use href="#i-close" /></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- ② 侧边栏 -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar__scroll">
+          <nav class="sidebar__group" aria-label="曲库">
+            <div class="sidebar__label">曲库</div>
+            <button class="navitem" type="button" data-nav="library" aria-selected="true">
+              <svg class="navitem__icon"><use href="#i-music" /></svg>
+              <span class="navitem__text">所有歌曲</span>
+              <span class="navitem__badge" id="badge-library">0</span>
+            </button>
+            <button class="navitem" type="button" data-nav="queue" aria-selected="false">
+              <svg class="navitem__icon"><use href="#i-queue" /></svg>
+              <span class="navitem__text">播放列表</span>
+              <span class="navitem__badge" id="badge-queue">0</span>
+            </button>
+          </nav>
+
+          <nav class="sidebar__group" aria-label="歌单">
+            <div class="sidebar__label">
+              <span>歌单</span>
+              <button class="sidebar__label-btn" id="btn-new-playlist-sm" type="button" data-tip="新建歌单" aria-label="新建歌单">
+                <svg><use href="#i-plus" /></svg>
+              </button>
+            </div>
+            <div id="playlist-nav"></div>
+          </nav>
+        </div>
+
+        <div class="sidebar__foot">
+          <button class="navitem" id="btn-new-playlist" type="button">
+            <svg class="navitem__icon"><use href="#i-plus" /></svg>
+            <span class="navitem__text">新建歌单</span>
+          </button>
+          <button class="navitem" type="button" data-nav="settings" aria-selected="false">
+            <svg class="navitem__icon"><use href="#i-settings" /></svg>
+            <span class="navitem__text">设置</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- ③ 主内容区 -->
+      <main class="main" id="main">
+        <div class="content-header" id="content-header">
+          <div class="content-header__titles">
+            <h1 class="content-header__title" id="content-title">所有歌曲</h1>
+            <p class="content-header__subtitle" id="content-subtitle">0 首 · 0 个文件夹</p>
+          </div>
+          <div class="content-header__tools" id="content-tools"></div>
+        </div>
+        <div class="content-body" id="content-body"></div>
+      </main>
+
+      <!-- 播放界面（覆盖主内容区，底栏独立常驻） -->
+      <section class="playerview" id="playerview" data-mode="classic" hidden aria-label="播放界面">
+        <div class="playerview__head">
+          <button class="playerview__back" id="btn-player-back" type="button">
+            <svg><use href="#i-arrow-left" /></svg>
+            <span>返回</span>
+          </button>
+          <span class="playerview__crumb" id="playerview-crumb">正在播放</span>
+          <span class="u-spacer"></span>
+          <div class="viewmode" id="playerview-mode" role="group" aria-label="播放界面样式">
+            <button class="viewmode__btn" type="button" data-pv-mode="classic" aria-pressed="true" data-tip="经典">
+              <svg><use href="#i-disc" /></svg>
+            </button>
+            <button class="viewmode__btn" type="button" data-pv-mode="immersive" aria-pressed="false" data-tip="沉浸">
+              <svg><use href="#i-immersive" /></svg>
+            </button>
+            <button class="viewmode__btn" type="button" data-pv-mode="minimal" aria-pressed="false" data-tip="简约">
+              <svg><use href="#i-minimal" /></svg>
+            </button>
+          </div>
+        </div>
+        <div class="playerview__stage" id="playerview-stage"></div>
+      </section>
+
+      <!-- ④ 底部常驻播放控件 -->
+      <footer class="playerbar" id="playerbar">
+        <div class="playerbar__now">
+          <button class="playerbar__cover" id="bar-cover" type="button" data-tip="打开播放界面" aria-label="打开播放界面">
+            <img id="bar-cover-img" alt="" />
+            <svg class="playerbar__cover-icon"><use href="#i-expand" /></svg>
+          </button>
+          <div class="playerbar__meta" id="bar-meta">
+            <span class="playerbar__title" id="bar-title">未在播放</span>
+            <span class="playerbar__sub" id="bar-sub">选择一首歌曲开始</span>
+          </div>
+          <button class="playerbar__heart" id="bar-heart" type="button" aria-pressed="false" data-tip="加入我喜欢" aria-label="加入我喜欢">
+            <svg><use href="#i-heart" /></svg>
+          </button>
+        </div>
+
+        <div class="playerbar__center">
+          <div class="transport">
+            <button class="transport__btn" id="btn-prev" type="button" data-tip="上一曲" aria-label="上一曲">
+              <svg><use href="#i-prev" /></svg>
+            </button>
+            <button class="transport__btn transport__btn--main" id="btn-play" type="button" data-tip="播放/暂停" aria-label="播放">
+              <svg id="icon-play"><use href="#i-play" /></svg>
+            </button>
+            <button class="transport__btn" id="btn-next" type="button" data-tip="下一曲" aria-label="下一曲">
+              <svg><use href="#i-next" /></svg>
+            </button>
+          </div>
+          <div class="progress">
+            <span class="progress__time" id="time-current">00:00</span>
+            <div class="slider" id="progress" role="slider" tabindex="0" aria-label="播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-disabled="false">
+              <div class="slider__rail">
+                <div class="slider__buffer" id="progress-buffer"></div>
+                <div class="slider__fill" id="progress-fill"></div>
+              </div>
+              <div class="slider__thumb"></div>
+              <div class="slider__bubble" id="progress-bubble">00:00</div>
+            </div>
+            <span class="progress__time progress__time--total" id="time-total">00:00</span>
+          </div>
+        </div>
+
+        <div class="playerbar__tools">
+          <div class="volume">
+            <button class="volume__btn" id="btn-mute" type="button" data-tip="静音" aria-label="静音">
+              <svg id="icon-volume"><use href="#i-volume-high" /></svg>
+            </button>
+            <div class="slider volume__slider" id="volume" role="slider" tabindex="0" aria-label="音量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="80">
+              <div class="slider__rail">
+                <div class="slider__fill" id="volume-fill"></div>
+              </div>
+              <div class="slider__thumb"></div>
+              <div class="slider__bubble" id="volume-bubble">80</div>
+            </div>
+          </div>
+          <button class="mode-btn" id="btn-mode" type="button" data-mode="sequence" data-tip="顺序播放" aria-label="播放模式">
+            <svg id="icon-mode"><use href="#i-list-order" /></svg>
+            <span class="mode-btn__badge">1</span>
+          </button>
+          <button class="mode-btn" id="btn-lyrics-toggle" type="button" data-tip="显示歌词" aria-label="显示歌词">
+            <svg><use href="#i-lyrics" /></svg>
+          </button>
+          <button class="mode-btn" id="btn-fullscreen" type="button" data-tip="全屏" aria-label="全屏">
+            <svg><use href="#i-expand" /></svg>
+          </button>
+        </div>
+      </footer>
+    </div>
+
+    <!-- 浮层容器 -->
+    <div class="menu" id="menu" hidden role="menu"></div>
+    <div class="modal-backdrop" id="modal-backdrop" hidden></div>
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+    <div class="scanning" id="scanning" hidden>
+      <div class="scanning__box">
+        <div class="scanning__ring"></div>
+        <div class="scanning__text" id="scanning-text">正在扫描音乐文件夹…</div>
+      </div>
+    </div>
+
+    <script type="module" src="./js/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=音乐播放器
+Comment=A MusicPlayer application
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/musicplayer.exe %u
+Terminal=false
+Type=Application
+Icon=musicplayer.exe
+Categories=Utility;
+StartupWMClass=musicplayer.exe
+
+ 

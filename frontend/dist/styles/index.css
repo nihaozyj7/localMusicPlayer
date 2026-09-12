@@ -1,0 +1,33 @@
+/* ==========================================================================
+   index.css — 唯一样式入口
+   --------------------------------------------------------------------------
+   引入顺序固定：
+     1. base      复位与基础排版（无颜色）
+     2. tokens    设计令牌默认值
+     3. themes/*  主题令牌（覆盖默认值）
+     4. components/* 组件样式（只引用令牌）
+     5. utilities 原子类
+   新增主题：在 themes/ 下新增一个 CSS 文件，并在此处按主题加入一行 @import。
+   （后续由 Go 后端扫描 themes/ 目录自动注入 <link>，届时无需手改本文件。）
+   ========================================================================== */
+
+@import "./base.css";
+
+@import "./tokens.css";
+
+@import "./themes/dark-minimal.css";
+@import "./themes/light-minimal.css";
+@import "./themes/cover-dark.css";
+
+@import "./components/layout.css";
+@import "./components/titlebar.css";
+@import "./components/sidebar.css";
+@import "./components/content.css";
+@import "./components/tracktable.css";
+@import "./components/playerbar.css";
+@import "./components/playerview.css";
+@import "./components/lyrics.css";
+@import "./components/settings.css";
+@import "./components/overlay.css";
+
+@import "./utilities.css";

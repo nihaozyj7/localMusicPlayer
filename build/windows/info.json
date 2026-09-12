@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.1.0"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "0.1.0",
+			"CompanyName": "My Company",
+			"FileDescription": "A MusicPlayer application",
+			"LegalCopyright": "© 2026, My Company",
+			"ProductName": "音乐播放器",
+			"Comments": "This is a comment"
+		}
+	}
+}
