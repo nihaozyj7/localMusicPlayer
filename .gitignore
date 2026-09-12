@@ -56,3 +56,6 @@ desktop.ini
 # ---- 本地配置（含个人音乐路径，不入库）----
 config.local.json
 config.json
+
+# ---- ??????????? ----
+.tmp-*/
