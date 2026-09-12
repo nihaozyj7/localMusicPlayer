@@ -93,7 +93,7 @@ func main() {
 	for i := 0; i < n; i++ {
 		song := songs[i]
 		t0 := time.Now()
-		item, err := mgr.Measure(context.Background(), song)
+		item, err := mgr.Measure(context.Background(), song, target)
 		if err != nil {
 			fmt.Printf("  ! %-28s 测量失败: %v\n", trunc(song.Title, 28), err)
 			continue
@@ -134,7 +134,7 @@ func main() {
 	mgr2 := loudness.NewManager(tmp, 4)
 	hit := 0
 	for i := 0; i < n; i++ {
-		if _, ok := mgr2.Get(songs[i]); ok {
+		if _, ok := mgr2.Get(songs[i], target); ok {
 			hit++
 		}
 	}

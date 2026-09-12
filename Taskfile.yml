@@ -8,6 +8,7 @@ version: '3'
 #    wails3 task package        打 Windows 安装包（NSIS）
 #    wails3 task dev:frontend   只启动界面预览服务器（浏览器，无需编译 Go）
 #    wails3 task test           运行后端测试
+#    wails3 task ffmpeg:info    查看内置 ffmpeg 的体积/许可证/能力清单
 # ============================================================================
 
 vars:
@@ -58,13 +59,13 @@ tasks:
     cmds:
       - task: common:go:mod:tidy
 
-  ffmpeg:fetch:
-    summary: 下载内置 ffmpeg（静态构建，约 155MB）
+  ffmpeg:build:
+    summary: 从源码编译精简内置 ffmpeg（5.6MB / LGPL）
     cmds:
-      - task: common:ffmpeg:fetch
+      - task: common:ffmpeg:build
 
   ffmpeg:info:
-    summary: 查看内置 ffmpeg 状态
+    summary: 查看内置 ffmpeg 状态（体积、许可证、能力清单）
     cmds:
       - task: common:ffmpeg:info
 

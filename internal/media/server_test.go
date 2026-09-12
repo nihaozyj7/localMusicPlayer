@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"musicplayer/internal/bootstrap"
+	"musicplayer/internal/ffmpeg"
 )
 
 func newTestServer(t *testing.T, ext string, size int) (*Server, bootstrap.Song) {
@@ -248,12 +249,17 @@ func fakeFFmpeg(t *testing.T, wavSize int, callsFile string) string {
 
 // TestTranscodeCachedAndServedAsFile 转码结果落到缓存后按文件提供：
 // 必须带准确的 Content-Length，并且第二次请求不再调用 ffmpeg。
+//
+// 注意：现在转码分两步 —— 假 ffmpeg 只写**裸 PCM**，WAV 头由 ffmpeg 包
+// 在 Go 侧补上。所以最终长度 = 假 PCM 大小 + 44 字节头。
+// 这样头长度是硬保证的，不会像 ffmpeg 的 wav 复用器那样插 LIST/INFO 块。
 func TestTranscodeCachedAndServedAsFile(t *testing.T) {
 	srv, song := newTestServer(t, "ape", 2048)
 	srv.SetCacheDir(filepath.Join(t.TempDir(), "tc"))
 
-	const wavSize = 844
-	srv.ffmpeg = fakeFFmpeg(t, wavSize, "")
+	const pcmSize = 844
+	wantSize := pcmSize + ffmpeg.WAVHeaderSize
+	srv.ffmpeg = fakeFFmpeg(t, pcmSize, "")
 
 	url := "/audio/" + song.ID + "?t=" + srv.Token()
 
@@ -261,14 +267,31 @@ func TestTranscodeCachedAndServedAsFile(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("首次转码请求应 200，实际 %d（%s）", rec.Code, rec.Body.String())
 	}
-	if got := rec.Body.Len(); got != wavSize {
-		t.Errorf("应返回 %d 字节，实际 %d", wavSize, got)
+	if got := rec.Body.Len(); got != wantSize {
+		t.Errorf("应返回 %d 字节（%d PCM + %d 头），实际 %d", wantSize, pcmSize, ffmpeg.WAVHeaderSize, got)
 	}
-	if got := rec.Header().Get("Content-Length"); got != strconv.Itoa(wavSize) {
-		t.Errorf("Content-Length = %q，期望 %d（长度不准会让浏览器一直等）", got, wavSize)
+	if got := rec.Header().Get("Content-Length"); got != strconv.Itoa(wantSize) {
+		t.Errorf("Content-Length = %q，期望 %d（长度不准会让浏览器一直等）", got, wantSize)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "audio/wav" {
 		t.Errorf("Content-Type = %q", got)
+	}
+
+	// WAV 头必须自洽：data 字段 = 文件长度 - 44，RIFF 字段 = 文件长度 - 8
+	body := rec.Body.Bytes()
+	if len(body) >= ffmpeg.WAVHeaderSize {
+		if string(body[0:4]) != "RIFF" || string(body[8:12]) != "WAVE" || string(body[36:40]) != "data" {
+			t.Errorf("WAV 头标记不对: %q", body[0:40])
+		}
+		le32 := func(off int) int64 {
+			return int64(uint32(body[off]) | uint32(body[off+1])<<8 | uint32(body[off+2])<<16 | uint32(body[off+3])<<24)
+		}
+		if got, want := le32(40), int64(pcmSize); got != want {
+			t.Errorf("WAV 头 data 字段 = %d，期望 %d", got, want)
+		}
+		if got, want := le32(4)+8, int64(wantSize); got != want {
+			t.Errorf("WAV 头 RIFF 字段推算长度 = %d，期望 %d", got, want)
+		}
 	}
 
 	// Range 请求：转码文件也应支持字节级 seek
@@ -286,8 +309,8 @@ func TestTranscodeCachedAndServedAsFile(t *testing.T) {
 	if again.Code != http.StatusOK {
 		t.Fatalf("第二次请求应命中缓存并返回 200，实际 %d（%s）", again.Code, again.Body.String())
 	}
-	if again.Body.Len() != wavSize {
-		t.Errorf("缓存内容长度不对: %d", again.Body.Len())
+	if again.Body.Len() != wantSize {
+		t.Errorf("缓存内容长度不对: %d，期望 %d", again.Body.Len(), wantSize)
 	}
 }
 

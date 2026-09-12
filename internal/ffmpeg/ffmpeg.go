@@ -332,6 +332,10 @@ type ProbeInfo struct {
 func (t Tools) CanProbe() bool { return t.FFmpeg != "" }
 
 // Probe 探测媒体文件。ctx 控制超时，建议给 5~10 秒。
+//
+// 注意 -vn 与 -c:a：m4a 里的内嵌封面是视频流，不禁掉会去选视频编码器；
+// 而 null 复用器仍需要一个音频编码器，精简构建（只保留 pcm_s16le/flac）
+// 必须显式指定，否则报 "Error selecting an encoder"。
 func Probe(ctx context.Context, ffmpegPath, path string) (ProbeInfo, error) {
 	if ffmpegPath == "" {
 		return ProbeInfo{}, fmt.Errorf("ffmpeg 不可用")
@@ -339,7 +343,9 @@ func Probe(ctx context.Context, ffmpegPath, path string) (ProbeInfo, error) {
 	cmd := exec.CommandContext(ctx, ffmpegPath,
 		"-hide_banner", "-nostdin",
 		"-i", path,
-		"-vn", "-f", "null", "-",
+		"-vn", "-map", "0:a",
+		"-c:a", "pcm_s16le",
+		"-f", "null", "-",
 	)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -361,7 +367,6 @@ func Probe(ctx context.Context, ffmpegPath, path string) (ProbeInfo, error) {
 }
 
 // SoundDurationMS 用 ffmpeg 求出**实际可解码**音频的精确时长（毫秒，含小数）。
-//
 // 为什么需要它：曲库里的时长是毫秒整数，而转码输出成 WAV 后必须给出准确字节数，
 // 否则浏览器会一直等缺失的尾巴（表现为 loadedmetadata 永不触发、播放卡死）。
 // ffmpeg 解码出的样本数受最后一块填充影响，与「毫秒 × 采样率」并不相等
@@ -376,9 +381,10 @@ func SoundDurationMS(ctx context.Context, ffmpegPath, path string) (float64, err
 	cmd := exec.CommandContext(ctx, ffmpegPath,
 		"-hide_banner", "-nostdin", "-nostats",
 		"-i", path,
-		"-vn",
+		"-vn", "-map", "0:a",
 		"-af", "volumedetect",
 		"-t", "0",
+		"-c:a", "pcm_s16le",
 		"-f", "null", "-",
 	)
 	var stderr bytes.Buffer
@@ -389,6 +395,140 @@ func SoundDurationMS(ctx context.Context, ffmpegPath, path string) (float64, err
 		return d * 1000, nil
 	}
 	return 0, fmt.Errorf("未能解析出时长")
+}
+
+/* --------------------------------------------------------------------------
+   转码
+   -------------------------------------------------------------------------- */
+
+// 转码输出参数：16bit / 44.1kHz / 立体声 PCM
+const (
+	WAVSampleRate = 44100
+	WAVChannels   = 2
+	WAVFrameSize  = WAVChannels * 16 / 8 // 一帧 = 声道数 × 位深/8
+	WAVBytesPerSec = WAVSampleRate * WAVFrameSize
+)
+
+// TranscodeToWAV 把任意受支持的音频转成标准 WAV 落盘。
+//
+// 做法分两步，不要合并成 ffmpeg 直接输出 .wav：
+//
+//	1) ffmpeg 只输出**裸 PCM**（-f s16le）到 .pcm
+//	2) Go 侧补一个 44 字节标准 WAV 头，再改名到 out
+//
+// 为什么不用 ffmpeg 的 wav 复用器：它会插入 LIST/INFO 元数据块，
+// 于是 data 块不在偏移 40，而是往后挪（实测在 70）。这样文件头长度
+// 就不再固定，任何"按 44 字节头推算 PCM 偏移"的代码（媒体服务算
+// Content-Length、做 Range seek）全部会算错。
+// 自己写头可以让「头长度 = 44、data 长度 = 文件大小 - 44」成为硬保证。
+//
+// 参数里的 -vn -map 0:a 也是必需的：m4a 的内嵌封面是视频流，
+// 而精简构建关掉了所有视频编码器，不禁掉会报 "Error selecting an encoder"。
+func TranscodeToWAV(ctx context.Context, ffmpegPath, src, out string) error {
+	if ffmpegPath == "" {
+		return fmt.Errorf("ffmpeg 不可用")
+	}
+	tmpPCM := out + ".pcm"
+	_ = os.Remove(tmpPCM)
+
+	cmd := exec.CommandContext(ctx, ffmpegPath,
+		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-i", src,
+		"-vn", "-map", "0:a",
+		"-acodec", "pcm_s16le",
+		"-ar", strconv.Itoa(WAVSampleRate),
+		"-ac", strconv.Itoa(WAVChannels),
+		"-f", "s16le",
+		tmpPCM,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		_ = os.Remove(tmpPCM)
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("转码失败: %v（%s）", err, tailStr(msg, 300))
+	}
+
+	st, err := os.Stat(tmpPCM)
+	if err != nil {
+		_ = os.Remove(tmpPCM)
+		return err
+	}
+
+	if err := writeWAV(tmpPCM, out, st.Size()); err != nil {
+		_ = os.Remove(tmpPCM)
+		return err
+	}
+	_ = os.Remove(tmpPCM)
+	return nil
+}
+
+// writeWAV 把裸 PCM 文件包装成标准 44 字节头的 WAV。
+// 全程流式拷贝，不会把整首歌读进内存。
+func writeWAV(pcmPath, out string, dataBytes int64) error {
+	src, err := os.Open(pcmPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	tmp := out + ".part"
+	dst, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+
+	if _, err := dst.Write(wavHeader(dataBytes)); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if _, err := CopyWithLimit(dst, src, 0); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, out)
+}
+
+// WAVHeaderSize 标准 WAV 头长度。转码产物保证是这个值，
+// media 包据此推算 PCM 偏移与 Content-Length。
+const WAVHeaderSize = 44
+
+// wavHeader 生成 44 字节的 WAV 头（16bit PCM）
+func wavHeader(dataBytes int64) []byte {
+	h := make([]byte, 0, WAVHeaderSize)
+	put32 := func(v uint32) { h = append(h, byte(v), byte(v>>8), byte(v>>16), byte(v>>24)) }
+	put16 := func(v uint16) { h = append(h, byte(v), byte(v>>8)) }
+
+	h = append(h, []byte("RIFF")...)
+	put32(uint32(36 + dataBytes))
+	h = append(h, []byte("WAVEfmt ")...)
+	put32(16)                          // fmt 块长度
+	put16(1)                           // PCM
+	put16(uint16(WAVChannels))         // 声道数
+	put32(uint32(WAVSampleRate))       // 采样率
+	put32(uint32(WAVBytesPerSec))      // 字节率
+	put16(uint16(WAVFrameSize))        // 块对齐
+	put16(16)                          // 位深
+	h = append(h, []byte("data")...)
+	put32(uint32(dataBytes))
+	return h
+}
+
+// tailStr 取字符串尾部若干字符（错误信息通常在后面）
+func tailStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }
 
 // parseStreamLine 解析形如下面的流信息行：

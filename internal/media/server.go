@@ -10,7 +10,6 @@
 package media
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,9 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,14 +26,18 @@ import (
 	"musicplayer/internal/ffmpeg"
 )
 
-// WAV 输出参数：44.1kHz / 立体声 / 16bit → 176400 字节每秒
+// WAV 输出参数。
+//
+// 这些值必须与 ffmpeg 包里的 TranscodeToWAV 保持一致 —— 转码产物由
+// ffmpeg 包写头，本服务据此推算 PCM 偏移与 Content-Length。
+// 头长度是硬保证的 44 字节（我们自己写，不让 ffmpeg 的 wav 复用器插手，
+// 否则它会插 LIST/INFO 块把 data 挪到偏移 70，长度就全算错了）。
 const (
-	wavSampleRate  = 44100
-	wavChannels    = 2
-	wavBits        = 16
-	wavHeaderSize  = 44
-	wavFrameSize   = wavChannels * wavBits / 8 // 一帧 = 声道数 × 位深/8 = 4 字节
-	wavBytesPerSec = wavSampleRate * wavFrameSize
+	wavSampleRate  = ffmpeg.WAVSampleRate
+	wavChannels    = ffmpeg.WAVChannels
+	wavHeaderSize  = ffmpeg.WAVHeaderSize
+	wavFrameSize   = ffmpeg.WAVFrameSize
+	wavBytesPerSec = ffmpeg.WAVBytesPerSec
 )
 
 // transcodeBudgetBytes 转码缓存的总预算。
@@ -403,8 +404,7 @@ func (s *Server) ensureTranscoded(ctx context.Context, song bootstrap.Song) (str
 }
 
 // transcode 把不能原生播放的格式转成 16bit/44.1kHz/立体声 WAV。
-//
-// 先写临时文件再改名，避免中断留下半截文件被后续请求当成完整缓存。
+// 实现放在 internal/ffmpeg，供本服务与诊断工具共用一套参数。
 func (s *Server) transcode(ctx context.Context, song bootstrap.Song, out string) error {
 	s.mu.Lock()
 	ff := s.ffmpeg
@@ -412,43 +412,9 @@ func (s *Server) transcode(ctx context.Context, song bootstrap.Song, out string)
 	if ff == "" {
 		return fmt.Errorf("ffmpeg 不可用")
 	}
-
-	tmp := out + ".part"
-	_ = os.Remove(tmp)
-
-	args := []string{
-		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-		"-i", song.Path,
-		"-vn",
-		"-acodec", "pcm_s16le",
-		"-ar", strconv.Itoa(wavSampleRate),
-		"-ac", strconv.Itoa(wavChannels),
-		"-f", "wav",
-		tmp,
-	}
 	tctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-
-	cmd := exec.CommandContext(tctx, ff, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		_ = os.Remove(tmp)
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		if len(msg) > 300 {
-			msg = msg[len(msg)-300:]
-		}
-		return fmt.Errorf("%v（%s）", err, msg)
-	}
-
-	if err := os.Rename(tmp, out); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return ffmpeg.TranscodeToWAV(tctx, ff, song.Path, out)
 }
 
 // evictIfNeeded 超出预算时按最久未使用淘汰（跳过正在转码的条目）

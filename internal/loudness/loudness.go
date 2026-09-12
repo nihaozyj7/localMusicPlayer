@@ -525,11 +525,20 @@ type loudnormJSON struct {
 }
 
 // analyse 跑一次 loudnorm 分析
+//
+// 参数说明（都踩过坑）：
+//   -vn -map 0:a：m4a/mp4 里常内嵌封面（视频流）。不禁掉的话 ffmpeg 会为它选
+//     视频编码器，而精简构建里所有视频编码器都被关掉了，于是报
+//     "Error selecting an encoder"。
+//   -c:a pcm_s16le：null 复用器仍需要一个音频编码器，必须显式指定
+//     （精简构建只保留 pcm_s16le / flac）。
 func analyse(ctx context.Context, ffmpegPath, path string) (Measurement, error) {
 	args := []string{
 		"-hide_banner", "-nostdin", "-nostats",
 		"-i", path,
+		"-vn", "-map", "0:a",
 		"-af", "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json",
+		"-c:a", "pcm_s16le",
 		"-f", "null", "-",
 	}
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)

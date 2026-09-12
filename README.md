@@ -12,15 +12,19 @@
 ## 运行应用
 
 ```powershell
-# 首次构建前先取内置 ffmpeg（约 155MB，只需一次）
-node tools/fetch-ffmpeg.mjs
+# 首次构建前先编译内置 ffmpeg（精简版约 5.6MB，只需一次，约 3~6 分钟）
+# 需要 MinGW-w64（gcc/nasm/mingw32-make）+ 一个 bash（Git for Windows 自带）
+node tools/build-ffmpeg.mjs
 
-# 构建（会同步前端产物 + 生成绑定 + 编译，带上内置 ffmpeg 约 168MB）
+# 构建（会同步前端产物 + 生成绑定 + 编译，带上内置 ffmpeg 约 18MB）
 wails3 build
 .\bin\musicplayer.exe
 
 # 跑后端测试
 go test ./...
+
+# 看看内置 ffmpeg 的体积/许可证/实际编进去的能力
+node tools/build-ffmpeg.mjs --info
 
 # 打包 Windows 安装程序（需要本机安装 NSIS）
 wails3 task package
@@ -30,8 +34,8 @@ wails3 task package
 添加音乐文件夹后，扫描与监听都会自动生效。
 
 **ffmpeg 是内置的**：首次启动会把编译进 exe 的 ffmpeg 解包到
-`%LOCALAPPDATA%\MusicPlayer\bin\`（约 155MB，按内容哈希命名，只解包一次）。
-因此用户机器上不需要预装 ffmpeg；`ape/wma` 等格式能直接播放。
+`%LOCALAPPDATA%\MusicPlayer\bin\`（约 5.6MB，按内容哈希命名，只解包一次）。
+因此用户机器上不需要预装 ffmpeg；`ape/wma/dsf` 等格式能直接播放。
 如果本机已装了 ffmpeg 也可以指定：
 
 ```powershell
@@ -82,8 +86,38 @@ $env:MUSICPLAYER_FFMPEG_DIR = "D:\mp-bin"              # 改内置版本的解�
 
 ### 关于内置 ffmpeg 的体积
 
-内置的是通用静态构建（155MB，故产物约 168MB），用 `go:embed` 打进 exe。
-**它目前无法完全去掉**，原因是解码：
+内置的是**自己编译的精简构建**：只包含本项目真正用到的组件，
+单个二进制 5.6MB（对照：第三方通用静态构建 155MB）。
+打包产物因此从 **167.6MB 降到 18.0MB**，许可证也从 GPLv3 变成 **LGPL-2.1-or-later**
+（编译时没有 `--enable-gpl`/`--enable-nonfree`，而 FFmpeg 的 AAC 解码器与
+`loudnorm` 滤镜本身都是 LGPL）。
+
+能力清单是唯一事实来源，写在 `build/ffmpeg/features.env`：
+`build-minimal.sh` 照它生成 configure 参数，`--info` 照它核对实际产物，
+两边不会漂移。清单是这样的：
+
+| 用途 | 编进去的组件 |
+| --- | --- |
+| 解码 | aac, alac, ac3, eac3, dca, mp3, flac, vorbis, opus, wmav1/2, wmapro, ape, dsd_*, wavpack, pcm_* |
+| 滤镜 | **loudnorm**（EBU R128 测量）、aresample、aformat、anull、volumedetect |
+| 编码 | pcm_s16le、flac |
+| 封装 | pcm_s16le/pcm_f32le（裸 PCM）、wav、flac、null |
+| 协议 | file、pipe |
+
+明确关掉：所有视频编解码器、所有硬件加速、网络、字幕、设备输入输出，
+以及全部第三方外部库（x264/x265/libvpx/fdk-aac/opus…）。
+
+重新编译：
+
+```powershell
+node tools/build-ffmpeg.mjs            # 已有产物则跳过
+node tools/build-ffmpeg.mjs --force    # 强制重新编译
+node tools/build-ffmpeg.mjs --download # 只下载解压源码
+node tools/build-ffmpeg.mjs --info     # 体积 + 许可证 + 能力清单核对
+```
+
+**响度测量已经不再依赖 ffmpeg** —— 那部分改成了纯 Go 实现的 ITU-R BS.1770
+（见下一节）。ffmpeg 现在只负责**解码**：
 
 | 用途 | 能否纯 Go | 说明 |
 | --- | --- | --- |
@@ -93,8 +127,7 @@ $env:MUSICPLAYER_FFMPEG_DIR = "D:\mp-bin"              # 改内置版本的解�
 | ape / wma / dsf 转码 | ❌ | 依赖 ffmpeg 的对应解码器 |
 
 所以要彻底去掉 ffmpeg，下一步得走 **Windows Media Foundation**
-（系统自带 AAC 解码，COM 调用，不增加分发体积，但是 Windows 专有且实现量大），
-或者自己精简编译一个只带必要解码器的 ffmpeg。
+（系统自带 AAC 解码，COM 调用，不增加分发体积，但是 Windows 专有且实现量大）。
 
 ### 标题栏拖动（Wails v3 的写法）
 
@@ -199,7 +232,7 @@ internal/
   media/                      本地音频 HTTP 服务（CORS / Range / 转码缓存）
   theme/                      主题目录扫描（内置主题随二进制分发）
 build/                        Wails 构建脚手架（Taskfile / 图标 / NSIS 脚本）
-Taskfile.yml                  构建入口（build / run / package / ffmpeg:fetch / test）
+Taskfile.yml                  构建入口（build / run / package / ffmpeg:build / test）
 docs/                         需求原文、界面设计、技术方案、后端实现说明、截图
 frontend/
   bindings/                   ★ wails3 生成的前端绑定（可重新生成）
@@ -229,16 +262,20 @@ frontend/
 tools/
   dev-server.js               零依赖静态预览服务器（含绑定与 runtime 桩）
   build-frontend.mjs          同步前端产物 + 内置主题 + 绑定
-  fetch-ffmpeg.mjs            下载内置 ffmpeg（静态构建）
+  build-ffmpeg.mjs            从源码编译精简 ffmpeg（含 --info 能力核对）
   cdp-check.js                场景化自检（CDP，14 个场景）
+  e2e.mjs                     打包产物的端到端验收（渲染 / 播放 / 响度 / ffmpeg）
   playtest.mjs                真实应用里点歌播放并确认真的在出声
   loudtest.mjs                真实应用里验证按需响度补偿与改标准失效
+  transcodetest.mjs           真实应用里验证转码播放链路
+  loudprobe.mjs               定位「按需响度没算出来」卡在哪一环
   tiltest.mjs                 核对标题栏拖拽的 CSS 契约
   netprobe.mjs                接入真实 WebView2 抓报错与网络事件
   appinspect.mjs              接入真实应用读取页面状态 / DOM / 控制台
   origin-check.mjs            地址空间矩阵测试（哪种跨源组合会被允许）
   media-check.mjs             跨源播放 / CORS / Web Audio 实测
   probe-audio.mjs             媒体事件细粒度追踪（播放卡住时用）
+  mincheck.go                 三条 ffmpeg 调用路径的能力自检
   realcheck.go                真实曲库全链路验收
   loudcheck.go                真实曲库响度测量验收
   loudcompare.go              纯 Go 响度算法 vs ffmpeg loudnorm 逐首对比

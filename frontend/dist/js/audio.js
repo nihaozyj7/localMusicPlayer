@@ -361,6 +361,13 @@ export async function refreshLoudnessGains() {
     state.loudnessGains = map || {};
     applyGainForSong();
     notify();
+
+    // 关键：上面只拿到「已经算过」的补偿。正在播放的这首歌可能还没测过，
+    // 此时必须按需补测一次 —— 否则用户在播放中途打开逐曲均衡，
+    // 当前这首歌会一直按原音量放，要等切歌才生效。
+    if (mode === "track" && state.currentId) {
+      requestLoudness(state.currentId);
+    }
   } catch (err) {
     console.warn("[loudness] 拉取补偿增益失败", err);
   }

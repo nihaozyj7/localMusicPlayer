@@ -36,12 +36,17 @@ bin/
 # （保留入库：go:embed 在干净克隆上也需要这些文件存在）
 
 # ---- 内置 ffmpeg ----
-# 静态构建的 ffmpeg.exe 约 155MB，不入库；用 `node tools/fetch-ffmpeg.mjs`
-# 或 `wails3 task ffmpeg:fetch` 下载。production 构建会把它编译进 exe。
+# 自己编译的精简 ffmpeg.exe（约 5.6MB）不入库；用
+# `node tools/build-ffmpeg.mjs` 或 `wails3 task ffmpeg:build` 从源码编译。
+# 编译需要 MinGW-w64（gcc/nasm/mingw32-make）+ 一个 bash（Git for Windows 自带）。
+# production 构建会把它 go:embed 进 exe。
 internal/ffmpeg/bin/*.exe
-internal/ffmpeg/bin/_extract/
-internal/ffmpeg/bin/*.zip
-internal/ffmpeg/bin/VERSION.txt
+
+# ---- ffmpeg 源码与编译中间产物（build/ffmpeg/ 下只保留构建脚本）----
+build/ffmpeg/ffmpeg-*/
+build/ffmpeg/*.tar.xz
+build/ffmpeg/*.tar.gz
+build/ffmpeg/*.zip
 
 # ---- 编辑器 ----
 .vscode/
