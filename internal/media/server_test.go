@@ -345,6 +345,71 @@ func TestClearCache(t *testing.T) {
 	}
 }
 
+/* --------------------------------------------------------------------------
+   同源路由
+   --------------------------------------------------------------------------
+   实测（Windows 11 + WebView2 152）：从 http://wails.localhost 页面加载
+   http://127.0.0.1:port 的音频会被 Chromium 直接拒绝，错误是
+   「MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check」，
+   请求连发都不会发出去（网络日志里看不到）。因此音频必须与页面同源。
+   -------------------------------------------------------------------------- */
+
+func TestSameOriginURLIsRelative(t *testing.T) {
+	srv, song := newTestServer(t, "m4a", 2048)
+	// 没有 Start() 监听端口时，URLFor 也必须给出可用的同源相对路径
+	url := srv.URLFor(song.ID)
+
+	if !strings.HasPrefix(url, AudioPrefix) {
+		t.Errorf("播放地址必须是 %s 前缀的相对路径（同源），实际 %q —— "+
+			"跨源地址会被 WebView2 的 URL safety check 拒绝", AudioPrefix, url)
+	}
+	if strings.Contains(url, "127.0.0.1") || strings.Contains(url, "localhost:") {
+		t.Errorf("播放地址不应带主机名（那会变成跨源），实际 %q", url)
+	}
+	if !strings.Contains(url, srv.Token()) {
+		t.Errorf("播放地址必须带 token（防止本机其他程序随意读取），实际 %q", url)
+	}
+	if got := srv.SameOriginURL(song.ID); got != url {
+		t.Errorf("SameOriginURL 与 URLFor 结果不一致: %q vs %q", got, url)
+	}
+}
+
+func TestAudioPrefixIsStable(t *testing.T) {
+	// 前端与 asset server 中间件都依赖这个前缀，改动会同时影响两处
+	if AudioPrefix != "/audio/" {
+		t.Errorf("AudioPrefix = %q，若确实要改，请同步 main.go 的中间件与前端", AudioPrefix)
+	}
+}
+
+// TestHandlerServesSameOriginPath 中间件挂载用的 Handler 必须能直接处理相对路径
+func TestHandlerServesSameOriginPath(t *testing.T) {
+	srv, song := newTestServer(t, "mp3", 4096)
+	srv.ffmpeg = ""
+
+	req := httptest.NewRequest(http.MethodGet, srv.SameOriginURL(song.ID), nil)
+	req.Header.Set("Range", "bytes=0-127")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("同源路径应返回 206，实际 %d（%s）", rec.Code, rec.Body.String())
+	}
+	if rec.Body.Len() != 128 {
+		t.Errorf("应返回 128 字节，实际 %d", rec.Body.Len())
+	}
+}
+
+func TestHealthEndpoint(t *testing.T) {
+	srv, _ := newTestServer(t, "mp3", 100)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+		t.Errorf("health 应返回 200 ok，实际 %d %q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestMimeForExt(t *testing.T) {
 	cases := map[string]string{
 		"mp3":   "audio/mpeg",

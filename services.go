@@ -641,14 +641,19 @@ func NewMediaService(srv *media.Server, songs func(id string) (bootstrap.Song, b
 	return &MediaService{srv: srv, songs: songs}
 }
 
-// URL 返回某首歌的播放地址
+// URL 返回某首歌的播放地址。
+//
+// 返回的是**页面同源**的相对路径（/audio/xxx?t=...），由 Wails 的 asset server
+// 提供。原因：WebView2 会拒绝从 http://wails.localhost 页面加载
+// http://127.0.0.1:port 的媒体（"Media load rejected by URL safety check"），
+// 跨源音频在这个环境下根本发不出请求。
 func (s *MediaService) URL(songID string) (string, error) {
 	song, ok := s.songs(songID)
 	if !ok {
 		return "", fmt.Errorf("歌曲不存在: %s", songID)
 	}
 	if !bootstrap.NeedsTranscode(song.Ext) || s.srv.CanTranscode() {
-		return s.srv.URLFor(songID), nil
+		return s.srv.SameOriginURL(songID), nil
 	}
 	return "", fmt.Errorf("格式 .%s 需要 ffmpeg 转码，请先安装 ffmpeg", song.Ext)
 }
@@ -656,7 +661,8 @@ func (s *MediaService) URL(songID string) (string, error) {
 // State 返回播放服务状态（前端据此提示「需安装 ffmpeg」）
 func (s *MediaService) State() map[string]any {
 	return map[string]any{
-		"baseUrl":      s.srv.BaseURL(),
+		"baseUrl":      "",
+		"sameOrigin":   true,
 		"canTranscode": s.srv.CanTranscode(),
 		"tools":        s.srv.ToolsInfo(),
 	}

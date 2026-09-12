@@ -12,7 +12,10 @@ import (
 	"context"
 	"embed"
 	"log"
+	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -116,6 +119,17 @@ func main() {
 	state.loudnessSvc = NewLoudnessService(loudMgr, lib)
 
 	/* ---- 5) Wails 应用 ---- */
+	//
+	// MUSICPLAYER_DEBUG_PORT 会让 WebView2 打开远程调试端口（如 9333），
+	// 之后可以用 http://127.0.0.1:9333/json 接入 DevTools 查看真实页面里的
+	// 报错、网络请求与 DOM —— 排查「界面里能复现但外部测不出来」的问题时非常有用。
+	// 平时不设置该变量，端口不会打开。
+	var browserArgs []string
+	if port := strings.TrimSpace(os.Getenv("MUSICPLAYER_DEBUG_PORT")); port != "" {
+		browserArgs = append(browserArgs, "--remote-debugging-port="+port)
+		log.Printf("[debug] WebView2 远程调试已开启：http://127.0.0.1:%s/json", port)
+	}
+
 	app := application.New(application.Options{
 		Name:        "音乐播放器",
 		Description: "本地音乐播放器 · Go + Wails3",
@@ -131,9 +145,23 @@ func main() {
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
+			// 音频必须与页面同源：WebView2 会拒绝从 http://wails.localhost
+			// 页面加载 http://127.0.0.1:port 的媒体（URL safety check），
+			// 连请求都不会发出去。因此这里把 /audio/ 直接挂到 asset server 上。
+			Middleware: func(next http.Handler) http.Handler {
+				audio := mediaSrv.Handler()
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if strings.HasPrefix(r.URL.Path, media.AudioPrefix) {
+						audio.ServeHTTP(w, r)
+						return
+					}
+					next.ServeHTTP(w, r)
+				})
+			},
 		},
 		Windows: application.WindowsOptions{
 			DisableQuitOnLastWindowClosed: false,
+			AdditionalBrowserArgs:         browserArgs,
 		},
 	})
 	state.app = app

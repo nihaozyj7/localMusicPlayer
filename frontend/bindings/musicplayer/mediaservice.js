@@ -36,7 +36,12 @@ export function State() {
 }
 
 /**
- * URL 返回某首歌的播放地址
+ * URL 返回某首歌的播放地址。
+ * 
+ * 返回的是**页面同源**的相对路径（/audio/xxx?t=...），由 Wails 的 asset server
+ * 提供。原因：WebView2 会拒绝从 http://wails.localhost 页面加载
+ * http://127.0.0.1:port 的媒体（"Media load rejected by URL safety check"），
+ * 跨源音频在这个环境下根本发不出请求。
  * @param {string} songID
  * @returns {$CancellablePromise<string>}
  */

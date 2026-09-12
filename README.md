@@ -69,10 +69,37 @@ $env:MUSICPLAYER_FFMPEG_DIR = "D:\mp-bin"              # 改内置版本的解�
 - **真峰值保护**：增益后真峰值不超过 -1 dBTP，避免抬升导致削波
 - 回放链路：`<audio>` → `MediaElementSource` → `GainNode`（用户音量 × 响度补偿）→ 输出
 
-> 跨源细节：打包后前端在 `http://wails.localhost`，音频服务在 `http://127.0.0.1:port`。
-> 实测若服务端不给 CORS 头，`<audio>` 仍能出声，但 **Web Audio 会读到纯静音**，
-> 响度均衡就完全失效。因此音频服务会回显 `Origin` 并暴露 `Content-Range` 等头，
-> 前端 `<audio>` 也固定设置 `crossOrigin="anonymous"`。
+> **音频必须与页面同源。** 实测（Windows 11 + WebView2 152）从
+> `http://wails.localhost` 页面加载 `http://127.0.0.1:port` 的媒体会被
+> Chromium 直接拒绝：`MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check`，
+> 请求连发都不会发出去。因此音频走 Wails 自己的 asset server：
+> `http://wails.localhost/audio/<songID>?t=<token>`，
+> 由 `main.go` 里的 asset middleware 转发到 `internal/media`。
+> 同源后 CORS / `crossorigin` / Web Audio 跨源取数限制都不再是问题。
+
+### 播放排查工具
+
+```powershell
+# 在真实应用里点歌播放并确认 currentTime 真的在推进、无解码错误
+node tools/playtest.mjs --exe bin/musicplayer.exe --query "星月神话"
+
+# 接入真实 WebView2，抓页面报错 + 网络事件（定位「请求有没有发出去」）
+node tools/netprobe.mjs
+
+# 跨源播放 / CORS / Web Audio 实测（独立端口模式）
+$env:MP_AUDIO_URL="http://127.0.0.1:PORT/audio/ID?t=TOKEN"; node tools/media-check.mjs
+
+# 起点地址空间矩阵测试：哪些「页面源 × 音频地址」组合会被允许
+node tools/origin-check.mjs
+```
+
+要在真实应用里开 DevTools 远程调试，设置环境变量后启动即可：
+
+```powershell
+$env:MUSICPLAYER_DEBUG_PORT = "9333"
+.\bin\musicplayer.exe
+# 然后浏览器打开 http://127.0.0.1:9333/json
+```
 
 ---
 
@@ -164,6 +191,10 @@ tools/
   build-frontend.mjs          同步前端产物 + 内置主题 + 绑定
   fetch-ffmpeg.mjs            下载内置 ffmpeg（静态构建）
   cdp-check.js                场景化自检（CDP，14 个场景）
+  playtest.mjs                真实应用里点歌播放并确认真的在出声
+  netprobe.mjs                接入真实 WebView2 抓报错与网络事件
+  appinspect.mjs              接入真实应用读取页面状态 / DOM / 控制台
+  origin-check.mjs            地址空间矩阵测试（哪种跨源组合会被允许）
   media-check.mjs             跨源播放 / CORS / Web Audio 实测
   probe-audio.mjs             媒体事件细粒度追踪（播放卡住时用）
   realcheck.go                真实曲库全链路验收

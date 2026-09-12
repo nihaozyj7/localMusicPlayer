@@ -118,16 +118,8 @@ func (s *Server) Start() (string, error) {
 	}
 	s.listen = "http://" + ln.Addr().String()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/audio/", s.handleAudio)
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		setCORS(w, r)
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("ok"))
-	})
-
 	s.srv = &http.Server{
-		Handler:           mux,
+		Handler:           s.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	s.running = true
@@ -140,7 +132,7 @@ func (s *Server) Start() (string, error) {
 			log.Printf("[media] 服务退出: %v", err)
 		}
 	}()
-	log.Printf("[media] 音频服务已启动：%s（ffmpeg: %s）", base, orNone(ff))
+	log.Printf("[media] 独立端口已启动：%s（ffmpeg: %s）", base, orNone(ff))
 	return base, nil
 }
 
@@ -164,15 +156,50 @@ func (s *Server) BaseURL() string {
 // Token 返回访问令牌
 func (s *Server) Token() string { return s.token }
 
-// URLFor 生成某首歌的播放地址
+// AudioPrefix 是音频路由前缀。
+//
+// 重要：音频必须由**页面同源**提供，而不是另开端口。
+// 实测（Windows 11 + WebView2 152）跨源加载音频会被 Chromium 直接拦掉：
+//
+//	MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check
+//
+// 请求甚至不会出现在网络日志里（在渲染进程内就被拒绝），
+// 且这个行为在无头 Edge 里复现不出来。把音频挂到 Wails 自己的
+// asset server 上（http://wails.localhost/audio/...）就完全绕开了这一限制，
+// 顺带也不再需要 CORS、crossorigin 和 Web Audio 的跨源取数。
+const AudioPrefix = "/audio/"
+
+// Handler 返回只处理音频路由的 http.Handler（不含监听端口）。
+// 供 Wails 的 asset server 以中间件方式挂载，或由 Start 起独立端口。
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc(AudioPrefix, s.handleAudio)
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w, r)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("ok"))
+	})
+	return mux
+}
+
+// URLFor 生成某首歌的播放地址。
+//
+// sameOriginBase 非空时（打包运行）返回同源地址，形如 /audio/xxx?t=...；
+// 为空时（独立端口模式，如 tools/realcheck.go）返回完整 http://127.0.0.1:port 地址。
 func (s *Server) URLFor(songID string) string {
 	s.mu.Lock()
 	base := s.listen
 	s.mu.Unlock()
 	if base == "" {
-		return ""
+		// 未监听端口：给出相对路径，由同源 asset server 提供
+		return fmt.Sprintf("%s%s?t=%s", AudioPrefix, songID, s.token)
 	}
-	return fmt.Sprintf("%s/audio/%s?t=%s", base, songID, s.token)
+	return fmt.Sprintf("%s%s%s?t=%s", base, AudioPrefix, songID, s.token)
+}
+
+// SameOriginURL 返回相对路径形式（页面同源）的播放地址
+func (s *Server) SameOriginURL(songID string) string {
+	return fmt.Sprintf("%s%s?t=%s", AudioPrefix, songID, s.token)
 }
 
 // CanTranscode 是否具备转码能力
@@ -188,11 +215,9 @@ func (s *Server) CanTranscode() bool {
 
 // handleAudio 处理播放请求。
 //
-// 关键：打包后前端在 Wails 的虚拟主机上（http://wails.localhost），
-// 音频服务在 http://127.0.0.1:port，属于跨源。实测结论：
-//   - <audio> 不加 crossorigin 也能播放，但 Web Audio 会读到纯静音；
-//   - fetch/XHR 直接失败。
-// 响度均衡需要用 Web Audio 做增益，因此这里必须给出正确的 CORS 头。
+// CORS 仍然保留：即使现在的默认路径是同源，独立端口模式
+// （tools/realcheck.go、外部播放器）下仍可能是跨源访问，
+// 且同源请求本来就不受影响。
 func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
 	setCORS(w, r)
 
@@ -205,7 +230,7 @@ func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/audio/")
+	id := strings.TrimPrefix(r.URL.Path, AudioPrefix)
 	if id == "" {
 		http.Error(w, "missing song id", http.StatusBadRequest)
 		return
