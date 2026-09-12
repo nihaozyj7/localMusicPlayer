@@ -37,7 +37,10 @@ export function Clear() {
 }
 
 /**
- * GainMap 返回「songId → 补偿增益 dB」映射，供前端批量套用
+ * GainMap 返回「songId → 补偿增益 dB」映射，供前端批量套用。
+ * 
+ * 只包含当前标准下**有效**的缓存；没测过的歌不在其中，
+ * 前端播到那首时会走 Measure 按需补算。
  * @param {number} targetLUFS
  * @returns {$CancellablePromise<{ [_ in string]?: number } | null>}
  */
@@ -46,7 +49,7 @@ export function GainMap(targetLUFS) {
 }
 
 /**
- * Get 取一首歌的测量结果与补偿增益
+ * Get 取一首歌的测量结果与补偿增益（当前标准下未测量则 measured=false）
  * @param {string} songID
  * @param {number} targetLUFS
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
@@ -56,20 +59,34 @@ export function Get(songID, targetLUFS) {
 }
 
 /**
- * Measure 测量单首歌（前端在播放时按需调用）
- * @param {string} songID
+ * InvalidateTarget 让不等于给定标准的缓存全部失效。
+ * 设置界面改了目标响度/算法后调用：清掉旧补偿，之后播放时按需重算。
+ * @param {number} targetLUFS
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
-export function Measure(songID) {
-    return $Call.ByID(1705685682, songID);
+export function InvalidateTarget(targetLUFS) {
+    return $Call.ByID(3331883314, targetLUFS);
 }
 
 /**
- * MeasureAll 后台测量整个曲库（异步，进度通过 loudness:progress 事件推送）
+ * Measure 测量单首歌 —— 这是常规路径：用户播到哪首就测哪首，不预先全库扫描。
+ * 前端在开始播放时调用，测完立刻套用补偿。
+ * @param {string} songID
+ * @param {number} targetLUFS
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
-export function MeasureAll() {
-    return $Call.ByID(22522345);
+export function Measure(songID, targetLUFS) {
+    return $Call.ByID(1705685682, songID, targetLUFS);
+}
+
+/**
+ * MeasureAll 后台批量预热整个曲库（可选，正常使用不需要）。
+ * 异步执行，进度通过 loudness:progress 事件推送。
+ * @param {number} targetLUFS
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function MeasureAll(targetLUFS) {
+    return $Call.ByID(22522345, targetLUFS);
 }
 
 /**

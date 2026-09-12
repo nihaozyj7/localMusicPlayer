@@ -243,31 +243,50 @@ export async function syncAudio() {
   }
 }
 
+/** 正在进行的按需测量：同一首歌被反复触发时合并成一次 */
+const pendingMeasure = new Map();
+
 /**
- * 按需向后端请求某首歌的响度补偿。
- * 结果写回 state.loudnessGains，界面重绘时一并更新增益。
+ * 按需获取某首歌的响度补偿 —— 这是常规路径。
+ *
+ * 不预先扫描全库：用户播到哪首就算哪首。若缓存命中（后端已经算过且补偿标准
+ * 没变）就直接套用，零延迟；否则后台算一次，算完立刻作用到当前播放。
+ * 测量很慢（要完整解码一遍），所以绝不能让播放等它 —— 先按原音量放，
+ * 算好后再平滑过渡。
  */
 export async function requestLoudness(songId) {
   const mode = state.config.loudnessMode || "off";
   if (mode === "off" || !isWails() || !songId) return;
   if (state.loudnessGains?.[songId] !== undefined) return;
+  // 同一首歌可能被反复触发（切歌来回、界面重绘），做一个去重
+  if (pendingMeasure.has(songId)) return pendingMeasure.get(songId);
 
-  try {
-    const target = state.config.loudnessTarget ?? -16;
-    const res = await backend.loudnessLookup(songId, target);
-    if (res?.measured) {
-      setGain(songId, res.gainDB);
-      return;
+  const job = (async () => {
+    try {
+      const target = state.config.loudnessTarget ?? -16;
+
+      // 1) 先查缓存：这是「播放时零延迟」的关键
+      const res = await backend.loudnessLookup(songId, target);
+      if (res?.measured) {
+        setGain(songId, res.gainDB);
+        return;
+      }
+
+      // 2) 没算过（或补偿标准变了导致缓存失效）→ 后台按需测量
+      if (mode === "album") return; // 专辑模式要整张一起算，交给 refreshLoudnessGains
+      const m = await backend.loudnessMeasure(songId, target);
+      if (m?.measured) {
+        setGain(songId, m.gainDB ?? computeGain(m, target));
+      }
+    } catch (err) {
+      console.warn("[audio] 响度补偿获取失败", err);
+    } finally {
+      pendingMeasure.delete(songId);
     }
-    // 还没测过：后台测一次（不阻塞播放），测完套用
-    const m = await backend.loudnessMeasure(songId);
-    if (m?.measured) {
-      const gain = computeGain(m, target);
-      setGain(songId, gain);
-    }
-  } catch (err) {
-    console.warn("[audio] 响度补偿获取失败", err);
-  }
+  })();
+
+  pendingMeasure.set(songId, job);
+  return job;
 }
 
 /** 与 Go 侧 GainDB 保持同一算法，避免两端算出的增益不一致 */
@@ -299,6 +318,26 @@ export function applyGainMap(map) {
 }
 
 /**
+ * 补偿标准（目标响度）变了 —— 之前算好的补偿全部作废。
+ *
+ * 这是用户明确要求的行为：改了标准，缓存就得失效并按新标准重算。
+ * 后端按「文件 + 算法版本 + 目标响度」判有效性，所以这里先让后端清掉
+ * 不匹配的记录，再清空前端的增益表，之后播放时会自动按新标准按需测量。
+ */
+export async function invalidateLoudnessForTarget() {
+  const target = state.config.loudnessTarget ?? -16;
+  state.loudnessGains = {};
+  applyGainForSong();
+  notify();
+  if (!isWails()) return;
+  try {
+    await backend.loudnessInvalidateTarget(target);
+  } catch (err) {
+    console.warn("[loudness] 失效旧补偿失败", err);
+  }
+}
+
+/**
  * 按当前模式重新拉取补偿增益表。
  * 放在 audio.js 而不是 main.js：main → shell → settings 已有依赖链，
  * settings 反过来引 main 会形成循环导入。
@@ -313,12 +352,15 @@ export async function refreshLoudnessGains() {
   }
   const target = state.config.loudnessTarget ?? -16;
   try {
-    const map = mode === "album" ? await backend.loudnessAlbumGains(target) : await backend.loudnessGainMap(target);
-    if (map) {
-      state.loudnessGains = map;
-      applyGainForSong();
-      notify();
-    }
+    const map =
+      mode === "album"
+        ? await backend.loudnessAlbumGains(target)
+        : await backend.loudnessGainMap(target);
+    // 后端返回的是当前标准下有效的补偿；直接替换（不要 merge，
+    // 否则换标准后旧的补偿会残留下来）
+    state.loudnessGains = map || {};
+    applyGainForSong();
+    notify();
   } catch (err) {
     console.warn("[loudness] 拉取补偿增益失败", err);
   }

@@ -30,22 +30,42 @@ import (
 	"musicplayer/internal/ffmpeg"
 )
 
+// AlgoVersion 测量算法的版本号。
+//
+// 只要测量方式变了（滤镜参数、解析逻辑、单位换算…），就把它 +1，
+// 旧的缓存会自动判为过期并重算 —— 否则用户升级后会拿到用旧算法算出的
+// 补偿值，且完全看不出来。
+const AlgoVersion = 1
+
 // Measurement 一首歌的响度测量结果
 type Measurement struct {
-	Path       string  `json:"path"`
-	Size       int64   `json:"size"`
-	ModTime    int64   `json:"modTime"`
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	ModTime int64  `json:"modTime"`
+	// Target 与 Algo 一起构成缓存的「有效性条件」：换目标响度或换算法，
+	// 这条记录就视为过期，需要重算。见 Manager.valid。
+	Target float64 `json:"target,omitempty"`
+	Algo   int     `json:"algo,omitempty"`
+
 	Integrated float64 `json:"integrated"` // 整合响度 LUFS
 	TruePeak   float64 `json:"truePeak"`   // 真峰值 dBTP
 	LRA        float64 `json:"lra"`        // 响度范围 LU
 	Threshold  float64 `json:"threshold"`  // 相对门限 LUFS
-	MeasuredAt int64   `json:"measuredAt"`
+
+	// Gain 是这条记录生成时的补偿增益，缓存下来让回放时零延迟；
+	// 但它由 Target 决定，所以 Target 变了整条记录就不再有效。
+	Gain float64 `json:"gain,omitempty"`
+
+	Measured bool  `json:"measured,omitempty"` // false 表示「测过但拿不到数据」
+	MeasuredAt int64 `json:"measuredAt"`
 }
 
 // Album 专辑（或整个曲库）的平均响度，用于「整张专辑统一」模式
 type Album struct {
 	Integrated float64 `json:"integrated"`
 	Count      int     `json:"count"`
+	Target     float64 `json:"target,omitempty"`
+	Algo       int     `json:"algo,omitempty"`
 	UpdatedAt  int64   `json:"updatedAt"`
 }
 
@@ -187,34 +207,105 @@ func (m *Manager) Save() error {
 
 /* --------------------------------------------------------------------------
    查询
+   --------------------------------------------------------------------------
+   缓存有效性 = 文件没变（路径+大小+修改时间） && 算法版本没变 && 目标响度没变。
+   最后一条正是「用户改了补偿标准后缓存失效」的实现：换目标就换 key，
+   旧记录即使还在文件里也不会被采用，播放时会重新测量。
    -------------------------------------------------------------------------- */
 
-// Get 取某首歌的测量结果（未测量过返回 false）
-func (m *Manager) Get(song bootstrap.Song) (Measurement, bool) {
+// valid 判断一条缓存是否满足当前的有效性条件。
+// 调用方需持有锁。
+func valid(item Measurement, song bootstrap.Song, targetLUFS float64) bool {
+	if item.Path != song.Path || item.Size != song.Size || item.ModTime != song.ModTime {
+		return false
+	}
+	if item.Algo != AlgoVersion {
+		return false
+	}
+	// 允许浮点误差（目标值来自前端 JSON，可能带小数）
+	if math.Abs(item.Target-targetLUFS) > 0.001 {
+		return false
+	}
+	return true
+}
+
+// Get 取某首歌在当前补偿标准下的测量结果（过期或未测量返回 false）
+func (m *Manager) Get(song bootstrap.Song, targetLUFS float64) (Measurement, bool) {
+	m.mu.RLock()
+	item, ok := m.items[keyFor(song.Path, song.Size, song.ModTime)]
+	m.mu.RUnlock()
+	if !ok || !valid(item, song, targetLUFS) {
+		return Measurement{}, false
+	}
+	return item, true
+}
+
+// GetAny 取某首歌的缓存，不校验目标响度（仅用于显示「测过没有」）
+func (m *Manager) GetAny(song bootstrap.Song) (Measurement, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	item, ok := m.items[keyFor(song.Path, song.Size, song.ModTime)]
-	return item, ok
+	if !ok || item.Algo != AlgoVersion {
+		return Measurement{}, false
+	}
+	return item, true
 }
 
-// Count 已测量且仍有效的歌曲数
+// Count 缓存里的记录条数（含已过期的，仅供诊断显示）
 func (m *Manager) Count() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.items)
 }
 
-// Missing 返回还没测量过的歌曲（用于批量测量）
-func (m *Manager) Missing(songs []bootstrap.Song) []bootstrap.Song {
+// CountValid 在给定标准下仍然有效的记录数
+func (m *Manager) CountValid(songs []bootstrap.Song, targetLUFS float64) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	n := 0
+	for _, s := range songs {
+		if item, ok := m.items[keyFor(s.Path, s.Size, s.ModTime)]; ok && valid(item, s, targetLUFS) {
+			n++
+		}
+	}
+	return n
+}
+
+// Missing 返回在当前标准下还没测量（或已过期）的歌曲，用于批量补测
+func (m *Manager) Missing(songs []bootstrap.Song, targetLUFS float64) []bootstrap.Song {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]bootstrap.Song, 0, len(songs))
 	for _, s := range songs {
-		if _, ok := m.items[keyFor(s.Path, s.Size, s.ModTime)]; !ok {
+		item, ok := m.items[keyFor(s.Path, s.Size, s.ModTime)]
+		if !ok || !valid(item, s, targetLUFS) {
 			out = append(out, s)
 		}
 	}
 	return out
+}
+
+// InvalidateTarget 丢弃所有目标响度不等于 target 的缓存。
+// 设置界面改完标准后调用，让「已测量数」立刻反映真实情况。
+func (m *Manager) InvalidateTarget(targetLUFS float64) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	dropped := 0
+	for k, item := range m.items {
+		if math.Abs(item.Target-targetLUFS) > 0.001 || item.Algo != AlgoVersion {
+			delete(m.items, k)
+			dropped++
+		}
+	}
+	if dropped > 0 {
+		m.byPath = map[string]string{}
+		for _, it := range m.items {
+			m.byPath[it.Path] = keyFor(it.Path, it.Size, it.ModTime)
+		}
+		m.albums = map[string]Album{}
+		m.dirty = true
+	}
+	return dropped
 }
 
 // Clear 清空测量缓存
@@ -259,9 +350,9 @@ func GainDB(item Measurement, targetLUFS float64) float64 {
 	return math.Round(gain*100) / 100
 }
 
-// GainFor 直接按歌曲查询并计算增益；未测量时返回 (0,false)
+// GainFor 直接按歌曲查询并计算增益；未测量/已过期时返回 (0,false)
 func (m *Manager) GainFor(song bootstrap.Song, targetLUFS float64) (float64, bool) {
-	item, ok := m.Get(song)
+	item, ok := m.Get(song, targetLUFS)
 	if !ok {
 		return 0, false
 	}
@@ -272,15 +363,23 @@ func (m *Manager) GainFor(song bootstrap.Song, targetLUFS float64) (float64, boo
    测量
    -------------------------------------------------------------------------- */
 
-// Measure 测量一首歌（已缓存则直接返回缓存）
-func (m *Manager) Measure(ctx context.Context, song bootstrap.Song) (Measurement, error) {
-	if item, ok := m.Get(song); ok {
+// Measure 得到某首歌在当前标准下的测量结果。
+//
+// 命中有效缓存就直接返回；否则**立刻按需测量**（这是常规路径：用户播到哪首
+// 就测哪首，不需要事先全库扫描）。ctx 可用于取消（例如用户很快切歌）。
+func (m *Manager) Measure(ctx context.Context, song bootstrap.Song, targetLUFS float64) (Measurement, error) {
+	if item, ok := m.Get(song, targetLUFS); ok {
 		return item, nil
 	}
-	return m.measureUncached(ctx, song)
+	return m.measureUncached(ctx, song, targetLUFS)
 }
 
-func (m *Manager) measureUncached(ctx context.Context, song bootstrap.Song) (Measurement, error) {
+// ForceMeasure 忽略缓存重新测量（设置里点「重新测量」时用）
+func (m *Manager) ForceMeasure(ctx context.Context, song bootstrap.Song, targetLUFS float64) (Measurement, error) {
+	return m.measureUncached(ctx, song, targetLUFS)
+}
+
+func (m *Manager) measureUncached(ctx context.Context, song bootstrap.Song, targetLUFS float64) (Measurement, error) {
 	if !m.tools.Available() {
 		return Measurement{}, fmt.Errorf("ffmpeg 不可用，无法测量响度")
 	}
@@ -291,6 +390,10 @@ func (m *Manager) measureUncached(ctx context.Context, song bootstrap.Song) (Mea
 	res.Path = song.Path
 	res.Size = song.Size
 	res.ModTime = song.ModTime
+	res.Target = targetLUFS
+	res.Algo = AlgoVersion
+	res.Measured = true
+	res.Gain = GainDB(res, targetLUFS)
 	res.MeasuredAt = time.Now().UnixMilli()
 
 	m.mu.Lock()
@@ -310,12 +413,13 @@ type Progress struct {
 	Finished bool
 }
 
-// MeasureAll 并发测量一批歌曲，通过 onProgress 汇报进度。
+// MeasureAll 并发补测一批歌曲，通过 onProgress 汇报进度。
 //
-// 只测缺失的部分，因此重复调用是廉价的。ctx 取消后会尽快返回，
+// 这是**可选**的批量预热：正常使用不需要它，播放时会自动按需测量。
+// 只测缺失或已过期的部分，因此重复调用是廉价的。ctx 取消后会尽快返回，
 // 已测好的部分仍然保留（下次继续，不会白干）。
-func (m *Manager) MeasureAll(ctx context.Context, songs []bootstrap.Song, onProgress func(Progress)) (int, int, error) {
-	todo := m.Missing(songs)
+func (m *Manager) MeasureAll(ctx context.Context, songs []bootstrap.Song, targetLUFS float64, onProgress func(Progress)) (int, int, error) {
+	todo := m.Missing(songs, targetLUFS)
 	total := len(todo)
 	if onProgress != nil {
 		onProgress(Progress{Done: 0, Total: total})
@@ -327,7 +431,13 @@ func (m *Manager) MeasureAll(ctx context.Context, songs []bootstrap.Song, onProg
 		return 0, 0, nil
 	}
 
-	sem := make(chan struct{}, m.conc)
+	// 并发上限：ffmpeg 解码是 CPU 密集的，且这是后台任务，
+	// 留出余量给正在播放的歌，避免抢占导致爆音。
+	conc := m.conc
+	if conc > 4 {
+		conc = 4
+	}
+	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	done, failed := 0, 0
@@ -345,7 +455,7 @@ func (m *Manager) MeasureAll(ctx context.Context, songs []bootstrap.Song, onProg
 			if ctx.Err() != nil {
 				return
 			}
-			_, err := m.measureUncached(ctx, s)
+			_, err := m.measureUncached(ctx, s, targetLUFS)
 
 			mu.Lock()
 			done++
@@ -371,11 +481,11 @@ func (m *Manager) MeasureAll(ctx context.Context, songs []bootstrap.Song, onProg
 }
 
 // UpdateAlbum 用一批测量结果更新某个专辑（或整个曲库）的平均响度
-func (m *Manager) UpdateAlbum(name string, songs []bootstrap.Song) {
+func (m *Manager) UpdateAlbum(name string, songs []bootstrap.Song, targetLUFS float64) {
 	var sum float64
 	var n int
 	for _, s := range songs {
-		if item, ok := m.Get(s); ok && item.Integrated != 0 {
+		if item, ok := m.Get(s, targetLUFS); ok && item.Integrated != 0 {
 			sum += item.Integrated
 			n++
 		}
@@ -384,7 +494,7 @@ func (m *Manager) UpdateAlbum(name string, songs []bootstrap.Song) {
 		return
 	}
 	m.mu.Lock()
-	m.albums[name] = Album{Integrated: sum / float64(n), Count: n, UpdatedAt: time.Now().UnixMilli()}
+	m.albums[name] = Album{Integrated: sum / float64(n), Count: n, Target: targetLUFS, UpdatedAt: time.Now().UnixMilli()}
 	m.dirty = true
 	m.mu.Unlock()
 }

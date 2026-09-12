@@ -7,7 +7,7 @@ import { applyRules, compileRegex, state } from "./store.js";
 import { backend, isWails } from "./bridge.js";
 import { esc, fmtCount, fmtSize, uid } from "./utils.js";
 import { applyResolvedTheme, discoverThemes, listThemes, resolvedGlassBlur } from "./theme.js";
-import { refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
+import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
 import { setRuntimeToken, replaceStyleRules } from "./runtime-tokens.js";
 
 /* --------------------------------------------------------------------------
@@ -485,8 +485,10 @@ function loudnessCard() {
       <div class="card__head">
         <h2 class="card__title">${icon("scale")}<span>响度均衡</span></h2>
         <p class="card__desc">
-          用 ffmpeg 按 EBU R128 测量每首歌的整合响度（LUFS），回放时按目标响度做增益补偿，
-          让不同来源的歌曲音量听起来一致。测量结果会缓存，每首歌只测一次。
+          按 EBU R128 测量整合响度（LUFS），回放时按目标响度做增益补偿，
+          让不同来源的歌曲音量听起来一致。<br />
+          <b>不需要预先扫描</b>：播到哪首就测哪首，算好的补偿会缓存下来，
+          之后播放零延迟。改了目标响度后旧补偿会自动失效并按新标准重算。
         </p>
       </div>
 
@@ -508,7 +510,7 @@ function loudnessCard() {
       <div class="setting">
         <div class="setting__label">
           <span>目标响度</span>
-          <small class="u-fs-xs u-dim">数字越小整体越轻。推荐 -16 LUFS</small>
+          <small class="u-fs-xs u-dim">数字越小整体越轻。推荐 -16 LUFS。改动后已缓存的补偿会失效并重算</small>
         </div>
         <div class="setting__control">
           <select class="select" data-act="loudness-target">
@@ -539,15 +541,16 @@ function loudnessCard() {
         </div>
 
         <div class="card__actions">
-          <button class="btn btn--sm btn--primary" type="button" data-act="loudness-measure-all">${icon("bolt")}<span>测量全部歌曲</span></button>
+          <button class="btn btn--sm btn--primary" type="button" data-act="loudness-measure-all">${icon("bolt")}<span>预先把全部歌曲算好</span></button>
           <button class="btn btn--sm" type="button" data-act="loudness-cancel">${icon("close")}<span>停止</span></button>
           <button class="btn btn--sm" type="button" data-act="loudness-refresh">${icon("refresh")}<span>重新拉取补偿</span></button>
           <button class="btn btn--sm btn--danger" type="button" data-act="loudness-clear">${icon("trash")}<span>清除测量数据</span></button>
         </div>
 
         <div class="setting__hint">
-          已测量 <b>${measured}</b> / ${total} 首${missing ? `，还有 <b>${fmtCount(missing)}</b> 首未测量` : "（全部已测量）"}<br />
-          ffmpeg：<b>${esc(available ? sourceText : "不可用")}</b>${available ? "（内置，开箱即用）" : " —— 转码与响度测量不可用"}
+          当前标准下已算好 <b>${measured}</b> / ${total} 首${missing ? `，其余 <b>${fmtCount(missing)}</b> 首会在播放时按需计算` : "（全部已算好）"}<br />
+          缓存文件里另有 ${ls.cached ?? 0} 条记录（含其他标准下的旧结果，不会生效）<br />
+          响度来源：<b>${esc(available ? sourceText : "不可用")}</b>${available ? "" : " —— 转码与响度测量不可用"}
         </div>
       </div>
     </section>`;
@@ -763,7 +766,7 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       const box = document.querySelector("#loudness-progress");
       if (box) box.hidden = false;
       try {
-        const res = await backend.loudnessMeasureAll();
+        const res = await backend.loudnessMeasureAll(state.config.loudnessTarget ?? -16);
         if (!res?.started) {
           toast(res?.reason === "already-measuring" ? "已在测量中" : `无法开始测量：${res?.reason ?? "未知原因"}`, {
             tone: "warning",
@@ -771,7 +774,7 @@ export async function handleSettingsAction(actEl, ctx = {}) {
           if (box) box.hidden = true;
           return;
         }
-        toast(`开始测量 ${res.total} 首歌曲的响度…`, { duration: 2500 });
+        toast(`开始预热 ${res.total} 首歌曲的响度（可选操作，不预热也会在播放时按需计算）…`, { duration: 3000 });
       } catch (err) {
         if (box) box.hidden = true;
         toast(`无法开始测量：${err?.message ?? err}`, { tone: "error", duration: 6000 });
@@ -814,10 +817,15 @@ export async function handleSettingsAction(actEl, ctx = {}) {
 
     case "loudness-target": {
       const v = Number(actEl.value);
+      const prev = state.config.loudnessTarget;
+      if (v === prev) break;
       state.config.loudnessTarget = v;
       ctx.commit?.();
-      await refreshLoudnessGains();
-      toast(`目标响度已设为 ${v} LUFS`, { tone: "success", duration: 2000 });
+      // 补偿标准变了 → 之前算好的补偿全部作废，按新标准重算
+      await invalidateLoudnessForTarget();
+      await refreshLoudnessState();
+      renderContent();
+      toast(`目标响度已设为 ${v} LUFS，旧补偿已失效，将按新标准重算`, { tone: "success", duration: 3200 });
       break;
     }
 

@@ -10,12 +10,13 @@
   visibility: hidden;
 }
 
+/* Wails v3 用 CSS 自定义属性 --wails-draggable 控制窗口拖拽（不是 -webkit-app-region） */
 .u-drag {
-  -webkit-app-region: drag;
+  --wails-draggable: drag;
 }
 
 .u-no-drag {
-  -webkit-app-region: no-drag;
+  --wails-draggable: no-drag;
 }
 
 .u-scroll {

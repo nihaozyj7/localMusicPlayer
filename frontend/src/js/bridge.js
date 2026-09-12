@@ -30,6 +30,7 @@ export function isWails() {
 /** 后端只读快照（供界面提示「需安装 ffmpeg」等） */
 export const backendState = {
   mediaBaseUrl: "",
+  sameOrigin: true,
   canTranscode: false,
   configPath: "",
 };
@@ -58,6 +59,8 @@ export async function connect() {
     active = true;
     try {
       const state = await bindings.Media.State();
+      // 音频与页面同源（走 Wails 的 asset server），因此没有独立端口地址
+      backendState.sameOrigin = state?.sameOrigin !== false;
       backendState.mediaBaseUrl = state?.baseUrl ?? "";
       backendState.canTranscode = Boolean(state?.canTranscode);
     } catch {
@@ -68,7 +71,9 @@ export async function connect() {
     } catch {
       /* 忽略 */
     }
-    console.info("[bridge] 已连接 Go 后端，播放服务:", backendState.mediaBaseUrl || "不可用");
+    console.info(
+      `[bridge] 已连接 Go 后端（音频同源：${backendState.sameOrigin ? "是" : "否"}，转码：${backendState.canTranscode ? "可用" : "不可用"}）`
+    );
     return true;
   } catch (err) {
     bindings = null;
@@ -175,10 +180,13 @@ export const backend = {
   /* ---- 响度均衡 ---- */
   loudnessState: () => call(bindings?.Loudness?.State),
   loudnessLookup: (songId, target) => call(bindings?.Loudness?.Get, songId, target),
-  loudnessMeasure: (songId) => call(bindings?.Loudness?.Measure, songId),
-  loudnessMeasureAll: () => call(bindings?.Loudness?.MeasureAll),
+  // 按需测量：播放某首歌时调用，不需要事先全库扫描
+  loudnessMeasure: (songId, target) => call(bindings?.Loudness?.Measure, songId, target),
+  loudnessMeasureAll: (target) => call(bindings?.Loudness?.MeasureAll, target),
   loudnessCancel: () => call(bindings?.Loudness?.Cancel),
   loudnessClear: () => call(bindings?.Loudness?.Clear),
+  // 改补偿标准后让旧缓存失效
+  loudnessInvalidateTarget: (target) => call(bindings?.Loudness?.InvalidateTarget, target),
   loudnessGainMap: (target) => call(bindings?.Loudness?.GainMap, target),
   loudnessAlbumGains: (target) => call(bindings?.Loudness?.AlbumGains, target),
   loudnessRefresh: () => call(bindings?.Loudness?.RefreshTools),

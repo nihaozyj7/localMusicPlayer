@@ -696,79 +696,135 @@ type LoudnessService struct {
 	mu       sync.Mutex
 	cancel   context.CancelFunc
 	measuring bool
+	// lastTarget 记住最近一次用到的目标响度，供 State() 在没有入参时判断
+	// 「已测量」到底是多少首（缓存有效性与目标响度绑定）。
+	lastTarget float64
 }
 
 // NewLoudnessService 构造服务
 func NewLoudnessService(mgr *loudness.Manager, lib *library.Manager) *LoudnessService {
-	return &LoudnessService{mgr: mgr, lib: lib}
+	return &LoudnessService{mgr: mgr, lib: lib, lastTarget: defaultTarget}
+}
+
+// defaultTarget 前端没给目标值时的兜底（与前端 DEFAULT_CONFIG 保持一致）
+const defaultTarget = -16.0
+
+// normTarget 归一化目标响度，并记住它
+func (s *LoudnessService) normTarget(t float64) float64 {
+	if t == 0 {
+		t = defaultTarget
+	}
+	s.mu.Lock()
+	s.lastTarget = t
+	s.mu.Unlock()
+	return t
+}
+
+func (s *LoudnessService) currentTarget() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastTarget == 0 {
+		return defaultTarget
+	}
+	return s.lastTarget
 }
 
 // State 返回响度测量能力与进度概况
 func (s *LoudnessService) State() map[string]any {
 	t := s.mgr.Tools()
 	songs := s.lib.Songs()
-	missing := len(s.mgr.Missing(songs))
+	target := s.currentTarget()
+	// 注意：「已测量」必须按当前标准统计 —— 用户换了补偿标准后
+	// 旧缓存全部失效，这里要立刻反映出来，否则界面会撒谎。
+	valid := s.mgr.CountValid(songs, target)
 	return map[string]any{
-		"available":   s.mgr.Available(),
-		"source":      t.Source,
-		"describe":    t.Describe(),
-		"path":        t.FFmpeg,
-		"measured":    s.mgr.Count(),
-		"missing":     missing,
-		"total":       len(songs),
-		"measuring":   s.isMeasuring(),
-		"cachePath":   s.mgr.CachePath(),
+		"available": s.mgr.Available(),
+		"source":    t.Source,
+		"describe":  t.Describe(),
+		"path":      t.FFmpeg,
+		"measured":  valid,
+		"cached":    s.mgr.Count(),
+		"missing":   len(songs) - valid,
+		"total":     len(songs),
+		"target":    target,
+		"algo":      loudness.AlgoVersion,
+		"measuring": s.isMeasuring(),
+		"cachePath": s.mgr.CachePath(),
+		"onDemand":  true,
 	}
 }
 
-// Get 取一首歌的测量结果与补偿增益
+// Get 取一首歌的测量结果与补偿增益（当前标准下未测量则 measured=false）
 func (s *LoudnessService) Get(songID string, targetLUFS float64) (map[string]any, error) {
 	song, ok := s.lib.SongByID(songID)
 	if !ok {
 		return nil, fmt.Errorf("歌曲不存在: %s", songID)
 	}
-	if targetLUFS == 0 {
-		targetLUFS = -16
-	}
-	item, ok := s.mgr.Get(song)
+	target := s.normTarget(targetLUFS)
+
+	item, ok := s.mgr.Get(song, target)
 	if !ok {
-		return map[string]any{"measured": false}, nil
+		return map[string]any{"measured": false, "target": target}, nil
 	}
 	return map[string]any{
 		"measured":   true,
 		"integrated": item.Integrated,
 		"truePeak":   item.TruePeak,
 		"lra":        item.LRA,
-		"gainDB":     loudness.GainDB(item, targetLUFS),
-		"target":     targetLUFS,
+		"gainDB":     loudness.GainDB(item, target),
+		"target":     target,
 	}, nil
 }
 
-// Measure 测量单首歌（前端在播放时按需调用）
-func (s *LoudnessService) Measure(songID string) (map[string]any, error) {
+// Measure 测量单首歌 —— 这是常规路径：用户播到哪首就测哪首，不预先全库扫描。
+// 前端在开始播放时调用，测完立刻套用补偿。
+func (s *LoudnessService) Measure(songID string, targetLUFS float64) (map[string]any, error) {
 	song, ok := s.lib.SongByID(songID)
 	if !ok {
 		return nil, fmt.Errorf("歌曲不存在: %s", songID)
 	}
+	target := s.normTarget(targetLUFS)
 	if !s.mgr.Available() {
 		return nil, fmt.Errorf("ffmpeg 不可用，无法测量响度")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	item, err := s.mgr.Measure(ctx, song)
+
+	item, err := s.mgr.Measure(ctx, song, target)
 	if err != nil {
 		return nil, err
 	}
+	// 单曲测量也要落盘，下次播放直接命中缓存
+	_ = s.mgr.Save()
 	return map[string]any{
 		"measured":   true,
 		"integrated": item.Integrated,
 		"truePeak":   item.TruePeak,
 		"lra":        item.LRA,
+		"gainDB":     loudness.GainDB(item, target),
+		"target":     target,
 	}, nil
 }
 
-// MeasureAll 后台测量整个曲库（异步，进度通过 loudness:progress 事件推送）
-func (s *LoudnessService) MeasureAll() map[string]any {
+// InvalidateTarget 让不等于给定标准的缓存全部失效。
+// 设置界面改了目标响度/算法后调用：清掉旧补偿，之后播放时按需重算。
+func (s *LoudnessService) InvalidateTarget(targetLUFS float64) map[string]any {
+	target := s.normTarget(targetLUFS)
+	dropped := s.mgr.InvalidateTarget(target)
+	if dropped > 0 {
+		_ = s.mgr.Save()
+	}
+	return map[string]any{
+		"dropped": dropped,
+		"target":  target,
+		"state":   s.State(),
+	}
+}
+
+// MeasureAll 后台批量预热整个曲库（可选，正常使用不需要）。
+// 异步执行，进度通过 loudness:progress 事件推送。
+func (s *LoudnessService) MeasureAll(targetLUFS float64) map[string]any {
+	target := s.normTarget(targetLUFS)
 	if !s.mgr.Available() {
 		return map[string]any{"started": false, "reason": "ffmpeg 不可用"}
 	}
@@ -792,7 +848,7 @@ func (s *LoudnessService) MeasureAll() map[string]any {
 			_ = s.mgr.Save()
 		}()
 
-		done, failed, err := s.mgr.MeasureAll(ctx, songs, func(p loudness.Progress) {
+		done, failed, err := s.mgr.MeasureAll(ctx, songs, target, func(p loudness.Progress) {
 			s.emit("loudness:progress", map[string]any{
 				"done": p.Done, "total": p.Total,
 				"failed": p.Failed, "current": p.Current, "finished": p.Finished,
@@ -825,14 +881,15 @@ func (s *LoudnessService) Clear() error {
 	return s.mgr.Clear()
 }
 
-// GainMap 返回「songId → 补偿增益 dB」映射，供前端批量套用
+// GainMap 返回「songId → 补偿增益 dB」映射，供前端批量套用。
+//
+// 只包含当前标准下**有效**的缓存；没测过的歌不在其中，
+// 前端播到那首时会走 Measure 按需补算。
 func (s *LoudnessService) GainMap(targetLUFS float64) map[string]float64 {
-	if targetLUFS == 0 {
-		targetLUFS = -16
-	}
+	target := s.normTarget(targetLUFS)
 	out := map[string]float64{}
 	for _, song := range s.lib.Songs() {
-		if g, ok := s.mgr.GainFor(song, targetLUFS); ok {
+		if g, ok := s.mgr.GainFor(song, target); ok {
 			out[song.ID] = g
 		}
 	}
@@ -841,9 +898,7 @@ func (s *LoudnessService) GainMap(targetLUFS float64) map[string]float64 {
 
 // AlbumGains 返回按专辑聚合的补偿增益（「整张专辑统一」模式）
 func (s *LoudnessService) AlbumGains(targetLUFS float64) map[string]float64 {
-	if targetLUFS == 0 {
-		targetLUFS = -16
-	}
+	target := s.normTarget(targetLUFS)
 	// 按专辑分组
 	groups := map[string][]bootstrap.Song{}
 	for _, song := range s.lib.Songs() {
@@ -856,8 +911,8 @@ func (s *LoudnessService) AlbumGains(targetLUFS float64) map[string]float64 {
 
 	out := map[string]float64{}
 	for name, songs := range groups {
-		s.mgr.UpdateAlbum(name, songs)
-		if g, ok := s.mgr.AlbumGainDB(name, targetLUFS); ok {
+		s.mgr.UpdateAlbum(name, songs, target)
+		if g, ok := s.mgr.AlbumGainDB(name, target); ok {
 			for _, song := range songs {
 				out[song.ID] = g
 			}

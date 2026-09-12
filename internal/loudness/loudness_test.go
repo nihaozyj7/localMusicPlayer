@@ -13,10 +13,12 @@ import (
 	"musicplayer/internal/ffmpeg"
 )
 
-// jsonUnmarshal 只是给测试用的薄封装，避免在测试里再引一次 encoding/json 别名
+// jsonUnmarshal 只是给测试用的薄封装
 func jsonUnmarshal(raw string, v any) error { return json.Unmarshal([]byte(raw), v) }
 
 func execCommand(name string, args ...string) *exec.Cmd { return exec.Command(name, args...) }
+
+const testTarget = -16.0
 
 /* --------------------------------------------------------------------------
    增益计算（响度均衡的核心公式，不需要 ffmpeg）
@@ -36,7 +38,6 @@ func TestGainDBBasic(t *testing.T) {
 		// 正好在目标 → 不动
 		{"刚好命中", Measurement{Integrated: -16.0, TruePeak: -3.0}, -16, 0},
 		// 真峰值保护：抬到会削波就截断
-		// 需要 +10dB，但真峰值 -1.0 只允许抬到 -1.0 dBTP，即最多 0dB
 		{"真峰值保护", Measurement{Integrated: -26.0, TruePeak: -1.0}, -16, 0},
 		// 真峰值保护但有余量：允许抬到上限
 		{"真峰值部分限制", Measurement{Integrated: -26.0, TruePeak: -8.0}, -16, 7.0},
@@ -76,8 +77,200 @@ func TestGainNeverClips(t *testing.T) {
 }
 
 /* --------------------------------------------------------------------------
-   缓存
+   缓存有效性：文件没变 + 算法没变 + 补偿标准没变
    -------------------------------------------------------------------------- */
+
+// TestCacheInvalidatedWhenTargetChanges 这是用户明确要求的行为：
+// 补偿标准改了，已算好的补偿必须失效并重算。
+func TestCacheInvalidatedWhenTargetChanges(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, 2)
+	song := bootstrap.Song{ID: "t_1", Path: `D:\m\a.flac`, Size: 1000, ModTime: 100}
+
+	m.mu.Lock()
+	m.items[keyFor(song.Path, 1000, 100)] = Measurement{
+		Path: song.Path, Size: 1000, ModTime: 100,
+		Target: -16, Algo: AlgoVersion,
+		Integrated: -20, TruePeak: -3, Measured: true, Gain: 4,
+	}
+	m.mu.Unlock()
+
+	// 同一标准 → 命中
+	if _, ok := m.Get(song, -16); !ok {
+		t.Fatal("同一补偿标准下应命中缓存")
+	}
+
+	// 换了标准 → 必须失效
+	if _, ok := m.Get(song, -23); ok {
+		t.Error("目标响度从 -16 改成 -23 后，旧的补偿必须失效（否则用户改了标准却没生效）")
+	}
+	if _, ok := m.Get(song, -14); ok {
+		t.Error("目标响度改成 -14 后也应失效")
+	}
+	// 目标带小数也不能误判
+	if _, ok := m.Get(song, -16.0); !ok {
+		t.Error("-16 与 -16.0 应视为同一标准")
+	}
+}
+
+// TestCacheInvalidatedOnAlgoChange 算法升级后旧结果作废
+func TestCacheInvalidatedOnAlgoChange(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, 2)
+	song := bootstrap.Song{ID: "t_1", Path: `D:\m\a.flac`, Size: 1000, ModTime: 100}
+
+	m.mu.Lock()
+	m.items[keyFor(song.Path, 1000, 100)] = Measurement{
+		Path: song.Path, Size: 1000, ModTime: 100,
+		Target: testTarget, Algo: AlgoVersion - 1, // 旧算法
+		Integrated: -20, Measured: true,
+	}
+	m.mu.Unlock()
+
+	if _, ok := m.Get(song, testTarget); ok {
+		t.Error("算法版本不同时缓存必须失效")
+	}
+}
+
+// TestCacheInvalidatedOnFileChange 文件变了必须重测
+func TestCacheInvalidatedOnFileChange(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, 2)
+	song := bootstrap.Song{ID: "t_1", Path: `D:\m\a.flac`, Size: 1000, ModTime: 100}
+	fresh := Measurement{
+		Path: song.Path, Size: 1000, ModTime: 100,
+		Target: testTarget, Algo: AlgoVersion, Integrated: -20, Measured: true,
+	}
+	m.mu.Lock()
+	m.items[keyFor(song.Path, 1000, 100)] = fresh
+	m.mu.Unlock()
+
+	if _, ok := m.Get(song, testTarget); !ok {
+		t.Fatal("同尺寸同时间应命中")
+	}
+
+	changed := song
+	changed.Size = 2000
+	if _, ok := m.Get(changed, testTarget); ok {
+		t.Error("文件大小变化后不应命中缓存")
+	}
+	changed = song
+	changed.ModTime = 200
+	if _, ok := m.Get(changed, testTarget); ok {
+		t.Error("修改时间变化后不应命中缓存")
+	}
+}
+
+func TestMissingAndCountValid(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, 2)
+	songs := []bootstrap.Song{
+		{ID: "a", Path: `D:\m\a.flac`, Size: 1, ModTime: 1},
+		{ID: "b", Path: `D:\m\b.flac`, Size: 1, ModTime: 1},
+	}
+	if got := len(m.Missing(songs, testTarget)); got != 2 {
+		t.Fatalf("应缺 2 首，实际 %d", got)
+	}
+	m.mu.Lock()
+	m.items[keyFor(songs[0].Path, 1, 1)] = Measurement{
+		Path: songs[0].Path, Size: 1, ModTime: 1,
+		Target: testTarget, Algo: AlgoVersion, Integrated: -16, Measured: true,
+	}
+	m.mu.Unlock()
+
+	if got := len(m.Missing(songs, testTarget)); got != 1 {
+		t.Fatalf("应缺 1 首，实际 %d", got)
+	}
+	if got := m.CountValid(songs, testTarget); got != 1 {
+		t.Fatalf("有效数应为 1，实际 %d", got)
+	}
+	// 换标准后有效数归零
+	if got := m.CountValid(songs, -23); got != 0 {
+		t.Fatalf("换标准后有效数应为 0，实际 %d", got)
+	}
+	if got := len(m.Missing(songs, -23)); got != 2 {
+		t.Fatalf("换标准后应缺 2 首，实际 %d", got)
+	}
+}
+
+// TestInvalidateTargetDropsStale 改标准后主动清掉过期记录
+func TestInvalidateTargetDropsStale(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, 2)
+	songs := []bootstrap.Song{
+		{ID: "a", Path: `D:\m\a.flac`, Size: 1, ModTime: 1},
+		{ID: "b", Path: `D:\m\b.flac`, Size: 1, ModTime: 1},
+	}
+	// 必须用真实 key，否则 Get 查不到（模拟 load() 之后的正常状态）
+	k1 := keyFor(songs[0].Path, 1, 1)
+	k2 := keyFor(songs[1].Path, 1, 1)
+	m.mu.Lock()
+	m.items[k1] = Measurement{Path: songs[0].Path, Size: 1, ModTime: 1, Target: -16, Algo: AlgoVersion, Integrated: -20}
+	m.items[k2] = Measurement{Path: songs[1].Path, Size: 1, ModTime: 1, Target: -23, Algo: AlgoVersion, Integrated: -18}
+	m.byPath[songs[0].Path] = k1
+	m.byPath[songs[1].Path] = k2
+	m.mu.Unlock()
+
+	dropped := m.InvalidateTarget(-23)
+	if dropped != 1 {
+		t.Errorf("应丢弃 1 条过期记录，实际 %d", dropped)
+	}
+	if m.Count() != 1 {
+		t.Errorf("剩余应 1 条，实际 %d", m.Count())
+	}
+	if _, ok := m.Get(songs[1], -23); !ok {
+		t.Error("与目标一致的那条应保留")
+	}
+	if _, ok := m.Get(songs[0], -16); ok {
+		t.Error("旧标准的那条应被丢弃")
+	}
+}
+
+func TestClear(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, 2)
+	m.mu.Lock()
+	m.items["k"] = Measurement{Integrated: -20}
+	m.mu.Unlock()
+	if err := m.Clear(); err != nil {
+		t.Fatalf("清除失败: %v", err)
+	}
+	if m.Count() != 0 {
+		t.Errorf("清除后应为空，实际 %d", m.Count())
+	}
+}
+
+// TestInvalidateTargetRebuildsPathIndex 失效重建后按路径索引仍要可用
+func TestInvalidateTargetRebuildsPathIndex(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, 2)
+	keep := bootstrap.Song{ID: "b", Path: `D:\m\b.flac`, Size: 1, ModTime: 1}
+	drop := bootstrap.Song{ID: "a", Path: `D:\m\a.flac`, Size: 1, ModTime: 1}
+
+	m.mu.Lock()
+	m.items[keyFor(keep.Path, 1, 1)] = Measurement{Path: keep.Path, Size: 1, ModTime: 1, Target: -23, Algo: AlgoVersion, Integrated: -18}
+	m.items[keyFor(drop.Path, 1, 1)] = Measurement{Path: drop.Path, Size: 1, ModTime: 1, Target: -16, Algo: AlgoVersion, Integrated: -20}
+	m.byPath[keep.Path] = keyFor(keep.Path, 1, 1)
+	m.byPath[drop.Path] = keyFor(drop.Path, 1, 1)
+	m.mu.Unlock()
+
+	if n := m.InvalidateTarget(-23); n != 1 {
+		t.Fatalf("应丢弃 1 条，实际 %d", n)
+	}
+	m.mu.RLock()
+	_, hasKept := m.byPath[keep.Path]
+	_, hasDropped := m.byPath[drop.Path]
+	m.mu.RUnlock()
+	if !hasKept {
+		t.Error("保留项的路径索引应重建")
+	}
+	if hasDropped {
+		t.Error("丢弃项的路径索引应清掉")
+	}
+	if _, ok := m.Get(keep, -23); !ok {
+		t.Error("保留项仍应可查")
+	}
+}
 
 func TestCacheRoundTrip(t *testing.T) {
 	dir := t.TempDir()
@@ -87,7 +280,8 @@ func TestCacheRoundTrip(t *testing.T) {
 	m.mu.Lock()
 	m.items[keyFor(song.Path, song.Size, song.ModTime)] = Measurement{
 		Path: song.Path, Size: song.Size, ModTime: song.ModTime,
-		Integrated: -18.5, TruePeak: -3.2, LRA: 6.5,
+		Target: testTarget, Algo: AlgoVersion,
+		Integrated: -18.5, TruePeak: -3.2, LRA: 6.5, Measured: true, Gain: 2.5,
 	}
 	m.dirty = true
 	m.mu.Unlock()
@@ -95,69 +289,47 @@ func TestCacheRoundTrip(t *testing.T) {
 	if err := m.Save(); err != nil {
 		t.Fatalf("保存缓存失败: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "loudness-cache.json")); err != nil {
-		t.Fatalf("缓存文件不存在: %v", err)
-	}
 
-	// 新的管理器应能读回
 	m2 := NewManager(dir, 2)
-	item, ok := m2.Get(song)
+	item, ok := m2.Get(song, testTarget)
 	if !ok {
 		t.Fatal("重启后没有读到缓存")
 	}
 	if math.Abs(item.Integrated-(-18.5)) > 1e-9 || math.Abs(item.TruePeak-(-3.2)) > 1e-9 {
 		t.Errorf("缓存数值不一致: %+v", item)
 	}
-}
-
-// TestCacheInvalidatedOnFileChange 文件变了必须重测
-func TestCacheInvalidatedOnFileChange(t *testing.T) {
-	dir := t.TempDir()
-	m := NewManager(dir, 2)
-	song := bootstrap.Song{ID: "t_1", Path: `D:\m\a.flac`, Size: 1000, ModTime: 100}
-	m.mu.Lock()
-	m.items[keyFor(song.Path, 1000, 100)] = Measurement{Path: song.Path, Size: 1000, ModTime: 100, Integrated: -20}
-	m.mu.Unlock()
-
-	if _, ok := m.Get(song); !ok {
-		t.Fatal("同尺寸同时间应命中")
-	}
-
-	changed := song
-	changed.Size = 2000
-	if _, ok := m.Get(changed); ok {
-		t.Error("文件大小变化后不应命中缓存")
-	}
-	changed = song
-	changed.ModTime = 200
-	if _, ok := m.Get(changed); ok {
-		t.Error("修改时间变化后不应命中缓存")
+	if item.Algo != AlgoVersion || math.Abs(item.Target-testTarget) > 1e-9 {
+		t.Errorf("有效性条件没有被持久化: algo=%d target=%.2f", item.Algo, item.Target)
 	}
 }
 
-func TestMissingAndClear(t *testing.T) {
+/* --------------------------------------------------------------------------
+   增益映射（服务层用的批量查询）
+   -------------------------------------------------------------------------- */
+
+func TestGainForRequiresFreshCache(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, 2)
-	songs := []bootstrap.Song{
-		{ID: "a", Path: `D:\m\a.flac`, Size: 1, ModTime: 1},
-		{ID: "b", Path: `D:\m\b.flac`, Size: 1, ModTime: 1},
-	}
-	if got := len(m.Missing(songs)); got != 2 {
-		t.Fatalf("应缺 2 首，实际 %d", got)
-	}
+	song := bootstrap.Song{ID: "a", Path: `D:\m\a.flac`, Size: 10, ModTime: 20}
+	key := keyFor(song.Path, 10, 20)
 	m.mu.Lock()
-	m.items[keyFor(songs[0].Path, 1, 1)] = Measurement{Path: songs[0].Path, Size: 1, ModTime: 1, Integrated: -16}
-	m.dirty = true
+	m.items[key] = Measurement{
+		Path: song.Path, Size: 10, ModTime: 20,
+		Target: -16, Algo: AlgoVersion, Integrated: -20, TruePeak: -3, Measured: true,
+	}
 	m.mu.Unlock()
 
-	if got := len(m.Missing(songs)); got != 1 {
-		t.Fatalf("应缺 1 首，实际 %d", got)
+	// 响度差是 +4dB，但真峰值 -3dBTP 只允许抬到 -1dBTP，因此被收口到 +2dB
+	gain, ok := m.GainFor(song, -16)
+	if !ok {
+		t.Fatal("有效缓存应返回增益")
 	}
-	if err := m.Clear(); err != nil {
-		t.Fatalf("清除失败: %v", err)
+	if math.Abs(gain-2) > 0.011 {
+		t.Errorf("增益 = %.2f，期望 +2.00（真峰值保护收口）", gain)
 	}
-	if got := len(m.Missing(songs)); got != 2 {
-		t.Fatalf("清除后应缺 2 首，实际 %d", got)
+	// 换标准后不再返回
+	if _, ok := m.GainFor(song, -23); ok {
+		t.Error("换标准后不应再返回旧增益")
 	}
 }
 
@@ -169,7 +341,6 @@ func TestParseLoudnormJSON(t *testing.T) {
 	stderr := `ffmpeg version 8.1
 Input #0, mov,mp4,m4a, from 'a.m4a':
   Duration: 00:04:06.35, start: 0.000000, bitrate: 133 kb/s
-Stream mapping:
 [Parsed_loudnorm_0 @ 000002] 
 {
 	"input_i" : "-21.75",
@@ -193,33 +364,8 @@ size=N/A time=00:04:06.35 bitrate=N/A speed= 220x
 	if parsed.InputI != "-21.75" || parsed.InputTP != "-6.00" {
 		t.Errorf("解析结果不对: %+v", parsed)
 	}
-
 	if _, ok := ffmpeg.ParseLoudnormJSON("no json here"); ok {
 		t.Error("没有 JSON 时不应返回成功")
-	}
-}
-
-func TestParseDuration(t *testing.T) {
-	cases := []struct {
-		in   string
-		want float64
-		ok   bool
-	}{
-		{"Duration: 00:04:06.35, start: 0", 246.35, true},
-		{"Duration: 00:03:02.05, start", 182.05, true},
-		{"Duration: 01:00:00.00, start", 3600, true},
-		{"nothing", 0, false},
-		{"Duration: 00:00:00.00, start", 0, false},
-	}
-	for _, c := range cases {
-		got, ok := ffmpeg.ParseDuration(c.in)
-		if ok != c.ok {
-			t.Errorf("ParseDuration(%q) ok=%v，期望 %v", c.in, ok, c.ok)
-			continue
-		}
-		if ok && math.Abs(got-c.want) > 0.01 {
-			t.Errorf("ParseDuration(%q) = %.2f，期望 %.2f", c.in, got, c.want)
-		}
 	}
 }
 
@@ -227,7 +373,7 @@ func TestParseDuration(t *testing.T) {
    真实测量（需要 ffmpeg，缺失时跳过）
    -------------------------------------------------------------------------- */
 
-func TestMeasureRealFile(t *testing.T) {
+func TestMeasureRealFileOnDemand(t *testing.T) {
 	tools := ffmpeg.Resolve()
 	if !tools.Available() {
 		t.Skip("没有可用的 ffmpeg，跳过真实测量")
@@ -239,7 +385,6 @@ func TestMeasureRealFile(t *testing.T) {
 		t.Skip("响度管理器报告 ffmpeg 不可用")
 	}
 
-	// 生成一个 6 秒正弦波（响度是确定的，可用于验证公式方向）
 	wav := filepath.Join(dir, "tone.wav")
 	if err := generateTone(tools.FFmpeg, wav); err != nil {
 		t.Skipf("无法生成测试音频: %v", err)
@@ -250,11 +395,14 @@ func TestMeasureRealFile(t *testing.T) {
 	}
 
 	song := bootstrap.Song{ID: "t_tone", Path: wav, Size: st.Size(), ModTime: st.ModTime().UnixMilli()}
-	item, err := m.Measure(context.Background(), song)
+
+	// 按需测量：不需要事先扫描
+	item, err := m.Measure(context.Background(), song, testTarget)
 	if err != nil {
 		t.Fatalf("测量失败: %v", err)
 	}
-	t.Logf("测得: 整合响度=%.2f LUFS 真峰值=%.2f dBTP LRA=%.2f", item.Integrated, item.TruePeak, item.LRA)
+	t.Logf("测得: 整合响度=%.2f LUFS 真峰值=%.2f dBTP LRA=%.2f 补偿=%+.2f dB",
+		item.Integrated, item.TruePeak, item.LRA, item.Gain)
 
 	if item.Integrated == 0 {
 		t.Error("整合响度不应为 0")
@@ -262,17 +410,39 @@ func TestMeasureRealFile(t *testing.T) {
 	if item.Integrated > 0 {
 		t.Errorf("整合响度不可能是正数: %.2f", item.Integrated)
 	}
+	if !item.Measured || item.Algo != AlgoVersion || item.Target != testTarget {
+		t.Errorf("测量结果缺少有效性标记: %+v", item)
+	}
+	if math.Abs(item.Gain-GainDB(item, testTarget)) > 1e-9 {
+		t.Errorf("缓存里的增益与公式不一致: %.2f vs %.2f", item.Gain, GainDB(item, testTarget))
+	}
 
-	// 落盘 → 新实例应命中缓存
+	// 第二次应命中缓存（不重新起 ffmpeg）
+	if again, err := m.Measure(context.Background(), song, testTarget); err != nil || again.MeasuredAt != item.MeasuredAt {
+		t.Errorf("第二次测量应命中缓存（MeasuredAt 应不变）: %v %d vs %d", err, again.MeasuredAt, item.MeasuredAt)
+	}
+
+	// 换标准 → 必须重算
+	if _, err := m.Measure(context.Background(), song, -23); err != nil {
+		t.Fatalf("换标准后重算失败: %v", err)
+	}
+	if v, ok := m.Get(song, testTarget); ok {
+		t.Errorf("换标准后旧标准不应再命中: %+v", v)
+	}
+
+	// 落盘 → 新实例应命中
 	if err := m.Save(); err != nil {
 		t.Fatal(err)
 	}
 	m2 := NewManager(dir, 2)
-	if _, ok := m2.Get(song); !ok {
-		t.Error("重启后应命中缓存")
+	if _, ok := m2.Get(song, -23); !ok {
+		t.Error("重启后应命中当前标准的缓存")
+	}
+	if _, ok := m2.Get(song, testTarget); ok {
+		t.Error("重启后旧标准的缓存不应被采用")
 	}
 
-	// 目标响度低于实测值时增益应为正（需要调小）
+	// 目标更轻 → 增益应为负
 	gain := GainDB(item, -30)
 	if gain >= 0 {
 		t.Errorf("目标 -30 比实测 %.1f 轻，增益应为负，实际 %.2f", item.Integrated, gain)

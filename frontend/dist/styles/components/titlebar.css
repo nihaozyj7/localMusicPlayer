@@ -13,7 +13,12 @@
   backdrop-filter: var(--panel-blur);
   -webkit-backdrop-filter: var(--panel-blur);
   border-bottom: var(--hairline);
-  -webkit-app-region: drag;
+  /* Wails v3 的拖拽开关是 CSS 自定义属性 --wails-draggable。
+     运行时会对鼠标事件的目标元素做：
+       getComputedStyle(el).getPropertyValue("--wails-draggable").trim() === "drag"
+     注意两点：必须是自定义属性（-webkit-app-region 在 v3 里没人读），
+     且值里不能带多余字符（"drag " 因为 trim 过所以还行，但也别加别的）。 */
+  --wails-draggable: drag;
 }
 
 .titlebar::after {
@@ -68,7 +73,14 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  -webkit-app-region: no-drag;
+  /* 按钮区域不能触发窗口拖动，否则点最小化/关闭会变成拖窗口 */
+  --wails-draggable: no-drag;
+}
+
+.titlebar__btn,
+.titlebar__menu,
+.titlebar button {
+  --wails-draggable: no-drag;
 }
 
 .titlebar__btn {
