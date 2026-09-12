@@ -12,7 +12,7 @@
 ## 运行应用
 
 ```powershell
-# 首次构建前先编译内置 ffmpeg（精简版约 5.6MB，只需一次，约 3~6 分钟）
+# 首次构建前先编译内置 ffmpeg（精简版约 6MB，只需一次，约 6~10 分钟）
 # 需要 MinGW-w64（gcc/nasm/mingw32-make）+ 一个 bash（Git for Windows 自带）
 node tools/build-ffmpeg.mjs
 
@@ -34,7 +34,7 @@ wails3 task package
 添加音乐文件夹后，扫描与监听都会自动生效。
 
 **ffmpeg 是内置的**：首次启动会把编译进 exe 的 ffmpeg 解包到
-`%LOCALAPPDATA%\MusicPlayer\bin\`（约 5.6MB，按内容哈希命名，只解包一次）。
+`%LOCALAPPDATA%\MusicPlayer\bin\`（约 6.0MB，按内容哈希命名，只解包一次）。
 因此用户机器上不需要预装 ffmpeg；`ape/wma/dsf` 等格式能直接播放。
 如果本机已装了 ffmpeg 也可以指定：
 
@@ -87,8 +87,8 @@ $env:MUSICPLAYER_FFMPEG_DIR = "D:\mp-bin"              # 改内置版本的解�
 ### 关于内置 ffmpeg 的体积
 
 内置的是**自己编译的精简构建**：只包含本项目真正用到的组件，
-单个二进制 5.6MB（对照：第三方通用静态构建 155MB）。
-打包产物因此从 **167.6MB 降到 18.0MB**，许可证也从 GPLv3 变成 **LGPL-2.1-or-later**
+单个二进制 6.0MB（对照：第三方通用静态构建 155MB）。
+打包产物因此从 **167.6MB 降到 18.4MB**，许可证也从 GPLv3 变成 **LGPL-2.1-or-later**
 （编译时没有 `--enable-gpl`/`--enable-nonfree`，而 FFmpeg 的 AAC 解码器与
 `loudnorm` 滤镜本身都是 LGPL）。
 

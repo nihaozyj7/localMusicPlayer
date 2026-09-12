@@ -112,7 +112,7 @@ function extract() {
 /* ------------------------------------------------------------------ 编译 */
 function build() {
   const script = path.join(BUILD_DIR, "build-minimal.sh");
-  console.log("[ffmpeg] 开始编译（首次约 3~6 分钟）…");
+  console.log("[ffmpeg] 开始编译（首次约 6~10 分钟，其中 configure 约 2~3 分钟）…");
   run(BASH, ["-c", `cd '${toMsys(ROOT)}' && bash '${toMsys(script)}'`], {
     env: { ...process.env, MP_MINGW_BIN: MINGW_BIN },
   });
