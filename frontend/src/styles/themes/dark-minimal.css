@@ -1,0 +1,64 @@
+/* ==========================================================================
+   主题：深色 · 黑白极简（dark-minimal）
+   仅声明令牌，不写任何组件样式。复制本文件改名即可创建新主题。
+   ========================================================================== */
+
+:root[data-theme="dark-minimal"] {
+  color-scheme: dark;
+
+  /* 表面 */
+  --bg-app: #08080a;
+  --bg-canvas:
+    radial-gradient(1100px 720px at 12% -10%, rgba(255, 255, 255, 0.075), transparent 62%),
+    radial-gradient(900px 640px at 100% 0%, rgba(255, 255, 255, 0.05), transparent 58%),
+    radial-gradient(760px 760px at 50% 118%, rgba(255, 255, 255, 0.035), transparent 64%);
+  --surface-1: rgba(255, 255, 255, 0.04);
+  --surface-2: rgba(255, 255, 255, 0.07);
+  --surface-3: rgba(255, 255, 255, 0.11);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --surface-active: rgba(255, 255, 255, 0.1);
+
+  /* 毛玻璃 */
+  --glass-bg: rgba(20, 20, 23, 0.62);
+  --glass-bg-strong: rgba(14, 14, 17, 0.8);
+  --glass-bg-weak: rgba(28, 28, 32, 0.42);
+  --glass-blur: 22px;
+  --glass-saturate: 1.6;
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 42%);
+  --glass-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+
+  /* 文字 */
+  --text-1: #f4f4f6;
+  --text-2: rgba(244, 244, 246, 0.66);
+  --text-3: rgba(244, 244, 246, 0.4);
+  --text-inverse: #0b0b0d;
+
+  /* 描边 */
+  --border-1: rgba(255, 255, 255, 0.08);
+  --border-2: rgba(255, 255, 255, 0.14);
+  --divider: rgba(255, 255, 255, 0.055);
+  --focus-ring: 0 0 0 2px rgba(255, 255, 255, 0.45);
+
+  /* 强调 */
+  --accent: #ffffff;
+  --accent-weak: rgba(255, 255, 255, 0.14);
+  --accent-weak-hover: rgba(255, 255, 255, 0.2);
+  --accent-text: #0b0b0d;
+  --accent-contrast: #0b0b0d;
+
+  /* 点缀 */
+  --heart: #ff4d6d;
+  --heart-off: rgba(244, 244, 246, 0.4);
+
+  /* 播放页 */
+  --immersive-veil: rgba(0, 0, 0, 0.36);
+  --vinyl: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.06) 0 18%, transparent 19%),
+    repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.045) 0 1px, transparent 1px 4px),
+    linear-gradient(145deg, #131316, #08080a 60%);
+
+  /* 状态 */
+  --danger: #ff5a5f;
+  --success: #3ddc84;
+  --warning: #ffcf5c;
+}

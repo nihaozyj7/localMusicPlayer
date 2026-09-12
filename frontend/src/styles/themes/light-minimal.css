@@ -1,0 +1,63 @@
+/* ==========================================================================
+   主题：浅色 · 黑白极简（light-minimal）
+   ========================================================================== */
+
+:root[data-theme="light-minimal"] {
+  color-scheme: light;
+
+  /* 表面 */
+  --bg-app: #f2f2f4;
+  --bg-canvas:
+    radial-gradient(1100px 720px at 8% -12%, rgba(0, 0, 0, 0.06), transparent 60%),
+    radial-gradient(900px 620px at 102% -4%, rgba(0, 0, 0, 0.045), transparent 58%),
+    radial-gradient(820px 820px at 46% 118%, rgba(0, 0, 0, 0.03), transparent 64%);
+  --surface-1: rgba(255, 255, 255, 0.55);
+  --surface-2: rgba(255, 255, 255, 0.72);
+  --surface-3: rgba(255, 255, 255, 0.88);
+  --surface-hover: rgba(0, 0, 0, 0.035);
+  --surface-active: rgba(0, 0, 0, 0.06);
+
+  /* 毛玻璃 */
+  --glass-bg: rgba(255, 255, 255, 0.66);
+  --glass-bg-strong: rgba(255, 255, 255, 0.82);
+  --glass-bg-weak: rgba(255, 255, 255, 0.42);
+  --glass-blur: 22px;
+  --glass-saturate: 1.35;
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0) 46%);
+  --glass-shadow: 0 10px 30px rgba(15, 15, 20, 0.12);
+
+  /* 文字 */
+  --text-1: #14141a;
+  --text-2: rgba(20, 20, 26, 0.62);
+  --text-3: rgba(20, 20, 26, 0.38);
+  --text-inverse: #ffffff;
+
+  /* 描边 */
+  --border-1: rgba(0, 0, 0, 0.08);
+  --border-2: rgba(0, 0, 0, 0.16);
+  --divider: rgba(0, 0, 0, 0.06);
+  --focus-ring: 0 0 0 2px rgba(0, 0, 0, 0.45);
+
+  /* 强调 */
+  --accent: #16161c;
+  --accent-weak: rgba(0, 0, 0, 0.08);
+  --accent-weak-hover: rgba(0, 0, 0, 0.14);
+  --accent-text: #ffffff;
+  --accent-contrast: #ffffff;
+
+  /* 点缀 */
+  --heart: #e8384f;
+  --heart-off: rgba(20, 20, 26, 0.34);
+
+  /* 播放页 */
+  --immersive-veil: rgba(255, 255, 255, 0.42);
+  --vinyl: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.75) 0 18%, transparent 19%),
+    repeating-radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0.07) 0 1px, transparent 1px 4px),
+    linear-gradient(145deg, #2a2a30, #101014 60%);
+
+  /* 状态 */
+  --danger: #d92d3a;
+  --success: #1f9d55;
+  --warning: #b7791f;
+}

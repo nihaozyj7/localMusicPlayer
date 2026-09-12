@@ -1,0 +1,142 @@
+/* ==========================================================================
+   lyrics.css — 歌词滚动区（三种播放样式共用）
+   ========================================================================== */
+
+.lyrics {
+  --lyric-size: 16px;
+  --lyric-size-active: 21px;
+  --lyric-dim: 0.36;
+  --lyric-line-gap: 2px;
+  --lyric-pad: 34%;
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  /* 上下渐隐遮罩 */
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 14%,
+    #000 76%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 14%,
+    #000 76%,
+    transparent 100%
+  );
+}
+
+.lyrics__scroll {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  padding: var(--lyric-pad) 0;
+  scroll-behavior: smooth;
+  text-align: center;
+}
+
+.lyrics__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.lyric {
+  display: block;
+  width: 100%;
+  padding: 7px var(--sp-4);
+  border: 0;
+  background: none;
+  text-align: inherit;
+  font-family: inherit;
+  font-size: var(--lyric-size);
+  line-height: 1.5;
+  color: var(--text-1);
+  opacity: var(--lyric-dim);
+  transform-origin: center;
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease),
+    font-size var(--dur) var(--ease), color var(--dur) var(--ease), filter var(--dur) var(--ease);
+  cursor: pointer;
+  filter: blur(0.3px);
+  user-select: text;
+}
+
+.lyric:hover {
+  opacity: 0.75;
+  filter: none;
+}
+
+.lyric[aria-current="true"] {
+  font-size: var(--lyric-size-active);
+  font-weight: var(--fw-semibold);
+  color: var(--accent);
+  opacity: 1;
+  filter: none;
+  letter-spacing: -0.01em;
+}
+
+.lyric[data-past="true"] {
+  opacity: calc(var(--lyric-dim) * 0.9);
+}
+
+/* 逐字歌词：当前行内的高亮进度 */
+.lyric__word {
+  color: inherit;
+}
+
+.lyric__word[data-active="true"] {
+  color: var(--accent);
+}
+
+/* 翻译 / 罗马音副行 */
+.lyric__trans {
+  display: block;
+  margin-top: 2px;
+  font-size: calc(var(--lyric-size) * 0.78);
+  font-weight: var(--fw-normal);
+  color: var(--text-3);
+}
+
+/* 纯音乐标记 */
+.lyric__interlude {
+  display: block;
+  padding: 7px var(--sp-4);
+  font-family: var(--font-num);
+  font-size: var(--lyric-size);
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
+/* —— 无歌词空态 —— */
+.lyrics__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  height: 100%;
+  padding: var(--sp-5);
+  text-align: center;
+}
+
+.lyrics__empty-icon {
+  width: 40px;
+  height: 40px;
+  color: var(--text-3);
+  opacity: 0.7;
+}
+
+.lyrics__empty-text {
+  font-size: var(--fs-md);
+  color: var(--text-3);
+}
+
+/* —— 歌词密度选项 —— */
+.playerview[data-lyrics="compact"] .lyrics {
+  --lyric-line-gap: 0px;
+  --lyric-pad: 40%;
+}

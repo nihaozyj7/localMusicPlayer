@@ -1,0 +1,147 @@
+/* ==========================================================================
+   tokens.css — 设计令牌（唯一允许出现「颜色字面量」的地方之一）
+   --------------------------------------------------------------------------
+   规则：
+     1. 组件 CSS（components/*.css）禁止硬编码颜色，只能引用 var(--…) 。
+     2. 主题文件（themes/*.css）只需覆盖 :root[data-theme="xxx"] 内的令牌。
+     3. 令牌缺失时回退到本文件的 :root 默认值（= 深色 / 黑白极简）。
+   ========================================================================== */
+
+:root {
+  /* —— 基础色板（主题可覆盖，作为派生令牌的原料）—— */
+  --c-white: #ffffff;
+  --c-black: #000000;
+  --c-hue: 240;
+
+  /* —— 表面与层级 —— */
+  --bg-app: #08080a;
+  --bg-canvas:
+    radial-gradient(1100px 720px at 12% -10%, rgba(255, 255, 255, 0.075), transparent 62%),
+    radial-gradient(900px 640px at 100% 0%, rgba(255, 255, 255, 0.05), transparent 58%),
+    radial-gradient(760px 760px at 50% 118%, rgba(255, 255, 255, 0.035), transparent 64%);
+  --surface-1: rgba(255, 255, 255, 0.04);
+  --surface-2: rgba(255, 255, 255, 0.07);
+  --surface-3: rgba(255, 255, 255, 0.11);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --surface-active: rgba(255, 255, 255, 0.1);
+
+  /* —— 毛玻璃 —— */
+  --glass-bg: rgba(20, 20, 23, 0.62);
+  --glass-bg-strong: rgba(14, 14, 17, 0.8);
+  --glass-bg-weak: rgba(28, 28, 32, 0.42);
+  --glass-blur: 22px;
+  --glass-saturate: 1.6;
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 42%);
+  --glass-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+
+  /* —— 文字 —— */
+  --text-1: #f4f4f6;
+  --text-2: rgba(244, 244, 246, 0.66);
+  --text-3: rgba(244, 244, 246, 0.4);
+  --text-inverse: #0b0b0d;
+
+  /* —— 描边 / 分隔 —— */
+  --border-1: rgba(255, 255, 255, 0.08);
+  --border-2: rgba(255, 255, 255, 0.14);
+  --divider: rgba(255, 255, 255, 0.055);
+  --focus-ring: 0 0 0 2px rgba(255, 255, 255, 0.45);
+
+  /* —— 强调色（黑白极简：用明度对比代替彩色）—— */
+  --accent: #ffffff;
+  --accent-weak: rgba(255, 255, 255, 0.14);
+  --accent-weak-hover: rgba(255, 255, 255, 0.2);
+  --accent-text: #0b0b0d;
+  --accent-contrast: #0b0b0d;
+
+  /* —— 唯一彩色点缀：爱心。主题可置为灰色以做纯黑白 —— */
+  --heart: #ff4d6d;
+  --heart-off: var(--text-3);
+
+  /* —— 状态 —— */
+  --danger: #ff5a5f;
+  --success: #3ddc84;
+  --warning: #ffcf5c;
+
+  /* —— 播放页专用 —— */
+  --immersive-veil: rgba(0, 0, 0, 0.36);
+  --vinyl: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.06) 0 18%, transparent 19%),
+    repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.045) 0 1px, transparent 1px 4px),
+    linear-gradient(145deg, #131316, #08080a 60%);
+
+  /* —— 字体 —— */
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC",
+    "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
+  --font-num: "Segoe UI Variable Small", "Segoe UI", ui-monospace, "Cascadia Mono", monospace;
+
+  /* —— 字号 —— */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 20px;
+  --fs-2xl: 30px;
+  --fs-display: 42px;
+
+  /* —— 字重 —— */
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* —— 间距 —— */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* —— 圆角 —— */
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 28px;
+  --r-full: 999px;
+
+  /* —— 固定布局尺寸 —— */
+  --h-titlebar: 36px;
+  --w-sidebar: 232px;
+  --h-playerbar: 88px;
+  --h-header: 64px;
+  --row-h: 56px;
+  --row-h-compact: 44px;
+  --w-cover-sm: 40px;
+  --size-cover-sm: 36px;
+  --size-cover-bar: 48px;
+  --btn-sm: 28px;
+  --btn-md: 34px;
+  --btn-lg: 44px;
+
+  /* —— 动效 —— */
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 420ms;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* —— 层级 —— */
+  --z-bg: 0;
+  --z-content: 10;
+  --z-playerview: 30;
+  --z-playerbar: 40;
+  --z-dropdown: 55;
+  --z-modal: 60;
+  --z-titlebar: 70;
+
+  /* —— 语义映射（组件只认这些，方便主题整体替换风格）—— */
+  --panel-radius: var(--r-lg);
+  --panel-border: 1px solid var(--glass-border);
+  --panel-bg: var(--glass-bg);
+  --panel-blur: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  --panel-shadow: var(--glass-shadow);
+  --hairline: 1px solid var(--border-1);
+  --hairline-strong: 1px solid var(--border-2);
+}

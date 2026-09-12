@@ -1,0 +1,350 @@
+/* ==========================================================================
+   playerview.css — 播放界面三种样式：经典 / 沉浸 / 简约
+   ========================================================================== */
+
+.playerview {
+  background: var(--bg-app);
+  animation: fade-in var(--dur) var(--ease);
+}
+
+.playerview__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 52px;
+  padding: 0 var(--sp-4);
+}
+
+.playerview__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--btn-md);
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+
+.playerview__back svg {
+  width: 16px;
+  height: 16px;
+}
+
+.playerview__back:hover {
+  color: var(--text-1);
+  background: var(--surface-hover);
+}
+
+.playerview__crumb {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.playerview__stage {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   经典：左唱片 + 右歌词
+   ========================================================================== */
+
+.playerview[data-mode="classic"] .playerview__stage {
+  display: grid;
+  grid-template-columns: minmax(280px, 38%) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-7);
+  padding: var(--sp-5) var(--sp-7) var(--sp-6);
+}
+
+.disc {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(100%, 400px);
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+}
+
+.disc__shadow {
+  position: absolute;
+  inset: 6%;
+  border-radius: var(--r-full);
+  background: var(--accent-weak);
+  filter: blur(38px);
+  opacity: 0.55;
+  z-index: 0;
+}
+
+.disc__platter {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--r-full);
+  background: var(--vinyl);
+  border: 1px solid var(--border-1);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  display: grid;
+  place-items: center;
+  animation: spin 26s linear infinite;
+  animation-play-state: paused;
+}
+
+.disc[data-spinning="true"] .disc__platter {
+  animation-play-state: running;
+}
+
+.disc__label {
+  width: 62%;
+  height: 62%;
+  border-radius: var(--r-full);
+  overflow: hidden;
+  border: 1px solid var(--border-2);
+  box-shadow: inset 0 0 0 8px rgba(0, 0, 0, 0.28);
+}
+
+.disc__label img,
+.disc__label .cover-placeholder {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--r-full);
+}
+
+.disc__hole {
+  position: absolute;
+  width: 5.5%;
+  height: 5.5%;
+  border-radius: var(--r-full);
+  background: var(--bg-app);
+  border: 1px solid var(--border-2);
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.7);
+}
+
+.disc__arm {
+  position: absolute;
+  top: 2%;
+  right: 4%;
+  width: 22%;
+  height: 22%;
+  border-radius: var(--r-full);
+  border: 2px solid var(--border-2);
+  border-left-color: transparent;
+  border-bottom-color: transparent;
+  transform: rotate(-32deg);
+  opacity: 0.5;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.classic__side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+}
+
+.classic__info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.classic__title {
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.classic__artist {
+  font-size: var(--fs-lg);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.classic__album {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+/* ==========================================================================
+   沉浸：封面铺满 + 毛玻璃覆盖 + 居中歌词
+   ========================================================================== */
+
+.playerview[data-mode="immersive"] .playerview__stage {
+  display: grid;
+  place-items: center;
+  padding: var(--sp-5) var(--sp-6) var(--sp-6);
+}
+
+.immersive__bg {
+  position: absolute;
+  inset: -60px;
+  z-index: 0;
+  overflow: hidden;
+  background: var(--bg-app);
+}
+
+.immersive__bg img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(var(--immersive-blur, 54px)) saturate(1.5) brightness(0.85);
+  transform: scale(1.12);
+}
+
+.immersive__veil {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--immersive-veil);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.immersive__grain {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: radial-gradient(120% 80% at 50% 40%, transparent 40%, rgba(0, 0, 0, 0.35) 100%);
+  pointer-events: none;
+}
+
+.immersive__card {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+  width: min(760px, 100%);
+  max-height: 100%;
+  padding: var(--sp-5) var(--sp-6);
+  border-radius: var(--r-xl);
+  background: var(--glass-bg);
+  border: var(--panel-border);
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  box-shadow: var(--panel-shadow);
+  overflow: hidden;
+}
+
+.immersive__card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 42%;
+  background: var(--glass-highlight);
+  pointer-events: none;
+}
+
+.immersive__info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+  z-index: 1;
+}
+
+.immersive__title {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+  color: var(--text-1);
+}
+
+.immersive__artist {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+/* ==========================================================================
+   简约：无封面，居中歌词
+   ========================================================================== */
+
+.playerview[data-mode="minimal"] .playerview__stage {
+  display: grid;
+  place-items: center;
+  padding: var(--sp-6);
+}
+
+.minimal__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-5);
+  width: min(680px, 100%);
+  max-height: 100%;
+  min-height: 0;
+}
+
+.minimal__info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.minimal__title {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+.minimal__artist {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+/* 简约模式下歌词独占视觉重心 */
+.playerview[data-mode="minimal"] .lyrics {
+  --lyric-size: 19px;
+  --lyric-size-active: 26px;
+  --lyric-dim: 0.34;
+}
+
+.playerview[data-mode="immersive"] .lyrics {
+  --lyric-size: 16px;
+  --lyric-size-active: 22px;
+  --lyric-dim: 0.4;
+}
+
+.playerview[data-mode="immersive"] .lyrics,
+.playerview[data-mode="minimal"] .lyrics {
+  width: 100%;
+}
+
+/* 非沉浸模式下歌词卡片有边界 */
+.playerview[data-mode="classic"] .lyrics {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+}
+
+@media (max-width: 900px) {
+  .playerview[data-mode="classic"] .playerview__stage {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 40%) minmax(0, 1fr);
+    gap: var(--sp-4);
+    padding: var(--sp-4);
+  }
+
+  .disc {
+    width: min(100%, 240px);
+  }
+}

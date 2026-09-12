@@ -1,0 +1,26 @@
+# 依赖与构建产物（Wails3 脚手架生成后按需保留）
+node_modules/
+frontend/dist/
+frontend/node_modules/
+build/
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 系统
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 本地配置（含个人音乐路径，不入库）
+config.local.json
