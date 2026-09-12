@@ -4,6 +4,7 @@
 
 import * as ConfigService from "./configservice.js";
 import * as LibraryService from "./libraryservice.js";
+import * as LoudnessService from "./loudnessservice.js";
 import * as LyricsService from "./lyricsservice.js";
 import * as MediaService from "./mediaservice.js";
 import * as PlaylistService from "./playlistservice.js";
@@ -12,6 +13,7 @@ import * as WindowService from "./windowservice.js";
 export {
     ConfigService,
     LibraryService,
+    LoudnessService,
     LyricsService,
     MediaService,
     PlaylistService,

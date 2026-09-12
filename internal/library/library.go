@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"musicplayer/internal/bootstrap"
+	"musicplayer/internal/ffmpeg"
 	"musicplayer/internal/filter"
 	"musicplayer/internal/meta"
 )
@@ -47,6 +48,9 @@ type cacheEntry struct {
 	Cover    string `json:"cover,omitempty"` // data URL，体积大，能省则省
 	ModTime  int64  `json:"modTime"`
 	Size     int64  `json:"size"`
+	// Probed 表示「已经用 ffmpeg 探测过且确实拿不到时长」。
+	// 没有这个标记的话，每次重扫都会对同一批无时长文件反复起 ffmpeg 进程。
+	Probed bool `json:"probed,omitempty"`
 }
 
 // Manager 曲库管理器，方法均可并发调用
@@ -345,6 +349,10 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 	cfg := m.store.Get()
 	res := filter.Apply(results, cfg.FilterRules)
 
+	// 3.5) 对 meta 没有解析器的容器（wma/ape/dsf…）用 ffmpeg 补时长。
+	//      时长缺失会让转码流拿不到 Content-Length，前端进度条就没法用。
+	m.enrichDurations(ctx, res.Kept, force)
+
 	// 4) 与旧数据对比，得出新增/移除
 	m.mu.Lock()
 	prevIDs := make(map[string]bool, len(m.songs))
@@ -608,7 +616,6 @@ func (m *Manager) songFromCandidate(c candidate, force bool) bootstrap.Song {
 	}
 	m.cacheMu.Unlock()
 	atomic.AddInt64(&m.metaReads, 1)
-
 	return song
 }
 
@@ -624,6 +631,112 @@ func fillFallback(s *bootstrap.Song) {
 	if strings.TrimSpace(s.Album) == "" {
 		s.Album = "未知专辑"
 	}
+}
+
+/* --------------------------------------------------------------------------
+   无时长文件的兜底探测
+   --------------------------------------------------------------------------
+   meta 包只手写了 mp3/flac/wav/m4a 的时长解析。wma/ape/dsf/ogg 等容器
+   没有解析器，时长会是 0 —— 会导致转码流拿不到 Content-Length，
+   前端连进度条都用不了。这里对这类文件用 ffmpeg 探测一次并写入缓存。
+   -------------------------------------------------------------------------- */
+
+// maxProbePerScan 单次扫描最多探测多少个文件，避免首次扫描被大量进程拖住；
+// 剩下的会在后续扫描里陆续补齐（结果有缓存，不会重复探测）。
+const maxProbePerScan = 48
+
+func (m *Manager) enrichDurations(ctx context.Context, songs []bootstrap.Song, force bool) int {
+	tools := ffmpeg.Resolve()
+	if !tools.Available() {
+		return 0
+	}
+
+	// 收集候选：时长为 0 且缓存里没有「已探测过」标记
+	type task struct {
+		idx int
+		s   bootstrap.Song
+	}
+	tasks := make([]task, 0, len(songs))
+	for i, s := range songs {
+		if s.Duration > 0 {
+			continue
+		}
+		if !force {
+			m.cacheMu.RLock()
+			entry, ok := m.cache[s.Path]
+			m.cacheMu.RUnlock()
+			if ok && entry.Probed && entry.Size == s.Size && entry.ModTime == s.ModTime {
+				continue // 已经探测过且确实没有时长，不再重复
+			}
+		}
+		tasks = append(tasks, task{idx: i, s: s})
+		if len(tasks) >= maxProbePerScan {
+			break
+		}
+	}
+	if len(tasks) == 0 {
+		return 0
+	}
+
+	m.report("probe", 0, len(tasks))
+	sem := make(chan struct{}, 2) // ffmpeg 进程较重，并发压到 2
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var done, filled int
+
+	for _, t := range tasks {
+		if ctx.Err() != nil {
+			break
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(t task) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			pctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			info, err := ffmpeg.Probe(pctx, tools.FFmpeg, t.s.Path)
+			cancel()
+
+			mu.Lock()
+			done++
+			if err == nil && info.DurationSec > 0 {
+				songs[t.idx].Duration = int64(info.DurationSec * 1000)
+				if songs[t.idx].SampleRate == 0 {
+					songs[t.idx].SampleRate = info.SampleRate
+				}
+				if songs[t.idx].Bitrate == 0 {
+					songs[t.idx].Bitrate = info.Bitrate
+				}
+				filled++
+			}
+			mu.Unlock()
+
+			// 写回缓存：拿到时长的存时长，没拿到的存 Probed 标记
+			m.cacheMu.Lock()
+			entry := m.cache[t.s.Path]
+			entry.Title = songs[t.idx].Title
+			entry.Artist = songs[t.idx].Artist
+			entry.Album = songs[t.idx].Album
+			entry.Size = t.s.Size
+			entry.ModTime = t.s.ModTime
+			entry.Probed = true
+			if err == nil && info.DurationSec > 0 {
+				entry.Duration = int64(info.DurationSec * 1000)
+				entry.Sample = info.SampleRate
+				entry.Bitrate = info.Bitrate
+			}
+			m.cache[t.s.Path] = entry
+			m.cacheMu.Unlock()
+
+			if done%4 == 0 {
+				m.report("probe", done, len(tasks))
+			}
+		}(t)
+	}
+	wg.Wait()
+	m.report("probe", len(tasks), len(tasks))
+	return filled
 }
 
 /* --------------------------------------------------------------------------

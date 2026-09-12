@@ -35,6 +35,14 @@ bin/
 # 后端嵌入的内置主题由构建脚本从 frontend/src/styles/themes 同步而来
 # （保留入库：go:embed 在干净克隆上也需要这些文件存在）
 
+# ---- 内置 ffmpeg ----
+# 静态构建的 ffmpeg.exe 约 155MB，不入库；用 `node tools/fetch-ffmpeg.mjs`
+# 或 `wails3 task ffmpeg:fetch` 下载。production 构建会把它编译进 exe。
+internal/ffmpeg/bin/*.exe
+internal/ffmpeg/bin/_extract/
+internal/ffmpeg/bin/*.zip
+internal/ffmpeg/bin/VERSION.txt
+
 # ---- 编辑器 ----
 .vscode/
 .idea/

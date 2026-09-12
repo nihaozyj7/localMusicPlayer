@@ -12,6 +12,22 @@
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails/runtime.js";
 
 /**
+ * CacheStats 转码缓存占用
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function CacheStats() {
+    return $Call.ByID(2902661948);
+}
+
+/**
+ * ClearTranscodeCache 清空转码缓存（不能原生播放的格式转出的 WAV）
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function ClearTranscodeCache() {
+    return $Call.ByID(633235145);
+}
+
+/**
  * State 返回播放服务状态（前端据此提示「需安装 ffmpeg」）
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */

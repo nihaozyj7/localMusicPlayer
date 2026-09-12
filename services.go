@@ -17,6 +17,7 @@ import (
 
 	"musicplayer/internal/bootstrap"
 	"musicplayer/internal/library"
+	"musicplayer/internal/loudness"
 	"musicplayer/internal/lyrics"
 	"musicplayer/internal/media"
 	"musicplayer/internal/theme"
@@ -657,7 +658,226 @@ func (s *MediaService) State() map[string]any {
 	return map[string]any{
 		"baseUrl":      s.srv.BaseURL(),
 		"canTranscode": s.srv.CanTranscode(),
+		"tools":        s.srv.ToolsInfo(),
 	}
+}
+
+// ClearTranscodeCache 清空转码缓存（不能原生播放的格式转出的 WAV）
+func (s *MediaService) ClearTranscodeCache() (map[string]any, error) {
+	if err := s.srv.ClearCache(); err != nil {
+		return nil, err
+	}
+	count, bytes := s.srv.CacheStats()
+	return map[string]any{"count": count, "bytes": bytes}, nil
+}
+
+// CacheStats 转码缓存占用
+func (s *MediaService) CacheStats() map[string]any {
+	count, bytes := s.srv.CacheStats()
+	return map[string]any{"count": count, "bytes": bytes}
+}
+
+// ---------------------------------------------------------------------------
+// Loudness 服务（响度均衡：EBU R128 测量 + 回放增益补偿）
+// ---------------------------------------------------------------------------
+
+// LoudnessService 响度测量与补偿
+type LoudnessService struct {
+	mgr *loudness.Manager
+	lib *library.Manager
+	app *application.App
+
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	measuring bool
+}
+
+// NewLoudnessService 构造服务
+func NewLoudnessService(mgr *loudness.Manager, lib *library.Manager) *LoudnessService {
+	return &LoudnessService{mgr: mgr, lib: lib}
+}
+
+// State 返回响度测量能力与进度概况
+func (s *LoudnessService) State() map[string]any {
+	t := s.mgr.Tools()
+	songs := s.lib.Songs()
+	missing := len(s.mgr.Missing(songs))
+	return map[string]any{
+		"available":   s.mgr.Available(),
+		"source":      t.Source,
+		"describe":    t.Describe(),
+		"path":        t.FFmpeg,
+		"measured":    s.mgr.Count(),
+		"missing":     missing,
+		"total":       len(songs),
+		"measuring":   s.isMeasuring(),
+		"cachePath":   s.mgr.CachePath(),
+	}
+}
+
+// Get 取一首歌的测量结果与补偿增益
+func (s *LoudnessService) Get(songID string, targetLUFS float64) (map[string]any, error) {
+	song, ok := s.lib.SongByID(songID)
+	if !ok {
+		return nil, fmt.Errorf("歌曲不存在: %s", songID)
+	}
+	if targetLUFS == 0 {
+		targetLUFS = -16
+	}
+	item, ok := s.mgr.Get(song)
+	if !ok {
+		return map[string]any{"measured": false}, nil
+	}
+	return map[string]any{
+		"measured":   true,
+		"integrated": item.Integrated,
+		"truePeak":   item.TruePeak,
+		"lra":        item.LRA,
+		"gainDB":     loudness.GainDB(item, targetLUFS),
+		"target":     targetLUFS,
+	}, nil
+}
+
+// Measure 测量单首歌（前端在播放时按需调用）
+func (s *LoudnessService) Measure(songID string) (map[string]any, error) {
+	song, ok := s.lib.SongByID(songID)
+	if !ok {
+		return nil, fmt.Errorf("歌曲不存在: %s", songID)
+	}
+	if !s.mgr.Available() {
+		return nil, fmt.Errorf("ffmpeg 不可用，无法测量响度")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	item, err := s.mgr.Measure(ctx, song)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"measured":   true,
+		"integrated": item.Integrated,
+		"truePeak":   item.TruePeak,
+		"lra":        item.LRA,
+	}, nil
+}
+
+// MeasureAll 后台测量整个曲库（异步，进度通过 loudness:progress 事件推送）
+func (s *LoudnessService) MeasureAll() map[string]any {
+	if !s.mgr.Available() {
+		return map[string]any{"started": false, "reason": "ffmpeg 不可用"}
+	}
+	s.mu.Lock()
+	if s.measuring {
+		s.mu.Unlock()
+		return map[string]any{"started": false, "reason": "already-measuring"}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+	s.measuring = true
+	s.mu.Unlock()
+
+	songs := s.lib.Songs()
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			s.measuring = false
+			s.cancel = nil
+			s.mu.Unlock()
+			_ = s.mgr.Save()
+		}()
+
+		done, failed, err := s.mgr.MeasureAll(ctx, songs, func(p loudness.Progress) {
+			s.emit("loudness:progress", map[string]any{
+				"done": p.Done, "total": p.Total,
+				"failed": p.Failed, "current": p.Current, "finished": p.Finished,
+			})
+		})
+		payload := map[string]any{"done": done, "failed": failed, "total": len(songs)}
+		if err != nil && !errors.Is(err, context.Canceled) {
+			payload["message"] = err.Error()
+			s.emit("loudness:failed", payload)
+			return
+		}
+		s.emit("loudness:done", payload)
+	}()
+
+	return map[string]any{"started": true, "total": len(songs)}
+}
+
+// Cancel 中止批量测量
+func (s *LoudnessService) Cancel() {
+	s.mu.Lock()
+	cancel := s.cancel
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// Clear 清空测量缓存
+func (s *LoudnessService) Clear() error {
+	return s.mgr.Clear()
+}
+
+// GainMap 返回「songId → 补偿增益 dB」映射，供前端批量套用
+func (s *LoudnessService) GainMap(targetLUFS float64) map[string]float64 {
+	if targetLUFS == 0 {
+		targetLUFS = -16
+	}
+	out := map[string]float64{}
+	for _, song := range s.lib.Songs() {
+		if g, ok := s.mgr.GainFor(song, targetLUFS); ok {
+			out[song.ID] = g
+		}
+	}
+	return out
+}
+
+// AlbumGains 返回按专辑聚合的补偿增益（「整张专辑统一」模式）
+func (s *LoudnessService) AlbumGains(targetLUFS float64) map[string]float64 {
+	if targetLUFS == 0 {
+		targetLUFS = -16
+	}
+	// 按专辑分组
+	groups := map[string][]bootstrap.Song{}
+	for _, song := range s.lib.Songs() {
+		album := strings.TrimSpace(song.Album)
+		if album == "" || album == "未知专辑" {
+			album = "__unknown__"
+		}
+		groups[album] = append(groups[album], song)
+	}
+
+	out := map[string]float64{}
+	for name, songs := range groups {
+		s.mgr.UpdateAlbum(name, songs)
+		if g, ok := s.mgr.AlbumGainDB(name, targetLUFS); ok {
+			for _, song := range songs {
+				out[song.ID] = g
+			}
+		}
+	}
+	_ = s.mgr.Save()
+	return out
+}
+
+// RefreshTools 重新探测 ffmpeg（设置界面点「重新检测」时用）
+func (s *LoudnessService) RefreshTools() map[string]any {
+	s.mgr.RefreshTools()
+	return s.State()
+}
+
+func (s *LoudnessService) isMeasuring() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.measuring
+}
+
+func (s *LoudnessService) emit(name string, payload any) {
+	if s.app == nil {
+		return
+	}
+	s.app.Event.Emit(name, payload)
 }
 
 // ---------------------------------------------------------------------------

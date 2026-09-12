@@ -37,6 +37,8 @@ const SCENARIOS = [
   { name: "搜索过滤", url: "?probe=1&query=%E9%99%88%E9%BB%98" },
   { name: "扫描中遮罩", url: "?probe=1&scan=1" },
   { name: "设置 · 过滤规则", url: "?probe=1&tab=settings&sec=filters" },
+  { name: "设置 · 响度均衡", url: "?probe=1&tab=settings&sec=loudness" },
+  { name: "设置 · 歌词", url: "?probe=1&tab=settings&sec=lyrics" },
 ];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

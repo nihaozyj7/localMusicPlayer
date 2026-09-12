@@ -7,6 +7,7 @@ import { applyRules, compileRegex, state } from "./store.js";
 import { backend, isWails } from "./bridge.js";
 import { esc, fmtCount, fmtSize, uid } from "./utils.js";
 import { applyResolvedTheme, discoverThemes, listThemes, resolvedGlassBlur } from "./theme.js";
+import { refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
 import { setRuntimeToken, replaceStyleRules } from "./runtime-tokens.js";
 
 /* --------------------------------------------------------------------------
@@ -428,6 +429,7 @@ export function renderSettings(container) {
     { id: "filters", label: "过滤规则" },
     { id: "appearance", label: "外观" },
     { id: "playback", label: "播放" },
+    { id: "loudness", label: "响度均衡" },
     { id: "lyrics", label: "歌词" },
     { id: "about", label: "关于" },
   ];
@@ -446,9 +448,109 @@ export function renderSettings(container) {
       ${rulesCard()}
       ${themeCard()}
       ${playbackCard()}
+      ${loudnessCard()}
       ${lyricsCard()}
       ${aboutCard()}
     </div>`;
+}
+
+/* --------------------------------------------------------------------------
+   响度均衡（EBU R128 测量 + 回放增益补偿）
+   -------------------------------------------------------------------------- */
+const LOUDNESS_TARGETS = [
+  { value: -14, label: "-14 LUFS · 较响（流媒体常见）" },
+  { value: -16, label: "-16 LUFS · 推荐（默认）" },
+  { value: -18, label: "-18 LUFS · 温和" },
+  { value: -23, label: "-23 LUFS · 广播标准（EBU R128）" },
+];
+
+const LOUDNESS_MODES = [
+  { value: "off", label: "关闭" },
+  { value: "track", label: "逐曲均衡" },
+  { value: "album", label: "同专辑统一" },
+];
+
+function loudnessCard() {
+  const cfg = state.config;
+  const ls = state.loudnessState || {};
+  const measured = ls.measured ?? 0;
+  const missing = ls.missing ?? Math.max(0, state.songs.length - measured);
+  const total = ls.total ?? state.songs.length;
+  const available = ls.available !== false;
+  const tools = state.ffmpegState || {};
+  const sourceText = tools.describe || ls.describe || "检测中…";
+
+  return `
+    <section class="card" id="sec-loudness" data-section="loudness">
+      <div class="card__head">
+        <h2 class="card__title">${icon("scale")}<span>响度均衡</span></h2>
+        <p class="card__desc">
+          用 ffmpeg 按 EBU R128 测量每首歌的整合响度（LUFS），回放时按目标响度做增益补偿，
+          让不同来源的歌曲音量听起来一致。测量结果会缓存，每首歌只测一次。
+        </p>
+      </div>
+
+      <div class="setting">
+        <div class="setting__label">
+          <span>均衡模式</span>
+          <small class="u-fs-xs u-dim">逐曲：每首歌都拉到目标响度；同专辑：整张专辑用同一个增益，保留专辑内部的强弱对比</small>
+        </div>
+        <div class="setting__control">
+          <div class="segmented" data-segment="loudness-mode">
+            ${LOUDNESS_MODES.map(
+              (m) =>
+                `<button class="segmented__btn" type="button" data-segment-value="${m.value}" aria-pressed="${cfg.loudnessMode === m.value}">${esc(m.label)}</button>`
+            ).join("")}
+          </div>
+        </div>
+      </div>
+
+      <div class="setting">
+        <div class="setting__label">
+          <span>目标响度</span>
+          <small class="u-fs-xs u-dim">数字越小整体越轻。推荐 -16 LUFS</small>
+        </div>
+        <div class="setting__control">
+          <select class="select" data-act="loudness-target">
+            ${LOUDNESS_TARGETS.map(
+              (t) =>
+                `<option value="${t.value}" ${Number(cfg.loudnessTarget) === t.value ? "selected" : ""}>${esc(t.label)}</option>`
+            ).join("")}
+          </select>
+        </div>
+      </div>
+
+      <div class="setting">
+        <div class="setting__label">
+          <span>真峰值保护</span>
+          <small class="u-fs-xs u-dim">抬升音量时限制增益，避免超过 ${-1} dBTP 造成削波失真</small>
+        </div>
+        <div class="setting__control">
+          <button class="switch" type="button" role="switch" data-toggle="loudnessLimit" aria-checked="${Boolean(cfg.loudnessLimit)}">
+            <span class="switch__thumb"></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="setting setting--stack">
+        <div class="progress-line" id="loudness-progress" hidden>
+          <div class="progress-line__text" data-role="text">准备测量…</div>
+          <div class="progress-line__track"><div class="progress-line__bar" data-role="bar" data-value="0"></div></div>
+        </div>
+
+        <div class="card__actions">
+          <button class="btn btn--sm btn--primary" type="button" data-act="loudness-measure-all">${icon("bolt")}<span>测量全部歌曲</span></button>
+          <button class="btn btn--sm" type="button" data-act="loudness-cancel">${icon("close")}<span>停止</span></button>
+          <button class="btn btn--sm" type="button" data-act="loudness-refresh">${icon("refresh")}<span>重新拉取补偿</span></button>
+          <button class="btn btn--sm btn--danger" type="button" data-act="loudness-clear">${icon("trash")}<span>清除测量数据</span></button>
+        </div>
+
+        <div class="setting__hint">
+          已测量 <b>${measured}</b> / ${total} 首${missing ? `，还有 <b>${fmtCount(missing)}</b> 首未测量` : "（全部已测量）"}<br />
+          ffmpeg：<b>${esc(available ? sourceText : "不可用")}</b>${available ? "（内置，开箱即用）" : " —— 转码与响度测量不可用"}
+        </div>
+      </div>
+    </section>`;
 }
 
 /* --------------------------------------------------------------------------
@@ -651,6 +753,74 @@ export async function handleSettingsAction(actEl, ctx = {}) {
     case "clear-cache":
       toast("缓存清理需在后端实现（当前仅保存元数据缓存文件）", { tone: "warning" });
       break;
+
+    /* 响度均衡 */
+    case "loudness-measure-all": {
+      if (!isWails()) {
+        toast("响度测量需要后端支持，浏览器预览不可用", { tone: "warning" });
+        return;
+      }
+      const box = document.querySelector("#loudness-progress");
+      if (box) box.hidden = false;
+      try {
+        const res = await backend.loudnessMeasureAll();
+        if (!res?.started) {
+          toast(res?.reason === "already-measuring" ? "已在测量中" : `无法开始测量：${res?.reason ?? "未知原因"}`, {
+            tone: "warning",
+          });
+          if (box) box.hidden = true;
+          return;
+        }
+        toast(`开始测量 ${res.total} 首歌曲的响度…`, { duration: 2500 });
+      } catch (err) {
+        if (box) box.hidden = true;
+        toast(`无法开始测量：${err?.message ?? err}`, { tone: "error", duration: 6000 });
+      }
+      break;
+    }
+    case "loudness-cancel":
+      if (isWails()) {
+        await backend.loudnessCancel();
+        toast("已请求停止测量");
+      }
+      break;
+    case "loudness-refresh": {
+      if (!isWails()) return;
+      await refreshLoudnessGains();
+      const ls = await refreshLoudnessState();
+      ctx.commit?.();
+      toast(`已重新拉取补偿（已测量 ${ls?.measured ?? 0} 首）`, { tone: "success" });
+      break;
+    }
+    case "loudness-clear": {
+      if (!isWails()) return;
+      openModal({
+        title: "清除响度测量数据？",
+        desc: "只会删除测量缓存，不会动你的音乐文件。清除后再次启用响度均衡会重新测量。",
+        okText: "清除",
+        danger: true,
+        onOk: async () => {
+          await backend.loudnessClear();
+          state.loudnessGains = {};
+          await refreshLoudnessState();
+          ctx.commit?.();
+          renderContent();
+          toast("已清除响度测量数据", { tone: "success" });
+          return true;
+        },
+      });
+      break;
+    }
+
+    case "loudness-target": {
+      const v = Number(actEl.value);
+      state.config.loudnessTarget = v;
+      ctx.commit?.();
+      await refreshLoudnessGains();
+      toast(`目标响度已设为 ${v} LUFS`, { tone: "success", duration: 2000 });
+      break;
+    }
+
     default:
       break;
   }
@@ -715,6 +885,10 @@ export function handleSettingControl(actEl, ctx = {}) {
       state.config[segKey] = numeric.includes(segKey) ? Number(value) : value;
       if (segKey === "lyricsLines") {
         setRuntimeToken("--lyric-pad", `${50 - Number(value) * 4}%`);
+      }
+      if (segKey === "loudnessMode") {
+        // 模式切换后需要重新拉取补偿增益表（off→on 或 track↔album）
+        refreshLoudnessGains();
       }
     }
     ctx.commit?.();

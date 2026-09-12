@@ -58,6 +58,16 @@ tasks:
     cmds:
       - task: common:go:mod:tidy
 
+  ffmpeg:fetch:
+    summary: 下载内置 ffmpeg（静态构建，约 155MB）
+    cmds:
+      - task: common:ffmpeg:fetch
+
+  ffmpeg:info:
+    summary: 查看内置 ffmpeg 状态
+    cmds:
+      - task: common:ffmpeg:info
+
   test:
     summary: 运行后端测试
     cmds:

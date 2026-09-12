@@ -12,7 +12,10 @@
 ## 运行应用
 
 ```powershell
-# 构建（会同步前端产物 + 生成绑定 + 编译）
+# 首次构建前先取内置 ffmpeg（约 155MB，只需一次）
+node tools/fetch-ffmpeg.mjs
+
+# 构建（会同步前端产物 + 生成绑定 + 编译，带上内置 ffmpeg 约 168MB）
 wails3 build
 .\bin\musicplayer.exe
 
@@ -24,8 +27,52 @@ wails3 task package
 ```
 
 首次运行会在 `%APPDATA%\MusicPlayer\` 生成 `config.json` 与 `themes\`（内置主题会同步过去）。
-添加音乐文件夹后，扫描与监听都会自动生效；`ape/wma` 等格式会自动调用本机 ffmpeg 转码播放
-（没装 ffmpeg 时这些格式只展示、不播放，界面上会提示）。
+添加音乐文件夹后，扫描与监听都会自动生效。
+
+**ffmpeg 是内置的**：首次启动会把编译进 exe 的 ffmpeg 解包到
+`%LOCALAPPDATA%\MusicPlayer\bin\`（约 155MB，按内容哈希命名，只解包一次）。
+因此用户机器上不需要预装 ffmpeg；`ape/wma` 等格式能直接播放。
+如果本机已装了 ffmpeg 也可以指定：
+
+```powershell
+$env:MUSICPLAYER_FFMPEG = "D:\ffmpeg\bin\ffmpeg.exe"   # 优先使用它
+$env:MUSICPLAYER_FFMPEG_DIR = "D:\mp-bin"              # 改内置版本的解包位置
+```
+
+> 内置的是 GPL 构建版 ffmpeg，许可证随二进制放在
+> `internal/ffmpeg/bin/FFMPEG-LICENSE.txt`，再分发时请一并保留。
+
+---
+
+## 响度均衡（音量一致化）
+
+不同来源的音乐响度差得很远。实测你的曲库（53 首 m4a）：
+
+```
+实测响度范围: -23.25 ~ -8.51 LUFS  →  相差 14.74 LU
+补偿增益范围: +4.67 dB ~ -7.49 dB
+```
+
+也就是说切歌时音量可能突然跳 15 dB。开启响度均衡后，每首歌会被补偿到同一个
+目标响度（默认 **-16 LUFS**），切换歌曲音量保持稳定。
+
+- 在 **设置 → 响度均衡** 里选择模式：`关闭` / `逐曲均衡` / `同专辑统一`
+- 点「测量全部歌曲」批量分析（后台进行，有进度条，可随时停止）
+- 播放某首歌时若还没测过，会自动后台补测，测好立即生效
+- 测量结果缓存在 `%APPDATA%\MusicPlayer\loudness-cache.json`，每首歌只测一次
+
+实现要点：
+
+- 用 ffmpeg 的 `loudnorm` 滤镜按 **EBU R128** 测出整合响度（LUFS）与真峰值（dBTP）
+- 补偿采用**静态线性增益**（`目标响度 − 实测响度`）而不是动态归一化：
+  保留原始动态范围，且结果是个恒定 dB，前端可以用 GainNode 实时套用、切歌零延迟
+- **真峰值保护**：增益后真峰值不超过 -1 dBTP，避免抬升导致削波
+- 回放链路：`<audio>` → `MediaElementSource` → `GainNode`（用户音量 × 响度补偿）→ 输出
+
+> 跨源细节：打包后前端在 `http://wails.localhost`，音频服务在 `http://127.0.0.1:port`。
+> 实测若服务端不给 CORS 头，`<audio>` 仍能出声，但 **Web Audio 会读到纯静音**，
+> 响度均衡就完全失效。因此音频服务会回显 `Origin` 并暴露 `Content-Range` 等头，
+> 前端 `<audio>` 也固定设置 `crossOrigin="anonymous"`。
 
 ---
 
@@ -72,18 +119,20 @@ node tools/cdp-check.js
 ## 目录结构
 
 ```
-main.go                       应用入口：装配配置 / 主题 / 曲库 / 音频服务 / 窗口
-services.go                   7 个 Wails 服务（前端调用的接口层）
+main.go                       应用入口：装配配置 / 主题 / 曲库 / 音频服务 / 响度 / 窗口
+services.go                   8 个 Wails 服务（前端调用的接口层）
 internal/
   bootstrap/                  数据模型、配置读写、稳定 id
   filter/                     过滤规则引擎（与前端语义一致）
   library/                    扫描、元数据缓存、增量重扫、fsnotify 监听
   meta/                       标签与封面解析、各格式时长解析
   lyrics/                     .lrc 与内嵌歌词
-  media/                      本地音频 HTTP 服务（Range + ffmpeg 转码）
+  ffmpeg/                     ffmpeg 定位与内置二进制解包（bin/ 不入库）
+  loudness/                   EBU R128 响度测量与补偿增益计算
+  media/                      本地音频 HTTP 服务（CORS / Range / 转码缓存）
   theme/                      主题目录扫描（内置主题随二进制分发）
 build/                        Wails 构建脚手架（Taskfile / 图标 / NSIS 脚本）
-Taskfile.yml                  构建入口（wails3 task build / run / package / test）
+Taskfile.yml                  构建入口（build / run / package / ffmpeg:fetch / test）
 docs/                         需求原文、界面设计、技术方案、后端实现说明、截图
 frontend/
   bindings/                   ★ wails3 生成的前端绑定（可重新生成）
@@ -113,9 +162,13 @@ frontend/
 tools/
   dev-server.js               零依赖静态预览服务器（含绑定与 runtime 桩）
   build-frontend.mjs          同步前端产物 + 内置主题 + 绑定
-  cdp-check.js                场景化自检（CDP）
+  fetch-ffmpeg.mjs            下载内置 ffmpeg（静态构建）
+  cdp-check.js                场景化自检（CDP，14 个场景）
+  media-check.mjs             跨源播放 / CORS / Web Audio 实测
+  probe-audio.mjs             媒体事件细粒度追踪（播放卡住时用）
+  realcheck.go                真实曲库全链路验收
+  loudcheck.go                真实曲库响度测量验收
   screenshots.ps1             批量截图
-  gen-id-vectors.mjs          生成 StableID 测试向量（前端算法侧）
   ui-probe.ps1                探针的 PowerShell 版（备用）
 ```
 
@@ -163,7 +216,9 @@ tools/
 | 需求 | 状态 |
 | --- | --- |
 | 真实播放 | ✅ 本地音频服务（127.0.0.1 + token），原生格式支持 Range 精确 seek |
-| ape / wma 等格式 | ✅ 自动调用 ffmpeg 转 WAV 流；没装 ffmpeg 时提示而不崩溃 |
+| ape / wma 等格式 | ✅ 内置 ffmpeg 转码（首次启动解包，用户无需安装） |
+| 转码缓存 | ✅ 转成 WAV 落盘后按文件提供，长度准确、支持字节级 seek，LRU 上限 600MB |
+| 响度测量与补偿 | ✅ EBU R128（loudnorm）+ 静态增益 + 真峰值保护，逐曲/同专辑两种模式 |
 | 歌词 | ✅ 同名 `.lrc`（含 `song.zh.lrc`）→ 音频内嵌歌词，按设置顺序 |
 | 进度条真实进度 | ✅ 由 `<audio>` 事件驱动（预览下仍是模拟时钟） |
 | 在线歌词匹配 | ⏳ 预留开关位，未实现 |

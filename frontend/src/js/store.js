@@ -38,6 +38,11 @@ const DEFAULT_CONFIG = {
   lyricsLines: 7,
   cacheDir: "%APPDATA%\\MusicPlayer\\cache",
   scanConcurrency: 4,
+
+  /* 响度均衡（LUFS 补偿） */
+  loudnessMode: "off", // off | track（逐曲） | album（同专辑统一）
+  loudnessTarget: -16, // 目标整合响度 LUFS（-16 接近流媒体常用值）
+  loudnessLimit: true, // 真峰值保护，避免抬升后削波
 };
 
 function initialState() {
@@ -72,6 +77,10 @@ function initialState() {
     volume: 0.8,
     muted: false,
     shuffleOrder: [],
+
+    /* 响度均衡：songId → 补偿增益(dB)，由后端测量结果算出 */
+    loudnessGains: {},
+    loudnessState: null, // 后端响度能力/进度快照
 
     /* 配置 */
     config: { ...DEFAULT_CONFIG },
@@ -657,6 +666,9 @@ const SYNCED_KEYS = [
   "lyricsLines",
   "lyricsSources",
   "cacheDir",
+  "loudnessMode",
+  "loudnessTarget",
+  "loudnessLimit",
 ];
 
 let syncTimer = null;

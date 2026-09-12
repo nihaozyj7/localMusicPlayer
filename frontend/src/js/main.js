@@ -27,7 +27,7 @@ import {
 } from "./store.js";
 import { bindShell, doRescan, navigate, renderShell } from "./shell.js";
 import { initPlayerBar, paintPlayerBar } from "./playerbar.js";
-import { applyVolume, syncAudio } from "./audio.js";
+import { applyVolume, applyGainForSong, syncAudio, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
 import {
   closePlayer,
   openPlayer,
@@ -74,8 +74,9 @@ function tick() {
   paintPlayerBar();
   renderPlayerView();
   syncPlaybackState();
-  // 真实播放：切歌 / 播放暂停状态变化时同步到 <audio>
+  // 真实播放：切歌 / 播放暂停状态变化时同步到 <audio>，并套用响度补偿
   syncAudio();
+  applyGainForSong();
 }
 
 /* --------------------------------------------------------------------------
@@ -276,6 +277,46 @@ function bindBackendEvents() {
     if (typeof payload.duration === "number") state.duration = payload.duration;
     if (typeof payload.playing === "boolean") state.playing = payload.playing;
   });
+
+  /* ---- 响度均衡 ---- */
+  on("loudness:progress", (payload) => {
+    if (!payload) return;
+    state.loudnessState = { ...(state.loudnessState || {}), ...payload };
+    const box = $("#loudness-progress");
+    if (box) {
+      box.hidden = false;
+      const text = box.querySelector("[data-role='text']");
+      const bar = box.querySelector("[data-role='bar']");
+      if (text) text.textContent = `正在测量响度 ${payload.done} / ${payload.total}${payload.current ? ` · ${payload.current}` : ""}`;
+      if (bar && payload.total) bar.dataset.value = String(Math.round((payload.done / payload.total) * 100));
+    }
+  });
+
+  on("loudness:done", async (payload) => {
+    const box = $("#loudness-progress");
+    if (box) box.hidden = true;
+    const failed = payload?.failed ?? 0;
+    toast(
+      failed
+        ? `响度测量完成：成功 ${payload?.done - failed} 首，失败 ${failed} 首`
+        : `响度测量完成：共 ${payload?.done ?? 0} 首`,
+      { tone: failed ? "warning" : "success", duration: 4000 }
+    );
+    await refreshLoudnessState();
+    await refreshLoudnessGains();
+  });
+
+  on("loudness:failed", (payload) => {
+    const box = $("#loudness-progress");
+    if (box) box.hidden = true;
+    toast(`响度测量失败：${payload?.message ?? "未知错误"}`, { tone: "error", duration: 6000 });
+  });
+
+  on("ffmpeg:ready", (payload) => {
+    if (!payload) return;
+    state.ffmpegState = payload;
+    console.info(`[ffmpeg] ${payload.available ? payload.describe : "不可用"}`);
+  });
 }
 
 /* --------------------------------------------------------------------------
@@ -346,6 +387,10 @@ async function main() {
   subscribe(() => tick());
   tick();
   applyVolume();
+
+  // 响度能力与补偿表（后端可用时）
+  await refreshLoudnessState();
+  await refreshLoudnessGains();
 
   // 预览模式下的进度模拟（真实播放时自动让位给 <audio> 事件）
   startMockTicker();

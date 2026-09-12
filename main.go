@@ -12,11 +12,14 @@ import (
 	"context"
 	"embed"
 	"log"
+	"path/filepath"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"musicplayer/internal/bootstrap"
+	"musicplayer/internal/ffmpeg"
 	"musicplayer/internal/library"
+	"musicplayer/internal/loudness"
 	"musicplayer/internal/media"
 	"musicplayer/internal/theme"
 )
@@ -26,16 +29,18 @@ var assets embed.FS
 
 // appState 汇总应用运行期的各个组件，避免全局变量散落
 type appState struct {
-	store  *bootstrap.Store
-	lib    *library.Manager
-	watch  *library.Watcher
-	themes *theme.Manager
-	media  *media.Server
-	window *application.WebviewWindow
-	app    *application.App
+	store   *bootstrap.Store
+	lib     *library.Manager
+	watch   *library.Watcher
+	themes  *theme.Manager
+	media   *media.Server
+	loud    *loudness.Manager
+	window  *application.WebviewWindow
+	app     *application.App
 
-	librarySvc *LibraryService
-	windowSvc  *WindowService
+	librarySvc  *LibraryService
+	windowSvc   *WindowService
+	loudnessSvc *LoudnessService
 }
 
 var state *appState
@@ -60,18 +65,43 @@ func main() {
 		log.Printf("主题目录: %s（%d 个主题）", themeMgr.Dir(), len(themeMgr.List()))
 	}
 
-	/* ---- 3) 曲库与音频服务 ---- */
+	/* ---- 3) 曲库、音频服务与响度测量 ---- */
 	lib := library.NewManager(store)
 	state.lib = lib
 
+	loudMgr := loudness.NewManager(store.DataDir(), store.Get().ScanConcurrency)
+	state.loud = loudMgr
+
 	songs := func(id string) (bootstrap.Song, bool) { return lib.SongByID(id) }
 	mediaSrv := media.New(songs)
+	mediaSrv.SetCacheDir(filepath.Join(store.DataDir(), "cache", "transcode"))
 	state.media = mediaSrv
 	if base, err := mediaSrv.Start(); err != nil {
 		log.Printf("音频服务启动失败: %v", err)
 	} else {
 		log.Printf("音频服务: %s（转码能力: %v）", base, mediaSrv.CanTranscode())
 	}
+
+	// 内置 ffmpeg 是 155MB，解包要一两秒：放后台做，别挡住窗口显示。
+	// 解包完成后刷新一次解析结果，转码与响度测量就能用上内置版本。
+	go func() {
+		if err := ffmpeg.Prewarm(); err != nil {
+			log.Printf("[ffmpeg] 内置二进制解包失败: %v", err)
+		}
+		tools := ffmpeg.Resolve()
+		path := tools.FFmpeg
+		if path == "" {
+			path = "未找到"
+		}
+		log.Printf("[ffmpeg] 可用: %v 来源=%s 路径=%s", tools.Available(), tools.Describe(), path)
+		mediaSrv.RefreshFFmpeg()
+		loudMgr.RefreshTools()
+		emit("ffmpeg:ready", map[string]any{
+			"available": tools.Available(),
+			"source":    tools.Source,
+			"describe":  tools.Describe(),
+		})
+	}()
 
 	watch, err := library.NewWatcher(lib)
 	if err != nil {
@@ -83,6 +113,7 @@ func main() {
 	/* ---- 4) 服务实例 ---- */
 	state.librarySvc = NewLibraryService(lib, watch, store)
 	state.windowSvc = NewWindowService()
+	state.loudnessSvc = NewLoudnessService(loudMgr, lib)
 
 	/* ---- 5) Wails 应用 ---- */
 	app := application.New(application.Options{
@@ -95,6 +126,7 @@ func main() {
 			application.NewService(NewThemeService(themeMgr)),
 			application.NewService(NewConfigService(store)),
 			application.NewService(NewMediaService(mediaSrv, songs)),
+			application.NewService(state.loudnessSvc),
 			application.NewService(state.windowSvc),
 		},
 		Assets: application.AssetOptions{

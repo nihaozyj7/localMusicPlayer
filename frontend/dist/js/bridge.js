@@ -52,6 +52,7 @@ export async function connect() {
       Themes: mod.ThemeService,
       Config: mod.ConfigService,
       Media: mod.MediaService,
+      Loudness: mod.LoudnessService,
       Window: mod.WindowService,
     };
     active = true;
@@ -170,6 +171,17 @@ export const backend = {
   /* ---- 播放地址 ---- */
   mediaUrl: (songId) => call(bindings?.Media?.URL, songId),
   mediaState: () => call(bindings?.Media?.State),
+
+  /* ---- 响度均衡 ---- */
+  loudnessState: () => call(bindings?.Loudness?.State),
+  loudnessLookup: (songId, target) => call(bindings?.Loudness?.Get, songId, target),
+  loudnessMeasure: (songId) => call(bindings?.Loudness?.Measure, songId),
+  loudnessMeasureAll: () => call(bindings?.Loudness?.MeasureAll),
+  loudnessCancel: () => call(bindings?.Loudness?.Cancel),
+  loudnessClear: () => call(bindings?.Loudness?.Clear),
+  loudnessGainMap: (target) => call(bindings?.Loudness?.GainMap, target),
+  loudnessAlbumGains: (target) => call(bindings?.Loudness?.AlbumGains, target),
+  loudnessRefresh: () => call(bindings?.Loudness?.RefreshTools),
 
   /* ---- 窗口 ---- */
   windowMinimize: () => call(bindings?.Window?.Minimize),

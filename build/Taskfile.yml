@@ -28,6 +28,21 @@ tasks:
     cmds:
       - wails3 generate bindings -b -i -clean=true
 
+  ffmpeg:fetch:
+    summary: 下载内置 ffmpeg（静态构建，约 155MB，只在首次构建时需要）
+    status:
+      - test -f internal/ffmpeg/bin/ffmpeg.exe
+    cmds:
+      - node tools/fetch-ffmpeg.mjs
+    preconditions:
+      - sh: node --version
+        msg: "需要 Node.js 才能下载内置 ffmpeg（或手动把 ffmpeg.exe 放到 internal/ffmpeg/bin/）"
+
+  ffmpeg:info:
+    summary: 查看内置 ffmpeg 状态
+    cmds:
+      - node tools/fetch-ffmpeg.mjs
+
   build:frontend:
     summary: 同步静态前端到 frontend/dist（不使用打包器）
     run: once
@@ -38,6 +53,7 @@ tasks:
       - frontend/dist/**/*
     deps:
       - task: generate:bindings
+      - task: ffmpeg:fetch
     cmds:
       - node tools/build-frontend.mjs
 
