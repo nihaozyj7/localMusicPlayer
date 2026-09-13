@@ -290,7 +290,15 @@ function coverOverrideFor(id) {
  *
  * 需求：在线封面获取不到时**不显示封面**，而不是留一个破图或占位图。
  * 这里返回 true 表示调用方应当渲染一个空槽位（或直接省略 <img>）。
+ *
+ * 注意与 isPlaceholderCoverUrl 的分工：本函数问的是「这首歌该不该画封面」，
+ * 后者问的是「这个 <img src> 是不是那张占位图本身」（取色时要靠它把关）。
  */
 export function isPlaceholderCover(song) {
   return coverOf(song) === DEFAULT_COVER;
+}
+
+/** 这个封面地址是不是那张默认占位封面（DEFAULT_COVER）本身 */
+export function isPlaceholderCoverUrl(url) {
+  return String(url || "") === DEFAULT_COVER;
 }

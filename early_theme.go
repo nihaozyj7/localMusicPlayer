@@ -85,6 +85,14 @@ func earlyThemeScript(store *bootstrap.Store, themeMgr *theme.Manager) []byte {
 	// 种子色只有消费它的主题（内置的 cover-dark，以及将来同样声明 --seed 的
 	// 自定义主题）才需要。写进别的主题没有任何效果，但会一直留在 <html> 上，
 	// 容易误以为「主题自带色被覆盖了」—— 所以这里只在 cover-dark 下写。
+	//
+	// 注意：行内自定义属性**压得过样式表里的同名令牌**，所以这些值只在「首帧」
+	// 有意义。前端套主题时会「先把它们降级成运行时令牌、再撤掉行内副本」
+	// （见 theme.js#demoteEarlyThemeInlineProps）：
+	//   · 不撤 —— 窗口底色会被永久锁在启动时那个颜色上，换主题看起来就像没生效；
+	//   · 直接撤 —— 封面还没解码完的那段空窗期会退回主题写死的占位灰，启动时
+	//     又要灰一下（「上次的颜色 → 灰 → 真正取色」）。
+	// 降级之后观感与首帧完全一致，同时把控制权交还给主题样式表 / 运行时令牌表。
 	if seed != "" && themeID == "cover-dark" {
 		fmt.Fprintf(&b, "d.style.setProperty('--seed',%q);", seed)
 		fmt.Fprintf(&b, "d.style.setProperty('--seed-2',%q);", seed2)

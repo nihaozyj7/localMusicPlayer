@@ -10,6 +10,7 @@
 import { backend, isWails } from "./bridge.js";
 import { animationDurationValue, setRuntimeTokens, replaceStyleRules } from "./runtime-tokens.js";
 import { state } from "./store.js";
+import { isPlaceholderCoverUrl } from "./utils.js";
 
 /** 内置主题登记表（新增主题时可在此追加，或依赖后端自动扫描） */
 const BUILTIN_THEMES = [
@@ -146,8 +147,90 @@ function rootVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+/* --------------------------------------------------------------------------
+   首帧主题脚本留下的行内令牌
+   --------------------------------------------------------------------------
+   Go 侧的 /early-theme.js（见 early_theme.go）会在页面加载前把 --seed / --seed-2
+   以及由种子色算出的近似 --bg-app / --bg-window **写进 <html> 的行内样式**，
+   让首帧就是对的颜色，而不是「先黑再取色」。
+
+   但行内自定义属性的优先级**高于任何样式表规则**（连运行时令牌表里的 !important
+   也压不过它）。这些值只在首帧有意义，之后必须撤掉，否则：
+
+     · --bg-app / --bg-window 会把窗口底色**永久锁**在启动时那个颜色上 ——
+       换主题后侧边栏、曲目区、底栏还是旧主题的底色，看起来就是「切主题没效果，
+       只是取色主题还残留一点颜色」（正是这一条造成的串味）；
+     · --seed / --seed-2 会盖住主题自带的默认种子色。
+
+   ★ 但**不能直接删掉就走人**。--seed 是封面取色主题的底色来源，而真正的种子色
+   要等封面解码完（primeCoverAccent / 主循环的 syncCoverAccent）才拿得到；直接
+   删掉的话，中间这段空窗期主题会退回自己写死的占位灰，于是启动时又变成
+   「上次保留的颜色 → 占位灰 → 真正的取色」三段 —— 就是修串味时引入的回退。
+
+   所以删之前先把行内值**搬进运行时令牌表**：观感与首帧完全一致（同一个颜色），
+   只是把「压过所有样式表的行内副本」换成了「可被后续覆盖的运行时令牌」。
+   底色令牌不搬 —— 主题样式表本来就会用同一个种子色算出精确值，让主题说了算。
+   -------------------------------------------------------------------------- */
+const EARLY_THEME_INLINE_PROPS = ["--seed", "--seed-2", "--bg-app", "--bg-window"];
+/** 需要「搬进运行时令牌表」的行内令牌（其余的直接删） */
+const EARLY_THEME_CARRIED_PROPS = ["--seed", "--seed-2"];
+
+function readHtmlInlineProp(name) {
+  const raw = document.documentElement.style.getPropertyValue(name).trim();
+  return raw ? String(document.documentElement.style.getPropertyValue(name)) : null;
+}
+
+/** 把首帧行内令牌降级成运行时令牌，然后撤掉行内副本。返回降级后的种子色。 */
+function demoteEarlyThemeInlineProps() {
+  const html = document.documentElement;
+  const carried = {};
+  for (const name of EARLY_THEME_CARRIED_PROPS) {
+    const value = readHtmlInlineProp(name);
+    if (value) carried[name] = value;
+  }
+  for (const name of EARLY_THEME_INLINE_PROPS) html.style.removeProperty(name);
+  return carried;
+}
+
+/** 目前消费 --seed / --seed-2 的主题（用户主题若照着写，见 seedFor 的说明） */
+export const SEED_CONSUMER = "cover-dark";
+
+/* --------------------------------------------------------------------------
+   封面取色的「种子源」策略
+   --------------------------------------------------------------------------
+   取色是**主题能力**（只有声明了 --seed / --seed-2 的主题才消费它），所以
+   「拿哪个封面去取色、什么源不该取色」属于主题层，不属于主循环。主循环只负责
+   在合适的时机把封面地址交过来（见 main.js#syncCoverAccent）。
+
+   唯一一条硬规则：**默认占位封面绝不取色**。那张内联 SVG 的主色是一个中性
+   深灰（实测 #1d1d22），拿它写进 --seed 会同时造成两件坏事：
+     1. 主题整片变灰（不是封面主色，却冒充主色）；
+     2. 它会被写回配置的 coverSeed，**覆盖掉上次真正的取色结果** ——
+        下次启动的首帧主题就用错了颜色。
+   占位封面出现的地方有两类：曲目本身没有内嵌封面；底栏 <img> 还没画出真正
+   那张封面时的过渡状态。
+   -------------------------------------------------------------------------- */
+export function seedSourceUsable(src) {
+  return Boolean(src) && !isPlaceholderCoverUrl(src);
+}
+
+/**
+ * 上一次真正把种子色落到运行时令牌表里的主题；null 表示「还没有落过，现在用的
+ * 是首帧脚本留下的那个种子色」。
+ *
+ * 它的唯一作用是判断「这次换主题，是不是该把旧种子撤掉」：
+ * 启动阶段（null）绝不能撤 —— 真正的种子色要等封面解码完才拿得到，中间撤掉
+ * 就会闪回主题的占位灰（就是这一条造成「启动时主题闪一下」）。
+ */
+let seedTheme = null;
+
+/** 首帧脚本留下的种子色：降级时暂存，供启动这段异步窗口顶上 */
+let earlySeed = null;
+let earlySeed2 = null;
+
 /**
  * 应用主题：
+ *  0. 首帧主题脚本留下的行内令牌降级为运行时令牌（否则换主题不会生效，见上）
  *  1. 解析深浅模式（dark / light / system）
  *  2. 写入 data-theme
  *  3. 应用毛玻璃强度与不透明度覆盖
@@ -156,6 +239,13 @@ function rootVar(name) {
 export async function applyResolvedTheme(config) {
   const html = document.documentElement;
   const sysDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+
+  // 必须在解析主题之前做：行内副本压着所有样式表，不移走的话下面读到的、
+  // 以及换主题之后生效的都还是启动时那个值。
+  // 降级出来的种子色只暂存起来，稍后按下面的「粘住」规则决定要不要继续用。
+  const carried = demoteEarlyThemeInlineProps();
+  if (carried["--seed"]) earlySeed = carried["--seed"];
+  if (carried["--seed-2"]) earlySeed2 = carried["--seed-2"];
 
   let themeId = config.theme || "dark-minimal";
   if (config.themeMode === "system") {
@@ -173,22 +263,46 @@ export async function applyResolvedTheme(config) {
   html.dataset.mode = registry.find((t) => t.id === themeId)?.mode || config.themeMode || "dark";
   config.theme = themeId;
 
+  /* —— 种子色：粘住，而不是「先清空再等封面取色」 ——
+     运行时令牌表一旦写进 --seed，就有 !important 优先级；而真正的取色结果要等
+     当前封面解码完（primeCoverAccent / 主循环的 syncCoverAccent）才写第二次。
+     所以在它到来之前，种子里必须一直是「首帧脚本留下的那个上次取色结果」，
+     中途清空就会闪回主题写死的占位灰（启动时闪一下就是这么来的）。
+
+     清空只在两种情况下做（此时主题的默认种子色才该生效）：
+       · 用户明确关掉了「主题色跟随封面」；
+       · 换主题时**真正把种子落过地的那个主题**（seedTheme）不是当前主题 ——
+         即从封面取色主题切到了别的主题。启动阶段 seedTheme 是 null，
+         所以这一条不会在启动时误伤。 */
+  const derivedSeed = seedFor(config, themeId);
+  const derivedSeed2 = seedFor(config, themeId, true);
+  const seedEnabled = config.accentFromCover !== false;
+  const dropEarlySeed = config.accentFromCover === false || (seedTheme !== null && themeId !== SEED_CONSUMER);
+  if (dropEarlySeed) {
+    earlySeed = null;
+    earlySeed2 = null;
+  }
+  const seed = derivedSeed ?? (seedEnabled ? earlySeed : null);
+  const seed2 = derivedSeed2 ?? earlySeed2 ?? seed;
+
   // 动画开关始终生效；毛玻璃强度只有在用户手动调过之后才覆盖主题自带的值，
   // 否则无论切到哪个主题都会显示成配置里的 22px（主题自己的 26px 就看不到了）。
   setRuntimeTokens({
     "--glass-blur": config.glassBlurCustom ? `${config.glassBlur}px` : null,
     // --dur 是全站唯一的过渡时长令牌：动画开关与「过渡速度」都只改它
     "--dur": animationDurationValue(config),
-    // 封面取色的种子色跟着配置一起重新下发。
+    // 封面取色的种子色。
     //
-    // 为什么要在这里做（而不只是取到色时写一次）：运行时令牌表的优先级
-    // **高于** :root[data-theme] 里的主题令牌，一旦写进去就会一直压着主题。
-    // 换了主题却不把种子重发一遍，新主题就会用着上一个主题的种子色 ——
-    // 反过来，没开「主题色跟随封面」/ 当前主题不消费种子时，种子里必须清空，
-    // 主题自己的默认色才能生效。
-    "--seed": seedFor(config, themeId),
-    "--seed-2": seedFor(config, themeId, true),
+    // 为什么换主题时必须重下发：运行时令牌表的优先级**高于**
+    // :root[data-theme] 里的主题令牌，一旦写进去就会一直压着主题 ——
+    // 换了主题却不重发，新主题就会用着上一个主题的种子色。
+    "--seed": seed,
+    "--seed-2": seed2,
   });
+  // 记下「现在真正管着种子色的是谁」：只有确实是封面取色主题时才认，别的主题
+  // 一律把种子色标记为「该撤」。启动阶段这里可能是 null（种子还只是首帧脚本
+  // 留下的暂存值）—— 那正是我们要的：下一次套主题时才允许撤它。
+  seedTheme = seed && themeId === SEED_CONSUMER ? SEED_CONSUMER : null;
 
   forceStyleRefresh();
   // 用户手动调过面板透明度时，换主题后按新主题的底色重新套一遍

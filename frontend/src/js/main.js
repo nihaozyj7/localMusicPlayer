@@ -59,7 +59,15 @@ import {
   syncPlaybackState,
   togglePlayer,
 } from "./playerhost.js";
-import { applyResolvedTheme, applyCoverSeed, discoverThemes, extractCoverSeed, getTheme, normalizeSeed } from "./theme.js";
+import {
+  applyResolvedTheme,
+  applyCoverSeed,
+  discoverThemes,
+  extractCoverSeed,
+  getTheme,
+  normalizeSeed,
+  seedSourceUsable,
+} from "./theme.js";
 import { coverOf } from "./utils.js";
 import { refreshBackdropState } from "./backdrop.js";
 import { desktopLyricsEnabled, pushDesktopLyrics } from "./desktop-lyrics.js";
@@ -298,10 +306,15 @@ function sameOriginSafeImage() {
   return img;
 }
 
-/** 需要为这张封面取色吗？（开关关着 / 地址没变就跳过） */
+/**
+ * 需要为这张封面取色吗？
+ *
+ * 门槛（开关 / 地址变没变 / 这个源能不能取色）都来自主题层：取色是主题能力，
+ * 这里只负责「什么时候问一次」。
+ */
 function accentNeeded(src) {
   if (!state.config.accentFromCover) return false;
-  if (!src) return false;
+  if (!seedSourceUsable(src)) return false;
   return src !== accentCoverSrc;
 }
 
@@ -311,6 +324,9 @@ function accentNeeded(src) {
  * 优先让底栏那个 <img> 直接把像素交出来：它早就画出来了，省一次加载与解码。
  */
 function extractSeed(src) {
+  // 不能取色的源（默认占位封面）直接回空：把这条规则也放在入口上，
+  // 免得将来新增调用点绕过上面的门槛、又拿占位图算出中性灰。
+  if (!seedSourceUsable(src)) return Promise.resolve("");
   if (seedCache.has(src)) return Promise.resolve(seedCache.get(src));
   if (seedJobs.has(src)) return seedJobs.get(src);
 
@@ -330,8 +346,11 @@ function extractSeed(src) {
     // 底栏封面还没画好 / 已经不是这张了：用一个独立 Image 加载，
     // 不依赖底栏节点，也不怕它被重建替换。
     const probe = sameOriginSafeImage();
-    probe.addEventListener("load", () => finish(normalizeSeed(extractCoverSeed(probe))));
-    // 取不到色（默认占位图、跨域被拦）就记为「没有」，别再试
+    // 取到的是不能取色的源（默认占位封面）→ 当作「没有主色」，绝不写进 --seed / 配置
+    probe.addEventListener("load", () =>
+      finish(seedSourceUsable(src) ? normalizeSeed(extractCoverSeed(probe)) : "")
+    );
+    // 取不到色（地址失效、跨域被拦）就记为「没有」，别再试
     probe.addEventListener("error", () => finish(""));
     probe.src = src;
   });
@@ -361,6 +380,12 @@ async function applySeed(hex) {
    -------------------------------------------------------------------------- */
 async function primeCoverAccent() {
   if (!state.config.accentFromCover) return;
+  // 配置里保存着上次的取色结果时**直接用它**，绝不在启动阶段重新解码封面。
+  // 为什么要这么克制：这一刻底栏封面还没画出来（它要等首次渲染），能拿到的
+  // 很可能只是默认占位封面 —— 拿它取色会算出中性灰，把上次保存的颜色顶掉，
+  // 于是启动时就是「上次的颜色 → 中性灰 → 真正的取色」闪两下。
+  // 真正的取色交给主循环的 syncCoverAccent：那时底栏已经画出当前封面了。
+  if (normalizeSeed(state.config.coverSeed)) return;
   const song = state.currentId ? songById(state.currentId) : null;
   const src = song ? coverOf(song) : "";
   if (!src) return;
@@ -382,6 +407,11 @@ function syncCoverAccent() {
   const img = $("#bar-cover-img");
   const src = img?.getAttribute("src") || "";
   if (!src) return;
+  // 记下「已经放弃过取色的地址」：底栏停在默认占位封面上时，不能每帧都重试
+  if (!seedSourceUsable(src)) {
+    accentCoverSrc = src;
+    return;
+  }
   if (!accentNeeded(src)) return;
 
   accentCoverSrc = src;
