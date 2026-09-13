@@ -231,12 +231,28 @@
 /* --------------------------------------------------------------------------
    舞台：老式监视器
    -------------------------------------------------------------------------- */
+/* 构图：**镜像两栏** —— 歌词（终端输出）在左、老式监视器在右。
+   另外三种样式都是"画面在左、歌词在右"，这里反过来，扫一眼就知道不是同一个布局。 */
 .playerview[data-skin="wasteland"] .playerview__stage {
   display: grid;
-  grid-template-columns: minmax(0, 0.98fr) minmax(0, 1.02fr);
+  grid-template-columns: minmax(0, 1.06fr) minmax(0, 0.94fr);
   gap: clamp(12px, 3vmin, 52px);
   align-items: stretch;
   padding: clamp(8px, 2.2vmin, 28px) clamp(12px, 3.4vmin, 56px) clamp(10px, 2.6vmin, 34px);
+}
+
+.playerview[data-skin="wasteland"] .wa-cam {
+  order: 2;
+}
+
+.playerview[data-skin="wasteland"] .wa-lyrics {
+  order: 1;
+  /* 终端输出靠左；上面再压一层淡淡的扫描线，和监视器同一套质感 */
+  background-image: repeating-linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--wa-amber) 7%, transparent) 0 1px,
+    transparent 1px 4px
+  );
 }
 
 .playerview[data-skin="wasteland"] .wa-cam {

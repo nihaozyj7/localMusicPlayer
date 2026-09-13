@@ -220,7 +220,31 @@ const skin = defineSkin({
     const artist = pick(".co-meta__artist");
     const lyricsHost = pick(".co-lyrics");
 
-    const camera = createCamera(cam, { ampX: 16, ampY: 12, rot: 0.7, zoom: 0.042, speed: 0.82, seed: 23 });
+    /* 运镜：宇宙是「慢而大」的 —— 幅度大、速度慢、旋转小，更像漂移而不是手摇 */
+    const camera = createCamera(cam, {
+      ampX: 74,
+      ampY: 60,
+      rot: 2.4,
+      zoom: 0.075,
+      base: 1.02,
+      speed: 0.6,
+      seed: 23,
+      shotMin: 15,
+      shotMax: 26,
+    });
+    camera.addLayer(lyricsHost, { depth: 0.55, scale: false });
+    if (bg) {
+      /** @type {Array<[string, number]>} 选择器 + 视差深度 */
+      const camLayers = [
+        [".co-bg__deep", 0.1],
+        [".co-bg__stars", 0.4],
+        [".co-bg__nebula", 0.55],
+        [".co-bg__planet", 0.85],
+      ];
+      for (const [sel, depth] of camLayers) {
+        camera.addLayer(/** @type {HTMLElement|null} */ (bg.querySelector(sel)), { depth });
+      }
+    }
     const lyrics = createFxLyrics(lyricsHost, {
       onSeek: (ms) => ctx.actions.seek(ms),
       interactive,

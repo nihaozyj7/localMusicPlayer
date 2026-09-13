@@ -572,21 +572,72 @@ function renderNudge() {
   renderNudgePreview(offset);
 }
 
+/* —— 预览跟随播放 ——
+   两块预览（微调 / 打轴）都要「当前行跟着播放时间跳」。核心是别每帧重建
+   innerHTML（会打断滚动、也会闪），而是：
+     行号变了 → 只切 class；行号跑出窗口 → 才重建窗口。
+   用户自己滚过之后 4 秒内不抢滚动位置（与详情页歌词的处理一致，见
+   lyrics-view.js#userScrollingUntil）。 */
+let nudgeRows = [];
+let nudgeView = { from: 0, to: 0, active: -1, offset: 0 };
+/** 用户手动滚动后的「免打扰」截止时间戳；auto 为真时表示这次滚动是我们自己发的 */
+let followHold = 0;
+let followAuto = false;
+
+/** 把某一行滚进容器可视区中部；用户刚滚过时不抢 */
+function followScroll(box, row) {
+  if (!box || !row) return;
+  if (Date.now() < followHold) return;
+  const top = row.offsetTop - box.clientHeight / 2 + row.offsetHeight / 2;
+  const next = Math.max(0, top);
+  if (Math.abs(box.scrollTop - next) < 2) return;
+  followAuto = true;
+  box.scrollTo({ top: next, behavior: "smooth" });
+  setTimeout(() => {
+    followAuto = false;
+  }, 120);
+}
+
+/** 记下「用户自己在滚」：给两块预览列表都挂上（在事件绑定里调用一次） */
+function bindFollowScroll() {
+  [root.querySelector("[data-nudge-preview]"), root.querySelector("[data-editor-list]")].forEach((box) => {
+    if (!box) return;
+    box.addEventListener(
+      "scroll",
+      () => {
+        if (followAuto) return;
+        followHold = Date.now() + 4000;
+      },
+      { passive: true }
+    );
+  });
+}
+
+/** 当前播放到第几行（-1 = 还没到第一句），语义与 findLyricIndex 一致 */
+function activeLineIndex(lines, offset) {
+  let idx = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].time + offset <= state.position) idx = i;
+    else break;
+  }
+  return idx;
+}
+
 function renderNudgePreview(offset) {
   const box = $panel("[data-nudge-preview]");
   if (!box) return;
   const info = currentLyricsInfo();
+  nudgeRows = [];
   if (!info.text) {
     box.textContent = "这首歌还没有歌词。可以先用「在线匹配」找一份，或者切到「手动编辑」自己贴一份。";
+    nudgeView = { from: 0, to: 0, active: -1, offset };
     return;
   }
   const lines = info.lines;
-  // 当前行附近 ±5 行：给的是上下文，不是整首歌（整首在详情页里就能看）
-  let active = 0;
-  for (let i = 0; i < lines.length; i += 1) {
-    if (lines[i].time + offset <= state.position) active = i;
-    else break;
-  }
+  // 当前行附近 ±5 行：给的是上下文，不是整首歌（整首在详情页里就能看）。
+  // 窗口以当前行为中心，所以每次重建后当前行都落在中间 —— 行号推进一行，
+  // 列表看起来就是「往上滚一行」，这正是预览该有的观感。
+  const active = activeLineIndex(lines, offset);
   const from = Math.max(0, active - 5);
   const to = Math.min(lines.length, active + 6);
   const rows = [];
@@ -602,6 +653,37 @@ function renderNudgePreview(offset) {
     );
   }
   box.innerHTML = rows.join("");
+  nudgeRows = Array.from(box.querySelectorAll(".nudge__line"));
+  nudgeView = { from, to, active, offset };
+}
+
+/**
+ * 微调预览跟随播放。
+ *
+ * 以前这块**只在重建时画一次**，所以预览里的高亮永远停在打开面板那一刻 ——
+ * 用户看到的就是「预览根本不动」。现在放进 tick 里跟着走。
+ */
+function paintNudgeFollow() {
+  if (!root || root.hidden || activeTab !== "nudge") return;
+  const info = currentLyricsInfo();
+  if (!info.lines.length) return;
+  const offset = info.songId ? lyricsOffsetOf(info.songId) : 0;
+  // 偏移被改动过（用户点了 ± / 拖了滑条）→ 重建一次，时间与高亮一起更新
+  if (offset !== nudgeView.offset) {
+    renderNudgePreview(offset);
+    return;
+  }
+  const active = activeLineIndex(info.lines, offset);
+  if (active === nudgeView.active) return;
+  // 跑出当前窗口 → 重建（重建后当前行仍居中）
+  if (active < nudgeView.from || active >= nudgeView.to) {
+    renderNudgePreview(offset);
+    return;
+  }
+  nudgeView.active = active;
+  const at = active - nudgeView.from;
+  nudgeRows.forEach((row, i) => row.classList.toggle("is-active", i === at));
+  followScroll($panel("[data-nudge-preview]"), nudgeRows[at]);
 }
 
 function resetNudge() {
@@ -1037,6 +1119,11 @@ async function copyLrc() {
    -------------------------------------------------------------------------- */
 function onTick() {
   if (!root || root.hidden) return;
+  // 微调那块也要跟：它以前只在重建时画一次，所以预览永远停在打开那一刻
+  if (activeTab === "nudge") {
+    paintNudgeFollow();
+    return;
+  }
   if (activeTab !== "edit") return;
   const clock = $panel("[data-editor-clock]");
   if (clock) {
@@ -1088,6 +1175,8 @@ function paintNowRow() {
   const next = draftRows[idx];
   if (next) next.classList.add("is-now");
   lastNowIndex = idx;
+  // 跟着播放往下滚（用户刚自己滚过就让位）—— 打轴时要能一直看见「唱到哪句」
+  followScroll($panel("[data-editor-list]"), next);
 }
 
 /* --------------------------------------------------------------------------
@@ -1096,6 +1185,7 @@ function paintNowRow() {
 function bindPanelEvents() {
   root.addEventListener("click", onPanelClick);
   root.addEventListener("input", onPanelInput);
+  bindFollowScroll();
   // 捕获阶段：空格是本程序全局的「播放/暂停」，打轴也要用空格，
   // 必须抢在 main.js#bindShortcuts 之前拦下来（见 onPanelKeyDown）
   document.addEventListener("keydown", onPanelKeyDown, true);

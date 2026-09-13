@@ -141,12 +141,15 @@
 /* --------------------------------------------------------------------------
    舞台：街机框体
    -------------------------------------------------------------------------- */
+/* 构图：**街机框体居中 + 底部对话框**（游戏里的文字框）。
+   与宇宙样式的"行星居中"也不一样：这里的歌词被框成一块带粗边的对话框。 */
 .playerview[data-skin="arcade"] .playerview__stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: clamp(12px, 3vmin, 52px);
-  align-items: stretch;
-  padding: clamp(8px, 2.2vmin, 28px) clamp(12px, 3.4vmin, 56px) clamp(10px, 2.6vmin, 34px);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1.32fr) minmax(148px, 0.68fr);
+  justify-items: center;
+  gap: clamp(8px, 2vmin, 26px);
+  padding: clamp(8px, 2.2vmin, 28px) clamp(20px, 8vmin, 130px) clamp(10px, 2.6vmin, 34px);
 }
 
 .playerview[data-skin="arcade"] .ag-cam {
@@ -370,15 +373,23 @@
    歌词：对话盒 + 打字机
    -------------------------------------------------------------------------- */
 .playerview[data-skin="arcade"] .ag-lyrics {
+  inline-size: min(100%, 1040px);
+  /* 游戏对话框：粗外框 + 一圈内描边，和框体本身同一套像素语言 */
+  border: 3px solid #0b0616;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--ag-void) 80%, transparent);
+  box-shadow:
+    inset 0 0 0 2px color-mix(in oklab, var(--ag-yellow) 42%, transparent),
+    0 10px 30px rgb(0 0 0 / 35%);
+  padding-inline: clamp(10px, 2.4vmin, 30px);
+}
+
+.playerview[data-skin="arcade"] .ag-lyrics {
+  /* 原来这里是 ag-lyrics 的底衬渐变，改成对话框之后由容器自己给底色，
+     这里只保留布局必需的定位属性 */
   position: relative;
   min-width: 0;
   min-height: 0;
-  background: radial-gradient(
-    118% 96% at 36% 50%,
-    color-mix(in oklab, var(--ag-void) 72%, transparent) 0,
-    color-mix(in oklab, var(--ag-void) 34%, transparent) 46%,
-    transparent 78%
-  );
 }
 
 .playerview[data-skin="arcade"] .ag-lyrics .fxl {

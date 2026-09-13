@@ -128,7 +128,31 @@ const skin = defineSkin({
     const comboEl = pick(".ag-combo");
     const lyricsHost = pick(".ag-lyrics");
 
-    const camera = createCamera(cam, { ampX: 7, ampY: 6, rot: 0.4, zoom: 0.02, speed: 1.15, seed: 51, maxFps: 60 });
+    /* 运镜：街机要「格子感」，所以幅度中等、旋转很小（旋转多了像素网格就糊） */
+    const camera = createCamera(cam, {
+      ampX: 64,
+      ampY: 42,
+      rot: 2.0,
+      zoom: 0.045,
+      base: 1.008,
+      speed: 1.25,
+      seed: 51,
+      shotMin: 8,
+      shotMax: 14,
+      maxFps: 60,
+    });
+    camera.addLayer(lyricsHost, { depth: 0.58, scale: false });
+    if (bg) {
+      /** @type {Array<[string, number]>} 选择器 + 视差深度 */
+      const camLayers = [
+        [".ag-bg__void", 0.1],
+        [".ag-bg__sun", 0.22],
+        [".ag-bg__pixels", 1.3],
+      ];
+      for (const [sel, depth] of camLayers) {
+        camera.addLayer(/** @type {HTMLElement|null} */ (bg.querySelector(sel)), { depth });
+      }
+    }
     const lyrics = createFxLyrics(lyricsHost, {
       onSeek: (ms) => ctx.actions.seek(ms),
       interactive,

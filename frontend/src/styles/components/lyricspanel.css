@@ -359,6 +359,11 @@
 .nudge__line.is-active {
   background: var(--surface-active);
   color: var(--text-1);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.nudge__line.is-active .nudge__time {
+  color: var(--accent);
 }
 
 .nudge__time {
@@ -490,19 +495,33 @@
   background: var(--surface-hover);
 }
 
-/* 选中行 = 下一次打轴的目标；用左侧竖条 + 底色，不改变行高（避免列表跳动） */
-.drow.is-cursor {
-  background: var(--surface-active);
-  border-left-color: var(--accent);
+/* 两种高亮必须一眼可分：
+     · .is-now    = 现在唱到哪一行（跟着播放走）
+     · .is-cursor = 下一笔打轴写哪一行（跟着空格/点击走）
+   先写 .is-now（弱），再写 .is-cursor（强）：同一行同时命中时以选中行为准
+   （两条规则的特异性相同，后写的胜出）。 */
+.drow.is-now {
+  background: var(--surface-1);
 }
 
-/* 正在播放到的那一行：只做一个淡淡的标记，与「选中行」区分开 */
+.drow.is-now .drow__no {
+  color: var(--accent);
+  font-weight: var(--fw-bold);
+}
+
+.drow.is-now .drow__time {
+  border-color: var(--accent);
+  color: var(--text-1);
+}
+
 .drow.is-now .drow__text {
   color: var(--text-1);
 }
 
-.drow.is-now .drow__no {
-  color: var(--text-2);
+/* 选中行 = 下一次打轴的目标；用左侧竖条 + 底色，不改变行高（避免列表跳动） */
+.drow.is-cursor {
+  background: var(--surface-active);
+  border-left-color: var(--accent);
 }
 
 .drow__no {

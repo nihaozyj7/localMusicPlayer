@@ -125,6 +125,17 @@ export function Minimize() {
 }
 
 /**
+ * ResetDesktopLyricsPosition 把桌面歌词窗口移回默认位置并清掉记忆。
+ * 
+ * 给设置界面一个出口：换显示器/改分辨率之后如果存档落在别扭的地方，
+ * 用户可以一键回到默认（而不是去删配置文件）。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function ResetDesktopLyricsPosition() {
+    return $Call.ByID(2622782167);
+}
+
+/**
  * Restart 重启应用：先拉起一个新的自己，再退出当前进程。
  * 
  * 原生材质这类「只能在创建窗口时指定」的选项靠它生效。启动失败时不会退出，

@@ -122,7 +122,34 @@ const skin = defineSkin({
     const artist = pick(".an-meta__artist");
     const lyricsHost = pick(".an-lyrics");
 
-    const camera = createCamera(cam, { ampX: 11, ampY: 8, rot: 0.55, zoom: 0.028, speed: 1.05, seed: 11 });
+    /* 运镜：分层视差 + 机位切换（见 fx-camera.js 顶部说明）。
+       幅度必须够大才看得见 —— 第一版 11px/0.55° 在居中构图上等于静止。 */
+    const camera = createCamera(cam, {
+      ampX: 88,
+      ampY: 54,
+      rot: 3.6,
+      zoom: 0.055,
+      speed: 1.05,
+      seed: 11,
+      shotMin: 9,
+      shotMax: 15,
+    });
+    // 歌词跟着镜头动，但幅度只有主体的一半 → 与封面之间产生视差
+    camera.addLayer(lyricsHost, { depth: 0.6, scale: false });
+    if (bg) {
+      // 远景动得少、近景动得多；只挑自身没有 CSS transform 动画的容器
+      /** @type {Array<[string, number]>} 选择器 + 视差深度 */
+      const camLayers = [
+        [".an-bg__paper", 0.14],
+        [".an-bg__hills", 0.26],
+        [".an-bg__clouds", 0.55],
+        [".an-bg__tone", 0.85],
+        [".an-bg__petals", 1.5],
+      ];
+      for (const [sel, depth] of camLayers) {
+        camera.addLayer(/** @type {HTMLElement|null} */ (bg.querySelector(sel)), { depth });
+      }
+    }
     const lyrics = createFxLyrics(lyricsHost, {
       onSeek: (ms) => ctx.actions.seek(ms),
       interactive,

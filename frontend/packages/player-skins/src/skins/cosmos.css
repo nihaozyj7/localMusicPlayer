@@ -174,12 +174,16 @@
 /* --------------------------------------------------------------------------
    舞台
    -------------------------------------------------------------------------- */
+/* 构图：**单列**。行星居中悬浮在上，歌词铺在下方的整幅星云带里 ——
+   与「封面左 / 歌词右」的两栏骨架完全不同（四种新样式同质化的主要来源
+   就是它们当时共用同一套两栏网格）。 */
 .playerview[data-skin="cosmos"] .playerview__stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.04fr);
-  gap: clamp(12px, 3vmin, 56px);
-  align-items: stretch;
-  padding: clamp(8px, 2.2vmin, 28px) clamp(12px, 3.4vmin, 56px) clamp(10px, 2.6vmin, 34px);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1.44fr) minmax(140px, 0.56fr);
+  justify-items: center;
+  gap: clamp(6px, 1.6vmin, 20px);
+  padding: clamp(8px, 2.2vmin, 28px) clamp(24px, 9vmin, 150px) clamp(10px, 2.6vmin, 34px);
 }
 
 .playerview[data-skin="cosmos"] .co-cam {
@@ -352,6 +356,15 @@
   position: relative;
   min-width: 0;
   min-height: 0;
+  inline-size: min(100%, 1000px);
+  /* 两侧淡出：歌词像是悬在行星前方的一层星云，而不是一块独立的文字面板 */
+  mask-image: linear-gradient(90deg, transparent 0, #000 10%, #000 90%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 10%, #000 90%, transparent 100%);
+}
+
+/* 单列构图下歌词居中更稳；两栏时靠左与封面咬合更好看 */
+.playerview[data-skin="cosmos"] .co-lyrics .fxl__line {
+  text-align: center;
 }
 
 .playerview[data-skin="cosmos"] .co-lyrics .fxl {

@@ -1196,13 +1196,48 @@ function applyPersisted(saved) {
     if (liked) liked.songIds = saved.liked.slice();
     state.likedIds = new Set(saved.liked);
   }
-  if (Array.isArray(saved.queue) && saved.queue.length) {
-    state.queue = saved.queue.filter((id) => state.songs.some((s) => s.id === id));
+  // 队列与当前曲目**不能在这里校验**：此刻曲库还是空的（真实后端要先 await
+  // hydrateFromBackend），任何 id 都会被判成「不存在」，于是队列被清空、
+  // 当前曲目丢失 —— 启动永远落到「取前 5 首」的兜底上。
+  // 表现就是「每次打开都是同一首」。这里只记下来，等曲库到位再落（见 applyPendingPlayback）。
+  pendingPlayback = {
+    queue: Array.isArray(saved.queue) ? saved.queue.slice() : [],
+    currentId: saved.currentId || null,
+  };
+  // 注意这里**不能**顺手应用：此刻 state.songs 是刚 seed 的假数据，
+  // 用它校验存档会把存档消费掉（真实后端稍后灌进来的 id 又对不上）。
+  // 落盘点见 bootstrap() 结尾与 hydrateFromBackend() 结尾。
+}
+
+/**
+ * 上次的队列 / 当前曲目（等曲库装载完才能校验）。
+ *
+ * 为什么必须延后：`bootstrap()` 的顺序是「seed 假数据 → 恢复本地快照 →
+ * 拉后端曲库」，恢复时拿到的曲库要么是假数据、要么是空的。用错的曲库去过滤
+ * 存档队列，结果永远是空 —— 这是「每次打开都从第一首开始」的根因。
+ */
+let pendingPlayback = null;
+
+/**
+ * 把存档的队列 / 当前曲目落到 state 上（曲库就位后调用，幂等）。
+ * @returns {boolean} 是否真的应用了
+ */
+function applyPendingPlayback() {
+  if (!pendingPlayback) return false;
+  if (!state.songs.length) return false; // 曲库还没到，继续等
+  const ids = new Set(state.songs.map((s) => s.id));
+  const restored = pendingPlayback;
+  pendingPlayback = null;
+
+  const queue = restored.queue.filter((id) => ids.has(id));
+  if (queue.length) state.queue = queue;
+  if (restored.currentId && ids.has(restored.currentId)) {
+    state.currentId = restored.currentId;
+  } else if (!state.currentId && state.queue.length) {
+    state.currentId = state.queue[0];
   }
-  if (saved.currentId && state.songs.some((s) => s.id === saved.currentId)) {
-    state.currentId = saved.currentId;
-    state.duration = songById(saved.currentId)?.duration ?? 0;
-  }
+  state.duration = songById(state.currentId)?.duration ?? 0;
+  return true;
 }
 
 /**
@@ -1255,9 +1290,12 @@ export async function hydrateFromBackend() {
     if (liked) state.likedIds = new Set(liked.songIds);
   }
 
-  // 队列与当前曲目可能引用了已不存在的 id，做一次清理
+  // 队列与当前曲目可能引用了已不存在的 id，做一次清理。
+  // 顺序要紧：**先**把本地存档的「上次播到哪儿」落下来（此刻曲库才刚有），
+  // **再**做「队列为空就取前 5 首」的兜底 —— 反过来的话存档永远被兜底覆盖。
   const idSet = new Set(state.songs.map((s) => s.id));
   state.queue = state.queue.filter((id) => idSet.has(id));
+  applyPendingPlayback();
   if (state.queue.length === 0 && state.songs.length) {
     state.queue = state.songs.slice(0, 5).map((s) => s.id);
   }
@@ -1284,6 +1322,9 @@ export async function bootstrap() {
   }
   commit();
   await hydrateFromBackend();
+  // 曲库到位（真实后端，或预览模式下的假数据）之后再把「上次播到哪儿」落下来。
+  // 真实后端那条路径已经在 hydrateFromBackend 里落过了，这里是预览模式的路径。
+  if (applyPendingPlayback()) commit();
 }
 
 /**

@@ -133,7 +133,32 @@ const skin = defineSkin({
     const pct = pick(".wa-meta__pct");
     const lyricsHost = pick(".wa-lyrics");
 
-    const camera = createCamera(cam, { ampX: 9, ampY: 8, rot: 0.95, zoom: 0.03, speed: 1.35, seed: 37, maxFps: 60 });
+    /* 运镜：手持感最强的一档 —— 快、抖、旋转大（末日里的晃动镜头） */
+    const camera = createCamera(cam, {
+      ampX: 50,
+      ampY: 38,
+      rot: 4.6,
+      zoom: 0.05,
+      base: 1.01,
+      speed: 1.6,
+      seed: 37,
+      shotMin: 7,
+      shotMax: 12,
+      maxFps: 60,
+    });
+    camera.addLayer(lyricsHost, { depth: 0.62, scale: false });
+    if (bg) {
+      /** @type {Array<[string, number]>} 选择器 + 视差深度 */
+      const camLayers = [
+        [".wa-bg__base", 0.12],
+        [".wa-bg__sun", 0.2],
+        [".wa-bg__skyline", 0.32],
+        [".wa-bg__dust", 1.3],
+      ];
+      for (const [sel, depth] of camLayers) {
+        camera.addLayer(/** @type {HTMLElement|null} */ (bg.querySelector(sel)), { depth });
+      }
+    }
     const lyrics = createFxLyrics(lyricsHost, {
       onSeek: (ms) => ctx.actions.seek(ms),
       interactive,

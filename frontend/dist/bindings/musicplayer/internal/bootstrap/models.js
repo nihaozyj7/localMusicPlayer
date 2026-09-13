@@ -36,6 +36,8 @@
  * @property {string} coverSeed - —— 封面取色（cover-dark 主题）—— CoverSeed / CoverSeed2 是上一次从封面里提取得出的主色（十六进制）。 为什么要落盘：主题是在页面脚本跑起来之后才套用的，而取色还要等封面 图片解码完 —— 于是「启动 → 先用主题里写死的占位灰 → 取完色再整体重绘」， 肉眼看就是先黑一下、颜色还偏灰。把上次的取色结果记下来，Go 侧就能在 页面首屏之前把它写进 <html>，首帧直接就是对的颜色（见 early_theme.go）。
  * @property {string} coverSeed2
  * @property {boolean} showDesktopLyrics - ShowDesktopLyrics 是否显示桌面歌词（独立透明置顶窗口）。
+ * @property {number} desktopLyricsX - DesktopLyricsX / DesktopLyricsY 桌面歌词窗口**上次被拖到哪儿** （DIP 逻辑像素，与窗口 Position() 同一坐标系）。 为什么必须记：这个窗口的拖拽是系统级的（CSS --wails-draggable）， JS 收不到任何拖拽事件，窗口一销毁位置就彻底丢了 —— 表现就是「每次启动都跑回屏幕底部中间，每次都要重拖」。 用 -1 表示「没存过」：0 是合法坐标（副屏在主屏左侧时 X 就是负的， 而 0 是常见位置），不能拿 0 当哨兵值。
+ * @property {number} desktopLyricsY
  * @property {boolean} showDesktopWallpaper - ShowDesktopWallpaper 是否显示桌面背景歌词（铺满桌面、压在桌面图标之下的 壁纸层窗口，见 desktop_wallpaper.go）。 与 ShowDesktopLyrics 是**二选一**：两者都在回答同一个问题「歌词放在桌面的 哪儿」，同时开着既是双份资源，视觉上也是两条歌词叠在一起。互斥由 WindowService.setDesktopMode 单点保证，配置里同时为 true 时以 wallpaper 优先 （见 main.go 的启动恢复）。
  * @property {boolean} sleepAfterSong - SleepAfterSong 定时停止的「播放完歌曲（延长到歌曲播放结束）」选项。 打开后：倒计时到点时**不立刻暂停**，而是等当前这首播完再停。 这是「睡眠定时」的常见语义 —— 用户想听到正在听的这首结束， 而不是在副歌中间被掐掉。
  * @property {string} shuffleMode - ShuffleMode 随机播放行为：reshuffle | once。
