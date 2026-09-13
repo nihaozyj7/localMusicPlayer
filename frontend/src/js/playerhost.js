@@ -218,17 +218,6 @@ export function currentLyricWindow() {
 }
 
 /**
- * 当前生效的封面地址（含多封面轮播的下标）。
- *
- * 桌面背景歌词必须用**和详情页同一张**封面，否则「桌面上的背景」与窗口里的
- * 背景会对不上、还会在轮播时两边各走各的。所以这里不自己取封面，
- * 而是走与皮肤完全相同的 mediaSnapshot。
- */
-export function currentCoverSrc() {
-  return mediaSnapshot().cover;
-}
-
-/**
  * 应用一段「外部来源」的歌词（用户手动匹配，或在线接口返回）。
  *
  * 除了更新内存里的渲染缓存，还会把它写进后端缓存：
@@ -483,7 +472,35 @@ function optionsSnapshot() {
     animations: state.config.animations !== false,
     coverCarousel: state.config.coverCarousel === true,
     coverCarouselInterval: carouselSettings().seconds,
+    // 主窗口永远是可交互的。桌面背景歌词窗口用同一个快照并把这一项改成 false
+    // （见 desktop-wallpaper.js），皮肤据此把可点/可聚焦的东西去掉。
+    interactive: true,
   };
+}
+
+/* --------------------------------------------------------------------------
+   快照出口：给「桌面背景歌词」镜像到另一个窗口用
+   --------------------------------------------------------------------------
+   桌面背景歌词窗口跑的是**同一套皮肤**，所以它需要一个形状完全一样的 ctx。
+   它自己够不到 store（也不该够到），于是由主窗口按皮肤契约把快照推过去。
+
+   这里只把内部快照原样暴露出去、不做任何加工：任何加工都会让「详情页里的皮肤」
+   和「桌面上的皮肤」慢慢长出两套逻辑，而那正是这次改动要避免的事。
+   -------------------------------------------------------------------------- */
+
+/** 当前曲目/封面/歌词快照（= 皮肤 ctx.media() 的那一份） */
+export function currentMediaSnapshot() {
+  return mediaSnapshot();
+}
+
+/** 当前播放进度快照（= 皮肤 ctx.playback() 的那一份） */
+export function currentPlaybackSnapshot() {
+  return playbackSnapshot();
+}
+
+/** 当前显示设置快照；overrides 用来按宿主覆写（例如桌面那边把 interactive 关掉） */
+export function currentOptionsSnapshot(overrides = {}) {
+  return { ...optionsSnapshot(), ...overrides };
 }
 
 function makeCtx() {

@@ -49,9 +49,7 @@ import {
 } from "./audio.js";
 import {
   closePlayer,
-  currentCoverSrc,
   currentLyricLine,
-  currentLyricWindow,
   ensureLyricsLoaded,
   nextCover,
   openPlayer,
@@ -191,27 +189,21 @@ function paintDesktopLyrics() {
 }
 
 /**
- * 桌面背景歌词：每帧把「当前画面」推给那个铺在桌面图标之下的窗口。
+ * 桌面背景歌词：每帧把当前画面推给那个铺在桌面图标之下的窗口。
  *
- * 结构与桌面歌词完全对称，只是内容更多一点（三行歌词 + 曲目 + 封面），
- * 因为那个窗口是整屏的、只画一行会太空。封面在这里就被降采样成小图
- * （见 desktop-wallpaper.js#coverThumb），推到那边的是一张几 KB 的缩略图 ——
- * 这是「不让两份渲染各付一次全尺寸封面」的关键。
+ * 与桌面歌词是**同构**的，区别只在推什么：那个窗口挂的是详情页的同一个皮肤，
+ * 所以推过去的是皮肤契约里的整套数据（曲目 / 封面集合 / 已解析歌词 / 进度 /
+ * 设置 / 主题），而不是「三行歌词 + 一张缩略图」。
+ *
+ * 数据的取用、去重与限流都在 desktop-wallpaper.js 里 —— 那边拿的是 playerhost
+ * 的同一份快照，这里不重新算，避免「桌面上显示的是上一首」。
+ *
+ * 这里仍然要补一次 ensureLyricsLoaded：详情页没打开时歌词不会自己装载，
+ * 而桌面上那个皮肤同样需要歌词行。
  */
 function paintDesktopWallpaper() {
-  const enabled = desktopWallpaperEnabled();
-  if (enabled && state.playing) ensureLyricsLoaded();
-  const lines = enabled ? currentLyricWindow() : { prev: "", text: "", next: "" };
-  const song = currentSong();
-  pushDesktopWallpaper({
-    ...lines,
-    playing: Boolean(state.playing),
-    // 整屏尺寸下字号要更大：桌面歌词那条是 ×1.5，这里 ×2.6
-    fontSize: Math.round((Number(state.config.lyricsFontSize) || 16) * 2.6),
-    cover: enabled ? currentCoverSrc() : "",
-    title: song?.title || "",
-    artist: song?.artist || "",
-  });
+  if (desktopWallpaperEnabled() && state.playing) ensureLyricsLoaded();
+  pushDesktopWallpaper();
 }
 
 /* --------------------------------------------------------------------------

@@ -52,14 +52,21 @@ export const EMPTY_SOURCE_LABEL = {
  * @param {(text:string) => string} [opts.escape] 文本转义函数（默认内置一份最小实现）
  * @param {(ms:number) => void} [opts.onSeek] 点歌词 / 回车跳转到对应毫秒
  * @param {() => void} [opts.onOpenFolder] 空态里「打开所在文件夹」的回调
+ * @param {boolean} [opts.interactive] 是否可交互（默认 true）。
+ *        宿主把同一个皮肤挂到「只能看、点不到」的地方时传 false —— 例如桌面背景
+ *        歌词窗口（窗口垫在桌面图标之下，本来就收不到鼠标事件）。这时行不做成
+ *        role="button"、不挂任何监听、空态也不给「打开所在文件夹」，于是渲染出来
+ *        的纯粹是「内容」。
  * @returns {LyricsView}
  */
 export function createLyricsView(host, opts = {}) {
   const esc = opts.escape || defaultEscape;
+  const interactive = opts.interactive !== false;
 
   const root = document.createElement("div");
   root.className = "lyrics";
   root.id = "pv-lyrics";
+  if (!interactive) root.dataset.passive = "1";
   const scroll = document.createElement("div");
   scroll.className = "lyrics__scroll";
   root.appendChild(scroll);
@@ -84,10 +91,14 @@ export function createLyricsView(host, opts = {}) {
     }, USER_SCROLL_PAUSE_MS + 40);
   };
 
-  // passive：歌词区经常在滚，监听器不能拖慢滚动
-  scroll.addEventListener("wheel", markUserScroll, { passive: true });
-  scroll.addEventListener("touchmove", markUserScroll, { passive: true });
-  scroll.addEventListener("pointerdown", markUserScroll, { passive: true });
+  // passive：歌词区经常在滚，监听器不能拖慢滚动。
+  // 非交互模式下整个监听器都不挂 —— 不是为了省那点开销，而是因为「让位给用户
+  // 滚动」这套逻辑在没有用户滚动的地方只会带来额外的定时器。
+  if (interactive) {
+    scroll.addEventListener("wheel", markUserScroll, { passive: true });
+    scroll.addEventListener("touchmove", markUserScroll, { passive: true });
+    scroll.addEventListener("pointerdown", markUserScroll, { passive: true });
+  }
 
   function onClick(e) {
     const line = e.target.closest?.(".lyric");
@@ -108,8 +119,10 @@ export function createLyricsView(host, opts = {}) {
     if (Number.isFinite(t)) opts.onSeek?.(t);
   }
 
-  scroll.addEventListener("click", onClick);
-  scroll.addEventListener("keydown", onKeydown);
+  if (interactive) {
+    scroll.addEventListener("click", onClick);
+    scroll.addEventListener("keydown", onKeydown);
+  }
 
   /** 上一次要求高亮的下标（用户滚动结束后要重新对齐它） */
   let lastWanted = -1;
@@ -144,11 +157,12 @@ export function createLyricsView(host, opts = {}) {
       return;
     }
     scroll.innerHTML = lines
-      .map(
-        (l, i) =>
-          `<div class="lyric" role="button" tabindex="0" data-time="${l.time}" data-lyric-index="${i}">${esc(
-            l.text
-          )}</div>`
+      .map((l, i) =>
+        interactive
+          ? `<div class="lyric" role="button" tabindex="0" data-time="${l.time}" data-lyric-index="${i}">${esc(
+              l.text
+            )}</div>`
+          : `<div class="lyric" data-time="${l.time}" data-lyric-index="${i}">${esc(l.text)}</div>`
       )
       .join("");
     scroll.scrollTop = 0;
@@ -158,9 +172,9 @@ export function createLyricsView(host, opts = {}) {
     const text = meta.emptyText || "暂无歌词";
     const hint = meta.emptyHint ? `<div class="lyrics__empty-text">${esc(meta.emptyHint)}</div>` : "";
     const btn =
-      meta.showOpenFolder === false
-        ? ""
-        : `<button class="btn btn--sm" type="button" data-lyrics-act="open-folder"><span>打开所在文件夹</span></button>`;
+      interactive && meta.showOpenFolder !== false
+        ? `<button class="btn btn--sm" type="button" data-lyrics-act="open-folder"><span>打开所在文件夹</span></button>`
+        : "";
     scroll.innerHTML = `
       <div class="lyrics__empty">
         <svg class="lyrics__empty-icon" aria-hidden="true"><use href="#i-lyrics"/></svg>

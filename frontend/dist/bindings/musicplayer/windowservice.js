@@ -57,11 +57,11 @@ export function DesktopLyricsTouched() {
 }
 
 /**
- * DesktopWallpaperState 读当前状态。
+ * DesktopWallpaperState 读当前状态（一次**全量**快照）。
  * 
- * 背景歌词窗口加载完成后用它做一次初始同步：事件是「之后」才来的，
+ * 背景歌词窗口加载完成后用它做初始同步：事件是「之后」才来的，
  * 不主动拉一次的话，新窗口会一直空着直到下一次换行。
- * @returns {$CancellablePromise<$models.desktopWallpaperSnapshot>}
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
 export function DesktopWallpaperState() {
     return $Call.ByID(80366688);
@@ -105,11 +105,12 @@ export function MarkDesktopLyricsReady() {
 }
 
 /**
- * MarkDesktopWallpaperReady 由背景歌词窗口在加载完成后调用，立刻把状态推给自己。
+ * MarkDesktopWallpaperReady 由背景歌词窗口在加载完成后调用。
  * 
- * 页面加载完成与窗口创建之间有时序差：创建时推的那一次事件页面可能还没
- * 注册好监听，所以页面这边必须主动要一次。
- * @returns {$CancellablePromise<$models.desktopWallpaperSnapshot>}
+ * 页面加载完成与窗口创建之间有时序差：创建时推的那一次事件，页面可能还没注册
+ * 好监听。所以这里既补推一次全量、也把全量直接**返回**给调用方 —— 两条路任意
+ * 一条通了，窗口就不会停在空态。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
 export function MarkDesktopWallpaperReady() {
     return $Call.ByID(1378957625);
@@ -197,11 +198,18 @@ export function UpdateDesktopLyrics(payload) {
 }
 
 /**
- * UpdateDesktopWallpaper 主窗口在「换歌 / 歌词行变化 / 播放状态变化」时调用。
+ * UpdateDesktopWallpaper 主窗口在「换歌 / 封面 / 歌词 / 进度 / 设置 / 主题」变化时调用。
  * 
- * 前端做了节流（只在内容真的变化时调用），所以这里不再去重。
+ * payload = 皮肤契约里的一次 patch：`type` 说明这条是什么更新，其余键是本次
+ * 变化的字段。后端只按顶层 key 合并（**不做深合并**：像 options、lyrics 这些
+ * 字段本来就是整体替换的语义，深合并反而会把旧数据留在新状态上）。
+ * 
+ * 返回值刻意只有一个 ok：这个方法每秒会被调用一次（进度兜底），
+ * 把合并后的全量当成返回值回给前端，等于每秒把封面 data URL、整套主题令牌、
+ * 上百行歌词重新序列化一遍送回调用方 —— 而调用方根本不看。要全量请走
+ * DesktopWallpaperState（只在窗口加载完成时调一次）。
  * @param {{ [_ in string]?: any } | null} payload
- * @returns {$CancellablePromise<$models.desktopWallpaperSnapshot>}
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
 export function UpdateDesktopWallpaper(payload) {
     return $Call.ByID(4095740398, payload);

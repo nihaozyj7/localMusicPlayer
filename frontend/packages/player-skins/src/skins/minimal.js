@@ -31,6 +31,8 @@ const skin = defineSkin({
     const lyrics = createLyricsView(ctx.root.querySelector(".pv-lyrics-host"), {
       onSeek: (ms) => ctx.actions.seek(ms),
       onOpenFolder: () => ctx.actions.openFolder(),
+      // 同 classic：宿主挂到「只能看」的地方时歌词行不做成按钮
+      interactive: ctx.options().interactive !== false,
     });
 
     inst = {

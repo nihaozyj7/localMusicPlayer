@@ -3,7 +3,7 @@
      desktopwallpaper.css 里所有会碰到 html/body 的规则都必须挂在它下面：
      构建配置 cssCodeSplit:false 会把这张页面的 CSS 与主界面合并成一个文件
      （所有页面的 <link> 最终指向同一个 style-*.css），不限定作用域的话，
-     「整窗铺满背景」这条会顺手把主界面也一起铺了。 -->
+     「整窗铺满」这条会顺手把主界面也一起铺了。 -->
 <html lang="zh-CN" class="wp-window">
   <head>
     <meta charset="UTF-8" />
@@ -14,42 +14,60 @@
     />
     <title>桌面背景歌词</title>
     <!--
-      独立页面：桌面背景歌词窗口（见 Go 侧 desktop_wallpaper.go）。
+      桌面背景歌词窗口（见 Go 侧 desktop_wallpaper.go）。
 
-      刻意**不复用** index.html：那个页面会连带加载整套外壳、曲库与列表，
-      而这个窗口整块只是一张「会唱歌的壁纸」。既然需求上担心双份资源，
-      这里就只加载真正要画的三样东西 —— 背景图、遮罩、几行歌词。
+      需求：「把当前正在播放的样式投影到桌面中去，相当于把当前的播放详情页
+      投影到桌面上去，只不过去除掉 UI，只保留播放界面样式所渲染的内容」。
 
-      数据来源：主窗口把「封面缩略图 / 当前歌词行 / 曲目信息」推给 Go 后端
-      （WindowService.UpdateDesktopWallpaper），后端再用 app.Event.Emit 广播
-      desktop:wallpaper 事件 —— Wails v3 的事件是广播给所有窗口的。
+      所以这个页面**不重画自己的排版**，而是照搬详情页的外壳，只砍掉 UI：
+        · 留下   .app > .skin-bg（整窗背景层）+ .app > .playerview > .playerview__stage
+        · 砍掉   .playerview__head（返回 / 更换封面 / 样式按钮组）与底栏
+        · 皮肤自己渲染的内容原样保留 —— 唱片、歌词、曲目信息都是皮肤画的
+
+      ★ .app 这一层外壳**不能省**。
+      样式包约定「详情页内的元素以 .playerview[data-skin="<id>"] 开头，
+      需要影响详情页之外的外壳时另加 .app[data-mode="<id>"]」（见包里 README 与
+      设置界面的样式编写说明）。第三方样式的整窗背景层几乎都写在
+      .app[data-mode="<id>"] 下 —— 少了这一层，那批规则一条都不生效：
+      背景层退化成未样式化的纵向堆叠、画布停在 300×150 的默认尺寸。
+      （这是实测出来的：探针读到的 .mg-bg 是 2560×4155、canvas 是 300×150。）
+      所以这里的结构与主界面逐字一致：.app 带 data-mode="<样式id>" 和
+      data-view="player"，宿主换样式时同步改它们。
+
+      挂载的样式与主窗口当前用的那一个完全一致，由主窗口推 skinId 过来
+      （见 frontend/src/js/desktop-wallpaper.js）。
+      渲染逻辑见 ./js/desktop-wallpaper-window.js。
     -->
-    <script type="module" crossorigin src="/assets/wallpaper-Cay-0goa.js"></script>
+    <script type="module" crossorigin src="/assets/wallpaper-D41zL0Dw.js"></script>
     <link rel="modulepreload" crossorigin href="/assets/bridge-B8JBWU-B.js">
-    <link rel="stylesheet" crossorigin href="/assets/style-JFRrIj88.css">
+    <link rel="modulepreload" crossorigin href="/assets/index-un_4l_TW.js">
+    <link rel="stylesheet" crossorigin href="/assets/style-CD1HT3u6.css">
   </head>
   <body>
-    <div class="wp" id="wp" data-state="idle">
-      <!-- 背景层：三块拼出「播放器详情页的那张背景」——
-           降采样封面（大范围铺开）+ 主题遮罩 + 四角压暗。 -->
-      <img class="wp__img" id="wp-img" alt="" />
-      <div class="wp__veil" id="wp-veil"></div>
-      <div class="wp__grain"></div>
+    <div class="app" id="wp-app" data-view="player" data-mode="">
+      <!-- 整窗背景层：与主界面一样必须放在 .playerview **之外**
+           （.playerview 自己有 transform 进出场动效，放在里面会被一起变换）。
+           位置与层级由 .skin-bg 的样式决定，宿主只负责给它打 data-state。 -->
+      <div class="skin-bg" id="wp-skin-background" hidden aria-hidden="true"></div>
 
-      <!-- 歌词：上一行 / 当前行 / 下一行。当前行在中间、字号最大。 -->
-      <div class="wp__lyrics" id="wp-lyrics">
-        <p class="wp__line wp__line--prev" id="wp-prev"></p>
-        <p class="wp__line wp__line--now" id="wp-now">未在播放</p>
-        <p class="wp__line wp__line--next" id="wp-next"></p>
-      </div>
-
-      <!-- 曲目信息：压在最下面，和详情页一样是「小字副标题」 -->
-      <div class="wp__meta" id="wp-meta" hidden>
-        <p class="wp__title" id="wp-title"></p>
-        <p class="wp__artist" id="wp-artist"></p>
-      </div>
-
-      <p class="wp__tip" id="wp-tip">桌面背景歌词 · 播放歌曲后歌词会跟着壁纸显示</p>
+      <!--
+        只有舞台，没有头部：这就是「去掉 UI」这一步的全部动作。
+        - data-skin  由宿主按当前样式写入，皮肤包里的选择器都挂在它下面
+        - data-lyrics 跟随「显示歌词」开关，与详情页同一套规则
+        - hidden 直到挂上皮肤才撤掉，避免先闪一下空壳
+      -->
+      <section
+        class="playerview"
+        id="wp-playerview"
+        data-skin=""
+        data-state="opened"
+        data-lyrics="on"
+        aria-hidden="true"
+        hidden
+      >
+        <div class="playerview__stage" id="wp-stage"></div>
+      </section>
     </div>
+
   </body>
 </html>

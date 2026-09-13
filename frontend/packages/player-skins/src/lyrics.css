@@ -97,9 +97,19 @@
   user-select: text;
 }
 
-.lyric:hover {
+/* 悬停反馈只在可交互时给：非交互宿主（桌面背景歌词）里行根本收不到鼠标事件，
+   留着这条只会让「三行歌词里恰好压在鼠标下的那行颜色不太一样」这种随机观感。 */
+.lyrics:not([data-passive="1"]) .lyric:hover {
   opacity: 0.75;
   filter: none;
+}
+
+/* —— 非交互模式（宿主把皮肤挂到点不到的地方，如桌面背景歌词）——
+   行不再是 role="button"，指针与文本选择也一并关掉：
+   桌面背景上出现文本光标 / 拖出一片蓝色选区都是纯粹的穿帮。 */
+.lyrics[data-passive="1"] .lyric {
+  cursor: default;
+  user-select: none;
 }
 
 .lyric[aria-current="true"] {
@@ -167,7 +177,8 @@
   color: var(--text-3);
 }
 
-/* 歌词行是 role="button" 的 div，键盘聚焦时给一个不刺眼的反馈 */
+/* 歌词行是 role="button" 的 div，键盘聚焦时给一个不刺眼的反馈
+   （非交互模式下没有 tabindex，这条自然不会命中） */
 .lyric:focus-visible {
   outline: 1px solid var(--border-2);
   outline-offset: -2px;

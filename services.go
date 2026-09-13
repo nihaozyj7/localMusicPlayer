@@ -1260,7 +1260,9 @@ type WindowService struct {
 	wallpaperMu      sync.Mutex
 	wallpaperOn      bool
 	wallpaperTouched bool
-	wallpaper        desktopWallpaperContent
+	// wallpaper 是合并后的**全量状态**（键值都由前端按皮肤契约决定，
+	// 后端不认识其中任何一项，见 desktop_wallpaper.go 的类型注释）。
+	wallpaper map[string]any
 	// wallpaperProbed 记录「平台能力是不是已经探测过」。
 	// 探测要枚举桌面窗口，没必要每次换行（每几秒一次）都做。
 	wallpaperProbed    bool

@@ -7,27 +7,35 @@ import (
 /* ==========================================================================
    桌面背景歌词（铺满桌面、压在桌面图标之下的壁纸层）
    --------------------------------------------------------------------------
-   需求：歌词不只可以飘在桌面上（那种是「桌面歌词」，见 desktop_lyrics.go），
-   还可以**当成桌面背景**——把播放界面的那张背景铺满屏幕、垫在桌面图标下面，
-   歌词跟着画在上面。两者是二选一的一组单选按钮。
+   需求原文：「把当前正在播放的样式投影到桌面中去，相当于把当前的播放详情页
+   投影到桌面上去，只不过去除掉 UI，只保留播放界面样式所渲染的内容」。
+   它与「桌面歌词」（飘在桌面上的那一条，见 desktop_lyrics.go）二选一，
+   在界面上是同一组单选按钮的两个选项。
 
    实现要点：
-     1. 打开一个全屏无边框窗口，页面是**专门写的轻量页**（/wallpaper.html），
-        它只画「背景 + 歌词」，不加载外壳、曲库、列表这些主界面才要的东西。
+     1. 打开一个全屏无边框窗口，页面是 /wallpaper.html。它加载**同一套皮肤**
+        （frontend/packages/player-skins），挂载**当前正在用的那一个样式**，
+        但只有一个 .playerview__stage：没有标题栏、没有返回/封面/样式按钮组、
+        没有底栏；歌词行也不做成可点可聚焦的按钮（宿主通过 options.interactive
+        告知皮肤，见包里的 contract.js）。于是剩下的正是「样式渲染出来的内容」。
      2. 用 SetParent 把这个窗口挂到桌面的「壁纸层」（WorkerW）里，并压到最底，
         于是它就在桌面图标之下 —— 这正是「桌面背景」的定义。
         Windows 专属部分见 desktop_wallpaper_windows.go。
-     3. 数据仍然由主窗口推过来（窗口标题 / 封面缩略图 / 当前歌词行），
-        通道与桌面歌词一致：WindowService 保存 + app.Event.Emit 广播。
+     3. 数据由主窗口按**皮肤契约的 patch** 推过来（换歌 / 封面 / 歌词 / 进度 /
+        设置 / 主题），通道与桌面歌词一致：WindowService 保存 + app.Event.Emit 广播。
 
-   为什么不做「把整个播放详情页投到桌面上」：
-     那等于同时跑两个完整的播放界面（两套 DOM、两套图片解码、两套动效），
-     而桌面那一份用户根本点不到 —— 花的全是纯浪费。这里改成只渲染
-     「背景层 + 歌词」这一小块，并且：
-       · 封面由主窗口降采样成 64px 的小图再推过来（解码与模糊都便宜一个数量级）；
-       · 页面里没有任何 requestAnimationFrame 轮询，只在收到推送时才重画；
-       · 两个桌面模式互斥，永远不会同时存在两个额外窗口。
-     详见 frontend/src/js/desktop-wallpaper.js 的说明。
+   为什么后端在这里是个「哑管道」：
+      窗口里跑的是和详情页一模一样的皮肤，皮肤需要的是「曲目 / 封面集合 /
+      已解析的歌词行 / 播放进度 / 显示设置 / 主题令牌」这一整套。在 Go 这边把这套
+      结构再声明一遍，等于把皮肤契约抄成第二份 —— 皮肤一改这里就悄悄过期，而且过期
+      的表现是「桌面上少画了一块」，很难联想到是后端字段没跟上。所以后端只做三件
+      事：记住最后一次全量、按顶层 key 合并增量、原样转发。
+
+   资源开销（需求里专门问过「会不会渲染两份」）：
+      确实是两份 DOM，但桌面那一份是**事件驱动**的：页面里没有 requestAnimationFrame、
+      没有定时器，只在收到推送时才写 DOM；推送端按内容签名去重、进度推送限流到 1Hz，
+      内容不变时一次 IPC 都不发。加上两个桌面模式互斥，任意时刻至多一个额外窗口。
+      详见 frontend/src/js/desktop-wallpaper.js 的说明。
    ========================================================================== */
 
 const (
@@ -38,11 +46,15 @@ const (
 	// desktopWallpaperURL 背景歌词窗口的页面
 	desktopWallpaperURL = "/wallpaper.html"
 
-	// desktopWallpaperDefaultFontSize 歌词默认字号（推送里没带时用）
-	desktopWallpaperDefaultFontSize = 44
-	// 字号的合法区间，挡住前端算错时把歌词画成一行或者糊满全屏
-	desktopWallpaperMinFontSize = 16
-	desktopWallpaperMaxFontSize = 160
+	// desktopWallpaperPatchType 增量里「这条是什么更新」的键名。
+	// 值取自皮肤契约的 PATCH_TYPES（song / media / lyrics / progress / state /
+	// options / theme / resize…）。后端只转发，不解释。
+	desktopWallpaperPatchType = "type"
+	// desktopWallpaperFullPatch 把「全量快照」包装成哪种增量。
+	//
+	// 选 song，是因为契约里 song 的语义就是「换歌：皮肤用 ctx 里的数据整体重画
+	// 一遍」，恰好等于「窗口刚打开，把现在的样子铺上去」。
+	desktopWallpaperFullPatch = "song"
 )
 
 // 桌面歌词与桌面背景歌词这两种模式的取值。
@@ -54,40 +66,6 @@ const (
 	desktopModeLyrics    = "lyrics"
 	desktopModeWallpaper = "wallpaper"
 )
-
-// desktopWallpaperContent 背景歌词窗口要画的内容。
-//
-// 刻意做成「一个扁平快照」而不是让窗口自己去查曲库：那个窗口里没有 store、
-// 没有曲库也没有歌词缓存，它只是一个画布。
-type desktopWallpaperContent struct {
-	// —— 歌词 ——
-	Text     string `json:"text"` // 当前行
-	Prev     string `json:"prev"` // 上一行（淡显，给一点上下文）
-	Next     string `json:"next"` // 下一行（淡显）
-	Playing  bool   `json:"playing"`
-	FontSize int    `json:"fontSize"`
-	// —— 曲目 ——
-	Title  string `json:"title"`
-	Artist string `json:"artist"`
-	// Cover 是**小尺寸**封面（主窗口用 canvas 降采样后的 data URL）。
-	// 桌面背景本来就是大范围模糊的，用原图既慢又看不出差别。
-	Cover string `json:"cover"`
-	// —— 背景观感（与主题/皮肤一致，避免桌面与主界面两个颜色）——
-	Veil       string  `json:"veil"`
-	Blur       float64 `json:"blur"`
-	Scale      float64 `json:"scale"`
-	Brightness float64 `json:"brightness"`
-}
-
-// desktopWallpaperSnapshot 推给背景歌词窗口的完整状态（内容 + 开关 + 平台能力）。
-type desktopWallpaperSnapshot struct {
-	Enabled bool `json:"enabled"`
-	desktopWallpaperContent
-	// Supported 当前系统是否支持「窗口垫到桌面图标之下」。
-	// 不支持的平台（非 Windows、或找不到桌面窗口）上前端会把这个按钮禁掉。
-	Supported bool   `json:"supported"`
-	Reason    string `json:"reason"`
-}
 
 /* --------------------------------------------------------------------------
    单选：桌面歌词 / 桌面背景歌词
@@ -184,8 +162,8 @@ func (s *WindowService) openDesktopWallpaperWindow() map[string]any {
 		return map[string]any{"ok": false, "enabled": false, "reason": reason}
 	}
 
-	// 窗口刚创建时还没有任何事件，不推的话它会停在「等待播放」的空态
-	s.pushDesktopWallpaper()
+	// 窗口刚创建时还没有任何事件，不推的话它会停在空态
+	s.pushDesktopWallpaper(s.DesktopWallpaperState())
 	return map[string]any{"ok": true, "enabled": true}
 }
 
@@ -255,57 +233,65 @@ func (s *WindowService) desktopWallpaperOptions() application.WebviewWindowOptio
 
 /* --------------------------------------------------------------------------
    状态同步（主窗口 -> 背景歌词窗口）
+   --------------------------------------------------------------------------
+   这一段刻意保持「薄」：payload 的形状由前端按皮肤契约决定，后端只负责
+   保存最后一次全量 + 转发增量。理由见文件头「为什么后端在这里是个哑管道」。
    -------------------------------------------------------------------------- */
 
-// UpdateDesktopWallpaper 主窗口在「换歌 / 歌词行变化 / 播放状态变化」时调用。
+// UpdateDesktopWallpaper 主窗口在「换歌 / 封面 / 歌词 / 进度 / 设置 / 主题」变化时调用。
 //
-// 前端做了节流（只在内容真的变化时调用），所以这里不再去重。
-func (s *WindowService) UpdateDesktopWallpaper(payload map[string]any) desktopWallpaperSnapshot {
+// payload = 皮肤契约里的一次 patch：`type` 说明这条是什么更新，其余键是本次
+// 变化的字段。后端只按顶层 key 合并（**不做深合并**：像 options、lyrics 这些
+// 字段本来就是整体替换的语义，深合并反而会把旧数据留在新状态上）。
+//
+// 返回值刻意只有一个 ok：这个方法每秒会被调用一次（进度兜底），
+// 把合并后的全量当成返回值回给前端，等于每秒把封面 data URL、整套主题令牌、
+// 上百行歌词重新序列化一遍送回调用方 —— 而调用方根本不看。要全量请走
+// DesktopWallpaperState（只在窗口加载完成时调一次）。
+func (s *WindowService) UpdateDesktopWallpaper(payload map[string]any) map[string]any {
+	if len(payload) == 0 {
+		return map[string]any{"ok": true}
+	}
+
 	s.wallpaperMu.Lock()
-	applyWallpaperStrings(&s.wallpaper, payload)
-	if v, ok := payload["playing"].(bool); ok {
-		s.wallpaper.Playing = v
+	if s.wallpaper == nil {
+		s.wallpaper = make(map[string]any, len(payload))
 	}
-	if v, ok := payload["fontSize"].(float64); ok && v > 0 {
-		s.wallpaper.FontSize = int(v)
-	}
-	for _, key := range []string{"blur", "scale", "brightness"} {
-		if v, ok := payload[key].(float64); ok {
-			switch key {
-			case "blur":
-				s.wallpaper.Blur = v
-			case "scale":
-				s.wallpaper.Scale = v
-			case "brightness":
-				s.wallpaper.Brightness = v
-			}
+	for key, value := range payload {
+		if key == desktopWallpaperPatchType {
+			// type 属于「这条增量」，不是状态本身，不能并进快照 ——
+			// 并进去的话下一次读全量会带着上一条的 type，语义就乱了
+			continue
 		}
+		s.wallpaper[key] = value
 	}
 	s.wallpaperMu.Unlock()
 
-	s.pushDesktopWallpaper()
-	return s.DesktopWallpaperState()
+	s.pushDesktopWallpaper(payload)
+	return map[string]any{"ok": true}
 }
 
-// DesktopWallpaperState 读当前状态。
+// DesktopWallpaperState 读当前状态（一次**全量**快照）。
 //
-// 背景歌词窗口加载完成后用它做一次初始同步：事件是「之后」才来的，
+// 背景歌词窗口加载完成后用它做初始同步：事件是「之后」才来的，
 // 不主动拉一次的话，新窗口会一直空着直到下一次换行。
-func (s *WindowService) DesktopWallpaperState() desktopWallpaperSnapshot {
+func (s *WindowService) DesktopWallpaperState() map[string]any {
 	s.wallpaperMu.Lock()
 	defer s.wallpaperMu.Unlock()
 	return s.wallpaperSnapshotLocked()
 }
 
-// MarkDesktopWallpaperReady 由背景歌词窗口在加载完成后调用，立刻把状态推给自己。
+// MarkDesktopWallpaperReady 由背景歌词窗口在加载完成后调用。
 //
-// 页面加载完成与窗口创建之间有时序差：创建时推的那一次事件页面可能还没
-// 注册好监听，所以页面这边必须主动要一次。
-func (s *WindowService) MarkDesktopWallpaperReady() desktopWallpaperSnapshot {
+// 页面加载完成与窗口创建之间有时序差：创建时推的那一次事件，页面可能还没注册
+// 好监听。所以这里既补推一次全量、也把全量直接**返回**给调用方 —— 两条路任意
+// 一条通了，窗口就不会停在空态。
+func (s *WindowService) MarkDesktopWallpaperReady() map[string]any {
+	state := s.DesktopWallpaperState()
 	if s.desktopWallpaperWindowRef() != nil {
-		s.pushDesktopWallpaper()
+		s.pushDesktopWallpaper(state)
 	}
-	return s.DesktopWallpaperState()
+	return state
 }
 
 // DesktopWallpaperTouched 报告「背景歌词开关是否已经被用户/前端操作过」。
@@ -317,56 +303,35 @@ func (s *WindowService) DesktopWallpaperTouched() bool {
 	return s.wallpaperTouched
 }
 
-func (s *WindowService) pushDesktopWallpaper() {
-	if s.app == nil {
+// pushDesktopWallpaper 把一份 payload 广播出去。
+//
+// app.Event.Emit 会广播给所有窗口（包含背景歌词窗口），主窗口也会收到 ——
+// 前端按 payload 里的字段自行忽略即可。
+func (s *WindowService) pushDesktopWallpaper(payload map[string]any) {
+	if s.app == nil || len(payload) == 0 {
 		return
 	}
-	// app.Event.Emit 会广播给所有窗口（包含新建的背景歌词窗口），
-	// 主窗口也会收到 —— 前端按 payload 里的字段自行忽略即可。
-	s.app.Event.Emit(desktopWallpaperEvent, s.DesktopWallpaperState())
+	s.app.Event.Emit(desktopWallpaperEvent, payload)
 }
 
-// wallpaperSnapshotLocked 组装快照（调用方必须已持有 wallpaperMu）。
-func (s *WindowService) wallpaperSnapshotLocked() desktopWallpaperSnapshot {
-	content := s.wallpaper
-	if content.FontSize <= 0 {
-		content.FontSize = desktopWallpaperDefaultFontSize
-	}
-	if content.FontSize < desktopWallpaperMinFontSize {
-		content.FontSize = desktopWallpaperMinFontSize
-	}
-	if content.FontSize > desktopWallpaperMaxFontSize {
-		content.FontSize = desktopWallpaperMaxFontSize
-	}
+// wallpaperSnapshotLocked 组装**全量**快照（调用方必须已持有 wallpaperMu）。
+//
+// 合并进来的键原样带上，再把「开关 + 平台能力」和 type 覆盖上去。
+// type 固定成 song：接收方据此走「用全量重画一遍」那条路（理由见常量注释）。
+func (s *WindowService) wallpaperSnapshotLocked() map[string]any {
 	// 平台能力只探测一次：它要枚举桌面窗口，没必要每次换行都做
 	if !s.wallpaperProbed {
 		s.wallpaperProbed = true
 		s.wallpaperSupported, s.wallpaperReason = desktopWallpaperSupport()
 	}
-	return desktopWallpaperSnapshot{
-		Enabled:                 s.wallpaperOn,
-		desktopWallpaperContent: content,
-		Supported:               s.wallpaperSupported,
-		Reason:                  s.wallpaperReason,
-	}
-}
 
-// applyWallpaperStrings 把推送里的字符串字段搬进内容快照。
-//
-// 单独抽出来只是为了 UpdateDesktopWallpaper 读起来不像一堵墙；
-// 允许缺字段（推啥更新啥），因为主窗口有时候只推歌词、有时候只推封面。
-func applyWallpaperStrings(dst *desktopWallpaperContent, payload map[string]any) {
-	for key, target := range map[string]*string{
-		"text":   &dst.Text,
-		"prev":   &dst.Prev,
-		"next":   &dst.Next,
-		"title":  &dst.Title,
-		"artist": &dst.Artist,
-		"cover":  &dst.Cover,
-		"veil":   &dst.Veil,
-	} {
-		if v, ok := payload[key].(string); ok {
-			*target = v
-		}
+	out := make(map[string]any, len(s.wallpaper)+4)
+	for key, value := range s.wallpaper {
+		out[key] = value
 	}
+	out[desktopWallpaperPatchType] = desktopWallpaperFullPatch
+	out["enabled"] = s.wallpaperOn
+	out["supported"] = s.wallpaperSupported
+	out["reason"] = s.wallpaperReason
+	return out
 }

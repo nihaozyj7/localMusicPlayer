@@ -49,6 +49,9 @@ const skin = defineSkin({
     const lyrics = createLyricsView(ctx.root.querySelector(".pv-lyrics-host"), {
       onSeek: (ms) => ctx.actions.seek(ms),
       onOpenFolder: () => ctx.actions.openFolder(),
+      // 宿主可以把同一个皮肤挂到「只能看」的地方（桌面背景歌词），
+      // 那种场合下歌词行不该是可点、可聚焦的按钮
+      interactive: ctx.options().interactive !== false,
     });
 
     inst = {

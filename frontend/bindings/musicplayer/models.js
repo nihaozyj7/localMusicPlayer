@@ -95,26 +95,6 @@
  * @property {number} fontSize
  */
 
-/**
- * desktopWallpaperSnapshot 推给背景歌词窗口的完整状态（内容 + 开关 + 平台能力）。
- * @typedef {Object} desktopWallpaperSnapshot
- * @property {boolean} enabled
- * @property {string} text - —— 歌词 —— 当前行
- * @property {string} prev - 上一行（淡显，给一点上下文）
- * @property {string} next - 下一行（淡显）
- * @property {boolean} playing
- * @property {number} fontSize
- * @property {string} title - —— 曲目 ——
- * @property {string} artist
- * @property {string} cover - Cover 是**小尺寸**封面（主窗口用 canvas 降采样后的 data URL）。 桌面背景本来就是大范围模糊的，用原图既慢又看不出差别。
- * @property {string} veil - —— 背景观感（与主题/皮肤一致，避免桌面与主界面两个颜色）——
- * @property {number} blur
- * @property {number} scale
- * @property {number} brightness
- * @property {boolean} supported - Supported 当前系统是否支持「窗口垫到桌面图标之下」。 不支持的平台（非 Windows、或找不到桌面窗口）上前端会把这个按钮禁掉。
- * @property {string} reason
- */
-
 // In interface mode, this file is likely to contain just comments.
 // We add a dummy export statement to ensure it is recognised as an ES module.
 export {};

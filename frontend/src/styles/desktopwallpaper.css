@@ -1,215 +1,92 @@
 /* ==========================================================================
-   desktopwallpaper.css — 桌面背景歌词窗口的样式
+   desktopwallpaper.css — 桌面背景歌词窗口
    --------------------------------------------------------------------------
-   这个窗口整块就是一张会唱歌的壁纸：先在底下铺一层「从当前封面模糊出来的
-   背景」，再把歌词画在中间。
+   这个窗口里跑的是**详情页的同一套皮肤**（packages/player-skins），只砍掉了 UI。
+   骨架、皮肤样式、歌词样式全部复用现成的：
+     · .playerview / .playerview__stage      → components/playerview.css
+     · .skin-bg（沉浸类整窗背景层）           → 包里的 background-layer.css
+     · .disc / .classic__* / .immersive__* / .minimal__* 等 → 各皮肤自己的 CSS
+   这里只补两件事：
 
-   ⚠ 两条硬约束（都是构建配置逼出来的，别删）：
+     1. 把 .playerview 的定位从「标题栏之下、底栏之上」改成铺满整窗
+        （这个窗口没有标题栏与底栏）；
+     2. 去掉这个窗口里任何残留的交互观感（它垫在桌面图标之下，收不到输入）。
 
-   1. 所有会碰到 html / body 的规则都要锁在 `.wp-window`
-      （wallpaper.html 的 <html class="wp-window">）之下。
-      cssCodeSplit:false 会把**所有页面**的 CSS 合并成一个文件、所有 HTML
-      指向同一个 style-*.css（详见 vite.config.js），裸写 html/body 会打到
-      主界面上，把主窗口的底色与尺寸规则一起改掉。
-
-   2. 必须显式关掉 base.css 的 body::before。
-      那是主界面的「背景光斑层」（position:fixed + inset:0 的整窗渐变），
-      合并 CSS 之后它同样作用在这里。它自己的背景与环境不受 body 的
-      background 影响，所以不清掉的话会在壁纸上盖一层看得见的浅色。
-
-   性能取向（这条是需求里「双份资源」那个问题的答案，改样式时请保持）：
-     · 背景图是主窗口降采样过的**小图**（约 64px），靠放大 + 很轻的模糊
-       得到「大范围模糊的封面」观感 —— 比原图 + blur(54px) 便宜一个数量级；
-     · 页面里没有任何常驻动画 / requestAnimationFrame，静止时 GPU 无事可做；
-     · 只有「换行」那一下有一小段淡入，且只作用在一行文字上。
+   ★ 所有规则都必须挂在 html.wp-window 下面。
+   构建配置 cssCodeSplit:false 会把所有页面的 CSS 合成同一个 style-*.css，
+   所有页面的 <link> 指向它 —— 不限定作用域的话，上面第 1 条会顺手把主窗口的
+   详情页也一起铺满，把标题栏和底栏盖掉。
    ========================================================================== */
 
 html.wp-window,
 html.wp-window body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
   height: 100%;
   overflow: hidden;
-  /* 兜底底色：封面还没来 / 没有封面时也不能是白的 */
-  background: #08080a;
-  color: #fff;
-  /* 壁纸是「看」的不是「选」的 */
+}
+
+/* 背景层与详情页是同性质的：都铺满整个视口。
+   .playerview 关掉动效后它是静止的，所以这里直接给它「已入场」状态即可
+   （data-state 由脚本打，这条只是兜底）。 */
+html.wp-window .skin-bg {
+  pointer-events: none;
+}
+
+/* —— 外壳 .app ——
+   这一层是**给皮肤 CSS 用的钩子**，不是布局容器：样式包约定整窗背景层写在
+   .app[data-mode="<样式id>"] 下（见 wallpaper.html 的说明）。主界面里它是
+   三区网格骨架；这里两个固定定位的孩子，网格没有意义，改回普通块。
+   z-index: var(--z-content)(10) 仍然保留 —— 它把 .skin-bg(25) 与
+   .playerview(30) 收进同一个层叠上下文，顺序与主界面完全一致。 */
+html.wp-window .app {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+/* —— ① 详情页铺满整窗 ——
+   主界面里它是 inset: var(--h-titlebar) 0 var(--h-playerbar) 0（让开标题栏与
+   底栏）。这个窗口两者都没有，所以四边都是 0。
+   进出场动效（translateY + 淡入）也一并去掉：窗口是先挂到壁纸层再 Show 的，
+   入场那一下没有观众，留着只会让第一帧从半透明开始。 */
+html.wp-window .playerview {
+  position: fixed;
+  inset: 0;
+  /* 主界面里是 grid-template-rows: auto minmax(0,1fr)：第一行留给头部。
+     这里只有舞台一个孩子，不改成单行的话它会落在 auto 行上，
+     高度变成「内容高度」——经典样式的歌词区会因此塌掉、不再居中。 */
+  grid-template-rows: minmax(0, 1fr);
+  opacity: 1;
+  transform: none;
+  transition: none;
+  will-change: auto;
+}
+
+/* 舞台占满剩余高度。主界面里这一行是 grid-template-rows: auto minmax(0,1fr)
+   的第一行给头部（auto）—— 这里没有头部，直接让舞台吃满。 */
+html.wp-window .playerview__stage {
+  height: 100%;
+  min-height: 0;
+}
+
+/* 皮肤挂载失败时给一行说明（与详情页同一套兜底，别留一片纯色） */
+html.wp-window .skin-error {
+  color: var(--text-3);
+}
+
+/* —— ② 这个窗口里不存在交互 ——
+   它被 SetParent 挂进桌面壁纸层并压在图标之下，鼠标事件根本到不了这里。
+   把光标与文本选择一起关掉：桌面背景上出现文本光标、或者拖动时划出一片
+   蓝色选区，都是很明显的穿帮。（歌词行本身的被动样式见包里的 lyrics.css
+   的 [data-passive] 规则，那边是渲染器自己按 interactive:false 关的。） */
+html.wp-window,
+html.wp-window * {
+  cursor: default;
   user-select: none;
   -webkit-user-select: none;
-  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
 }
 
-/* 关掉 base.css 的背景光斑层（见文件头第 2 条） */
-html.wp-window body::before {
-  display: none !important;
-}
-
-.wp {
-  --wp-size: 44px;
-  --wp-blur: 12px;
-  --wp-scale: 1.06;
-  --wp-brightness: 0.85;
-  --wp-veil: rgba(0, 0, 0, 0.42);
-
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  background: #08080a;
-}
-
-/* —— 背景层 —— */
-
-.wp__img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  /* 放大一点：模糊之后边缘会透出底色，缩放能把它推出可视区 */
-  transform: scale(var(--wp-scale));
-  /* 小图放大本来就已经很糊了，这里只用一点模糊把放大产生的块状感抹平。
-     真要拉满「详情页那种 54px 毛玻璃」的话，代价是全屏一遍大半径卷积 ——
-     静态画面下这笔开销不划算。 */
-  filter: blur(var(--wp-blur)) saturate(1.45) brightness(var(--wp-brightness));
-  /* 图要解码完才画得出来，所以从透明开始、加载完再淡入 */
-  opacity: 0;
-  transition: opacity 600ms ease;
-  pointer-events: none;
-}
-
-.wp__img[data-ready="1"] {
-  opacity: 1;
-}
-
-/* 主题遮罩：和主界面皮肤用的 --skin-bg-veil 是同一个思路，
-   保证「桌面上的背景」与「窗口里的背景」明暗一致。 */
-.wp__veil {
-  position: absolute;
-  inset: 0;
-  background: var(--wp-veil);
-  pointer-events: none;
-}
-
-/* 四角压暗：让中间的歌词在任何封面上都读得清 */
-.wp__grain {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(120% 80% at 50% 45%, transparent 38%, rgba(0, 0, 0, 0.55) 100%);
-  pointer-events: none;
-}
-
-/* —— 歌词 —— */
-
-.wp__lyrics {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.35em;
-  width: min(88vw, 1400px);
-  padding: 0 4vw;
-  text-align: center;
-}
-
-.wp__line {
-  margin: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  /* 描边 + 投影：壁纸可能是任何颜色，两种手段叠着才在任何背景上都读得清 */
-  text-shadow:
-    0 0 3px rgba(0, 0, 0, 0.9),
-    0 0 12px rgba(0, 0, 0, 0.7),
-    0 2px 10px rgba(0, 0, 0, 0.75);
-  transition: opacity 260ms ease;
-}
-
-.wp__line--now {
-  font-size: var(--wp-size);
-  font-weight: 700;
-  line-height: 1.3;
-  letter-spacing: 0.02em;
-  color: #fff;
-}
-
-.wp__line--prev,
-.wp__line--next {
-  font-size: calc(var(--wp-size) * 0.52);
-  font-weight: 500;
-  line-height: 1.4;
-  color: rgba(255, 255, 255, 0.6);
-}
-
-/* 切行时淡入：直接换字在整屏尺寸下会「跳」一下 */
-.wp__line--now[data-fresh="1"] {
-  animation: wp-line-in 320ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-@keyframes wp-line-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-/* 暂停：整体降一点不透明度，明确「现在没在唱」 */
-.wp[data-state="paused"] .wp__lyrics {
-  opacity: 0.72;
-}
-
-/* —— 曲目信息 —— */
-
-.wp__meta {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 5.5vh;
-  text-align: center;
-  text-shadow:
-    0 0 3px rgba(0, 0, 0, 0.9),
-    0 2px 10px rgba(0, 0, 0, 0.8);
-}
-
-.wp__title {
-  margin: 0;
-  font-size: calc(var(--wp-size) * 0.4);
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.88);
-}
-
-.wp__artist {
-  margin: 0.25em 0 0;
-  font-size: calc(var(--wp-size) * 0.32);
-  color: rgba(255, 255, 255, 0.6);
-}
-
-/* —— 空态提示 —— */
-
-.wp__tip {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 5.5vh;
-  margin: 0;
-  text-align: center;
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.55);
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
-}
-
-/* 有歌在放（不管在不在唱）就把提示收起来 */
-.wp[data-state="singing"] .wp__tip,
-.wp[data-state="paused"] .wp__tip {
-  display: none;
+/* 焦点环同理：这个窗口永远不会获得焦点，但 WebView 仍然可能画出它 */
+html.wp-window :focus-visible {
+  box-shadow: none;
+  outline: none;
 }

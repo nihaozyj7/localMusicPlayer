@@ -88,13 +88,27 @@ export const PATCH_TYPES = [
  */
 
 /**
+ * @typedef {Object} SkinOptions
+ * @property {boolean} showLyrics
+ * @property {number} lyricsFontSize
+ * @property {boolean} animations
+ * @property {boolean} coverCarousel
+ * @property {number} coverCarouselInterval
+ * @property {boolean} interactive 宿主是否允许交互。
+ *   默认 true。宿主把同一个皮肤挂到「只能看」的地方时传 false ——
+ *   目前唯一这样的宿主是**桌面背景歌词**窗口：它垫在桌面图标之下，
+ *   本来就收不到鼠标与键盘事件。皮肤收到 false 应当把可点、可聚焦、
+ *   悬停反馈这类东西一起去掉，只留渲染出来的内容。
+ */
+
+/**
  * @typedef {Object} SkinContext 宿主上下文（皮肤拿到的唯一入口）
  * @property {HTMLElement} root 皮肤自己的挂载点（宿主已清空）
  * @property {HTMLElement} backgroundRoot 整窗背景层的容器（宿主已就位，皮肤按需填充）
  * @property {HTMLAudioElement|null} audio 真实音频元素（可直接读 buffered / 挂监听）
  * @property {() => SkinPlayback} playback 播放进度快照
  * @property {() => SkinMedia} media 曲目/封面/歌词快照
- * @property {() => object} options 显示相关设置（showLyrics / lyricsFontSize / animations…）
+ * @property {() => SkinOptions} options 显示相关设置（showLyrics / lyricsFontSize / interactive…）
  * @property {(type: string, fn: (patch: any) => void) => () => void} on 订阅宿主推送
  * @property {SkinActions} actions 受控动作（不要在皮肤里直接操作 store）
  * @property {string} defaultCover 封面加载失败时的兜底图（内联 SVG data URL）
