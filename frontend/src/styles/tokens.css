@@ -148,14 +148,28 @@
   --btn-md: 34px;
   --btn-lg: 44px;
 
-  /* —— 动效 —— */
-  --dur-fast: 120ms;
+  /* —— 动效 ——
+     设计约束：全站的动效只允许从这几个令牌取值。这样「设置 → 界面动画」
+     关掉时是整体一致地停，而不是有的地方停了、有的地方还在滑。
+
+     关键点是 --dur 之外的时长全部由它 calc 派生：
+     开关唯一的动作就是把 --dur 归零（见 settings.js / handleSettingControl），
+     派生出来的 --dur-fast / --dur-slow / --pv-slide-dur 会跟着一起归零。
+     以前它们是各自写死的毫秒数，所以关掉动画后面板、菜单仍然在滑。 */
   --dur: 200ms;
-  --dur-slow: 420ms;
-  --pv-slide-dur: 260ms;
+  --dur-fast: calc(var(--dur) * 0.6); /* 120ms：悬停 / 按下 / 菜单，需要「跟手」 */
+  --dur-slow: calc(var(--dur) * 2.1); /* 420ms：大范围位移、整页级变化 */
+  --pv-slide-dur: calc(var(--dur) * 1.3); /* 260ms：播放详情页整页滑入 / 滑出 */
+
+  /* 缓动只保留三种语义：通用属性过渡 / 进场 / 位移。
+     进场的 --ease-out 是「快出慢收」，收尾时几乎停住，符合「东西推到位」的直觉。 */
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-slide: cubic-bezier(0.32, 0.72, 0.24, 1);
+
+  /* 统一位移：面板从「来的方向」推进一点点，而不是整屏飞入（桌面端会显拖沓） */
+  --rise: 10px;
+  --rise-sm: 4px;
 
   /* —— 层级 ——
      注意 --z-modal-top：弹窗（modal-backdrop）必须比所有「层」（设置层 / 封面层 /

@@ -42,8 +42,10 @@ const DEFAULT_CONFIG = {
   lyricsSources: ["embedded", "lrc-file", "cache", "online"],
   lyricsFontSize: 16,
   lyricsLines: 7,
-  // 桌面歌词（悬浮在窗口上的歌词，区别于详情页里的歌词）
+  // 桌面歌词：独立的透明置顶窗口（区别于详情页里的歌词区）
   showDesktopLyrics: false,
+  // 定时停止：「播放完歌曲」= 倒计时到点后等当前这首播完再停（延长到歌曲结束）
+  sleepAfterSong: false,
 
   /* 随机播放行为：reshuffle（打乱后播完重新打乱）| once（打乱后顺序播完即停） */
   shuffleMode: "reshuffle",
@@ -51,8 +53,13 @@ const DEFAULT_CONFIG = {
   /* AI 元数据清洗（设置 → AI 元数据） */
   aiBaseUrl: "",
   aiApiKey: "",
+  // 思考模式默认关闭；开关字段按「模型类型」（aiVendor）选择，见 ai-vendors.js
   aiThinking: false,
+  // 模型类型（厂商）：决定思考开关用哪家的请求体字段；auto = 自动识别
+  aiVendor: "auto",
   aiModelId: "",
+  // 自动匹配歌词时先用 AI 清洗元数据（关掉后只做本地整形，不再等 8~18 秒的 AI）
+  aiLyricsClean: true,
   cacheDir: "%APPDATA%\\MusicPlayer\\cache",
   scanConcurrency: 4,
 
@@ -103,6 +110,9 @@ function initialState() {
     /* 界面 */
     view: "library", // library | queue | playlist | settings
     playlistId: null,
+    /* 歌单多选模式：勾选歌曲后可以批量移除 */
+    playlistSelecting: false,
+    selectedIds: new Set(),
     playerOpen: false,
     queueOpen: false,
     pvMode: "classic",
@@ -329,7 +339,10 @@ function recalcVisible() {
     );
   }
 
-  if (state.sortKey && SORTERS[state.sortKey]) {
+  // 播放列表（队列）视图**不排序**：队列顺序本身就是数据（用户拖拽排序的结果），
+  // 再按 sortKey 排一次会把拖拽效果整个抹掉 —— 这正是「拖拽后提示成功、
+  // 界面却没变化」的原因。队列的排序由用户拖拽决定。
+  if (state.view !== "queue" && state.sortKey && SORTERS[state.sortKey]) {
     const cmp = SORTERS[state.sortKey];
     const dir = state.sortDir === "desc" ? -1 : 1;
     out = out.slice().sort((a, b) => cmp(a, b) * dir);
@@ -455,6 +468,38 @@ export function movePlaylist(from, to) {
 }
 
 /* --------------------------------------------------------------------------
+   歌单多选（纯界面状态，不落盘）
+   --------------------------------------------------------------------------
+   需求：歌单里加「多选」按钮，勾选后可以批量移除。
+   勾选状态放在 state 而不是各组件里：工具条（显示已选数量 / 全选 / 移除）
+   与曲目行（勾选框）读的是同一份，避免两边各记一份而不同步。
+   -------------------------------------------------------------------------- */
+export function setPlaylistSelecting(on) {
+  state.playlistSelecting = Boolean(on);
+  if (!state.playlistSelecting) state.selectedIds = new Set();
+  commit();
+}
+
+export function toggleSelectedSong(id) {
+  if (!id) return;
+  const next = new Set(state.selectedIds);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  state.selectedIds = next;
+  commit();
+}
+
+export function setSelectedSongs(ids) {
+  state.selectedIds = new Set(Array.isArray(ids) ? ids : []);
+  commit();
+}
+
+export function clearSelectedSongs() {
+  state.selectedIds = new Set();
+  commit();
+}
+
+/* --------------------------------------------------------------------------
    播放队列（需求 B3 / B4 / B5）
    -------------------------------------------------------------------------- */
 export function setQueue(songIds, origin = null) {
@@ -493,6 +538,9 @@ export function removeFromQueue(songId) {
 
 export function reorderQueue(from, to) {
   state.queue = moveItem(state.queue, from, to);
+  // 需求：用户拖拽调整播放顺序后，播放模式自动切回「列表循环」。
+  // 拖拽表达的是「就按我排的这个顺序播」，单曲循环 / 随机都与它矛盾。
+  setPlayMode("sequence");
   commit();
   if (isWails() && state.queueOrigin?.id) {
     backend.reorderPlaylist(state.queueOrigin.id, from, to);
@@ -536,6 +584,23 @@ export function songById(id) {
    现在统一读这里，单一真源。
    -------------------------------------------------------------------------- */
 
+/* 封面版本号：每次封面表有任何变化都 +1。
+   --------------------------------------------------------------------------
+   为什么需要它：曲目列表是按「渲染键」增量重绘的（见 main.js#renderKey），
+   而封面不在键里 —— 于是「应用了新封面但列表一行都不重绘」，
+   用户看到的现象就是「匹配完封面，列表里还是默认封面」。
+   把版本号写进渲染键，封面一变整张表就重绘；底栏也用它判断要不要换图。 */
+let coverRevision = 0;
+
+/** 当前封面版本号（只读，供渲染键与底栏比对） */
+export function coverVersion() {
+  return coverRevision;
+}
+
+function bumpCoverVersion() {
+  coverRevision += 1;
+}
+
 /** 取某首歌的封面集合（永远是同一个形状，调用方不必判空） */
 export function coverSetOf(id) {
   const set = state.coverSets.get(id);
@@ -570,6 +635,7 @@ export function setCoverSet(id, set) {
       active: Math.max(0, Math.min(Number(set.active) || 0, items.length - 1)),
     });
   }
+  bumpCoverVersion();
   commit();
 }
 
@@ -585,6 +651,7 @@ export function setCoverSets(map) {
       active: Math.max(0, Math.min(Number(set.active) || 0, items.length - 1)),
     });
   }
+  bumpCoverVersion();
   commit();
 }
 
@@ -594,6 +661,7 @@ export function setCoverOverride(id, dataURL) {
   if (dataURL) setCoverSet(id, { items: [{ preview: dataURL, source: "user" }], active: 0 });
   else {
     state.coverSets.delete(id);
+    bumpCoverVersion();
     commit();
   }
 }
@@ -790,7 +858,13 @@ export function toggleMute() {
 
 export function cyclePlayMode() {
   const i = PLAY_MODES.indexOf(state.playMode);
-  state.playMode = PLAY_MODES[(i + 1) % PLAY_MODES.length];
+  setPlayMode(PLAY_MODES[(i + 1) % PLAY_MODES.length]);
+}
+
+/** 直接设定播放模式（"sequence" 即列表循环）。 */
+export function setPlayMode(mode) {
+  const next = PLAY_MODES.includes(mode) || mode === "loop-all" ? mode : "sequence";
+  if (next !== state.playMode) state.playMode = next;
   state.config.playMode = state.playMode;
   if (state.playMode === "shuffle") reshuffle();
   commit();
@@ -927,11 +1001,14 @@ const SYNCED_KEYS = [
   "lyricsLines",
   "lyricsSources",
   "showDesktopLyrics",
+  "sleepAfterSong",
   "shuffleMode",
   "aiBaseUrl",
   "aiApiKey",
   "aiThinking",
+  "aiVendor",
   "aiModelId",
+  "aiLyricsClean",
   "cacheDir",
   "loudnessMode",
   "loudnessTarget",

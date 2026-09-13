@@ -222,18 +222,8 @@
   height: 34px;
 }
 
-/* —— 极窄窗口：仅图标模式 —— */
-@media (max-width: 900px) {
-  .sidebar__label,
-  .navitem__text,
-  .navitem__badge,
-  .navitem__more {
-    display: none;
-  }
-
-  .navitem {
-    justify-content: center;
-    padding: 0;
-    height: 40px;
-  }
-}
+/* 说明：这里**不再有**「极窄窗口只留图标」的响应式折叠。
+   需求是左侧曲库 / 歌单栏不随窗口宽度折叠 —— 折叠后：
+     · 歌单名看不见了，只凭一个通用图标分不清哪个是哪个；
+     · 数量徽标消失，用户也没法一眼看出每个歌单有多少首。
+   侧边栏宽度是固定令牌 --w-sidebar，与窗口宽度无关。 */

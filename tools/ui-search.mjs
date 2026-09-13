@@ -8,7 +8,8 @@
      4. 弹层里有清空按钮，点它会同时清掉输入与结果；
      5. 没有清空之前结果不会被销毁（关掉再打开还是上次的结果）；
      6. 试听在线歌曲：进播放列表但不进「本地歌曲」；
-     7. 全程没有 console 报错。
+     7. 本地搜索已挪到「本地歌曲」列表上方的筛选框（弹层里不再有本地标签）；
+     8. 全程没有 console 报错。
 
    用法：node tools/ui-search.mjs [--port 5173]
    ========================================================================== */
@@ -169,26 +170,67 @@ try {
     JSON.stringify(afterType)
   );
 
-  /* 3. 回车出结果（浏览器预览没有在线后端，所以切到本地标签验证结果渲染） */
+  /* 3. 弹层里不再有「本地曲库」标签（本地搜索已独立成列表上方的筛选框） */
+  const noLocalTab = await evalJs(`
+    return {
+      localTab: Boolean(document.querySelector('[data-search-tab="local"]')),
+      tabs: document.querySelectorAll("[data-search-tab]").length,
+    };
+  `);
+  check("在线搜索弹层不再有本地标签", noLocalTab.localTab === false, JSON.stringify(noLocalTab));
+
+  /* 4. 本地歌曲上方的筛选框：可见、能过滤、输入不丢焦点 */
   await evalJs(`
-    const tab = document.querySelector('[data-search-tab="local"]');
-    tab.click();
+    const store = await import("/js/store.js");
+    store.state.query = "";
+    store.state.view = "library";
+    store.state.playlistId = null;
+    store.commit();
+    await new Promise((r) => setTimeout(r, 320));
     return true;
   `);
-  await sleep(200);
+  const filterBar = await evalJs(`
+    const bar = document.getElementById("content-filter");
+    const input = document.getElementById("content-filter-input");
+    // compareDocumentPosition 的 4 = DOCUMENT_POSITION_FOLLOWING：确认筛选框在内容区之前
+    const beforeBody = bar && document.getElementById("content-body")
+      ? Boolean(bar.compareDocumentPosition(document.getElementById("content-body")) & 4)
+      : false;
+    return { visible: Boolean(bar && !bar.hidden), hasInput: Boolean(input), beforeBody };
+  `);
+  check(
+    "本地歌曲上方有筛选框",
+    filterBar.visible === true && filterBar.hasInput === true && filterBar.beforeBody === true,
+    JSON.stringify(filterBar)
+  );
+
   await evalJs(`
-    const input = document.getElementById("search-input");
+    const input = document.getElementById("content-filter-input");
+    input.focus();
     input.value = "陈默";
     input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     return true;
   `);
-  await sleep(400);
-  const localRes = await evalJs(`
-    const body = document.getElementById("search-body");
-    return { rows: body.querySelectorAll(".search-row").length, headline: document.getElementById("search-headline").textContent };
+  await sleep(420);
+  const filtered = await evalJs(`
+    const store = await import("/js/store.js");
+    const input = document.getElementById("content-filter-input");
+    return {
+      total: store.state.songs.length,
+      visible: document.querySelectorAll(".track").length,
+      query: store.state.query,
+      focused: document.activeElement === input,
+      count: document.getElementById("content-filter-count").textContent,
+    };
   `);
-  check("回车后本地标签列出匹配结果", localRes.rows > 0, JSON.stringify(localRes));
+  check(
+    "筛选框即时过滤且不丢焦点",
+    filtered.query === "陈默" &&
+      filtered.visible > 0 &&
+      filtered.visible < filtered.total &&
+      filtered.focused === true,
+    JSON.stringify(filtered)
+  );
 
   /* 4. 关掉再打开：结果还在（没有点清空就不销毁） */
   await evalJs(`
@@ -203,6 +245,7 @@ try {
     const body = document.getElementById("search-body");
     return { hidden: layer.hidden, kept: body?.dataset.probeId === "keep-me", rows: body?.querySelectorAll(".search-row").length || 0 };
   `);
+  // 在线结果面板在预览下可能是空态，这里只验证「节点没被销毁」
   check(
     "关闭只是隐藏，结果 DOM 保留",
     hiddenState.hidden === true && hiddenState.kept === true,
@@ -223,7 +266,7 @@ try {
   `);
   check(
     "再次打开复用同一个结果面板",
-    reopened.hidden === false && reopened.sameNode === true && reopened.rows > 0,
+    reopened.hidden === false && reopened.sameNode === true,
     JSON.stringify(reopened)
   );
 
@@ -283,7 +326,7 @@ try {
   /* 7. 「本地歌曲」视图不显示在线曲目 */
   const lib = await evalJs(`
     const store = await import("/js/store.js");
-    store.navigate ? null : null;
+    store.state.query = "";
     store.state.view = "library";
     store.commit();
     await new Promise((r) => setTimeout(r, 300));

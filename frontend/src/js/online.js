@@ -48,6 +48,7 @@ function fmt(ms) {
 let lyricsPanel = null;
 let lyricsInput = null;
 let lyricsResults = null;
+let lyricsHint = null;
 
 function bindLyricsButton() {
   const btn = document.getElementById("btn-lyrics-match");
@@ -89,8 +90,10 @@ function makeLyricsPanel() {
   const title = document.createElement("b");
   title.textContent = "手动匹配歌词";
   const hint = document.createElement("span");
-  hint.textContent = "LRCLIB";
+  // 来源名由后端给出（不写死）：加/换歌词来源时这里自动跟着变
+  hint.textContent = "在线歌词来源";
   hint.style.cssText = "color:#888;font-size:12px;";
+  lyricsHint = hint;
   const spacer = document.createElement("span");
   spacer.style.flex = "1";
   const close = document.createElement("button");
@@ -138,12 +141,33 @@ async function searchLyrics() {
     toast("在线歌词后端未就绪", { tone: "error" });
     return;
   }
+  refreshLyricsHint(service);
   lyricsResults.textContent = "搜索中…";
   try {
-    const list = await service.SearchLyrics(keyword, song ? song.artist : "", song ? song.duration : 0);
+    // keyword 是用户在输入框里写/改的搜索词；title/artist 是这首歌的元数据，
+    // 一起传过去是为了让后端**按它们给候选打分排序** —— 只给关键词时所有候选
+    // 都是同一个基础分，翻唱版会跑到原唱前面（这就是「搜到的一堆但都不是想要的」）。
+    const list = await service.SearchLyrics(
+      keyword,
+      song ? song.title : "",
+      song ? song.artist : "",
+      song ? song.duration : 0
+    );
     renderLyricCandidates(Array.isArray(list) ? list : []);
   } catch (err) {
     lyricsResults.textContent = "搜索失败：" + (err.message || err);
+  }
+}
+
+/** 来源名由后端提供（LRCLIB / 网易云 / QQ 音乐…），拿不到就保持通用文案 */
+async function refreshLyricsHint(service) {
+  if (!lyricsHint) return;
+  try {
+    const res = await service.LyricsProviders?.();
+    const list = Array.isArray(res?.providers) ? res.providers : [];
+    if (list.length) lyricsHint.textContent = list.join(" / ");
+  } catch {
+    /* 拿不到来源列表不影响搜索 */
   }
 }
 

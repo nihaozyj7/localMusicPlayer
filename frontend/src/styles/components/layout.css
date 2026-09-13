@@ -75,7 +75,8 @@
 .main {
   grid-area: main;
   display: grid;
-  grid-template-rows: var(--h-header) minmax(0, 1fr);
+  /* 三行：内容头 / 本地筛选栏（隐藏时 auto 行塌成 0）/ 内容区 */
+  grid-template-rows: var(--h-header) auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   position: relative;
@@ -152,18 +153,17 @@
   background: none;
 }
 
-/* —— 窄窗口：收窄侧边栏，不改变结构 —— */
+/* —— 窄窗口：只压缩底栏高度 ——
+   需求：左侧曲库 / 歌单栏不做响应式折叠（--w-sidebar 固定），
+   因此这里**不再**随窗口宽度收窄侧边栏，只调整底栏高度。 */
 @media (max-width: 1120px) {
   :root {
-    --w-sidebar: 196px;
     --h-playerbar: 88px;
   }
 }
 
-/* 接近窗口最小宽度（1000px）：侧边栏只留图标 */
 @media (max-width: 1040px) {
   :root {
-    --w-sidebar: 72px;
     --h-playerbar: 86px;
   }
 }

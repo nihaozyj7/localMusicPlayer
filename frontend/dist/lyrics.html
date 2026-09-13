@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws:"
+    />
+    <title>桌面歌词</title>
+    <!--
+      独立页面：桌面歌词窗口（见 Go 侧 desktop_lyrics.go）。
+      刻意**不引入** styles/index.css —— 那套样式会给 html/body 铺底色，
+      而这里整块区域必须是全透明的，只显示文字。
+    -->
+    <script type="module" crossorigin src="/assets/lyrics-KODwUJgq.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/bridge-CiGPKscV.js">
+    <link rel="stylesheet" crossorigin href="/assets/style-idzzDm86.css">
+  </head>
+  <body>
+    <div class="dl" id="dl" data-state="idle" data-style="classic">
+      <!-- 悬浮控制栏：鼠标移入窗口时才出现（"常规窗口"形态）。
+           里面是「桌面歌词样式」下拉框；不悬浮时整块（含窗口背景）完全透明，
+           不会在桌面上留下一条半透明的色块。 -->
+      <div class="dl__bar" id="dl-bar">
+        <label class="dl__bar-label" for="dl-style">桌面歌词样式</label>
+        <div class="dl__select-wrap">
+          <select class="dl__select" id="dl-style" aria-label="桌面歌词样式"></select>
+        </div>
+      </div>
+      <p class="dl__line" id="dl-line"></p>
+      <p class="dl__tip" id="dl-tip">桌面歌词 · 播放歌曲后逐行显示（鼠标移入可选择样式，拖动可移动）</p>
+    </div>
+  </body>
+</html>

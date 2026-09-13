@@ -2,6 +2,7 @@ package coverfetch
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"strings"
 )
@@ -53,16 +54,27 @@ func (p *NeteaseProvider) Find(ctx context.Context, req Request) (FindResult, er
 	}
 
 	candidates := make([]Cover, 0, 6)
+	// 两段查询是「先专辑、不中再单曲」的回退关系，但要记住**为什么**没中：
+	// 如果两段都是接口层报错（例如 code 405 限流），那这个来源就是坏了，
+	// 必须把错误抛出去让熔断生效 —— 不能伪装成「没搜到」。
+	var firstErr error
 	if covers, err := p.searchAlbums(ctx, req); err == nil {
 		candidates = append(candidates, covers...)
+	} else {
+		firstErr = err
 	}
 	if len(candidates) == 0 {
 		if covers, err := p.searchSongDetails(ctx, req); err == nil {
 			candidates = append(candidates, covers...)
+		} else if firstErr == nil {
+			firstErr = err
 		}
 	}
 	candidates = dedupeCovers(candidates)
 	if len(candidates) == 0 {
+		if firstErr != nil {
+			return FindResult{}, firstErr
+		}
 		return FindResult{}, nil
 	}
 	return FindResult{Cover: candidates[0], Candidates: candidates}, nil
@@ -86,6 +98,11 @@ func (p *NeteaseProvider) searchAlbums(ctx context.Context, req Request) ([]Cove
 		"limit":  {"10"},
 	}
 	var resp struct {
+		// Code 是网易接口自己的业务状态码。**HTTP 200 不代表成功**：
+		// 请求稍频繁时它会回 {"code":405,"msg":"操作频繁，请稍候再试"}，
+		// 早期实现只看 HTTP 状态码，于是这类失败被当成「没搜到」静默吞掉，
+		// 用户只觉得「封面老是搜不到」，熔断也永远不生效。
+		Code   int `json:"code"`
 		Result struct {
 			Albums []struct {
 				Name       string `json:"name"`
@@ -102,6 +119,9 @@ func (p *NeteaseProvider) searchAlbums(ctx context.Context, req Request) ([]Cove
 	}
 	endpoint := p.base() + "/api/search/get/web?" + q.Encode()
 	if err := getJSON(ctx, endpoint, &resp, neteaseHeaders()); err != nil {
+		return nil, err
+	}
+	if err := neteaseCodeErr(resp.Code); err != nil {
 		return nil, err
 	}
 
@@ -153,6 +173,7 @@ func (p *NeteaseProvider) searchSongDetails(ctx context.Context, req Request) ([
 		"limit":  {"5"},
 	}
 	var search struct {
+		Code   int `json:"code"`
 		Result struct {
 			Songs []struct {
 				ID      int64  `json:"id"`
@@ -165,6 +186,9 @@ func (p *NeteaseProvider) searchSongDetails(ctx context.Context, req Request) ([
 	}
 	endpoint := p.base() + "/api/search/get/web?" + q.Encode()
 	if err := getJSON(ctx, endpoint, &search, neteaseHeaders()); err != nil {
+		return nil, err
+	}
+	if err := neteaseCodeErr(search.Code); err != nil {
 		return nil, err
 	}
 	if len(search.Result.Songs) == 0 {
@@ -236,4 +260,20 @@ func neteaseSized(raw string, size int) string {
 		raw = raw[:i]
 	}
 	return raw + "?param=" + itoa(int64(size)) + "y" + itoa(int64(size))
+}
+
+// neteaseCodeErr 把网易接口的业务状态码翻成 error。
+//
+// 为什么必须看它：网易的搜索接口在请求偏频繁时返回的是
+// **HTTP 200 + {"code":405,"msg":"操作频繁，请稍候再试"}**。
+// 只看 HTTP 状态码会把它当成「这次没搜到」，于是：
+//   - 用户看到的是「封面/歌词老是搜不到」，而不是「这个源被限流了」；
+//   - 熔断永远不生效，每次搜索都要白等它一次。
+//
+// code 为 0 或 200 都表示成功（不同接口用的取值不一样）。
+func neteaseCodeErr(code int) error {
+	if code == 0 || code == 200 {
+		return nil
+	}
+	return fmt.Errorf("netease: 接口返回 code %d（可能被限流）", code)
 }

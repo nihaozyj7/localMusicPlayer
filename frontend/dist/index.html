@@ -20,8 +20,9 @@
     -->
     <style id="runtime-tokens"></style>
     <style id="swatch-styles"></style>
-    <script type="module" crossorigin src="/assets/index-CaHB6NmG.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/style-B1myoLnu.css">
+    <script type="module" crossorigin src="/assets/index-C1Zres4M.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/bridge-CiGPKscV.js">
+    <link rel="stylesheet" crossorigin href="/assets/style-idzzDm86.css">
   </head>
   <body>
     <!-- ==================================================================
@@ -332,6 +333,13 @@
           <path d="M11.5 3H20v8.5L11 20.5a2 2 0 0 1-2.8 0l-5.7-5.7a2 2 0 0 1 0-2.8Z" />
           <circle cx="16" cy="7.5" r="1.5" />
         </symbol>
+
+        <!-- 下载任务：箭头落进托盘 -->
+        <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3.5v11" />
+          <path d="m7.5 10.5 4.5 4.5 4.5-4.5" />
+          <path d="M4.5 19.5h15" />
+        </symbol>
       </defs>
     </svg>
 
@@ -359,6 +367,14 @@
         <span class="titlebar__sep"></span>
         <div class="titlebar__drag"></div>
         <div class="titlebar__actions">
+          <!-- 下载任务入口：**有下载任务时才出现**（初始 hidden，由 downloads.js 控制）。
+               按钮静态写在 HTML 里而不是运行时 inject —— 见 README「界面上的按钮写在
+               index.html 里」那条设计约束：inject 的按钮一旦模块没被 import 就会静默消失。 -->
+          <button class="titlebar__btn titlebar__btn--download" id="btn-downloads" type="button"
+            data-tip="下载任务" aria-label="下载任务" aria-pressed="false" hidden>
+            <svg><use href="#i-download" /></svg>
+            <span class="titlebar__badge" id="download-badge" hidden></span>
+          </button>
           <button class="titlebar__btn" id="btn-theme-toggle" type="button" data-tip="切换深浅色" aria-label="切换深浅色">
             <svg><use href="#i-moon" /></svg>
           </button>
@@ -414,6 +430,20 @@
             <p class="content-header__subtitle" id="content-subtitle">0 首 · 0 个文件夹</p>
           </div>
           <div class="content-header__tools" id="content-tools"></div>
+        </div>
+        <!-- 本地歌曲的搜索筛选框（需求：放在「本地歌曲」上方）。
+             它是 #content-body 之外的静态节点：输入时只重绘列表，
+             不会重建输入框，因此焦点与输入法状态不会被打断。 -->
+        <div class="content-filter" id="content-filter" hidden>
+          <div class="content-filter__field">
+            <svg class="content-filter__icon" aria-hidden="true"><use href="#i-search" /></svg>
+            <input class="content-filter__input" id="content-filter-input" type="text"
+              placeholder="筛选本地歌曲（标题 / 歌手 / 专辑 / 格式）" autocomplete="off" spellcheck="false"
+              aria-label="筛选本地歌曲" />
+            <button class="content-filter__clear" id="content-filter-clear" type="button" hidden
+              aria-label="清空筛选"><svg><use href="#i-close" /></svg></button>
+          </div>
+          <span class="content-filter__count" id="content-filter-count"></span>
         </div>
         <div class="content-body" id="content-body"></div>
       </main>
@@ -551,6 +581,27 @@
       </div>
       <div class="queue-panel__body" id="queue-panel-body"></div>
     </section>
+    <!-- 下载任务面板：标题栏「下载任务」按钮打开。
+         显示当前与最近的下载任务（进度 / 已完成 / 失败原因），
+         入口按钮只在存在任务时出现（见 downloads.js）。 -->
+    <section class="download-panel" id="download-panel" hidden data-state="closed" aria-label="下载任务">
+      <div class="download-panel__head">
+        <svg class="download-panel__icon" aria-hidden="true"><use href="#i-download" /></svg>
+        <span class="download-panel__title">下载任务</span>
+        <span class="download-panel__count" id="download-panel-count">0 个</span>
+        <button class="download-panel__btn" id="download-open-dir" type="button" data-tip="打开下载目录" aria-label="打开下载目录">
+          <svg><use href="#i-folder" /></svg>
+        </button>
+        <button class="download-panel__btn" id="download-clear" type="button" data-tip="清除已完成" aria-label="清除已完成">
+          <svg><use href="#i-trash" /></svg>
+        </button>
+        <button class="download-panel__btn" id="download-close" type="button" data-tip="关闭" aria-label="关闭下载任务面板">
+          <svg><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div class="download-panel__body" id="download-panel-body"></div>
+    </section>
+
     <section class="options-panel" id="options-panel" hidden data-state="closed" aria-label="播放选项">
       <div class="options-panel__head">
         <span class="options-panel__title">播放选项</span>

@@ -21,12 +21,21 @@ const PORT = Number(process.argv[2] || process.env.PORT || 5173);
 const ROOT = path.resolve(__dirname, "..", "frontend", "src");
 const BINDINGS = path.resolve(__dirname, "..", "frontend", "bindings");
 const PACKAGES = path.resolve(__dirname, "..", "frontend", "packages");
+const NODE_MODULES = path.resolve(__dirname, "..", "node_modules");
 
 /** 工作区包 → 浏览器可取的 URL（与 frontend/package.json 的依赖名保持一致） */
 const BARE_SPECIFIERS = [
   ["@musicplayer/player-skins/contract", "/packages/player-skins/src/contract.js"],
   ["@musicplayer/player-skins", "/packages/player-skins/src/index.js"],
+  // 第三方包（拖拽排序 SortableJS）：浏览器不认裸包名，映射到同源的
+  // /vendor/* 路径。正式构建由 Vite 打包，这条映射只服务于零依赖预览。
+  ["sortablejs", "/vendor/sortablejs.js"],
 ];
+
+/** /vendor/* → node_modules 里的具体文件（固定白名单，不接受任意路径） */
+const VENDOR_FILES = {
+  "/vendor/sortablejs.js": path.join(NODE_MODULES, "sortablejs", "modular", "sortable.esm.js"),
+};
 
 /**
  * 让源码能被「浏览器原生 ESM」直接跑起来 —— 这个服务器没有打包器，两件事必须自己做：
@@ -177,6 +186,12 @@ const server = http.createServer((req, res) => {
   // 工作区包（播放界面皮肤等）
   if (rel.startsWith("/packages/")) {
     serveMapped(res, PACKAGES, rel, /^\/packages\/?/, "packages");
+    return;
+  }
+
+  // 第三方依赖（零依赖预览用，固定白名单）
+  if (VENDOR_FILES[rel]) {
+    serveFile(res, VENDOR_FILES[rel], rel);
     return;
   }
 

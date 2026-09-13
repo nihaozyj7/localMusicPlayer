@@ -137,8 +137,14 @@ type Config struct {
 	// 原来每张表头各有一个密度按钮，现在统一到设置里，对所有列表生效。
 	ListDensity string `json:"listDensity"`
 
-	// ShowDesktopLyrics 是否显示桌面歌词（悬浮在窗口上的歌词）。
+	// ShowDesktopLyrics 是否显示桌面歌词（独立透明置顶窗口）。
 	ShowDesktopLyrics bool `json:"showDesktopLyrics"`
+	// SleepAfterSong 定时停止的「播放完歌曲（延长到歌曲播放结束）」选项。
+	//
+	// 打开后：倒计时到点时**不立刻暂停**，而是等当前这首播完再停。
+	// 这是「睡眠定时」的常见语义 —— 用户想听到正在听的这首结束，
+	// 而不是在副歌中间被掐掉。
+	SleepAfterSong bool `json:"sleepAfterSong"`
 	// ShuffleMode 随机播放行为：reshuffle | once。
 	ShuffleMode string `json:"shuffleMode"`
 
@@ -156,6 +162,17 @@ type Config struct {
 	AIAPIKey   string `json:"aiApiKey"`
 	AIThinking bool   `json:"aiThinking"`
 	AIModelID  string `json:"aiModelId"`
+	// AIVendor 模型类型（厂商）。思考模式的开关字段各家不同
+	// （reasoning_effort / thinking / enable_thinking / reasoning …），
+	// 必须知道调的是哪家才能发出正确的请求体；auto = 按接口地址与模型名猜。
+	// 取值见 ai_vendor.go 的 aiVendorCatalog。
+	AIVendor string `json:"aiVendor"`
+	// AILyricsClean 自动匹配歌词时，是否先用 AI 清洗元数据。
+	//
+	// AI 清洗能明显提高脏文件名的歌词命中率，但一次调用要 8~18 秒，
+	// 而歌词自动匹配发生在每次切歌的路径上 —— 所以必须给用户一个开关，
+	// 让他在「命中率」与「等待时间」之间自己选。
+	AILyricsClean bool `json:"aiLyricsClean"`
 
 	Folders     []Folder     `json:"folders"`
 	FilterRules []FilterRule `json:"filterRules"`
@@ -225,7 +242,7 @@ func DefaultConfig() *Config {
 		// 与 internal/lyrics.DefaultSources 保持一致；normalize() 会补齐缺项，
 		// 因此从旧版本升级上来的配置也能拿到 cache 这一层。
 		LyricsSources: []string{"embedded", "lrc-file", "cache", "online"},
-		Folders:         []Folder{},
+		Folders:       []Folder{},
 		FilterRules: []FilterRule{
 			{ID: "rule_size", Type: "size", Op: "lt", Value: "10240", Unit: "B", Scope: "exclude", Enabled: true},
 			{ID: "rule_mp4", Type: "regex", Op: "match", Value: `\.mp4$`, Scope: "exclude", Enabled: true},
@@ -247,6 +264,7 @@ func DefaultConfig() *Config {
 		ListDensity:    "cozy",
 
 		ShowDesktopLyrics: false,
+		SleepAfterSong:    false,
 		ShuffleMode:       "reshuffle",
 
 		// 封面轮播默认关闭：多封面时才会有意义，用户明确打开才动
@@ -257,6 +275,11 @@ func DefaultConfig() *Config {
 		AIAPIKey:   "",
 		AIThinking: false,
 		AIModelID:  "",
+		// 默认自动识别；识别不出按 OpenAI 兼容处理
+		AIVendor: "auto",
+		// 默认开启：配置了 AI 的用户，自动匹配歌词时会先清洗元数据，
+		// 与加入这个开关之前的行为一致（关掉即回到「只用本地整形」）。
+		AILyricsClean: true,
 	}
 }
 

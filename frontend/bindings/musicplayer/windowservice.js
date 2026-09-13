@@ -31,6 +31,17 @@ export function Close() {
 }
 
 /**
+ * DesktopLyricsState 读取桌面歌词的当前状态（自带开关状态，界面据此回填按钮）。
+ *
+ * 注意：桌面歌词窗口不在时依然返回「配置里是否开启」，而不是报错 ——
+ * 前端只想知道「现在该显示开还是关」。
+ * @returns {$CancellablePromise<{ text?: string, playing?: boolean, fontSize?: number, enabled?: boolean }>}
+ */
+export function DesktopLyricsState() {
+    return $Call.ByID(3272880628);
+}
+
+/**
  * IsFullscreen 当前是否全屏
  * @returns {$CancellablePromise<boolean>}
  */
@@ -44,6 +55,16 @@ export function IsFullscreen() {
  */
 export function IsMaximized() {
     return $Call.ByID(1152965621);
+}
+
+/**
+ * MarkDesktopLyricsReady 桌面歌词窗口的页面加载完成后调用：把当前状态补发一次。
+ * 
+ * 创建窗口与页面挂载监听之间有先后差，只靠广播的话新窗口会一直空着。
+ * @returns {$CancellablePromise<{ text?: string, playing?: boolean, fontSize?: number, enabled?: boolean }>}
+ */
+export function MarkDesktopLyricsReady() {
+    return $Call.ByID(4065798619);
 }
 
 /**
@@ -63,6 +84,15 @@ export function Minimize() {
  */
 export function Restart() {
     return $Call.ByID(542969608);
+}
+
+/**
+ * SetDesktopLyrics 开 / 关桌面歌词窗口（会立刻创建或隐藏那个透明窗口）。
+ * @param {boolean} on
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function SetDesktopLyrics(on) {
+    return $Call.ByID(285307357, on);
 }
 
 /**
@@ -88,4 +118,16 @@ export function ToggleFullscreen() {
  */
 export function ToggleMaximize() {
     return $Call.ByID(3752375843);
+}
+
+/**
+ * UpdateDesktopLyrics 主窗口把当前歌词行推给后端，由后端广播给桌面歌词窗口。
+ * 
+ * 用推送而不是让歌词窗口自己轮询：两个窗口共享不了播放器状态，
+ * 轮询还会在暂停时白白唤醒。
+ * @param {{ [_ in string]?: any }} payload
+ * @returns {$CancellablePromise<{ text?: string, playing?: boolean, fontSize?: number, enabled?: boolean }>}
+ */
+export function UpdateDesktopLyrics(payload) {
+    return $Call.ByID(760874120, payload);
 }

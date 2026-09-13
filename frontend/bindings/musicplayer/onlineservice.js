@@ -74,6 +74,14 @@ export function Lyrics(title, artist, duration) {
 }
 
 /**
+ * LyricsProviders 返回已注册的在线歌词来源（界面展示/排查用）。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function LyricsProviders() {
+    return $Call.ByID(1413160088);
+}
+
+/**
  * @param {string} keyword
  * @param {number} page
  * @param {number} pageSize
@@ -84,11 +92,21 @@ export function Search(keyword, page, pageSize) {
 }
 
 /**
+ * SearchLyrics 手动匹配歌词：按用户给的关键词搜索候选。
+ * 
+ * 三个参数各有用途，**不要合并**：
+ *   - keyword 是用户在输入框里写/改的搜索词，喂给各来源做全文搜索；
+ *   - title / artist 是这首歌的元数据，用于**打分排序**。
+ * 
+ * 早期实现只传了 keyword（还把它当成了 title），于是打分函数拿不到标题与歌手，
+ * 所有候选都落在同一个基础分上 —— 结果就是「翻唱版排在原唱前面」，
+ * 用户得自己在列表里找。
+ * @param {string} keyword
  * @param {string} title
  * @param {string} artist
  * @param {number} duration
  * @returns {$CancellablePromise<({ [_ in string]?: any } | null)[] | null>}
  */
-export function SearchLyrics(title, artist, duration) {
-    return $Call.ByID(3637869574, title, artist, duration);
+export function SearchLyrics(keyword, title, artist, duration) {
+    return $Call.ByID(3637869574, keyword, title, artist, duration);
 }

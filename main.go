@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"musicplayer/internal/bilibili"
 	"musicplayer/internal/bootstrap"
@@ -236,6 +237,22 @@ func main() {
 	state.windowBackdrop = backdropMode
 	state.window = app.Window.NewWithOptions(winOpts)
 	state.windowSvc.activeBackdrop = backdropMode
+
+	// 主窗口关闭 = 退出应用：桌面歌词是独立的置顶窗口，不跟着关的话它会
+	// 单独留在桌面上，应用也不会退出（DisableQuitOnLastWindowClosed=false
+	// 只在「最后一个窗口」关闭时才退出）。这里在主窗口收到 WindowClosing 时
+	// 顺手把歌词窗口也关掉。
+	//
+	// 用 goroutine 而不是同步调用：窗口关闭事件跑在主线程上，而
+	// WebviewWindow.Close() 内部走 InvokeSync，同步调用会死锁。
+	state.window.OnWindowEvent(events.Common.WindowClosing, func(*application.WindowEvent) {
+		go state.windowSvc.SetDesktopLyrics(false)
+	})
+	// 上次退出时开着桌面歌词的话，这里把它恢复出来
+	// （必须在主窗口创建之后：歌词窗口会读取主屏尺寸来定位自己）
+	if store.Get().ShowDesktopLyrics {
+		state.windowSvc.SetDesktopLyrics(true)
+	}
 
 	app.OnShutdown(func() {
 		if state.watch != nil {

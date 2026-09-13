@@ -2,6 +2,7 @@
    tracks.js — 曲目表格渲染与交互（所有歌曲 / 播放列表 / 歌单 共用）
    ========================================================================== */
 
+import Sortable from "sortablejs";
 import { bindCoverFallback, icon, openMenu, openModal, toast } from "./dom.js";
 import { addSongsTo } from "./playlists.js";
 import {
@@ -19,6 +20,7 @@ import {
   songById,
   state,
   toggleLike,
+  toggleSelectedSong,
 } from "./store.js";
 import { coverOf, esc, fmtCount, fmtTime } from "./utils.js";
 
@@ -45,21 +47,27 @@ export function trackTableMode() {
 function rowHtml(song, index, mode) {
   const isCurrent = song.id === state.currentId;
   const liked = isLiked(song.id);
+  // 歌单多选模式：把「#」列换成勾选框，点整行即勾选
+  const selecting = state.view === "playlist" && state.playlistSelecting;
+  const checked = selecting && state.selectedIds.has(song.id);
   const handle =
     mode === "playlist"
       ? `<div class="track__handle" data-handle="1" title="拖动排序">${icon("grip")}</div>`
       : `<div class="col-handle"></div>`;
   // 「选中行」与「正在播放行」是同一件事：唯一真源是 state.currentId
   // （同一份数据也驱动底栏与播放详情页，不再各维护一个选中态）。
+  const indexCell = selecting
+    ? `<span class="track__check" role="checkbox" aria-checked="${checked}">${icon("check")}</span>`
+    : `<span class="track__num u-num">${index + 1}</span>
+        <div class="track__bars"><span></span><span></span><span></span><span></span></div>
+        <button class="track__play" type="button" data-act="play" aria-label="播放 ${esc(song.title)}">${icon("play")}</button>`;
   return `
-    <div class="track" data-id="${song.id}" data-index="${index}" aria-current="${isCurrent}" data-playing="${
+    <div class="track" data-id="${song.id}" data-index="${index}" data-selectable="${selecting ? "1" : "0"}" aria-selected="${checked}" aria-current="${isCurrent}" data-playing="${
       isCurrent && state.playing ? "true" : "false"
     }">
       ${handle}
       <div class="track__index">
-        <span class="track__num u-num">${index + 1}</span>
-        <div class="track__bars"><span></span><span></span><span></span><span></span></div>
-        <button class="track__play" type="button" data-act="play" aria-label="播放 ${esc(song.title)}">${icon("play")}</button>
+        ${indexCell}
       </div>
       <div class="track__cover">
         <img src="${esc(coverOf(song))}" alt="" loading="lazy" draggable="false" />
@@ -85,6 +93,13 @@ function rowHtml(song, index, mode) {
 export function renderTracks(container) {
   const mode = trackTableMode();
   const songs = state.visibleSongs;
+  // 播放列表（队列）的顺序由用户拖拽决定，表头排序对它没有意义：
+  // 这里渲染成静态文本，避免出现「点了排序没反应」的假按钮。
+  const sortable = mode !== "playlist";
+  const sortCell = (key, label, cls = "") =>
+    sortable
+      ? `<button class="tracks__sort ${cls}" type="button" data-sort="${key}">${label}${icon("chevron-down")}</button>`
+      : `<div class="tracks__sort ${cls}" data-static="1">${label}</div>`;
   container.innerHTML = `
     <div class="tracks" data-mode="${mode}" data-density="${state.config.listDensity || "cozy"}"
          data-album="${state.config.showAlbumColumn === false ? "off" : "on"}">
@@ -92,9 +107,9 @@ export function renderTracks(container) {
         <div class="col-handle"></div>
         <div class="col-index">#</div>
         <div class="col-cover"></div>
-        <button class="tracks__sort" type="button" data-sort="title">标题${icon("chevron-down")}</button>
-        <button class="tracks__sort col-album" type="button" data-sort="album">专辑${icon("chevron-down")}</button>
-        <button class="tracks__sort" type="button" data-sort="duration">时长${icon("chevron-down")}</button>
+        ${sortCell("title", "标题")}
+        ${sortCell("album", "专辑", "col-album")}
+        ${sortCell("duration", "时长")}
         <div class="col-heart" title="我喜欢">${icon("heart")}</div>
         <div class="col-more"></div>
       </div>
@@ -113,6 +128,10 @@ export function renderTracks(container) {
 
   // 封面加载失败 → 默认封面（不要留下浏览器破碎图标）
   container.querySelectorAll(".track__cover img").forEach(bindCoverFallback);
+
+  // 队列的拖拽排序交给 SortableJS（需求：不要自己实现拖拽逻辑）。
+  // 只在队列视图绑定：本地歌曲 / 歌单的顺序由排序字段决定，拖拽没有意义。
+  if (state.view === "queue") bindQueueSort(container);
 }
 
 /* --------------------------------------------------------------------------
@@ -253,6 +272,20 @@ export function bindTrackEvents(container, handlers = {}) {
   container.__handlers = handlers;
 
   container.addEventListener("click", (e) => {
+    // 拖拽排序刚结束时会跟着冒泡一个 click：不拦的话会误判成「单击歌曲行」，
+    // 把刚拖过的那首歌设为「下一首播放」。
+    if (shouldIgnoreRowClick()) return;
+
+    // 歌单多选模式：点整行 = 勾选 / 取消勾选。
+    // 这个判断放在最前面，连「播放 / 爱心 / 更多」按钮也一起拦截 ——
+    // 多选时用户的目标就是勾选，误触发别的动作反而更烦。
+    const selectRow = e.target.closest(".track");
+    if (selectRow && state.view === "playlist" && state.playlistSelecting) {
+      e.preventDefault();
+      toggleSelectedSong(selectRow.dataset.id);
+      return;
+    }
+
     const h = container.__handlers || {};
     const emptyAct = e.target.closest("[data-empty-act]")?.dataset.emptyAct;
     if (emptyAct === "add-folder") return h.onAddFolder?.();
@@ -313,6 +346,8 @@ export function bindTrackEvents(container, handlers = {}) {
   });
 
   container.addEventListener("dblclick", (e) => {
+    // 多选模式下双击不进入播放（否则选歌时会被突然切歌打断）
+    if (state.view === "playlist" && state.playlistSelecting) return;
     const row = e.target.closest(".track");
     if (!row) return;
     const ids = state.visibleSongs.map((s) => s.id);
@@ -336,7 +371,6 @@ export function bindTrackEvents(container, handlers = {}) {
     openTrackMenu(null, row.dataset.id, { x: e.clientX, y: e.clientY });
   });
 
-  bindDragSort(container);
 }
 
 /* --------------------------------------------------------------------------
@@ -473,80 +507,46 @@ function openAddToPlaylist(songId) {
 }
 
 /* --------------------------------------------------------------------------
-   拖拽排序（需求 B4）
+   队列拖拽排序（SortableJS）
+   --------------------------------------------------------------------------
+   需求：不要自己实现拖拽逻辑；并且「拖拽排序后界面要真的看到效果」。
+   以前是手写 HTML5 DnD，而队列视图还会再按 sortKey 排一次序，
+   把拖拽结果整个盖掉 —— 于是提示成功、界面没变化。
+   现在：
+     · 拖拽交给 SortableJS（成熟库，触屏 / 键盘 / 自动滚动都已处理好）；
+     · 队列视图不再二次排序（见 store.js#recalcVisible）；
+     · onEnd 调用 reorderQueue()，它会顺手把播放模式切回「列表循环」。
    -------------------------------------------------------------------------- */
-function bindDragSort(container) {
-  let dragIndex = -1;
-  let armed = false;
 
-  const cleanup = () => {
-    armed = false;
-    dragIndex = -1;
-    container.dataset.dragging = "";
-    container.querySelectorAll(".track").forEach((n) => {
-      n.classList.remove("is-dragging", "is-drop-before", "is-drop-after");
-      n.draggable = false;
-    });
-  };
+/** 容器会随视图重建，保留实例、重建前销毁，避免事件重复绑定 */
+let queueSortable = null;
 
-  container.addEventListener("pointerdown", (e) => {
-    const handle = e.target.closest("[data-handle]");
-    if (!handle) return;
-    const row = handle.closest(".track");
-    if (!row) return;
-    armed = true;
-    dragIndex = Number(row.dataset.index);
-    row.draggable = true;
+/** 刚刚拖拽结束的时间戳：抑制紧随其后的 click，否则会误触「加入下一首播放」 */
+let lastDragEndAt = 0;
+
+export function shouldIgnoreRowClick() {
+  return Date.now() - lastDragEndAt < 260;
+}
+
+function bindQueueSort(container) {
+  const body = container.querySelector(".tracks__body");
+  if (!body) return;
+  queueSortable?.destroy();
+  queueSortable = Sortable.create(body, {
+    handle: "[data-handle]",
+    draggable: ".track",
+    animation: 160,
+    ghostClass: "is-dragging",
+    chosenClass: "is-dragging",
+    onEnd(evt) {
+      lastDragEndAt = Date.now();
+      const from = evt.oldIndex;
+      const to = evt.newIndex;
+      if (from == null || to == null || from === to) return;
+      reorderQueue(from, to);
+      toast("已调整播放顺序 · 播放模式已切回列表循环", { duration: 1800 });
+    },
   });
-
-  container.addEventListener("pointerup", () => {
-    if (!container.dataset.dragging) cleanup();
-  });
-
-  container.addEventListener("dragstart", (e) => {
-    const row = e.target.closest(".track");
-    if (!armed || !row) {
-      e.preventDefault();
-      return;
-    }
-    row.classList.add("is-dragging");
-    container.dataset.dragging = "1";
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", row.dataset.id || "");
-  });
-
-  container.addEventListener("dragover", (e) => {
-    if (!container.dataset.dragging) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const row = e.target.closest(".track");
-    container
-      .querySelectorAll(".is-drop-before,.is-drop-after")
-      .forEach((n) => n.classList.remove("is-drop-before", "is-drop-after"));
-    if (!row) return;
-    const rect = row.getBoundingClientRect();
-    const after = e.clientY > rect.top + rect.height / 2;
-    row.classList.add(after ? "is-drop-after" : "is-drop-before");
-  });
-
-  container.addEventListener("drop", (e) => {
-    e.preventDefault();
-    const row = e.target.closest(".track");
-    if (!row || dragIndex < 0) return cleanup();
-    const targetIndex = Number(row.dataset.index);
-    const after = row.classList.contains("is-drop-after");
-    const from = dragIndex;
-    cleanup();
-    if (targetIndex === from) return;
-    // moveItem 的 to 是「删掉源元素之后」的插入下标，因此向下拖时要减 1 抵消位移。
-    let insertAt = after ? targetIndex + 1 : targetIndex;
-    if (from < insertAt) insertAt -= 1;
-    if (insertAt === from) return;
-    reorderQueue(from, insertAt);
-    toast("已更新播放顺序", { duration: 1400 });
-  });
-
-  container.addEventListener("dragend", cleanup);
 }
 
 /* --------------------------------------------------------------------------

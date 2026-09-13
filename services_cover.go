@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"musicplayer/internal/bootstrap"
 	"musicplayer/internal/coverfetch"
@@ -164,18 +165,17 @@ func (s *CoverService) LookupAll(songID string, override map[string]any) ([]Cove
 		req.Duration = int64(v)
 	}
 
-	list, skipped, err := s.covers.ResolveAll(context.Background(), req)
+	// 封面面板是「用户主动点、愿意等」的场景，给一个宽裕的总预算：
+	// ResolveAll 内部查询阶段与下载阶段各有一段超时，外层只要别把它们提前掐断。
+	ctx, cancel := context.WithTimeout(context.Background(), coverfetch.DefaultWorstCase+5*time.Second)
+	defer cancel()
+	list, skipped, err := s.covers.ResolveAll(ctx, req)
 	if err != nil {
 		if errors.Is(err, coverfetch.ErrNotFound) {
-			// 全部候选都是白图/打不开时，把原因说出来，别让用户以为是网络问题
-			for _, sk := range skipped {
-				if errors.Is(skipErr(sk), coverfetch.ErrBlankImage) {
-					return []CoverResult{{
-						Message: "找到的图都是空白占位图，已丢弃；可以在这里手填歌曲名/歌手再搜，或直接粘贴图片地址",
-					}}, nil
-				}
-			}
-			return nil, nil
+			// 候选全被丢弃时把原因说出来，别让用户以为是网络问题 ——
+			// 「一张都没搜到」和「搜到了但图都是白图/超时」是两个完全不同的结论，
+			// 只说「没有找到」等于把排查线索一起丢掉。
+			return []CoverResult{{Message: summarizeSkips(skipped)}}, nil
 		}
 		return nil, err
 	}
@@ -201,6 +201,44 @@ func skipErr(sk coverfetch.Skipped) error {
 		return coverfetch.ErrBlankImage
 	}
 	return errors.New(sk.Reason)
+}
+
+// summarizeSkips 把所有候选被丢弃的原因汇总成一句人话（封面面板直接用）。
+//
+// 为什么要分类：这三种原因的处置方式完全不同 ——
+//   - 全是白图：换关键词或粘贴图片地址；换来源通常也没用；
+//   - 下载超时：网络/图床的问题，重试一次往往就好了；
+//   - 都取不到：把第一个具体原因带出来，用户/日志才知道到底卡在哪。
+func summarizeSkips(skipped []coverfetch.Skipped) string {
+	blank, timeout := 0, 0
+	sample := ""
+	for _, sk := range skipped {
+		if errors.Is(skipErr(sk), coverfetch.ErrBlankImage) {
+			blank++
+			continue
+		}
+		if strings.Contains(sk.Reason, "deadline") || strings.Contains(sk.Reason, "timeout") {
+			timeout++
+			continue
+		}
+		if sample == "" {
+			sample = sk.Reason
+		}
+	}
+	if blank == 0 && timeout == 0 {
+		if sample == "" {
+			return "没有找到匹配的封面"
+		}
+		return "候选封面都取不到：" + sample
+	}
+	parts := make([]string, 0, 2)
+	if blank > 0 {
+		parts = append(parts, fmt.Sprintf("%d 张是空白占位图", blank))
+	}
+	if timeout > 0 {
+		parts = append(parts, fmt.Sprintf("%d 张下载超时", timeout))
+	}
+	return "找到的候选都没法用（" + strings.Join(parts, "、") + "）；可以手填更准确的关键词再搜，或直接粘贴图片地址"
 }
 
 // isPlaceholderMeta 判断一个元数据字段是不是「占位值」。

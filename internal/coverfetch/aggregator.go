@@ -14,8 +14,21 @@ const (
 	// 封面是「有更好、没有也能忍」的附加信息，不能让某个慢站点拖住界面。
 	DefaultPerProviderTimeout = 6 * time.Second
 
-	// DefaultTotalTimeout 一次 Find 的总超时。
+	// DefaultTotalTimeout 「并发查所有来源」这一阶段的总超时。
 	DefaultTotalTimeout = 9 * time.Second
+
+	// DefaultWorstCase 一次 Resolve / ResolveAll 的理论最坏耗时（查询阶段 + 下载阶段）。
+	// 编写外层超时时**不要小于它**，否则会把「已经开始下载」的那一步提前掐断，
+	// 表现为「明明找到了候选却一张都没返回」。
+	DefaultWorstCase = DefaultTotalTimeout + DefaultDownloadBudget
+
+	// DefaultDownloadBudget 「把候选图下载回来并体检」这一阶段的时间预算。
+	//
+	// 必须与查询阶段分开算：早期实现是两段共用同一个 9s 预算，只要有一个来源
+	// 把 6s 的单来源超时吃满（实测 Deezer 在大陆网络就是这样），留给下载的
+	// 就只剩 3s —— 网络稍慢就整批候选超时，用户看到的是「一张封面都搜不到」。
+	// 分段之后，慢来源最多拖慢查询阶段，下载阶段有自己的预算。
+	DefaultDownloadBudget = 14 * time.Second
 
 	// cacheTTL 命中缓存的存活时间。封面基本不会变，长一点没关系。
 	cacheTTL = 6 * time.Hour
@@ -29,8 +42,10 @@ type Aggregator struct {
 	providers []Provider
 	// PerProvider 单来源超时（<=0 用默认值）。
 	PerProvider time.Duration
-	// Total 总超时（<=0 用默认值）。
+	// Total 「并发查询所有来源」的总超时（<=0 用默认值）。
 	Total time.Duration
+	// DownloadBudget 「下载 + 体检候选图」的时间预算（<=0 用默认值）。
+	DownloadBudget time.Duration
 
 	// 熔断：某个来源连续失败若干次后，在一段时间内直接跳过它。
 	//
@@ -66,13 +81,19 @@ type cacheEntry struct {
 // New 创建聚合器；不传来源时使用内置的全部来源。
 //
 // 顺序即优先级：分数相同时排在前面的胜出。
-// iTunes / 网易云是标准音乐库接口，封面形态最接近「专辑封面」；
+// iTunes / 网易云 / QQ 音乐是标准音乐库接口，封面形态最接近「专辑封面」；
 // Deezer 与 MusicBrainz 作为补充（前者在大陆网络常超时，后者有 1req/s 限流）。
+//
+// 为什么加了 QQ 音乐：网易云的网页搜索接口会返回 HTTP 200 + code 405
+// 「操作频繁」（它不是错误状态码，只看 HTTP 是发现不了的），而 Deezer 在大陆
+// 网络下基本整条超时。两者一起失效时,只剩 iTunes 一个来源，中文歌经常搜不到。
+// QQ 音乐对华语覆盖好、接口稳定，正好补上这个缺口。
 func New(providers ...Provider) *Aggregator {
 	if len(providers) == 0 {
 		providers = []Provider{
 			NewITunes(),
 			NewNetease(),
+			NewQQ(),
 			NewDeezer(),
 			NewMusicBrainz(),
 		}
@@ -81,6 +102,7 @@ func New(providers ...Provider) *Aggregator {
 		providers:        providers,
 		PerProvider:      DefaultPerProviderTimeout,
 		Total:            DefaultTotalTimeout,
+		DownloadBudget:   DefaultDownloadBudget,
 		breakerThreshold: defaultBreakerThreshold,
 		breakerCooldown:  defaultBreakerCooldown,
 		cache:            map[string]cacheEntry{},
@@ -173,10 +195,17 @@ func (a *Aggregator) FindAll(ctx context.Context, req Request) ([]Cover, error) 
 	ctx, cancel := context.WithTimeout(ctx, total)
 	defer cancel()
 
-	results := runProviders(ctx, a.providers, req, a.PerProvider)
+	// 与 Find 用同一套「跳过熔断中的来源」逻辑，并且**同样记录熔断状态**。
+	//
+	// 这一条是实测出来的 bug：早期 FindAll 既不跳过熔断来源、也不上报结果，
+	// 于是「换封面」面板这条路径完全不受熔断保护 —— 一个整条超时的来源
+	// （Deezer 在大陆网络）会在每次搜索里稳定吃掉 6 秒，用户看到的就是
+	// 「搜索封面很慢/经常搜不到」，而 Find 路径却一切正常。
+	results := runProviders(ctx, a.activeProviders(), req, a.PerProvider)
 
 	var out []Cover
 	for _, res := range results {
+		a.observe(res)
 		out = append(out, candidateList(res.res)...)
 	}
 	if req.FallbackURL != "" && AllowedImageURL(req.FallbackURL) {

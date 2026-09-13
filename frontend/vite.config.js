@@ -131,6 +131,17 @@ export default defineConfig({
   build: {
     outDir: distDir,
     emptyOutDir: true,
+    // 两个入口：
+    //   index.html   主界面
+    //   lyrics.html  桌面歌词窗口（独立透明页面，见 desktop_lyrics.go）
+    // 歌词窗口刻意不复用 index.html：那个页面会连带加载整套外壳与曲库初始化，
+    // 对一个「只显示一行字」的透明小窗来说既慢又容易露出不该有的底色。
+    rollupOptions: {
+      input: {
+        index: path.join(srcDir, "index.html"),
+        lyrics: path.join(srcDir, "lyrics.html"),
+      },
+    },
     // WebView2 / Edge 版本足够新，可以放心用现代语法，省掉一堆降级辅助代码
     target: "chrome120",
     assetsDir: "assets",

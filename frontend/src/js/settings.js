@@ -17,6 +17,8 @@ import {
 import { BACKDROP_MODES, backdropLabel } from "./backdrop.js";
 import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
 import { setRuntimeToken, replaceStyleRules } from "./runtime-tokens.js";
+import { applyDesktopLyrics } from "./desktop-lyrics.js";
+import { AI_VENDORS, aiVendorHint, aiVendorLabel } from "./ai-vendors.js";
 import {
   PLAYER_SKIN_API_VERSION,
   availableSkins,
@@ -83,7 +85,7 @@ function foldersCard() {
     : `<div class="setting__hint">还没有添加音乐文件夹。</div>`;
 
   return `
-    <section class="card" id="sec-folders" data-section="folders">
+    <section class="card" id="sec-folders" data-section="library">
       <div class="card__head">
         <div class="card__icon">${icon("folder")}</div>
         <div class="card__titles">
@@ -167,7 +169,7 @@ function rulesCard() {
     : `<div class="setting__hint">还没有规则。下面的预置规则可以一键添加。</div>`;
 
   return `
-    <section class="card" id="sec-filters" data-section="filters">
+    <section class="card" id="sec-filters" data-section="library">
       <div class="card__head">
         <div class="card__icon">${icon("filter")}</div>
         <div class="card__titles">
@@ -299,6 +301,11 @@ function themeCard() {
           hint: "窄窗口下会自动隐藏该列",
           control: switchHtml("showAlbumColumn", state.config.showAlbumColumn, "显示专辑列"),
         })}
+        ${settingRow({
+          label: "列表密度",
+          hint: "对「本地歌曲」「播放列表」「歌单」三个列表同时生效；属于显示设置，所以归在外观里",
+          control: segmented("listDensity", LIST_DENSITIES, state.config.listDensity || "cozy"),
+        })}
       </div>
     </section>`;
 }
@@ -351,7 +358,7 @@ function playbackCard() {
         <div class="card__icon">${icon("headphones")}</div>
         <div class="card__titles">
           <div class="card__title">播放</div>
-          <div class="card__desc">播放模式、音量与播放界面默认样式</div>
+          <div class="card__desc">播放模式、随机方式与单击行为（界面相关的设置都在「外观」里）</div>
         </div>
       </div>
       <div class="card__body">
@@ -381,19 +388,6 @@ function playbackCard() {
           ),
         })}
         ${settingRow({
-          label: "播放界面默认样式",
-          hint: "经典 / 沉浸 / 简约",
-          control: segmented(
-            "playerViewMode",
-            [
-              { value: "classic", label: "经典" },
-              { value: "immersive", label: "沉浸" },
-              { value: "minimal", label: "简约" },
-            ],
-            state.config.playerViewMode
-          ),
-        })}
-        ${settingRow({
           label: "记忆音量",
           hint: `当前音量 ${Math.round(state.volume * 100)}%`,
           control: switchHtml("rememberVolume", true, "记忆音量"),
@@ -402,11 +396,6 @@ function playbackCard() {
           label: "单击歌曲时的行为",
           hint: "双击始终是「立即播放这一首」；这个设置只影响单击",
           control: segmented("rowClickAction", ROW_CLICK_ACTIONS, state.config.rowClickAction || "next"),
-        })}
-        ${settingRow({
-          label: "列表密度",
-          hint: "对「本地歌曲」「播放列表」「歌单」三个列表同时生效",
-          control: segmented("listDensity", LIST_DENSITIES, state.config.listDensity || "cozy"),
         })}
       </div>
     </section>`;
@@ -463,7 +452,7 @@ function lyricsCard() {
         })}
         ${settingRow({
           label: "桌面歌词",
-          hint: "在窗口上方悬浮显示当前歌词行（底栏「桌面歌词」按钮同效）",
+          hint: "在桌面上显示一行置顶歌词（独立透明窗口，可拖动；底栏「桌面歌词」按钮同效）",
           control: switchHtml("showDesktopLyrics", state.config.showDesktopLyrics, "桌面歌词"),
         })}
         ${settingRow({
@@ -668,6 +657,32 @@ function ensureSwatchStyles() {
    本地文件名里常常带着歌名/歌手，但混有脏数据，直接联网匹配封面/歌词命中率低。
    填好 OpenAI 兼容接口后，自动匹配时会先把元数据交给 AI 清洗一遍。
    -------------------------------------------------------------------------- */
+function aiVendorSelect(current) {
+  const value = current || "auto";
+  const options = AI_VENDORS.map(
+    (v) =>
+      `<option value="${esc(v.id)}"${v.id === value ? " selected" : ""}>${esc(v.label)}</option>`
+  ).join("");
+  return `<select class="select__field" data-act="ai-vendor" aria-label="模型类型">${options}</select>`;
+}
+
+/**
+ * 思考开关的说明文案。
+ *
+ * 各家对「关闭思考」的支持程度差别很大：有的能真关，有的最低只能降到
+ * minimal，有的干脆没有关闭参数、或者在部分模型上直接报错。把当前厂商的
+ * 限制写在开关旁边，比让用户自己试出 400 友好得多。
+ */
+function aiThinkingHint(cfg) {
+  const vendor = cfg.aiVendor || "auto";
+  const limit = aiVendorHint(vendor);
+  const base = "开启后模型会先推理再给结论，响应更慢；关闭则直接作答";
+  if (vendor === "auto") {
+    return base + "；自动识别：" + (limit || "按接口地址与模型名判断厂商");
+  }
+  return limit ? base + "；该厂商：" + limit : base;
+}
+
 function aiCard() {
   const cfg = state.config || {};
   const configured = Boolean(String(cfg.aiBaseUrl || "").trim() && String(cfg.aiApiKey || "").trim());
@@ -687,8 +702,8 @@ function aiCard() {
       <div class="card__head">
         <div class="card__icon">${icon("settings")}</div>
         <div class="card__titles">
-          <div class="card__title">AI 元数据</div>
-          <div class="card__desc">自动匹配歌词 / 封面时，用 AI 从脏文件名里提取真实元数据</div>
+          <div class="card__title">AI 相关</div>
+          <div class="card__desc">所有 AI 能力都在这里：自动匹配歌词 / 封面时，用 AI 从脏文件名里提取真实元数据</div>
         </div>
       </div>
       <div class="card__body">
@@ -696,9 +711,19 @@ function aiCard() {
         ${field("API Key", "只写入本地配置，不会发往该接口以外的任何地方", "aiApiKey", "sk-...", "password")}
         ${field("模型 ID", "例如 gpt-4o-mini、deepseek-chat；留空默认 gpt-4o-mini", "aiModelId", "gpt-4o-mini")}
         ${settingRow({
+          label: "模型类型",
+          hint: "思考模式的开关参数各家不同，必须选对厂商才会发出正确的请求体；选「自动识别」会按接口地址与模型名判断",
+          control: aiVendorSelect(cfg.aiVendor),
+        })}
+        ${settingRow({
           label: "启用思考模式",
-          hint: "让模型在给出结论前更充分地推理，响应会慢一些",
+          hint: aiThinkingHint(cfg),
           control: switchHtml("aiThinking", Boolean(cfg.aiThinking), "启用思考模式"),
+        })}
+        ${settingRow({
+          label: "自动匹配歌词时使用 AI 清洗元数据",
+          hint: "自动匹配歌词前先用 AI 从文件名里还原真实的标题/歌手。AI 一次调用可能要十几秒，关掉后只做本地整形：匹配更快，但脏文件名的命中率会低一些",
+          control: switchHtml("aiLyricsClean", state.config.aiLyricsClean !== false, "自动匹配歌词时使用 AI 清洗元数据"),
         })}
         <div class="setting__hint">
           ${
@@ -750,7 +775,7 @@ function playerCard() {
     : "";
 
   return `
-    <section class="card" id="sec-player" data-section="player">
+    <section class="card" id="sec-player" data-section="appearance">
       <div class="card__head">
         <div class="card__icon">${icon("disc")}</div>
         <div class="card__titles">
@@ -762,7 +787,15 @@ function playerCard() {
           <button class="btn btn--sm" type="button" data-act="open-skin-dir">${icon("folder")}<span>打开样式目录</span></button>
         </div>
       </div>
-      <div class="themes">${cards}</div>
+      <div class="themes">
+        ${cards}
+        <!-- 需求：播放器样式后面加一个「自定义」按钮，点开是用 AI 创建样式的引导弹层 -->
+        <button class="themes__add" type="button" data-act="skin-help">
+          ${icon("plus")}
+          <span>自定义样式</span>
+          <span class="u-num u-fs-xs">用 AI 帮你写一个</span>
+        </button>
+      </div>
       ${failHtml}
       <div class="card__body">
         ${settingRow({
@@ -790,18 +823,171 @@ function playerCard() {
 }
 
 /* --------------------------------------------------------------------------
+   自定义样式 / 主题：AI 引导弹层
+   --------------------------------------------------------------------------
+   需求：设置 → 播放界面样式 后面加一个「自定义」按钮，点开后给出可直接交给
+   AI 使用的提示词，让用户用 AI 生成一个播放界面样式（皮肤）。
+   同一个弹层里也附上「外观主题（CSS 令牌）」的提示词 —— 两者都是换皮，
+   放在一起比藏在两个入口里更好找。
+   -------------------------------------------------------------------------- */
+
+const SKIN_AI_PROMPT = `你是熟悉原生 ES Module + CSS 的前端工程师。请为「音乐播放器」写一个第三方「播放界面样式（皮肤）」包。
+
+交付一个目录 player-skins/<样式id>/，包含三个文件：
+1) skin.js   —— 入口 ES module，export default { ... }（不要 import 任何应用内部模块）
+2) skin.css  —— 样式表（可选，建议有）
+3) skin.json —— 清单（可选）：{"name":"显示名","version":"1.0.0","module":"skin.js","styles":["skin.css"]}
+
+skin.js 的接口（apiVersion 必须是 1）：
+export default {
+  apiVersion: 1,
+  id: "<样式id，与目录名一致>",
+  name: "<中文显示名>",
+  icon: "disc",         // 图标 sprite id：disc / lyrics / slideshow / palette / image / refresh 等
+  order: 200,           // 按钮排序；内置三种约 10~30，第三方建议 200 以上
+  description: "<一句话说明>",
+  background: false,    // 需要「整窗背景层」时设为 true，再往 ctx.backgroundRoot 里画
+  mount(ctx) {},        // 只调用一次：往 ctx.root 里写 DOM，并保存需要的元素引用
+  update(ctx, patch) {},// 宿主主动推送更新；patch.type 取值见下
+  destroy(ctx) {}       // 清理定时器 / 事件监听 / 大对象引用
+};
+
+ctx 提供的只读能力：
+- ctx.root             你的挂载点（宿主已清空，直接写 DOM）
+- ctx.backgroundRoot   整窗背景层容器（background 为 true 时才有内容）
+- ctx.media()          返回 { song, cover, covers, coverIndex, lyrics }；lyrics 里的 lines 已经是解析好的 [{time,text}]，index 是当前高亮行
+- ctx.playback()       返回 { position, duration, playing, volume, muted }（时间为毫秒）
+- ctx.options()        返回 { showLyrics, lyricsFontSize, animations, coverCarousel }
+- ctx.actions          只读动作：seek(ms) / togglePlay() / next() / prev() / openFolder() / openCoverPanel()
+- ctx.on(type, fn)     订阅更新，返回取消函数
+- ctx.defaultCover     封面兜底图（data URL）
+- ctx.themeId / ctx.mode   当前主题 id 与 "dark" | "light"
+
+patch.type 取值：mount / song / media / lyrics / progress / state / options / theme / resize / close / destroy
+（song = 换歌；media = 封面变化或轮播切图；lyrics = 歌词装载完成或更新；progress = 播放进度，宿主已按帧节流；state = 播放 / 暂停 / 音量变化）
+
+硬性约定：
+1. 不要 import 应用内部模块（store / bridge / utils / playerhost），也不要直接操作 <audio> 元素。
+2. skin.css 里所有选择器必须以 .playerview[data-skin="<样式id>"] 开头，否则会改到其它界面。
+3. 不要用 setInterval 轮询数据；宿主会主动推 update，用 ctx.on() 订阅即可。
+4. 高亮当前歌词请用 ctx.media().lyrics.index，不要自己重新解析 LRC。
+5. 可直接使用主题变量：--accent / --text-1 / --text-2 / --text-3 / --surface-1 / --surface-2 / --glass-bg / --glass-blur / --lyric-size。
+
+风格要求（按这个设计布局与动效）：【在这里写你想要的风格，例如：深色、左侧大封面、右侧滚动歌词、动效克制】
+
+请直接输出三个文件的完整代码，并在最前面写清目录名。`;
+
+const THEME_AI_PROMPT = `你是熟悉 CSS 设计令牌的前端工程师。请为「音乐播放器」生成一个外观主题。
+
+主题就是一个 CSS 文件，文件名 = 主题 id（例如 sunset.css）。文件内容只有一条规则：
+
+:root[data-theme="sunset"] {
+  color-scheme: dark;
+  /* 只声明你想覆盖的令牌，未声明的会自动回退到默认主题 */
+}
+
+文件开头可以写三行可选指令（播放器用它显示主题名 / 深浅模式 / 色板）：
+@theme-name 落日橘
+@theme-mode dark
+@theme-swatch #1a1020 #ff8a3d #ffd166 #fff4e6 #ff5a5f
+
+可用的令牌：
+- 表面：--bg-app（窗口底色）、--bg-canvas（背景渐变 / 纹理）、--surface-1 / --surface-2 / --surface-3 / --surface-hover / --surface-active
+- 毛玻璃：--glass-bg / --glass-bg-strong / --glass-bg-weak / --glass-blur / --glass-saturate / --glass-border / --glass-highlight / --glass-shadow
+- 文字：--text-1 / --text-2 / --text-3 / --text-inverse
+- 描边：--border-1 / --border-2 / --divider / --focus-ring
+- 强调色：--accent / --accent-weak / --accent-weak-hover / --accent-text / --accent-contrast
+- 状态色：--heart / --heart-off / --danger / --success / --warning
+- 播放页：--immersive-veil / --vinyl
+- 圆角与动效：--r-sm / --r-md / --r-lg / --r-xl / --dur / --ease
+不要改布局令牌（--h-titlebar / --w-sidebar / --h-playerbar / --h-header / --row-h 等），改了会破坏固定布局。
+
+要求：
+1. 只声明 :root[data-theme="..."] 里的令牌，不要写组件选择器或任何结构样式；
+2. 颜色要有明确明暗层级，保证正文（--text-1）与背景对比度足够；
+3. 同时给出 @theme-name / @theme-mode / @theme-swatch 三行指令。
+
+风格要求：【在这里写你想要的风格，例如：日落色调、暖橙强调色、深紫背景】
+
+请输出完整的 CSS 内容。`;
+
+/** 一段可复制的提示词块（textarea 方便整段选中 + 复制按钮） */
+function promptBlock(title, text, key) {
+  return `
+    <div class="setting setting--stack">
+      <div class="setting__main">
+        <div class="setting__label">${esc(title)}</div>
+      </div>
+      <textarea class="input prompt-box" data-prompt-text="${key}" readonly rows="9" spellcheck="false">${esc(text)}</textarea>
+      <div class="card__actions">
+        <button class="btn btn--sm btn--primary" type="button" data-copy-prompt="${key}">${icon("file")}<span>复制提示词</span></button>
+      </div>
+    </div>`;
+}
+
+/** 打开「用 AI 创建主题 / 播放界面样式」的引导弹层 */
+function openSkinHelp() {
+  const body = `
+    <div class="setting__hint setting__hint--steps">
+      把下面任意一段提示词复制给 AI（记得把方括号里的风格改成你想要的），它会直接产出可以用的文件。<br />
+      · 播放界面样式（皮肤）：把生成的文件放进「样式目录/<你的样式id>/」，回来点「重新扫描样式」；<br />
+      · 外观主题：把生成的 CSS 放进主题文件夹（设置里有「打开主题文件夹」按钮），回来点「重新扫描主题」。
+    </div>
+    ${promptBlock("播放界面样式（皮肤）提示词", SKIN_AI_PROMPT, "skin")}
+    ${promptBlock("外观主题（CSS 令牌）提示词", THEME_AI_PROMPT, "theme")}
+    <div class="setting__hint">接口的唯一定义在 frontend/packages/player-skins/src/contract.js；样式目录里也有现成的 _template 示例可以直接复制改名。</div>`;
+
+  const { root } = openModal({
+    title: "用 AI 创建主题 / 播放界面样式",
+    body,
+    okText: "知道了",
+    cancelText: "关闭",
+    onOk: () => true,
+  });
+
+  root.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-copy-prompt]");
+    if (!btn) return;
+    const area = root.querySelector(`[data-prompt-text="${btn.dataset.copyPrompt}"]`);
+    const text = area?.value || "";
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("提示词已复制，粘贴给 AI 即可", { tone: "success", duration: 2000 });
+    } catch {
+      area?.focus();
+      area?.select();
+      toast("已选中提示词，按 Ctrl+C 复制", { duration: 2400 });
+    }
+  });
+}
+
+
+/* --------------------------------------------------------------------------
    主渲染
    -------------------------------------------------------------------------- */
+/* 设置分区（需求：重新分类，让每一类的归属一目了然）。
+   --------------------------------------------------------------------------
+   归类原则：
+     · 曲库      —— 管「有哪些歌」：扫描文件夹 + 过滤规则；
+     · 外观      —— 管「长什么样」：主题、播放界面样式（皮肤）、列表密度、
+                    专辑列、动画、窗口材质；
+     · 播放      —— 管「怎么播」：播放模式、随机方式、单击行为、记忆音量；
+     · 歌词      —— 管「歌词怎么来、怎么显示」；
+     · 音频      —— 管「听起来怎么样」：响度均衡；
+     · 在线与缓存 —— 管「联网下载与本地缓存」；
+     · AI 相关   —— 所有 AI 能力（元数据清洗、思考模式、歌词清洗开关）；
+     · 关于      —— 统计与维护。
+   以前把「播放界面样式」放在「播放」下、把「列表密度」也放在「播放」下，
+   都属于「显示 / 外观」的东西，这次一并归到外观。 */
 const SECTIONS = [
-  { id: "folders", label: "音乐文件夹" },
-  { id: "filters", label: "过滤规则" },
+  { id: "library", label: "曲库" },
   { id: "appearance", label: "外观" },
-  { id: "player", label: "播放界面" },
   { id: "playback", label: "播放" },
-  { id: "loudness", label: "响度均衡" },
-  { id: "online", label: "在线歌曲" },
   { id: "lyrics", label: "歌词" },
-  { id: "ai", label: "AI 元数据" },
+  { id: "loudness", label: "音频" },
+  { id: "online", label: "在线与缓存" },
+  { id: "ai", label: "AI 相关" },
   { id: "about", label: "关于" },
 ];
 
@@ -852,9 +1038,9 @@ export function renderSettings(container) {
       ${themeCard()}
       ${playerCard()}
       ${playbackCard()}
+      ${lyricsCard()}
       ${loudnessCard()}
       ${onlineCard()}
-      ${lyricsCard()}
       ${aiCard()}
       ${aboutCard()}
     </div>`;
@@ -1244,6 +1430,23 @@ export async function handleSettingsAction(actEl, ctx = {}) {
         toast(`重新扫描失败：${err?.message ?? err}`, { tone: "error" });
       }
       break;
+
+    /* 自定义样式：AI 引导弹层（需求：播放器样式后面的「自定义」按钮） */
+    case "skin-help":
+      openSkinHelp();
+      break;
+
+    /* AI 模型类型（决定思考开关的请求体字段） */
+    case "ai-vendor": {
+      const vendor = String(actEl.value || "auto");
+      if (vendor === (state.config.aiVendor || "auto")) break;
+      state.config.aiVendor = vendor;
+      ctx.commit?.();
+      ctx.render?.();
+      const hint = aiVendorHint(vendor);
+      toast(`模型类型已设为「${aiVendorLabel(vendor)}」${hint ? "：" + hint : ""}`, { duration: 3600 });
+      break;
+    }
 
     /* 窗口原生材质（Mica / Acrylic） */
     case "backdrop-mode": {
@@ -1745,6 +1948,10 @@ export function handleSettingControl(actEl, ctx = {}) {
       }
       if (toggleKey === "watchFolders") {
         state.folders.forEach((f) => (f.watching = next));
+      }
+      if (toggleKey === "showDesktopLyrics") {
+        // 这个开关对应一个真实窗口，必须真的开/关它
+        applyDesktopLyrics(next);
       }
     }
     ctx.commit?.();

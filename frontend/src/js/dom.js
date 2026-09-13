@@ -31,6 +31,15 @@ export function html(node, markup) {
 const menuEl = () => document.getElementById("menu");
 
 let menuCloser = null;
+/** 关闭动画的收尾定时器（关闭是「先播动画再真的 hidden」） */
+let menuCloseTimer = null;
+/** 关-开快速交替时的序号：过期的收尾回调不许把新菜单藏起来 */
+let menuSeq = 0;
+
+// JS 里等动画结束用的毫秒数，必须 ≥ CSS 里的 --dur-fast（120ms）。
+// 拿的是固定值而不是计算样式：减少动态效果 / 关掉动画时 CSS 时长会变成
+// 0.001ms，这里多等 20ms 完全无感，但读计算样式会引入同步布局，不划算。
+const MENU_EXIT_MS = 140;
 
 /**
  * 打开浮层菜单
@@ -58,6 +67,13 @@ export function openMenu({ x, y, items, anchor, onPick, align = "left" }) {
     })
     .join("");
 
+  // 上一次「关闭后的收尾」可能还没跑：取消掉，否则它会把这次的菜单藏起来
+  if (menuCloseTimer) {
+    clearTimeout(menuCloseTimer);
+    menuCloseTimer = null;
+  }
+  const seq = ++menuSeq;
+  m.dataset.state = "";
   m.hidden = false;
   // 先显示再量尺寸，避免越界
   const rect = m.getBoundingClientRect();
@@ -85,6 +101,13 @@ export function openMenu({ x, y, items, anchor, onPick, align = "left" }) {
   };
   const onScroll = () => closeMenu();
 
+  // 下一帧再进 open：display:none → 块级 与 opacity 0 → 1 在同一帧里
+  // 浏览器只会看到「最终态」，过渡不会触发（菜单会直接闪现）。
+  requestAnimationFrame(() => {
+    if (seq !== menuSeq) return;
+    m.dataset.state = "open";
+  });
+
   setTimeout(() => {
     document.addEventListener("pointerdown", onDocDown, true);
     document.addEventListener("keydown", onKey);
@@ -100,12 +123,20 @@ export function openMenu({ x, y, items, anchor, onPick, align = "left" }) {
   };
 
   menuCloser = () => {
+    // 监听器立刻摘掉（否则关闭动画期间点在菜单外还会再触发一次 close），
+    // 但 DOM 要等动画播完再收 —— 这就是「菜单淡出」而不是「啪一下没了」。
     document.removeEventListener("pointerdown", onDocDown, true);
     document.removeEventListener("keydown", onKey);
     window.removeEventListener("resize", onScroll);
-    m.hidden = true;
-    m.innerHTML = "";
     menuCloser = null;
+    m.dataset.state = "closed";
+    if (menuCloseTimer) clearTimeout(menuCloseTimer);
+    menuCloseTimer = setTimeout(() => {
+      menuCloseTimer = null;
+      if (seq !== menuSeq) return;
+      m.hidden = true;
+      m.innerHTML = "";
+    }, MENU_EXIT_MS);
   };
 }
 
@@ -117,6 +148,11 @@ export function closeMenu() {
    弹窗
    -------------------------------------------------------------------------- */
 const backdrop = () => document.getElementById("modal-backdrop");
+
+/** 弹窗关闭动画的收尾定时器与序号（理由同 MENU_EXIT_MS） */
+let modalCloseTimer = null;
+let modalSeq = 0;
+const MODAL_EXIT_MS = 220;
 
 /**
  * 打开弹窗
@@ -139,18 +175,40 @@ export function openModal(opts) {
         </button>
       </div>
     </div>`;
+  if (modalCloseTimer) {
+    clearTimeout(modalCloseTimer);
+    modalCloseTimer = null;
+  }
+  const seq = ++modalSeq;
+  bd.dataset.state = "";
   bd.hidden = false;
+  requestAnimationFrame(() => {
+    if (seq !== modalSeq) return;
+    bd.dataset.state = "open";
+  });
 
   const modal = bd.querySelector(".modal");
   const errEl = bd.querySelector("#modal-error");
   const firstInput = modal.querySelector("input, select, textarea");
   setTimeout(() => firstInput?.focus({ preventScroll: true }), 30);
 
+  // 关闭要幂等：弹窗现在有 220ms 的淡出，这期间再按一次 Esc / 回车
+  // 不能重复执行 onOk（例如「新建歌单」会被建两遍）。
+  let closing = false;
   const close = () => {
-    bd.hidden = true;
-    bd.innerHTML = "";
+    if (closing) return;
+    closing = true;
     document.removeEventListener("keydown", onKey);
     bd.onclick = null;
+    // 先播淡出动画，再真的清空 —— 否则弹窗是「瞬间消失」的
+    bd.dataset.state = "closed";
+    if (modalCloseTimer) clearTimeout(modalCloseTimer);
+    modalCloseTimer = setTimeout(() => {
+      modalCloseTimer = null;
+      if (seq !== modalSeq) return;
+      bd.hidden = true;
+      bd.innerHTML = "";
+    }, MODAL_EXIT_MS);
   };
 
   // 取消按钮可能不只是「关掉」：例如改下载目录时，「不迁移」也是一个有效选择。

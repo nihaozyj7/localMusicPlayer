@@ -35,6 +35,14 @@ export function ApplyDir(dir, migrate) {
 }
 
 /**
+ * ClearFinished 只清掉已结束（成功/失败）的任务，正在下载的不动。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function ClearFinished() {
+    return $Call.ByID(1384077396);
+}
+
+/**
  * Dir 返回当前下载目录（并确保它存在）。
  * @returns {$CancellablePromise<string>}
  */
@@ -93,4 +101,12 @@ export function Start(bvid, title, durationMS) {
  */
 export function Status() {
     return $Call.ByID(2563507631);
+}
+
+/**
+ * Tasks 返回全部下载任务（前端面板打开时先拉一次，之后靠事件增量刷新）。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function Tasks() {
+    return $Call.ByID(2880220813);
 }

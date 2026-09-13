@@ -8,12 +8,14 @@
                  音量  播放顺序  桌面歌词  播放列表  全屏
    ========================================================================== */
 
+import Sortable from "sortablejs";
 import { $, bindCoverFallback, icon, openMenu, toast } from "./dom.js";
 import { createSlider } from "./slider.js";
 import { applyVolume, seekTo } from "./audio.js";
 import { addSongsTo } from "./playlists.js";
 import { setRuntimeToken } from "./runtime-tokens.js";
 import { applyGlassAlpha, resolvedGlassAlpha, resolvedGlassBlur } from "./theme.js";
+import { applyDesktopLyrics } from "./desktop-lyrics.js";
 import {
   LIKED_ID,
   clearQueue,
@@ -48,6 +50,9 @@ let progressSlider = null;
 let volumeSlider = null;
 const lastPainted = {
   id: null,
+  // cover 记录上次画进底栏的封面地址：同一首歌换了封面（手动 / 自动匹配）
+  // 也必须重画，否则底栏会一直停在默认封面 —— 这就是「匹配后底栏元数据不更新」。
+  cover: "",
   pos: -1,
   dur: -1,
   playing: null,
@@ -214,7 +219,10 @@ const PANEL_MS = 200;
 let panelCloseTimer = null;
 let panelBound = false;
 let panelKey = "";
-let queueDragFrom = -1;
+/** SortableJS 实例（#queue-panel-body 是常驻节点，只创建一次） */
+let queuePanelSortable = null;
+/** 刚刚拖拽结束的时间戳：抑制紧随其后的 click，避免误触「播放这一首」 */
+let lastQueueDragEndAt = 0;
 
 export function toggleQueuePanel(force) {
   const next = typeof force === "boolean" ? force : !state.queueOpen;
@@ -294,6 +302,8 @@ function bindQueuePanel() {
   });
 
   panel.addEventListener("click", (e) => {
+    // 拖拽结束会跟着冒泡一个 click：不拦的话会误判成「点选这首歌」而切歌
+    if (Date.now() - lastQueueDragEndAt < 260) return;
     const del = e.target.closest("[data-queue-del]");
     if (del) {
       e.stopPropagation();
@@ -312,68 +322,34 @@ function bindQueuePanel() {
     playSong(item.dataset.queueId);
   });
 
-  // 播放列表（队列）拖拽排序：整行可拖，拖到目标行上半/下半决定插入位置。
-  panel.addEventListener("dragstart", (e) => {
-    const item = e.target.closest?.("[data-queue-id]");
-    if (!item) return;
-    queueDragFrom = [...item.parentElement.children].indexOf(item);
-    item.classList.add("is-dragging");
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", item.dataset.queueId || "");
-  });
-
-  panel.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    const item = e.target.closest?.("[data-queue-id]");
-    panel.querySelectorAll(".queue-item.is-drop-before,.queue-item.is-drop-after").forEach((n) =>
-      n.classList.remove("is-drop-before", "is-drop-after")
-    );
-    if (!item) return;
-    const rect = item.getBoundingClientRect();
-    const after = e.clientY > rect.top + rect.height / 2;
-    item.classList.add(after ? "is-drop-after" : "is-drop-before");
-  });
-
-  panel.addEventListener("drop", (e) => {
-    e.preventDefault();
-    const item = e.target.closest?.("[data-queue-id]");
-    const from = queueDragFrom;
-    queueDragFrom = -1;
-    const clearDropClasses = () =>
-      panel.querySelectorAll(".queue-item.is-dragging,.queue-item.is-drop-before,.queue-item.is-drop-after").forEach((n) =>
-        n.classList.remove("is-dragging", "is-drop-before", "is-drop-after")
-      );
-    if (!item || from < 0) {
-      clearDropClasses();
-      return;
-    }
-    const rect = item.getBoundingClientRect();
-    const after = e.clientY > rect.top + rect.height / 2;
-    clearDropClasses();
-    const targetIndex = [...item.parentElement.children].indexOf(item);
-    // insertAt 是「删掉源元素之后」的插入下标，向下拖时减 1 抵消位移。
-    let insertAt = after ? targetIndex + 1 : targetIndex;
-    if (from < insertAt) insertAt -= 1;
-    if (insertAt !== from) reorderQueue(from, insertAt);
-  });
-
-  panel.addEventListener("dragend", () => {
-    queueDragFrom = -1;
-    panel.querySelectorAll(".queue-item.is-dragging,.queue-item.is-drop-before,.queue-item.is-drop-after").forEach((n) =>
-      n.classList.remove("is-dragging", "is-drop-before", "is-drop-after")
-    );
-  });
+  // 播放列表（队列）拖拽排序：交给 SortableJS（需求：不要自己实现拖拽）。
+  // 整行可拖；onEnd 之后再改数据，reorderQueue() 会把播放模式切回「列表循环」。
+  const body = $("#queue-panel-body");
+  if (body && !queuePanelSortable) {
+    queuePanelSortable = Sortable.create(body, {
+      draggable: ".queue-item",
+      animation: 150,
+      ghostClass: "is-dragging",
+      onEnd(evt) {
+        lastQueueDragEndAt = Date.now();
+        const from = evt.oldIndex;
+        const to = evt.newIndex;
+        if (from == null || to == null || from === to) return;
+        reorderQueue(from, to);
+        toast("已调整播放顺序 · 播放模式已切回列表循环", { duration: 1600 });
+      },
+    });
+  }
 }
 
 /* --------------------------------------------------------------------------
    桌面歌词 / 定时停止 / 播放选项
    -------------------------------------------------------------------------- */
 export function toggleDesktopLyrics() {
-  state.config.showDesktopLyrics = !state.config.showDesktopLyrics;
+  // 真正的开/关交给 desktop-lyrics.js：它要开一个独立的透明置顶窗口，
+  // 并且要处理「窗口创建失败」这种情况（失败时不能只是嘴上说打开了）。
+  applyDesktopLyrics(!state.config.showDesktopLyrics);
   commit();
-  $("#btn-desktop-lyrics")?.setAttribute("aria-pressed", String(state.config.showDesktopLyrics));
-  const sw = $("#opt-desktop-lyrics");
-  if (sw) sw.setAttribute("aria-checked", String(state.config.showDesktopLyrics));
   toast(state.config.showDesktopLyrics ? "已开启桌面歌词" : "已关闭桌面歌词", { duration: 1400 });
 }
 
@@ -386,8 +362,6 @@ function fmtRemain(ms) {
   if (h > 0) return `${h} 小时 ${String(m).padStart(2, "0")} 分`;
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
-
-const SLEEP_PRESETS = [15, 30, 60, 90];
 
 /** 定时停止面板的滑条实例（拖动同步倒计时要用它） */
 let sleepSlider = null;
@@ -449,17 +423,18 @@ function initSleepPanel(body) {
       <div class="sleep-panel__scale"><span>0</span><span>150</span><span>300 分钟</span></div>
     </div>
     <div class="sleep-panel__row">
-      <button class="btn btn--sm" type="button" data-sleep-act="after-song">
-        <svg><use href="#i-clock" /></svg><span>播完当前歌曲停止</span>
-      </button>
-      <button class="btn btn--sm" type="button" data-sleep-act="presets">
-        <svg><use href="#i-list-order" /></svg><span>常用档位</span>
+      <button class="btn btn--sm sleep-panel__after" type="button" data-sleep-act="after-song"
+        aria-pressed="false">
+        <svg><use href="#i-clock" /></svg><span>播放完歌曲</span>
       </button>
       <button class="btn btn--sm" type="button" data-sleep-act="off">
         <svg><use href="#i-close" /></svg><span>取消定时</span>
       </button>
     </div>
-    <div class="sleep-panel__hint">拖到 0 分钟就是取消定时；设置从松手那一刻开始倒计时。</div>`;
+    <div class="sleep-panel__hint">
+      「播放完歌曲」= 延长到歌曲播放结束：倒计时到点时如果这首还没播完，
+      会等它播完再停（不会在副歌中间掐掉）。拖到 0 分钟即取消定时；设置从松手那一刻开始倒计时。
+    </div>`;
 
   sleepSlider = createSlider($("#sleep-slider"), {
     min: 0,
@@ -482,13 +457,19 @@ function initSleepPanel(body) {
     if (!act) return;
     if (act === "off") {
       clearSleepTimer("已取消定时停止");
-    } else if (act === "after-song") {
-      state.sleepTimer = { type: "after-song" };
+      return;
+    }
+    if (act === "after-song") {
+      // 「播放完歌曲」是倒计时的一个修饰项，不是独立的定时模式：
+      // 打开后倒计时到点不会立刻停，而是等当前这首播完（见 checkSleepTimer）。
+      const next = !state.config.sleepAfterSong;
+      state.config.sleepAfterSong = next;
       commit();
       syncSleepPanel();
-      toast("将在当前歌曲播放完后停止", { duration: 1800 });
-    } else if (act === "presets") {
-      openSleepPresets(e.target.closest("[data-sleep-act]"));
+      toast(
+        next ? "已开启：倒计时结束后等当前歌曲播完再停" : "已关闭：倒计时结束后立即停止",
+        { duration: 2200 }
+      );
     }
   });
 
@@ -505,18 +486,6 @@ function initSleepPanel(body) {
     if (e.key !== "Escape") return;
     const panel = $("#sleep-panel");
     if (panel && !panel.hidden) closeSleepPanel();
-  });
-}
-
-/** 常用档位：滑条已经能表达任意分钟数，这里只是省一次拖动 */
-function openSleepPresets(anchor) {
-  openMenu({
-    anchor,
-    items: SLEEP_PRESETS.map((n) => ({ id: `min-${n}`, label: `${n} 分钟后停止`, icon: "clock" })),
-    onPick: (id) => {
-      const minutes = Number(String(id).slice(4)) || 0;
-      applySleepMinutes(minutes);
-    },
   });
 }
 
@@ -547,9 +516,11 @@ function syncSleepPanel() {
   const timer = state.sleepTimer;
   const valueEl = $("#sleep-value");
   const subEl = $("#sleep-sub");
+  syncSleepAfterToggle();
   if (timer?.type === "after-song") {
-    if (valueEl) valueEl.textContent = "播完当前歌曲";
-    if (subEl) subEl.textContent = "当前这首结束即暂停，不再进下一首";
+    // 倒计时已经到点，正在等这首播完
+    if (valueEl) valueEl.textContent = "等待本首播完";
+    if (subEl) subEl.textContent = "倒计时已结束，这首播完就暂停";
     sleepSlider?.set(0, { silent: true });
     return;
   }
@@ -567,10 +538,32 @@ function syncSleepPanel() {
   if (subEl) subEl.textContent = "拖动上面的条设置分钟数";
 }
 
-/** 定时停止到点：暂停播放并清掉定时器 */
+/** 「播放完歌曲」按钮的按下态跟随配置 */
+function syncSleepAfterToggle() {
+  const btn = document.querySelector("[data-sleep-act='after-song']");
+  if (btn) btn.setAttribute("aria-pressed", String(state.config.sleepAfterSong === true));
+}
+
+/**
+ * 定时停止到点。
+ *
+ * 「播放完歌曲」（延长到歌曲播放结束）打开时**不立刻暂停**，而是切换成
+ * after-song 状态：等当前这首自然播完，由 store/audio 的 ended 逻辑暂停。
+ * 不开就是老行为：到点立即暂停。
+ */
 function checkSleepTimer() {
   const timer = state.sleepTimer;
   if (timer?.type !== "duration" || Date.now() < timer.until) return;
+
+  if (state.config.sleepAfterSong === true && state.playing && state.currentId) {
+    // 交给「本首播完就停」那条既有通路处理（store.js / audio.js 都认这个 type）
+    state.sleepTimer = { type: "after-song" };
+    commit();
+    syncSleepPanel();
+    toast("定时到点：等这首播完就停", { duration: 2400 });
+    return;
+  }
+
   state.sleepTimer = null;
   if (state.playing) togglePlay();
   else commit();
@@ -721,19 +714,22 @@ export function paintPlayerBar() {
   };
 
   /* 曲目信息 */
-  if (song && song.id !== lastPainted.id) {
-    els.coverImg.src = coverOf(song);
+  const coverSrc = song ? coverOf(song) : "";
+  if (song && (song.id !== lastPainted.id || coverSrc !== lastPainted.cover)) {
+    if (coverSrc !== lastPainted.cover) els.coverImg.src = coverSrc;
     els.coverImg.alt = `${song.title} 封面`;
     els.title.textContent = song.title;
     els.sub.textContent = `${song.artist} · ${song.album}`;
     els.add.disabled = false;
     lastPainted.id = song.id;
+    lastPainted.cover = coverSrc;
   } else if (!song && lastPainted.id !== null) {
     els.coverImg.removeAttribute("src");
     els.title.textContent = "未在播放";
     els.sub.textContent = "选择一首歌曲开始";
     els.add.disabled = true;
     lastPainted.id = null;
+    lastPainted.cover = "";
   }
 
   /* 进度 */

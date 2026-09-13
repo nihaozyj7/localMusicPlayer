@@ -1,0 +1,235 @@
+/* ==========================================================================
+   desktoplyrics.css — 桌面歌词窗口（独立透明页面）
+   --------------------------------------------------------------------------
+   整块区域默认必须**完全透明**：只显示歌词文字，不能有任何底色/边框/阴影容器，
+   否则会变成一块盖在桌面上的色块。
+
+   两条硬约束：
+     1. HTML 与 BODY 都要 background: transparent —— Wails 只把 WebView2 的
+        默认背景设成透明，页面自己铺了底色照样是不透明的；
+     2. 不悬浮时一个字都不要用不透明背景（含 ::selection、滚动条）。
+
+   交互（需求）：
+     · 鼠标移入窗口 → 变成「常规窗口」：出现底色、圆角、边框与悬浮控制栏
+       （里面的下拉框用于设置桌面歌词样式）；
+     · 鼠标移出 → 背景立刻回到完全透明。
+   注意以前窗口是半透明的一层，会让桌面看起来蒙了灰；现在默认不铺任何底色。
+   ========================================================================== */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  /* 默认完全透明。显式写 !important 是为了压掉任何可能被加进来的半透明底色。 */
+  background: transparent !important;
+  overflow: hidden;
+  /* 桌面歌词不需要文本选择，避免拖动时误选 */
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+}
+
+/* 整窗可拖动：Wails v3 通过这个自定义属性识别拖动区域（不是 -webkit-app-region）。
+   窗口没开点击穿透（开了会破坏透明），所以拖动是可行的，也顺便给了用户
+   「把歌词挪到顺手的位置」的能力。
+   控制栏内部的控件要设成 no-drag，否则下拉框点不动（拖动区会吞掉鼠标事件）。 */
+.dl {
+  --wails-draggable: drag;
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  padding: 10px 24px;
+  text-align: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+/* —— 鼠标移入 = 常规窗口形态 —— */
+.dl:hover,
+.dl:focus-within {
+  background: rgba(16, 16, 20, 0.86);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* —— 悬浮控制栏（不悬浮时不占交互、完全不可见）—— */
+.dl__bar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 12px;
+  border-radius: 999px;
+  background: rgba(24, 24, 30, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transform: translate(-50%, -8px);
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease;
+  --wails-draggable: no-drag;
+  z-index: 2;
+}
+
+.dl:hover .dl__bar,
+.dl:focus-within .dl__bar {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+
+.dl__bar-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  white-space: nowrap;
+}
+
+.dl__select-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.dl__select {
+  appearance: none;
+  height: 26px;
+  padding: 0 26px 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+}
+
+.dl__select:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.dl__select option {
+  /* 下拉展开的面板由系统绘制，必须给不透明底色，否则文字和桌面混在一起 */
+  background: #1b1b21;
+  color: #fff;
+}
+
+/* 自绘下拉箭头（appearance:none 之后默认箭头会消失） */
+.dl__select-wrap::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid rgba(255, 255, 255, 0.7);
+  border-bottom: 1.5px solid rgba(255, 255, 255, 0.7);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+
+.dl__line {
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--dl-size, 26px);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  transition: opacity 220ms ease;
+}
+
+/* —— 桌面歌词样式（下拉框切换）——
+   桌面壁纸可能任何颜色，每种样式的目标都是「在任何背景上都读得清」。 */
+.dl[data-style="classic"] .dl__line {
+  color: #ffffff;
+  text-shadow:
+    0 0 2px rgba(0, 0, 0, 0.95),
+    0 0 5px rgba(0, 0, 0, 0.8),
+    0 2px 6px rgba(0, 0, 0, 0.85);
+}
+
+.dl[data-style="outline"] .dl__line {
+  color: #ffffff;
+  text-shadow: none;
+  -webkit-text-stroke: 1.4px rgba(0, 0, 0, 0.9);
+  paint-order: stroke fill;
+}
+
+.dl[data-style="shadow"] .dl__line {
+  color: #ffffff;
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.7),
+    0 4px 12px rgba(0, 0, 0, 0.72);
+}
+
+.dl[data-style="glow"] .dl__line {
+  color: #ffffff;
+  text-shadow:
+    0 0 6px rgba(124, 199, 255, 0.95),
+    0 0 18px rgba(124, 199, 255, 0.8),
+    0 2px 8px rgba(0, 0, 0, 0.7);
+}
+
+.dl[data-style="gradient"] .dl__line {
+  background-image: linear-gradient(92deg, #7ee8fa, #eec0c6 48%, #ffd76e);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: none;
+}
+
+/* 渐变色字在浅色桌面上可能偏淡：加一层很轻的深色投影 */
+.dl[data-style="gradient"] .dl__line {
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55));
+}
+
+/* 切行时淡入：直接换字会「跳」一下 */
+.dl__line[data-fresh="1"] {
+  animation: dl-line-in 260ms var(--dl-ease, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+@keyframes dl-line-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.dl__tip {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.72);
+  text-shadow:
+    0 0 2px rgba(0, 0, 0, 0.95),
+    0 2px 5px rgba(0, 0, 0, 0.8);
+}
+
+/* 有歌词时收起提示行，只留一行歌词 */
+.dl[data-state="singing"] .dl__tip {
+  display: none;
+}
+
+/* 暂停：整体降一点不透明度，明确「现在没在唱」 */
+.dl[data-state="paused"] .dl__line {
+  opacity: 0.72;
+}

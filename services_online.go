@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,22 +35,35 @@ type OnlineService struct {
 // setAI 注入 AI 元数据清洗服务（可选）。故意不导出，避免出现在前端绑定里。
 func (s *OnlineService) setAI(ai *AiService) { s.ai = ai }
 
-// cleanMeta 用 AI 清洗元数据；未配置或失败时原样返回。
+// cleanMeta 用 AI 清洗元数据；未配置、元数据已经够干净、或失败时原样返回。
+//
+// 「够干净就不调用 AI」这条很关键：实测一次 AI 调用要 8~18 秒，
+// 而歌词自动匹配发生在每次切歌的路径上 —— 无条件调用它会让
+// 「这首歌到底有没有歌词」变得完全不可预期（用户看到的现象就是
+// 「等一两秒提示没有歌词」或「等十几秒才出歌词」）。
 func (s *OnlineService) cleanMeta(title, artist, album string) (string, string, string) {
-	if s.ai == nil || !s.ai.Enabled() {
+	if s.ai == nil || !s.ai.Enabled() || !needsCleanMeta(title, artist) {
 		return title, artist, album
 	}
 	cleaned, err := s.ai.ExtractMeta(title, artist, album, "")
 	if err != nil {
 		return title, artist, album
 	}
-	if strings.TrimSpace(cleaned.Title) != "" {
+	return mergeCleanMeta(title, artist, album, cleaned)
+}
+
+// mergeCleanMeta 把 AI 结果合并回原元数据。
+//
+// 空值/占位值不覆盖原值：AI 只输出 JSON，模型不听话时会返回空字段或者
+// 「未知歌手」，直接覆盖等于把本来还能用的元数据也弄没了。
+func mergeCleanMeta(title, artist, album string, cleaned CleanMeta) (string, string, string) {
+	if !isPlaceholderMeta(cleaned.Title) {
 		title = cleaned.Title
 	}
-	if strings.TrimSpace(cleaned.Artist) != "" {
+	if !isPlaceholderMeta(cleaned.Artist) {
 		artist = cleaned.Artist
 	}
-	if strings.TrimSpace(cleaned.Album) != "" {
+	if !isPlaceholderMeta(cleaned.Album) {
 		album = cleaned.Album
 	}
 	return title, artist, album
@@ -151,8 +165,11 @@ func (s *OnlineService) Lyrics(title, artist string, duration int64) (map[string
 	if strings.TrimSpace(title) == "" {
 		return map[string]any{"lrc": "", "source": "none"}, nil
 	}
-	// 自动匹配前先让 AI 清洗元数据（脏标题会让在线匹配大幅跑偏）
+	// 先做本地整形（不联网、不等 AI），再按需让 AI 兜底清洗脏标题。
+	// 顺序不能反：AI 很慢，本地整形能解决的那部分不该花一次网络往返。
+	title, artist = sanitizeLyricsMeta(title, artist)
 	title, artist, _ = s.cleanMeta(title, artist, "")
+	title, artist = sanitizeLyricsMeta(title, artist)
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	res, err := s.lyrics.Match(ctx, lyricsfetch.SearchRequest{
@@ -194,7 +211,10 @@ func (s *OnlineService) CoverLookup(title, artist, album string, durationMS int6
 		return map[string]any{"available": false, "reason": "no-keyword"}, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), coverfetch.DefaultTotalTimeout+6*time.Second)
+	// 总超时按聚合器的**最坏情况**给（查询阶段 + 下载阶段）：只给查询阶段的
+	// 9s 会在「某个来源吃满单来源超时」时把下载那一步直接掐断，
+	// 表现就是「明明搜到了候选，却一张都返回不了」。
+	ctx, cancel := context.WithTimeout(context.Background(), coverfetch.DefaultWorstCase+2*time.Second)
 	defer cancel()
 	cover, err := s.covers.Resolve(ctx, req)
 	if err != nil || !cover.Valid() {
@@ -209,6 +229,14 @@ func (s *OnlineService) CoverLookup(title, artist, album string, durationMS int6
 		"width":     cover.Info.Width,
 		"height":    cover.Info.Height,
 	}, nil
+}
+
+// LyricsProviders 返回已注册的在线歌词来源（界面展示/排查用）。
+func (s *OnlineService) LyricsProviders() map[string]any {
+	if s.lyrics == nil {
+		return map[string]any{"providers": []string{}}
+	}
+	return map[string]any{"providers": s.lyrics.Providers()}
 }
 
 // CoverProviders 返回已注册的封面来源（设置界面展示用）。
@@ -260,7 +288,8 @@ func (s *OnlineService) handleCover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
-	ctx, cancel := context.WithTimeout(r.Context(), 24*time.Second)
+	// 同 CoverLookup：按聚合器最坏情况给，别把下载阶段掐断
+	ctx, cancel := context.WithTimeout(r.Context(), coverfetch.DefaultWorstCase+2*time.Second)
 	defer cancel()
 
 	src := strings.TrimSpace(q.Get("src"))
@@ -433,23 +462,67 @@ func (s *OnlineService) proxyStream(w http.ResponseWriter, r *http.Request, stre
 	http.Error(w, "online audio unavailable", http.StatusBadGateway)
 }
 
-func (s *OnlineService) SearchLyrics(title, artist string, duration int64) ([]map[string]any, error) {
+// SearchLyrics 手动匹配歌词：按用户给的关键词搜索候选。
+//
+// 三个参数各有用途，**不要合并**：
+//   - keyword 是用户在输入框里写/改的搜索词，喂给各来源做全文搜索；
+//   - title / artist 是这首歌的元数据，用于**打分排序**。
+//
+// 三个必须遵守的规则（每一条都对应一个实测到的问题）：
+//
+//  1. 用户填了关键词就不调用 AI。以前的实现无条件 cleanMeta，而 AI 一次要
+//     8~18 秒 —— 用户按回车之后十几秒界面还停在「搜索中…」，很容易被当成
+//     「搜索坏了」。用户亲手输入的关键词本来就比模型猜的准，没必要再洗。
+//
+//  2. 元数据先过本地整形（sanitizeLyricsMeta）。文件名兜底的标题往往是
+//     「《此去半生》-吴昊 “歌词歌词…”」这种脏串，直接拿去打分会让**所有候选
+//     一起塌成 0 分**（标题一个字都对不上），于是「搜了一两秒就说没有歌词」。
+//
+//  3. 整形之后仍然不可信的字段当成「没有」。打分函数对没有标题的情况给
+//     基础分，对错误标题却是直接否定（0 分）；两者相比后者更糟。
+func (s *OnlineService) SearchLyrics(keyword, title, artist string, duration int64) ([]map[string]any, error) {
 	if s.lyrics == nil {
 		return nil, fmt.Errorf("lyrics service disabled")
 	}
-	title, artist, _ = s.cleanMeta(title, artist, "")
-	keyword := title
-	if strings.TrimSpace(artist) != "" {
-		keyword = title + " " + artist
+	keyword = strings.TrimSpace(keyword)
+	title, artist = sanitizeLyricsMeta(title, artist)
+
+	if keyword == "" {
+		// 没有关键词（自动匹配走到这里）：这时才值得花一次 AI 清洗
+		title, artist, _ = s.cleanMeta(title, artist, "")
+		title, artist = sanitizeLyricsMeta(title, artist)
+		keyword = strings.TrimSpace(title + " " + artist)
 	}
+
+	// 打分用的字段：不可信的一律当成空，避免「全 0 分」把结果判死
+	scoreTitle, scoreArtist := title, artist
+	if !usableLyricsMetaForScore(scoreTitle) {
+		scoreTitle = ""
+	}
+	if !usableLyricsMetaForScore(scoreArtist) {
+		scoreArtist = ""
+	}
+	// 元数据完全不可信时，用用户输入的关键词当排序基准 —— 他输入的就是他想要的
+	if scoreTitle == "" && scoreArtist == "" && usableLyricsMetaForScore(keyword) {
+		scoreTitle = keyword
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	items, err := s.lyrics.Search(ctx, lyricsfetch.SearchRequest{
 		Keyword:  keyword,
+		Title:    scoreTitle,
+		Artist:   scoreArtist,
 		Duration: duration,
-		Limit:    12,
+		Limit:    20,
 	})
 	if err != nil {
+		// 「来源都正常，但没有这首歌词」是正常结果，不是错误：
+		// 返回空列表让界面显示「没有找到候选歌词」，而不是弹一句吓人的「搜索失败」。
+		// 只有真的全部失败了（网络/限流）才把错误抛给界面。
+		if errors.Is(err, lyricsfetch.ErrNoMatch) {
+			return []map[string]any{}, nil
+		}
 		return nil, err
 	}
 	out := make([]map[string]any, 0, len(items))

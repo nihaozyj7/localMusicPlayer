@@ -20,7 +20,7 @@
   box-shadow: var(--panel-shadow);
   overflow: hidden;
   opacity: 0;
-  transform: translateY(10px) scale(0.98);
+  transform: translateY(var(--rise)) scale(0.98);
   transform-origin: 100% 100%;
   transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-slide);
 }
@@ -230,7 +230,7 @@
   box-shadow: var(--panel-shadow);
   overflow: hidden;
   opacity: 0;
-  transform: translateY(10px) scale(0.98);
+  transform: translateY(var(--rise)) scale(0.98);
   transform-origin: 100% 100%;
   transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-slide);
 }
@@ -324,7 +324,7 @@
   box-shadow: var(--panel-shadow);
   overflow: hidden;
   opacity: 0;
-  transform: translateY(10px) scale(0.98);
+  transform: translateY(var(--rise)) scale(0.98);
   transform-origin: 100% 100%;
   transition:
     opacity var(--dur) var(--ease-out),
@@ -461,7 +461,18 @@
   backdrop-filter: var(--panel-blur);
   -webkit-backdrop-filter: var(--panel-blur);
   box-shadow: var(--panel-shadow);
-  animation: rise-in var(--dur-fast) var(--ease);
+  /* 进出都用 transition（而不是 animation）：关闭时才有状态可回退。
+     只用 animation 的话，菜单一 hidden 就是「啪」地消失。 */
+  opacity: 0;
+  transform: translateY(calc(var(--rise-sm) * -1));
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.menu[data-state="open"] {
+  opacity: 1;
+  transform: none;
 }
 
 .menu[hidden] {
@@ -562,7 +573,12 @@
   background: var(--immersive-veil);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  animation: fade-in var(--dur-fast) var(--ease);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.modal-backdrop[data-state="open"] {
+  opacity: 1;
 }
 
 .modal-backdrop[hidden] {
@@ -577,8 +593,18 @@
   backdrop-filter: var(--panel-blur);
   -webkit-backdrop-filter: var(--panel-blur);
   box-shadow: var(--panel-shadow);
-  animation: rise-in var(--dur) var(--ease-out);
+  /* 弹窗进场比背景慢一档、位移 --rise：先压暗再浮起，层次更像「桌面弹窗」 */
+  opacity: 0;
+  transform: translateY(var(--rise)) scale(0.985);
+  transition:
+    opacity var(--dur) var(--ease-out),
+    transform var(--dur) var(--ease-slide);
   overflow: hidden;
+}
+
+.modal-backdrop[data-state="open"] .modal {
+  opacity: 1;
+  transform: none;
 }
 
 .modal__head {
@@ -771,4 +797,80 @@
 .scanning__text {
   font-size: var(--fs-md);
   color: var(--text-2);
+}
+/* ==========================================================================
+   「添加歌曲到歌单」弹层（需求：添加按钮 → 列出所有歌曲 → 勾选加入）
+   ========================================================================== */
+.addsongs__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin: var(--sp-2) 0 var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.addsongs__actions {
+  display: inline-flex;
+  gap: var(--sp-2);
+}
+
+.addsongs {
+  max-height: 46vh;
+  overflow: auto;
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+}
+
+.addsongs__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+  border-bottom: var(--hairline);
+}
+
+.addsongs__row:last-child {
+  border-bottom: none;
+}
+
+.addsongs__row:hover {
+  background: var(--surface-hover);
+}
+
+.addsongs__row input[type="checkbox"] {
+  flex: none;
+  accent-color: var(--accent);
+}
+
+.addsongs__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.addsongs__title {
+  color: var(--text-1);
+  font-size: var(--fs-md);
+}
+
+.addsongs__sub {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+.addsongs__tag {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.addsongs__empty {
+  padding: var(--sp-4);
+  text-align: center;
+  color: var(--text-3);
 }

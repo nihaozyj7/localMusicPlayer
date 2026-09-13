@@ -712,22 +712,36 @@ func (s *LyricsService) cacheGet(songID string) (string, bool) {
 	return s.cache.Lyrics(songID)
 }
 
-// cleanMetaFor 用 AI 清洗脏标题（可选），并过滤掉「未知歌手」这类占位元数据。
+// cleanMetaFor 准备「拿去联网匹配」的标题与歌手。
+//
+// 顺序：本地整形（不联网、不等 AI）→ 仍然脏才花一次 AI 请求 → 再整形一次。
+//
+// 为什么本地整形必须在最前面：文件名兜底的标题里混着歌词与编号
+// （例：《此去半生》-吴昊 “花开又花谢花漫天…”），这种标题发出去
+// 既搜不到东西、又会让打分把所有候选打成 0 分，最后被判成「没有歌词」。
+// 本地整形能把这类标题还原成「此去半生 / 吴昊」，且完全不需要等网络。
+// aiEnabled 判断「自动匹配歌词时用 AI 清洗元数据」是否开启。
+//
+// 开关（config.aiLyricsClean）是用户可见的行为：关掉后歌词匹配只走
+// 本地整形（sanitizeLyricsMeta），不再等待 8~18 秒的 AI 请求。
+func (s *LyricsService) aiEnabled() bool {
+	if s.ai == nil || !s.ai.Enabled() {
+		return false
+	}
+	if s.store != nil && !s.store.Get().AILyricsClean {
+		return false
+	}
+	return true
+}
+
 func (s *LyricsService) cleanMetaFor(song bootstrap.Song) (string, string) {
-	title, artist := song.Title, song.Artist
-	if s.ai != nil && s.ai.Enabled() {
-		if cleaned, err := s.ai.ExtractMeta(song.Title, song.Artist, song.Album, filepath.Base(song.Path)); err == nil {
-			if strings.TrimSpace(cleaned.Title) != "" {
-				title = cleaned.Title
-			}
-			if strings.TrimSpace(cleaned.Artist) != "" {
-				artist = cleaned.Artist
-			}
+	title, artist := sanitizeLyricsMeta(song.Title, song.Artist)
+	if s.aiEnabled() && needsCleanMeta(title, artist) {
+		if cleaned, err := s.ai.ExtractMeta(title, artist, song.Album, filepath.Base(song.Path)); err == nil {
+			title, artist, _ = mergeCleanMeta(title, artist, "", cleaned)
 		}
 	}
-	if isPlaceholderMeta(artist) {
-		artist = ""
-	}
+	title, artist = sanitizeLyricsMeta(title, artist)
 	return title, artist
 }
 
@@ -1152,6 +1166,13 @@ type WindowService struct {
 	// activeBackdrop 创建窗口时实际生效的原生材质（由 main 注入）。
 	// 配置里的值只能等下次创建窗口时才起作用，两者不一致就是「待重启」。
 	activeBackdrop string
+
+	// —— 桌面歌词（独立透明窗口，见 desktop_lyrics.go）——
+	desktopMu       sync.Mutex
+	desktopOn       bool
+	desktopText     string
+	desktopPlaying  bool
+	desktopFontSize int
 }
 
 // NewWindowService 构造服务（app 由 main 在创建应用后注入）
@@ -1159,9 +1180,19 @@ func NewWindowService(store *bootstrap.Store) *WindowService {
 	return &WindowService{store: store, activeBackdrop: "off"}
 }
 
+// current 返回主窗口。
+//
+// 不能直接用 app.Window.Current()：那是「当前获得焦点的窗口」，
+// 桌面歌词窗口一旦被拖动/点击就会变成 current，于是最小化、最大化、
+// 关闭、全屏这些按钮会作用到歌词窗口上。这里固定按名字取主窗口。
 func (s *WindowService) current() *application.WebviewWindow {
 	if s.app == nil {
 		return nil
+	}
+	if w, ok := s.app.Window.GetByName("main"); ok {
+		if ww, ok := w.(*application.WebviewWindow); ok {
+			return ww
+		}
 	}
 	if w, ok := s.app.Window.Current().(*application.WebviewWindow); ok {
 		return w
@@ -1455,6 +1486,13 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			c.ListDensity = bootstrap.NormalizeListDensity(asString(raw, c.ListDensity))
 		case "showDesktopLyrics":
 			c.ShowDesktopLyrics = asBool(raw, c.ShowDesktopLyrics)
+		case "sleepAfterSong":
+			c.SleepAfterSong = asBool(raw, c.SleepAfterSong)
+		case "aiVendor":
+			// 非法值不静默接受：思考开关发错字段会被服务端直接拒
+			if v := strings.TrimSpace(asString(raw, c.AIVendor)); isValidAIVendor(v) && v != "" {
+				c.AIVendor = v
+			}
 		case "coverCarousel":
 			c.CoverCarousel = asBool(raw, c.CoverCarousel)
 		case "coverCarouselInterval":
@@ -1474,6 +1512,9 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			c.AIThinking = asBool(raw, c.AIThinking)
 		case "aiModelId":
 			c.AIModelID = strings.TrimSpace(asString(raw, c.AIModelID))
+		case "aiLyricsClean":
+			// 自动匹配歌词时是否先用 AI 清洗元数据（AI 慢，用户可关）
+			c.AILyricsClean = asBool(raw, c.AILyricsClean)
 		}
 	}
 }

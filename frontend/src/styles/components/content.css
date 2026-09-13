@@ -317,3 +317,102 @@
   }
 }
 
+/* ==========================================================================
+   本地歌曲筛选栏（在「本地歌曲」列表上方）
+   --------------------------------------------------------------------------
+   需求：本地搜索从「在线搜索弹层」里挪出来，单独放在本地歌曲上方。
+   它是 #content-body 之外的静态节点，输入时只重绘列表，不重建输入框。
+   ========================================================================== */
+.content-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-5) 0;
+  min-width: 0;
+}
+
+/* hidden 必须显式 display:none：类选择器的 display:flex 会盖过 UA 的 [hidden] */
+.content-filter[hidden] {
+  display: none;
+}
+
+.content-filter__field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 0 1 420px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  border: var(--hairline);
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+
+.content-filter__field:focus-within {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.content-filter__icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--text-3);
+}
+
+.content-filter__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-1);
+  font-size: var(--fs-md);
+}
+
+.content-filter__input::placeholder {
+  color: var(--text-3);
+}
+
+.content-filter__clear {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: var(--r-full);
+  color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+
+.content-filter__clear[hidden] {
+  display: none;
+}
+
+.content-filter__clear:hover {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.content-filter__clear svg {
+  width: 13px;
+  height: 13px;
+}
+
+.content-filter__count {
+  flex: none;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* 歌单多选模式下工具条上的「已选 N 首」 */
+.toolbar__selinfo {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

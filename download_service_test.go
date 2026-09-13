@@ -3,7 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	"musicplayer/internal/bootstrap"
 )
@@ -298,3 +300,130 @@ func TestRowClickAndDensityRejectGarbage(t *testing.T) {
 		t.Fatalf("非法密度应落回 cozy，实际 %q", got.ListDensity)
 	}
 }
+/* --------------------------------------------------------------------------
+   下载任务面板
+   --------------------------------------------------------------------------
+   标题栏「下载任务」入口的显隐、面板里的进度与结果全部读这份任务快照。
+   早期只有 running 集合：下载一结束就什么都不剩，用户看不到「已完成」，
+   失败原因也无处可查。
+*/
+
+func newDownloadFixture(t *testing.T) *DownloadService {
+	t.Helper()
+	t.Setenv("MUSICPLAYER_DATA_DIR", t.TempDir())
+	t.Setenv("MUSICPLAYER_MUSIC_DIR", t.TempDir())
+	store, err := bootstrap.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewDownloadService(store, nil)
+}
+
+func TestDownloadTasksLifecycle(t *testing.T) {
+	svc := newDownloadFixture(t)
+	var events []string
+	svc.setEmitter(func(name string, _ any) { events = append(events, name) })
+
+	dir := t.TempDir()
+	svc.mu.Lock()
+	running := svc.newTaskLocked("BV1", "正在下载", dir, 1000)
+	done := svc.newTaskLocked("BV2", "已完成", dir, 2000)
+	svc.mu.Unlock()
+
+	svc.updateTask(done.ID, func(task *DownloadTask) {
+		task.State = DownloadDone
+		task.Done = 123
+		task.Total = 123
+		task.Path = filepath.Join(dir, "done.m4a")
+		task.FinishedAt = time.Now().UnixMilli()
+	})
+
+	snap := svc.Tasks()
+	tasks := snap["tasks"].([]DownloadTask)
+	if len(tasks) != 2 {
+		t.Fatalf("应有 2 条任务，实际 %d", len(tasks))
+	}
+	if snap["active"].(int) != 1 {
+		t.Fatalf("进行中的任务数应为 1，实际 %v", snap["active"])
+	}
+	if tasks[0].ID != running.ID || tasks[0].State != DownloadRunning {
+		t.Fatalf("第一条应是进行中的任务: %+v", tasks[0])
+	}
+	if tasks[1].State != DownloadDone || tasks[1].Path == "" || tasks[1].Done != 123 {
+		t.Fatalf("完成的任务要带上状态/路径/字节数: %+v", tasks[1])
+	}
+
+	// 「清除已完成」不能把正在下载的那条一起删掉
+	after := svc.ClearFinished()
+	left := after["tasks"].([]DownloadTask)
+	if len(left) != 1 || left[0].ID != running.ID {
+		t.Fatalf("清除后应只剩进行中的任务，实际 %+v", left)
+	}
+
+	// 状态变化要广播整份快照（前端直接覆盖本地列表，不做增量合并）
+	found := false
+	for _, name := range events {
+		if name == "download:tasks" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("任务变化应广播 download:tasks 事件")
+	}
+}
+
+// 同一首歌并发下载只允许一条：第二次 Start 直接返回 already-running，不再登记任务。
+func TestDownloadStartRejectsDuplicate(t *testing.T) {
+	svc := newDownloadFixture(t)
+	svc.mu.Lock()
+	svc.running["BV1"] = true
+	svc.mu.Unlock()
+
+	res, err := svc.Start("BV1", "x", 0)
+	if err != nil {
+		t.Fatalf("Start 失败: %v", err)
+	}
+	if res["started"] != false || res["reason"] != "already-running" {
+		t.Fatalf("重复下载应被拒绝: %+v", res)
+	}
+	if got := len(svc.Tasks()["tasks"].([]DownloadTask)); got != 0 {
+		t.Fatalf("被拒绝的请求不应登记任务，实际 %d 条", got)
+	}
+}
+
+// 已结束的任务要限量，但**正在下载的永远不能被挤掉**。
+func TestDownloadTasksTrimKeepsRunning(t *testing.T) {
+	svc := newDownloadFixture(t)
+	dir := t.TempDir()
+	svc.mu.Lock()
+	running := svc.newTaskLocked("BVRUN", "进行中", dir, 0)
+	for i := 0; i < maxFinishedTasks+5; i++ {
+		svc.newTaskLocked("BV"+strconv.Itoa(i), "已完成", dir, 0)
+	}
+	svc.mu.Unlock()
+
+	// 把除 running 之外的全部标成已完成，并触发一次裁剪
+	svc.mu.Lock()
+	for _, task := range svc.tasks {
+		if task.ID != running.ID {
+			task.State = DownloadDone
+		}
+	}
+	svc.trimFinishedLocked()
+	remaining := len(svc.tasks)
+	svc.mu.Unlock()
+
+	if remaining != maxFinishedTasks+1 {
+		t.Fatalf("应保留 %d 条（%d 条已完成 + 1 条进行中），实际 %d", maxFinishedTasks+1, maxFinishedTasks, remaining)
+	}
+	foundRunning := false
+	for _, task := range svc.Tasks()["tasks"].([]DownloadTask) {
+		if task.ID == running.ID {
+			foundRunning = true
+		}
+	}
+	if !foundRunning {
+		t.Fatal("裁剪把正在下载的任务挤掉了")
+	}
+}
+

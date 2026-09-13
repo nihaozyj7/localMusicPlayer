@@ -227,6 +227,12 @@ export const backend = {
   // 原生材质（Mica / Acrylic）：读取窗口实际生效值 + 重启应用以让改动生效
   backdrop: () => call(bindings?.Window?.Backdrop),
   restartApp: () => call(bindings?.Window?.Restart),
+  // 桌面歌词：独立的透明置顶窗口（见 desktop_lyrics.go）。
+  // 主窗口用它开/关窗口并推送当前歌词行；歌词窗口用它拉初始状态。
+  desktopLyrics: (on) => call(bindings?.Window?.SetDesktopLyrics, Boolean(on)),
+  desktopLyricsState: () => call(bindings?.Window?.DesktopLyricsState),
+  desktopLyricsReady: () => call(bindings?.Window?.MarkDesktopLyricsReady),
+  updateDesktopLyrics: (payload) => call(bindings?.Window?.UpdateDesktopLyrics, payload),
 
   /* ---- 在线歌曲 ---- */
   onlineSearch: (keyword, page, pageSize) => call(bindings?.Online?.Search, keyword, page, pageSize),
@@ -239,6 +245,10 @@ export const backend = {
   /* ---- 下载 ---- */
   downloadStart: (bvid, title, duration) => call(bindings?.Download?.Start, bvid, title, duration),
   downloadStatus: () => call(bindings?.Download?.Status),
+  // 下载任务面板：Tasks 拉整份快照，之后靠 download:tasks 事件增量更新；
+  // ClearFinished 只清掉已结束的任务（正在下载的不动）
+  downloadTasks: () => call(bindings?.Download?.Tasks),
+  downloadClearFinished: () => call(bindings?.Download?.ClearFinished),
   // PickDir / SetDir 只返回「换目录提案」（含现有文件数量），不落盘；
   // 用户确认是否迁移后再调 ApplyDir 真正生效
   downloadPickDir: () => call(bindings?.Download?.PickDir),

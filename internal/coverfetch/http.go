@@ -110,10 +110,13 @@ var imageHostSuffixes = []string{
 	"hdslb.com",
 	"biliimg.com",
 	"bilivideo.com",
-	// 酷狗 / QQ 音乐（保留位，接口当前不稳定，先留域名免得上线后又要改）
-	"kugou.com",
+	// QQ 音乐：专辑封面在 y.gtimg.cn（.cn，不是 .com —— 只写 gtimg.com
+	// 会让 QQ 来源「搜得到但一张都下不下来」），网页端还有 y.qq.com。
 	"gtimg.com",
+	"gtimg.cn",
 	"y.qq.com",
+	// 酷狗（保留位：其移动搜索域名的证书与主机名不匹配，暂不作为来源）
+	"kugou.com",
 	// Last.fm / Discogs 的公共图床
 	"lastfm.freetls.fastly.net",
 	"discogs.com",
@@ -164,7 +167,13 @@ func Download(ctx context.Context, rawURL string) (ImageData, error) {
 	// 图床基本都校验 Referer。注意不能一律用图片自己的域名：网易云 CDN
 	// 与 B 站图床都期待「站点首页」作为来源，用错会 403 或返回占位白图。
 	req.Header.Set("Referer", refererFor(rawURL))
-	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+	// Accept 只优先声明**我们真的能解码**的格式（见 InspectImage 的 JPEG/PNG/GIF 解码器）。
+	//
+	// 这条踩过坑：原来照搬浏览器写 image/avif,image/webp,...，QQ 音乐的图床
+	// 于是回 WebP（Content-Type: image/webp），而标准库没有 WebP 解码器 ——
+	// 结果「这个来源明明搜到了候选，却一张都显示不出来」，还看不出原因。
+	// 把 jpeg/png/gif 放在前面、通配符权重压到 0.1，图床就会回可解码的 JPEG。
+	req.Header.Set("Accept", "image/jpeg,image/png,image/gif,image/*;q=0.1")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -305,7 +314,13 @@ func runProviders(ctx context.Context, providers []Provider, req Request, perPro
 				ch <- indexedResult{idx: i, provider: p, failed: true}
 				return
 			}
-			ch <- indexedResult{idx: i, provider: p, res: res, failed: !res.Cover.Valid()}
+			// 注意：**「没有命中」不算失败**。
+			//
+			// 早期实现把 failed 写成 !res.Cover.Valid()，于是「这个来源没有这首歌」
+			// 也会累计熔断计数：连续两首冷门歌没命中，一个本来健康的来源就被
+			// 停用 5 分钟 —— 这不是熔断该管的事。熔断要挡的是「连不上/超时/接口报错」，
+			// 那才是耗时且会反复发生的故障。
+			ch <- indexedResult{idx: i, provider: p, res: res}
 		}(i, p)
 	}
 	go func() {

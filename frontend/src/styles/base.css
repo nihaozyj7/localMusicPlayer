@@ -147,7 +147,7 @@ svg {
 @keyframes rise-in {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(var(--rise));
   }
   to {
     opacity: 1;

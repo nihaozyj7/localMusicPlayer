@@ -2,6 +2,7 @@
    shell.js — 侧边栏 / 内容头部工具条 / 内容区路由
    ========================================================================== */
 
+import Sortable from "sortablejs";
 import { $, $$, icon, openMenu, toast } from "./dom.js";
 import {
   renderSettings,
@@ -13,8 +14,12 @@ import {
   setSettingsSection,
 } from "./settings.js";
 import { addSongsTo } from "./playlists.js";
-import { confirmDeletePlaylist, promptNewPlaylist, promptRenamePlaylist } from "./playlists.js";
-import { clearSearch } from "./searchpanel.js";
+import {
+  confirmDeletePlaylist,
+  promptAddSongs,
+  promptNewPlaylist,
+  promptRenamePlaylist,
+} from "./playlists.js";
 import {
   LIKED_ID,
   clearQueue,
@@ -26,6 +31,8 @@ import {
   playContext,
   removeSongsFromPlaylist,
   rescan,
+  setPlaylistSelecting,
+  setSelectedSongs,
   state,
 } from "./store.js";
 import { bindTrackEvents, playAllVisible, renderEmpty, renderTracks } from "./tracks.js";
@@ -124,7 +131,20 @@ function toolbarHtml() {
   }
 
   if (v === "playlist") {
+    // 多选模式：工具条换成「已选 N 首 / 全选 / 移除所选 / 完成」，
+    // 这时排序与播放全部先让位，避免误触。
+    if (state.playlistSelecting) {
+      const n = state.selectedIds.size;
+      const all = state.visibleSongs.length > 0 && state.visibleSongs.every((s) => state.selectedIds.has(s.id));
+      return `
+        <span class="toolbar__selinfo">已选 ${fmtCount(n)} 首</span>
+        <button class="btn btn--sm" type="button" data-tool="sel-all">${icon("check")}<span>${all ? "取消全选" : "全选"}</span></button>
+        <button class="btn btn--sm btn--danger" type="button" data-tool="sel-remove" ${n ? "" : "disabled"}>${icon("trash")}<span>移除所选</span></button>
+        <button class="btn btn--sm btn--primary" type="button" data-tool="pl-select">${icon("close")}<span>完成</span></button>`;
+    }
     return `${sortSel}${playAll}
+      <button class="btn" type="button" data-tool="pl-select">${icon("check")}<span>多选</span></button>
+      <button class="btn" type="button" data-tool="pl-add">${icon("plus")}<span>添加</span></button>
       <button class="btn btn--icon" type="button" data-tool="pl-more" data-tip="歌单操作">${icon("more")}</button>`;
   }
 
@@ -139,6 +159,43 @@ function toolbarHtml() {
  * 让正在交互的按钮丢失焦点）。
  */
 let lastTools = "";
+
+/* --------------------------------------------------------------------------
+   本地歌曲筛选栏
+   --------------------------------------------------------------------------
+   需求：本地搜索从「在线搜索弹层」里独立出来，放在本地歌曲上方。
+   关键词存在 state.query（store 的 recalcVisible 已经在用它过滤）。
+   输入框是 #content-body 之外的静态节点，所以输入时不会重绘输入框本身，
+   焦点与输入法状态都不会被打断。
+   -------------------------------------------------------------------------- */
+function filterEls() {
+  return {
+    bar: $("#content-filter"),
+    input: $("#content-filter-input"),
+    clear: $("#content-filter-clear"),
+    count: $("#content-filter-count"),
+  };
+}
+
+/** 把筛选栏的显隐 / 文案同步到当前视图（每次 renderHeader 都会调） */
+function syncFilterBar() {
+  const { bar, input, clear, count } = filterEls();
+  if (!bar) return;
+  const show = state.view === "library";
+  bar.hidden = !show;
+  if (!show) return;
+  if (input && input.value !== state.query) input.value = state.query;
+  if (clear) clear.hidden = state.query.length === 0;
+  if (count) count.textContent = state.query.trim() ? `匹配 ${fmtCount(state.visibleSongs.length)} 首` : "";
+}
+
+/** 清空本地筛选（空态里的「清空筛选」按钮用） */
+export function clearLocalFilter() {
+  state.query = "";
+  const { input } = filterEls();
+  if (input) input.value = "";
+  commit();
+}
 
 export function renderHeader() {
   const v = state.view;
@@ -178,6 +235,8 @@ export function renderHeader() {
     lastTools = tools;
     $("#content-tools").innerHTML = tools;
   }
+
+  syncFilterBar();
 }
 
 /* --------------------------------------------------------------------------
@@ -205,9 +264,9 @@ export function renderContent() {
   bindTrackEvents(body, {
     onAddFolder: () => handleSettingsAction({ dataset: { act: "add-folder" } }, { commit, rescan: doRescan }),
     onGotoLibrary: () => navigate("library"),
-    // 「没有匹配的歌曲」空态里的「清空搜索」：连搜索弹层里的关键词一起清掉，
-    // 否则用户会看到「筛掉了但输入框里还有字」的矛盾状态
-    onClearSearch: () => clearSearch(),
+    // 「没有匹配的歌曲」空态里的「清空筛选」：清掉上方筛选框里的关键词，
+    // 否则用户会看到「列表空了但输入框里还有字」的矛盾状态
+    onClearSearch: () => clearLocalFilter(),
   });
 }
 
@@ -296,6 +355,11 @@ export function navigate(view, playlistId = null) {
   state.view = view;
   state.playlistId = view === "playlist" ? playlistId : null;
   state.playerOpen = false;
+  // 切视图时清掉本地筛选与歌单多选：否则会出现「切到歌单还被上一页的关键词
+  // 过滤着」「多选模式下换了另一个歌单」这类错位状态。
+  state.query = "";
+  state.playlistSelecting = false;
+  state.selectedIds = new Set();
   // 换视图时把播放列表面板收起来，避免它孤零零浮在主界面上。
   // 这里直接收 DOM（不入 playerbar 的依赖，避免 shell ← playerbar 的循环 import）；
   // 动画结束后由 paintPlayerBar 的渲染循环收尾。
@@ -343,6 +407,8 @@ export async function doRescan({ manual = false } = {}) {
 export function bindShell() {
   /* 侧边栏导航 + 歌单 */
   $("#sidebar").addEventListener("click", (e) => {
+    // 拖拽排序刚结束时不要导航（拖动的歌单会被误判成一次点击）
+    if (Date.now() - lastPlaylistDragEndAt < 260) return;
     const more = e.target.closest('[data-act="pl-more"]');
     if (more) {
       e.stopPropagation();
@@ -363,20 +429,27 @@ export function bindShell() {
     openPlaylistMenu(nav.dataset.playlist, nav);
   });
 
-  $("#sidebar").addEventListener("pointerdown", (e) => {
-    const handle = e.target.closest('[data-nav="playlist"]');
-    if (!handle || handle.dataset.locked === "true") return;
-    const dragging = e.target.closest(".navitem__more");
-    if (dragging) return;
-    handle.classList.add("is-dragging-handle");
-  });
-
-  $("#sidebar").addEventListener("pointerup", () => {
-    $$("#playlist-nav .navitem").forEach((n) => n.classList.remove("is-dragging-handle"));
-  });
-
-  // 歌单拖拽排序（自定义歌单之间）
+  // 歌单拖拽排序（自定义歌单之间）：交给 SortableJS
   bindPlaylistDrag();
+
+  /* 本地歌曲筛选框（在本地歌曲列表上方） */
+  const filterInput = $("#content-filter-input");
+  filterInput?.addEventListener("input", () => {
+    state.query = filterInput.value;
+    const clear = $("#content-filter-clear");
+    if (clear) clear.hidden = filterInput.value.length === 0;
+    commit();
+  });
+  filterInput?.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    clearLocalFilter();
+    filterInput.blur();
+  });
+  $("#content-filter-clear")?.addEventListener("click", () => {
+    clearLocalFilter();
+    filterInput?.focus();
+  });
 
   $("#btn-new-playlist")?.addEventListener("click", () => promptNewPlaylist((pl) => pl && navigate("playlist", pl.id)));
   $("#btn-new-playlist-sm")?.addEventListener("click", () => promptNewPlaylist((pl) => pl && navigate("playlist", pl.id)));
@@ -548,6 +621,29 @@ async function handleTool(tool) {
       clearQueue();
       toast("播放列表已清空");
       break;
+    /* —— 歌单：多选 / 添加歌曲 —— */
+    case "pl-select":
+      setPlaylistSelecting(!state.playlistSelecting);
+      break;
+    case "pl-add":
+      if (state.playlistId) promptAddSongs(state.playlistId);
+      break;
+    case "sel-all": {
+      const all =
+        state.visibleSongs.length > 0 && state.visibleSongs.every((s) => state.selectedIds.has(s.id));
+      setSelectedSongs(all ? [] : state.visibleSongs.map((s) => s.id));
+      break;
+    }
+    case "sel-remove": {
+      const ids = [...state.selectedIds];
+      if (!ids.length) break;
+      const pl = playlistById(state.playlistId);
+      const removed = removeSongsFromPlaylist(state.playlistId, ids);
+      // 退出多选会同时清空勾选
+      setPlaylistSelecting(false);
+      toast(`已从「${pl?.name ?? "歌单"}」移除 ${fmtCount(removed)} 首`, { tone: "success" });
+      break;
+    }
     case "pl-more":
       openPlaylistMenu(state.playlistId, $("#content-header [data-tool='pl-more']"));
       break;
@@ -611,44 +707,29 @@ function openPlaylistMenu(id, anchor) {
 /* --------------------------------------------------------------------------
    歌单拖拽排序
    -------------------------------------------------------------------------- */
+/** 拖拽结束的时间戳：抑制紧随其后的 click，否则拖动后会被当成「点击歌单」而导航 */
+let lastPlaylistDragEndAt = 0;
+
 function bindPlaylistDrag() {
   const nav = $("#playlist-nav");
-  let from = -1;
-
-  nav.addEventListener("dragstart", (e) => {
-    const item = e.target.closest('.navitem[data-locked="false"]');
-    if (!item) {
-      e.preventDefault();
-      return;
-    }
-    from = $$("#playlist-nav .navitem").indexOf(item);
-    item.classList.add("is-dragging");
-    e.dataTransfer.effectAllowed = "move";
+  if (!nav) return;
+  // 需求：拖拽排序不要自己实现，统一用 SortableJS。
+  Sortable.create(nav, {
+    draggable: ".navitem",
+    // 「我喜欢」固定在第一位：禁止拖动它本身（仍可作为落点）
+    filter: '[data-locked="true"]',
+    animation: 150,
+    ghostClass: "is-dragging",
+    onEnd(evt) {
+      lastPlaylistDragEndAt = Date.now();
+      const from = evt.oldIndex;
+      const to = evt.newIndex;
+      if (from == null || to == null || from === to) return;
+      // #playlist-nav 里第 0 项是「我喜欢」（locked），自定义歌单下标要减 1
+      movePlaylist(from - 1, to - 1);
+      toast("已调整歌单顺序", { duration: 1400 });
+    },
   });
-
-  nav.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    const item = e.target.closest(".navitem");
-    $$("#playlist-nav .navitem").forEach((n) => n.classList.remove("is-drop-target"));
-    if (item) item.classList.add("is-drop-target");
-  });
-
-  nav.addEventListener("drop", (e) => {
-    e.preventDefault();
-    const item = e.target.closest(".navitem");
-    const to = item ? $$("#playlist-nav .navitem").indexOf(item) : -1;
-    cleanup();
-    if (from < 0 || to < 0 || from === to) return;
-    movePlaylist(from, to);
-    toast("已调整歌单顺序", { duration: 1400 });
-  });
-
-  nav.addEventListener("dragend", cleanup);
-
-  function cleanup() {
-    from = -1;
-    $$("#playlist-nav .navitem").forEach((n) => n.classList.remove("is-dragging", "is-drop-target"));
-  }
 }
 
 /* --------------------------------------------------------------------------

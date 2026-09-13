@@ -43,7 +43,12 @@ func (m *onlineLyricsMatcher) Match(ctx context.Context, title, artist string, d
 	if m == nil || m.svc == nil || m.svc.lyrics == nil {
 		return "", "", "", "", nil
 	}
+	// LyricsService 已经整形+清洗过一轮（cleanMetaFor），这里再兜一次：
+	// 直接调用本适配器（不经过 LyricsService）时也要拿到干净的元数据。
+	// cleanMeta 内部有「够干净就不调用 AI」的判断与结果缓存，重复调用接近零成本。
+	title, artist = sanitizeLyricsMeta(title, artist)
 	title, artist, _ = m.svc.cleanMeta(title, artist, "")
+	title, artist = sanitizeLyricsMeta(title, artist)
 	if title == "" {
 		return "", "", "", "", nil
 	}

@@ -20,7 +20,10 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: var(--sp-2);
+  /* 上下留 3rem：设置面板贴满整个窗口高度会显得「顶天立地」，
+     四周透出一点内容区的背景，才有弹出层的层次感（需求反馈）。
+     左右保持 --sp-2，窄窗口时面板仍然能占满可用宽度。 */
+  padding: 3rem var(--sp-2);
   background: rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(10px);
   opacity: 0;
@@ -83,7 +86,7 @@
   backdrop-filter: var(--panel-blur);
   box-shadow: var(--panel-shadow);
   overflow: hidden;
-  transform: translateY(10px) scale(0.995);
+  transform: translateY(var(--rise)) scale(0.995);
   transition: transform var(--dur) var(--ease-out);
 }
 

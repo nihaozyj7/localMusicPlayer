@@ -10,6 +10,7 @@ import {
   applyRules,
   bootstrap,
   commit,
+  coverVersion,
   currentSong,
   flushConfigSync,
   isLiked,
@@ -17,6 +18,7 @@ import {
   playNext,
   playPrev,
   rescan,
+  setCoverSet,
   setCoverSets,
   setVolume,
   songById,
@@ -49,7 +51,9 @@ import {
 } from "./playerhost.js";
 import { applyResolvedTheme, applyCoverSeed, discoverThemes, extractCoverSeed, getTheme } from "./theme.js";
 import { refreshBackdropState } from "./backdrop.js";
+import { desktopLyricsEnabled, pushDesktopLyrics } from "./desktop-lyrics.js";
 import { initSearchPanel } from "./searchpanel.js";
+import { initDownloads } from "./downloads.js";
 // 只为副作用而导入：它把底栏「手动匹配歌词」按钮（#btn-lyrics-match，静态写在
 // index.html 里）接到在线歌词搜索面板上。缺了这行按钮就变成点不动的死按钮，
 // 所以别再删掉 —— 以前它是运行时 inject 的，模块没被导入时按钮会直接消失。
@@ -80,6 +84,11 @@ function renderKey() {
     state.scanning ? "scan" : "",
     state.config.theme,
     state.config.themeMode,
+    // 封面版本：封面变了要整张表重绘，否则「匹配完封面列表还是默认图」
+    coverVersion(),
+    // 歌单多选：进入/退出多选、勾选变化都要重绘（勾选框在行内）
+    state.playlistSelecting ? "sel" : "",
+    [...state.selectedIds].join(","),
   ].join("|");
 }
 
@@ -140,21 +149,24 @@ function applyDensity() {
   if (root.dataset.density !== next) root.dataset.density = next;
 }
 
-/* 桌面歌词悬浮条：只在「窗口歌词」开启且确实有当前行时显示。 */
+/**
+ * 桌面歌词：每帧算出「当前该显示的一行」，推给独立的透明窗口。
+ *
+ * 真实应用里歌词画在**独立窗口**上（desktop-lyrics.js → Go 后端 → 事件广播）；
+ * 浏览器预览没有第二个窗口，降级成主窗口内的悬浮条（见 desktop-lyrics.js）。
+ * 这里只负责算当前行：具体推送到哪里由 desktop-lyrics.js 决定。
+ */
 function paintDesktopLyrics() {
-  const layer = document.getElementById("desktop-lyrics");
-  if (!layer) return;
-  const line = document.getElementById("desktop-lyrics-line");
-  const show = state.config.showDesktopLyrics && state.playing;
+  const enabled = desktopLyricsEnabled();
   // 详情页没打开时歌词还没装载，这里补一次（有缓存/进行中会直接返回）
-  if (show) ensureLyricsLoaded();
-  const text = show ? currentLyricLine() : "";
-  if (show && text) {
-    line.textContent = text;
-    layer.hidden = false;
-  } else {
-    layer.hidden = true;
-  }
+  if (enabled && state.playing) ensureLyricsLoaded();
+  const text = enabled && state.playing ? currentLyricLine() : "";
+  pushDesktopLyrics({
+    text,
+    playing: Boolean(state.playing),
+    // 桌面歌词是「隔着整个桌面看」的，比详情页里的歌词字号放大一点才看得清
+    fontSize: Math.round((Number(state.config.lyricsFontSize) || 16) * 1.5),
+  });
 }
 
 /* --------------------------------------------------------------------------
@@ -414,6 +426,26 @@ function bindBackendEvents() {
     if (typeof payload.playing === "boolean") state.playing = payload.playing;
   });
 
+  /* ---- 封面变化 ----
+     后端在「自动匹配 / 手动应用 / 写回文件 / 清空缓存」后都会广播 cover:changed。
+     以前前端完全不订阅它，于是自动匹配出来的封面只写进了缓存，
+     界面（歌曲列表 + 底栏封面）永远停在默认封面 —— 必须订阅并把新集合拉回来。
+     空 id 表示批量变更（清空缓存 / 批量写回），直接整表回填。 */
+  on("cover:changed", async (payload) => {
+    const id = String(payload?.id || "");
+    try {
+      if (!id) {
+        const map = await backend.coverCachedSets();
+        if (map && typeof map === "object") setCoverSets(map);
+        return;
+      }
+      const set = await backend.coverList(id);
+      if (set && Array.isArray(set.items)) setCoverSet(id, set);
+    } catch (err) {
+      console.info("[cover] 同步封面失败", err?.message ?? err);
+    }
+  });
+
   /* ---- 响度均衡 ---- */
   on("loudness:progress", (payload) => {
     if (!payload) return;
@@ -556,6 +588,8 @@ async function main() {
   initTooltips();
   // 搜索必须早于首次渲染：它往标题栏插入搜索按钮，并负责搜索结果弹层的构建
   initSearchPanel();
+  // 标题栏「下载任务」入口 + 下载面板（按钮初始 hidden，有任务时才出现）
+  await initDownloads();
   initPlayerBar({
     onOpenPlayer: togglePlayer,
     onToggleQueue: () => toggleQueuePanel(),

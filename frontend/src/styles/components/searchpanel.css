@@ -53,7 +53,7 @@
   backdrop-filter: var(--panel-blur);
   box-shadow: var(--panel-shadow);
   overflow: hidden;
-  transform: translateY(-8px) scale(0.99);
+  transform: translateY(calc(var(--rise) * -1)) scale(0.99);
   transition: transform var(--dur) var(--ease-out);
 }
 
@@ -67,9 +67,32 @@
 .search-overlay__search {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
   padding: var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-4);
   border-bottom: var(--hairline);
+}
+
+/* 输入框本体：搜索图标 + 输入框 + 清空按钮都在这个框里面，
+   外面只剩一个「关闭」按钮 —— 视觉上就是「一个输入框 + 一个关闭」。 */
+.search-overlay__field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1;
+  min-width: 0;
+  height: var(--btn-lg);
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  border: var(--hairline-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  transition:
+    border-color 120ms var(--ease-out),
+    background 120ms var(--ease-out);
+}
+
+.search-overlay__field:focus-within {
+  border-color: var(--accent);
+  background: var(--surface-2);
 }
 
 .search-overlay__search-icon {
@@ -82,7 +105,7 @@
 .search-overlay__input {
   flex: 1;
   min-width: 0;
-  height: var(--btn-lg);
+  height: 100%;
   border: 0;
   background: none;
   color: var(--text-1);

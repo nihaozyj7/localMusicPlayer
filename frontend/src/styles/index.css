@@ -33,6 +33,7 @@
 @import "./components/playerview.css";
 @import "./components/settings.css";
 @import "./components/overlay.css";
+@import "./components/downloadpanel.css";
 @import "./components/layers.css";
 
 @import "./utilities.css";

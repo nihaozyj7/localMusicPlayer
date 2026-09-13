@@ -14,17 +14,19 @@
 
 .settings__nav {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: var(--sp-1);
   padding: var(--sp-1);
   border-radius: var(--r-md);
   background: var(--surface-1);
   border: var(--hairline);
-  align-self: flex-start;
+  /* 需求：导航按钮栏居中（原来是 flex-start 靠左） */
+  align-self: center;
+  max-width: 100%;
   position: sticky;
-  /* 吸附时上方留一点缝，别和面板标题栏贴死。
-     注意这个值是「相对滚动容器（.settings-layer__body）的 padding 边」算的，
-     所以不能再叠加 body 的上内边距 —— 那样导航条会被顶下去一截。 */
-  top: var(--sp-2);
+  /* 需求：吸附锚点改为 0（原来留了 --sp-2 的缝，滚动时会看到一条空档） */
+  top: 0;
   z-index: 3;
   backdrop-filter: var(--panel-blur);
   -webkit-backdrop-filter: var(--panel-blur);
@@ -168,6 +170,25 @@
 /* 多行说明文字（如「添加自定义主题」的步骤） */
 .setting__hint--steps {
   line-height: 1.75;
+}
+
+/* 提示词文本框（设置 → 播放界面样式 → 自定义）：等宽、可整段选中复制 */
+.prompt-box {
+  width: 100%;
+  min-height: 132px;
+  max-height: 42vh;
+  resize: vertical;
+  padding: var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  border: var(--hairline);
+  color: var(--text-2);
+  font-family: var(--font-num);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  /* 提示词按行排版，保留换行；超宽时横向滚动而不是软换行 */
+  white-space: pre;
+  overflow: auto;
 }
 
 /* —— 响度测量的进度条 —— */

@@ -77,11 +77,20 @@ type cachedResult struct {
 	at  time.Time
 }
 
-// NewAggregator 创建聚合器；不传 Provider 时使用内置的四个来源。
+// NewAggregator 创建聚合器；不传 Provider 时使用内置的三个来源。
+//
+// 顺序即优先级（同分时排前面的胜出）：
+//   - LRCLIB：国际化最好、有精确接口，且是唯一提供逐行时间轴的稳定来源；
+//   - 网易云：华语覆盖最好，但网页搜索接口会被限流（HTTP 200 + code 405）；
+//   - QQ 音乐：华语覆盖同样好、接口稳定，正好补上网易云被限流时的缺口。
+//
+// 为什么不再只有两个来源：网易云一旦被限流，实际上只剩 LRCLIB 一个来源，
+// 而 LRCLIB 对中文歌的覆盖（尤其是近几年的新歌）并不算好，用户就会觉得
+// 「歌词搜索老是失败」。多一个稳定来源是最直接的解法。
 func NewAggregator(providers ...Provider) *Aggregator {
 	if len(providers) == 0 {
 		providers = []Provider{
-			NewLRCLIB(), NewNetease(),
+			NewLRCLIB(), NewNetease(), NewQQ(),
 		}
 	}
 	return &Aggregator{
@@ -113,7 +122,11 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]Candidate
 	ch := make(chan providerResult, len(a.providers))
 	for _, p := range a.providers {
 		go func(p Provider) {
-			cctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			// 单来源超时。三个来源是并发跑的，所以总耗时由最慢的那个决定。
+			// 实测 LRCLIB / QQ 都在 1.5s 内返回，网易云被限流时 405 也是毫秒级；
+			// 6s 只用于兜住「某个源彻底卡住」的情况，比原来的 8s 更早给出结果。
+			// 更关键的是下面的「强命中就提前收工」，让慢来源通常根本等不到超时。
+			cctx, cancel := context.WithTimeout(ctx, providerTimeout)
 			defer cancel()
 			items, err := p.Search(cctx, req)
 			for i := range items {
@@ -125,20 +138,58 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]Candidate
 		}(p)
 	}
 
+	// 收集：三个来源并发跑，但**不一定要等齐**。
+	//
+	// 只要某个来源给出了「强命中」（标题+歌手基本对上，见 strongScore），
+	// 再给其余来源一个很短的宽限窗口就返回 —— 否则一个卡住的来源会让
+	// 用户为了一个 1 秒就到手的正确答案等满 8 秒。
 	var all []Candidate
 	var errs []error
-	for range a.providers {
-		r := <-ch
-		if r.err != nil {
-			errs = append(errs, r.err)
-			continue
+	got := 0
+	graceTimer := time.NewTimer(searchGrace)
+	graceTimer.Stop()
+	var grace <-chan time.Time
+	for got < len(a.providers) {
+		select {
+		case r := <-ch:
+			got++
+			if r.err != nil {
+				errs = append(errs, r.err)
+				continue
+			}
+			strong := false
+			for i := range r.items {
+				r.items[i].Score = scoreCandidate(req, r.items[i])
+				if r.items[i].Score >= strongScore {
+					strong = true
+				}
+			}
+			all = append(all, r.items...)
+			if strong && grace == nil {
+				graceTimer.Reset(searchGrace)
+				grace = graceTimer.C
+			}
+		case <-grace:
+			got = len(a.providers)
+		case <-ctx.Done():
+			got = len(a.providers)
 		}
-		all = append(all, r.items...)
 	}
-	for i := range all {
-		all[i].Score = scoreCandidate(req, all[i])
+	graceTimer.Stop()
+
+	// 排序：分数降序；**同分按来源声明顺序**（声明顺序即优先级）。
+	// 不能依赖 sort.SliceStable + 到达顺序：那样同分时谁先回来谁赢，
+	// 网络抖动会让同一首歌的匹配结果飘来飘去（用户会觉得「结果不稳定」）。
+	order := make(map[string]int, len(a.providers))
+	for i, p := range a.providers {
+		order[p.Name()] = i
 	}
-	sort.SliceStable(all, func(i, j int) bool { return all[i].Score > all[j].Score })
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].Score != all[j].Score {
+			return all[i].Score > all[j].Score
+		}
+		return order[all[i].Provider] < order[all[j].Provider]
+	})
 	if req.Limit > 0 && len(all) > req.Limit {
 		all = all[:req.Limit]
 	}
@@ -150,6 +201,16 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]Candidate
 	}
 	return all, nil
 }
+
+const (
+	// strongScore 「强命中」的分数线：标题相等（70）+ 歌手相等（30）= 100，
+	// 标题强命中但歌手只是包含时也有 90 上下。到这个分就说明实体基本对齐了。
+	strongScore = 85
+	// searchGrace 拿到强命中后，还愿意为其余来源多等多久。
+	searchGrace = 1500 * time.Millisecond
+	// providerTimeout 单个来源的超时上限。
+	providerTimeout = 6 * time.Second
+)
 
 // Match 自动匹配并抓取歌词：先取评分最高的候选，失败时按分数向后重试。
 func (a *Aggregator) Match(ctx context.Context, req SearchRequest) (Result, error) {

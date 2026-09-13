@@ -247,12 +247,13 @@
   color: var(--accent);
 }
 
+/* 播放/暂停主按钮：不要实心底色（需求：移除背景色、保留 padding/尺寸）。
+   它靠「更大的点击区 + accent 图标色」表达主操作，悬停时才浮出一层浅底，
+   这样底栏整体更安静、更沉浸。 */
 .transport__btn--main {
   width: var(--btn-lg);
   height: var(--btn-lg);
-  background: var(--accent);
-  color: var(--accent-text);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  color: var(--accent);
 }
 
 .transport__btn--main svg {
@@ -261,9 +262,30 @@
 }
 
 .transport__btn--main:hover {
-  background: var(--accent);
-  color: var(--accent-text);
-  filter: brightness(0.92);
+  color: var(--accent);
+  background: var(--surface-hover);
+}
+
+/* —— 进度条：默认压暗，悬停/拖动时回到主题色 ——
+   需求：进度条颜色亮度降低一点，鼠标悬浮时才变成原来那种亮度。
+   这样底栏在播放时不会一直有一根高亮色条抢视线，更沉浸。 */
+.playerbar__progress .slider__fill {
+  filter: brightness(0.62) saturate(0.82);
+  transition: width 80ms linear, filter var(--dur-fast) var(--ease);
+}
+
+.playerbar__progress .slider__thumb {
+  filter: brightness(0.62) saturate(0.82);
+  transition: transform var(--dur-fast) var(--ease), filter var(--dur-fast) var(--ease);
+}
+
+.playerbar__progress .slider:hover .slider__fill,
+.playerbar__progress .slider:hover .slider__thumb,
+.playerbar__progress .slider:focus-visible .slider__fill,
+.playerbar__progress .slider:focus-visible .slider__thumb,
+.playerbar__progress .slider[data-dragging="true"] .slider__fill,
+.playerbar__progress .slider[data-dragging="true"] .slider__thumb {
+  filter: none;
 }
 
 /* —— ③ 进度条 / 音量条（共用 .slider）—— */

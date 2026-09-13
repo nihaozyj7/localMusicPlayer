@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"musicplayer/internal/bootstrap"
@@ -25,13 +26,76 @@ import (
 type AiService struct {
 	store  *bootstrap.Store
 	client *http.Client
+
+	// cache 元数据清洗结果的缓存。
+	//
+	// 为什么必须有：AI 一次调用实测 8~18 秒，而歌词/封面匹配会在
+	// 「自动匹配一次 + 适配器再确认一次」的路径上重复请求同一首歌。
+	// 没有缓存时用户会看到「同一首歌反复等十几秒」，而且第三方网关
+	// 被这么打很容易限流。
+	mu    sync.Mutex
+	cache map[string]aiCacheEntry
 }
+
+type aiCacheEntry struct {
+	meta CleanMeta
+	at   time.Time
+	// failed 标记「这次清洗失败了」，也缓存，但只缓存很短时间：
+	// 网关挂掉时不应该让每首歌都白等一次 20 秒超时。
+	failed bool
+}
+
+const (
+	// aiCacheTTL 成功结果的缓存时长。元数据基本不变，缓存久一点没问题。
+	aiCacheTTL = 6 * time.Hour
+	// aiCacheFailTTL 失败结果的缓存时长。短一些，网关恢复后能自动重试。
+	aiCacheFailTTL = 3 * time.Minute
+)
 
 func NewAiService(store *bootstrap.Store) *AiService {
 	return &AiService{
 		store:  store,
 		client: &http.Client{Timeout: 20 * time.Second},
+		cache:  map[string]aiCacheEntry{},
 	}
+}
+
+// cachedMeta 读缓存（命中且未过期才算命中）。
+func (s *AiService) cachedMeta(key string) (CleanMeta, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.cache[key]
+	if !ok {
+		return CleanMeta{}, false
+	}
+	ttl := aiCacheTTL
+	if entry.failed {
+		ttl = aiCacheFailTTL
+	}
+	if time.Since(entry.at) > ttl {
+		delete(s.cache, key)
+		return CleanMeta{}, false
+	}
+	if entry.failed {
+		return CleanMeta{}, false
+	}
+	return entry.meta, true
+}
+
+func (s *AiService) storeCache(key string, meta CleanMeta, failed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// 简单的容量上限：元数据键是「标题|歌手|专辑」，几十首歌的场景完全够用，
+	// 这里只是防止长时间运行后无限增长。
+	if len(s.cache) > 512 {
+		for k := range s.cache {
+			delete(s.cache, k)
+			if len(s.cache) <= 256 {
+				break
+			}
+		}
+	}
+	s.cache[key] = aiCacheEntry{meta: meta, at: time.Now(), failed: failed}
 }
 
 // CleanMeta AI 清洗后的元数据。
@@ -55,13 +119,6 @@ type chatMessage struct {
 	Content string `json:"content"`
 }
 
-type chatRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
-	// 低温让结果更稳定；思考模式下部分推理模型不接受 temperature，因此省略。
-	Temperature *float64 `json:"temperature,omitempty"`
-}
-
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
@@ -79,6 +136,12 @@ func (s *AiService) ExtractMeta(title, artist, album, filename string) (CleanMet
 	if !s.Enabled() {
 		return CleanMeta{}, ErrAINotConfigured
 	}
+	cacheKey := strings.Join([]string{
+		strings.TrimSpace(title), strings.TrimSpace(artist), strings.TrimSpace(album),
+	}, "|")
+	if meta, ok := s.cachedMeta(cacheKey); ok {
+		return meta, nil
+	}
 	cfg := s.store.Get()
 
 	base := strings.TrimRight(strings.TrimSpace(cfg.AIBaseURL), "/")
@@ -95,41 +158,109 @@ func (s *AiService) ExtractMeta(title, artist, album, filename string) (CleanMet
 		"歌手(artist)、专辑(album)。只输出一个 JSON 对象，形如 " +
 		`{"title":"...","artist":"...","album":"..."}` +
 		"；无法确定的字段用空字符串。不要输出 JSON 以外的任何内容。"
-	if cfg.AIThinking {
-		system += "请先在内部仔细推理再给出结论。"
-	}
+	// 注意：思考模式不再靠「在提示词里加一句请仔细推理」假装开关 ——
+	// 真正的开关是各家的请求体字段（见 ai_vendor.go）。提示词只描述任务本身。
 
 	user := fmt.Sprintf(
 		"候选元数据：\n标题（title）：%s\n歌手（artist）：%s\n专辑（album）：%s\n完整文件名：%s",
 		title, artist, album, filename,
 	)
 
-	reqBody := chatRequest{
-		Model: model,
-		Messages: []chatMessage{
+	// 「模型类型」决定思考开关用哪家的字段；选自动时按接口地址与模型名猜。
+	vendor := strings.TrimSpace(cfg.AIVendor)
+	if vendor == "" || vendor == aiVendorAuto {
+		vendor = detectAIVendor(base, model)
+	}
+	thinking := cfg.AIThinking
+	fields := aiThinkingFields(vendor, model, thinking)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	meta, err := s.requestMeta(ctx, base, cfg.AIAPIKey, model, system, user, vendor, thinking, fields)
+	if err != nil && len(fields) > 0 && isAIRejectedParams(err) {
+		// 厂商/模型选得不对时，思考开关字段可能被服务端直接拒（400 / 422）。
+		// 退一步去掉这些字段重发一次：保证 AI 清洗本身仍然可用 ——
+		// 「开关没生效」不该升级成「AI 功能整个不可用」。
+		meta, err = s.requestMeta(ctx, base, cfg.AIAPIKey, model, system, user, vendor, thinking, nil)
+	}
+	if err != nil {
+		s.storeCache(cacheKey, CleanMeta{}, true)
+		return CleanMeta{}, err
+	}
+	s.storeCache(cacheKey, meta, false)
+	return meta, nil
+}
+
+// buildChatBody 组装 /chat/completions 的请求体。
+//
+// 单独抽出来是为了能被测试直接断言：思考开关的坑全在「发出去的字段」上，
+// 只测 aiThinkingFields 还不够 —— 温度冲突、字段是否真的落在顶层，
+// 都要看这里组装出来的最终结果。
+func buildChatBody(model, system, user, vendor string, thinking bool, fields map[string]any) map[string]any {
+	body := map[string]any{
+		"model": model,
+		"messages": []chatMessage{
 			{Role: "system", Content: system},
 			{Role: "user", Content: user},
 		},
 	}
-	if !cfg.AIThinking {
-		zero := 0.0
-		reqBody.Temperature = &zero
+	// 低温让结果更稳定；但思考模式与采样参数冲突时不发（见 aiDropTemperature）。
+	if !(thinking && aiDropTemperature(vendor)) {
+		body["temperature"] = 0
 	}
+	// 思考开关字段是**顶层**字段。官方示例里的 extra_body 只是 OpenAI SDK
+	// 用来塞非标准字段的写法，裸 HTTP 不能真的套一层。
+	for k, v := range fields {
+		body[k] = v
+	}
+	return body
+}
 
-	raw, err := json.Marshal(reqBody)
+// aiHTTPError 记录服务端返回的非 2xx 状态码，供上层判断「是不是参数被拒」。
+type aiHTTPError struct {
+	status int
+	detail string
+}
+
+func (e *aiHTTPError) Error() string {
+	return fmt.Sprintf("AI 服务返回 %d：%s", e.status, e.detail)
+}
+
+// isAIRejectedParams 判断错误是不是「请求体里的字段不被接受」。
+//
+// 只认 400 / 422：这两种才值得去掉思考参数重试。401/403 是鉴权问题、
+// 429 是限流、5xx 是服务端故障，重发一次没有意义。
+func isAIRejectedParams(err error) bool {
+	var httpErr *aiHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.status == http.StatusBadRequest || httpErr.status == http.StatusUnprocessableEntity
+	}
+	return false
+}
+
+// requestMeta 组装请求体并调用一次 /chat/completions。
+//
+// fields 为空表示「不带任何思考开关字段」（厂商不支持，或上一次被拒后的重试）。
+func (s *AiService) requestMeta(
+	ctx context.Context,
+	base, apiKey, model, system, user, vendor string,
+	thinking bool,
+	fields map[string]any,
+) (CleanMeta, error) {
+	body := buildChatBody(model, system, user, vendor, thinking, fields)
+
+	raw, err := json.Marshal(body)
 	if err != nil {
 		return CleanMeta{}, err
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/chat/completions", bytes.NewReader(raw))
 	if err != nil {
 		return CleanMeta{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(cfg.AIAPIKey))
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -137,13 +268,13 @@ func (s *AiService) ExtractMeta(title, artist, album, filename string) (CleanMet
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return CleanMeta{}, fmt.Errorf("AI 服务返回 %d：%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return CleanMeta{}, &aiHTTPError{status: resp.StatusCode, detail: strings.TrimSpace(string(respBody))}
 	}
 
 	var parsed chatResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return CleanMeta{}, fmt.Errorf("解析 AI 响应失败: %w", err)
 	}
 	if parsed.Error != nil && parsed.Error.Message != "" {
@@ -153,9 +284,7 @@ func (s *AiService) ExtractMeta(title, artist, album, filename string) (CleanMet
 		return CleanMeta{}, errors.New("AI 没有返回结果")
 	}
 
-	content := strings.TrimSpace(parsed.Choices[0].Message.Content)
-	content = stripJSONFence(content)
-
+	content := stripJSONFence(strings.TrimSpace(parsed.Choices[0].Message.Content))
 	var meta CleanMeta
 	if err := json.Unmarshal([]byte(content), &meta); err != nil {
 		return CleanMeta{}, fmt.Errorf("AI 返回内容不是合法 JSON: %w", err)

@@ -39,6 +39,49 @@ type DownloadService struct {
 
 	mu      sync.Mutex
 	running map[string]bool
+	// tasks 是「下载任务面板」的真相来源：每一次下载都留一条快照，
+	// 前端按钮的显隐、面板里的进度与结果全部从它读，而不是各自维护一份。
+	tasks []*DownloadTask
+	// seq 给任务生成稳定且唯一的 id（同一首歌先后下载两次是两条任务）。
+	seq int
+}
+
+// 下载任务状态。
+const (
+	DownloadRunning = "running"
+	DownloadDone    = "done"
+	DownloadFailed  = "failed"
+)
+
+// maxFinishedTasks 面板里最多保留多少条**已结束**的任务。
+//
+// 只保留已结束的：正在下载的任务永远不会被挤掉，否则用户会看到
+// 「下到一半的那条突然消失」。
+const maxFinishedTasks = 50
+
+// DownloadTask 一个下载任务的快照。
+//
+// 为什么要有一个独立的任务结构（而不是只看 running 集合）：
+//  1. 标题栏按钮要「有任务才显示」，而 running 集合在下载结束的瞬间就空了，
+//     用户还没看到「已完成」就什么也没有了；
+//  2. 面板要显示进度、大小、目标路径与失败原因，这些都不属于「正在下载」这一状态。
+type DownloadTask struct {
+	ID    string `json:"id"`
+	BVID  string `json:"bvid"`
+	Title string `json:"title"`
+	// State running | done | failed
+	State string `json:"state"`
+	// Done/Total 已写入 / 总字节数；总长未知时 Total 为 0。
+	Done  int64 `json:"done"`
+	Total int64 `json:"total"`
+	// Path 落盘后的完整路径（成功后才有），Dir 是下载目录。
+	Path string `json:"path"`
+	Dir  string `json:"dir"`
+	// Message 失败原因（成功时为空）。
+	Message    string `json:"message"`
+	DurationMS int64  `json:"duration"`
+	StartedAt  int64  `json:"startedAt"`
+	FinishedAt int64  `json:"finishedAt"`
 }
 
 // NewDownloadService 构造服务。
@@ -47,6 +90,7 @@ func NewDownloadService(store *bootstrap.Store, client *bilibili.Client) *Downlo
 		store:   store,
 		client:  client,
 		running: map[string]bool{},
+		tasks:   []*DownloadTask{},
 	}
 }
 
@@ -212,15 +256,133 @@ func (s *DownloadService) Start(bvid, title string, durationMS int64) (map[strin
 		return map[string]any{"started": false, "reason": "already-running"}, nil
 	}
 	s.running[bvid] = true
+	task := s.newTaskLocked(bvid, title, dir, durationMS)
 	s.mu.Unlock()
+	s.emitTasks()
 
 	// 先解析出文件名（同时确认这首歌确实能取到音频流），解析失败就直接报错，
 	// 不要先给用户一个「开始下载」再失败。
-	go s.run(bvid, title, durationMS, dir)
-	return map[string]any{"started": true, "dir": dir}, nil
+	go s.run(task.ID, bvid, title, durationMS, dir)
+
+	s.mu.Lock()
+	snap := *task
+	s.mu.Unlock()
+	return map[string]any{"started": true, "dir": dir, "task": snap}, nil
 }
 
-func (s *DownloadService) run(bvid, title string, durationMS int64, dir string) {
+/* --------------------------------------------------------------------------
+   下载任务面板
+   -------------------------------------------------------------------------- */
+
+// newTaskLocked 创建一条任务并加入列表（调用方必须已经持有 s.mu）。
+func (s *DownloadService) newTaskLocked(bvid, title, dir string, durationMS int64) *DownloadTask {
+	s.seq++
+	task := &DownloadTask{
+		ID:         fmt.Sprintf("%s-%d", bvid, s.seq),
+		BVID:       bvid,
+		Title:      strings.TrimSpace(title),
+		State:      DownloadRunning,
+		Dir:        dir,
+		DurationMS: durationMS,
+		StartedAt:  time.Now().UnixMilli(),
+	}
+	if task.Title == "" {
+		task.Title = bvid
+	}
+	s.tasks = append(s.tasks, task)
+	return task
+}
+
+// Tasks 返回全部下载任务（前端面板打开时先拉一次，之后靠事件增量刷新）。
+func (s *DownloadService) Tasks() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tasksLocked()
+}
+
+func (s *DownloadService) tasksLocked() map[string]any {
+	out := make([]DownloadTask, 0, len(s.tasks))
+	active := 0
+	for _, t := range s.tasks {
+		out = append(out, *t)
+		if t.State == DownloadRunning {
+			active++
+		}
+	}
+	return map[string]any{"tasks": out, "active": active}
+}
+
+// ClearFinished 只清掉已结束（成功/失败）的任务，正在下载的不动。
+func (s *DownloadService) ClearFinished() map[string]any {
+	s.mu.Lock()
+	kept := make([]*DownloadTask, 0, len(s.tasks))
+	for _, t := range s.tasks {
+		if t.State == DownloadRunning {
+			kept = append(kept, t)
+		}
+	}
+	s.tasks = kept
+	snapshot := s.tasksLocked()
+	s.mu.Unlock()
+	s.emit("download:tasks", snapshot)
+	return snapshot
+}
+
+// updateTask 修改一条任务并广播新快照。
+func (s *DownloadService) updateTask(id string, fn func(*DownloadTask)) {
+	s.mu.Lock()
+	found := false
+	for _, t := range s.tasks {
+		if t.ID == id {
+			fn(t)
+			found = true
+			break
+		}
+	}
+	if found {
+		s.trimFinishedLocked()
+	}
+	s.mu.Unlock()
+	if found {
+		s.emitTasks()
+	}
+}
+
+// trimFinishedLocked 限制已结束任务的数量（调用方必须持有 s.mu）。
+func (s *DownloadService) trimFinishedLocked() {
+	finished := 0
+	for _, t := range s.tasks {
+		if t.State != DownloadRunning {
+			finished++
+		}
+	}
+	if finished <= maxFinishedTasks {
+		return
+	}
+	drop := finished - maxFinishedTasks
+	kept := make([]*DownloadTask, 0, len(s.tasks)-drop)
+	for _, t := range s.tasks {
+		if t.State != DownloadRunning && drop > 0 {
+			drop--
+			continue
+		}
+		kept = append(kept, t)
+	}
+	s.tasks = kept
+}
+
+// emitTasks 把整份任务快照推给前端。
+//
+// 推整份而不是「单条增量」：任务数量是个位数，合并逻辑留在前端反而更容易出错
+// （漏合并就会出现「面板里的进度停住不动」）。
+func (s *DownloadService) emitTasks() {
+	s.mu.Lock()
+	snapshot := s.tasksLocked()
+	s.mu.Unlock()
+	s.emit("download:tasks", snapshot)
+}
+
+func (s *DownloadService) run(taskID, bvid, title string, durationMS int64, dir string) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.running, bvid)
@@ -232,7 +394,7 @@ func (s *DownloadService) run(bvid, title string, durationMS int64, dir string) 
 
 	stream, err := s.client.ResolveAudio(ctx, bvid)
 	if err != nil {
-		s.emit("download:failed", map[string]any{"bvid": bvid, "message": err.Error()})
+		s.failTask(taskID, bvid, err.Error())
 		return
 	}
 	if strings.TrimSpace(title) == "" {
@@ -249,17 +411,37 @@ func (s *DownloadService) run(bvid, title string, durationMS int64, dir string) 
 	}
 	target, err := uniquePath(dir, name, "."+ext)
 	if err != nil {
-		s.emit("download:failed", map[string]any{"bvid": bvid, "message": err.Error()})
+		s.failTask(taskID, bvid, err.Error())
 		return
 	}
+	// 解析出真实标题后同步到任务上（用户点下载时标题可能还是空的）。
+	s.updateTask(taskID, func(t *DownloadTask) {
+		if strings.TrimSpace(t.Title) == "" || t.Title == bvid {
+			t.Title = title
+		}
+		t.Path = target
+	})
 
-	size, err := s.fetchTo(ctx, stream, target, bvid, title)
+	size, err := s.fetchTo(ctx, stream, target, taskID, bvid, title)
 	if err != nil {
 		// 失败时清掉半成品，别在用户的音乐目录里留垃圾
 		_ = os.Remove(target)
-		s.emit("download:failed", map[string]any{"bvid": bvid, "message": err.Error()})
+		s.failTask(taskID, bvid, err.Error())
 		return
 	}
+
+	s.updateTask(taskID, func(t *DownloadTask) {
+		t.State = DownloadDone
+		t.Title = title
+		t.Path = target
+		t.Dir = dir
+		t.Done = size
+		if t.Total < size {
+			t.Total = size
+		}
+		t.Message = ""
+		t.FinishedAt = time.Now().UnixMilli()
+	})
 
 	s.emit("download:done", map[string]any{
 		"bvid":     bvid,
@@ -271,11 +453,24 @@ func (s *DownloadService) run(bvid, title string, durationMS int64, dir string) 
 	})
 }
 
+// failTask 把一条任务标记为失败并广播。
+//
+// 失败原因要留在任务里（而不是只发一条 toast）：面板上会一直显示这条任务，
+// 用户回头看时才知道「刚才那首为什么没下下来」。
+func (s *DownloadService) failTask(taskID, bvid, message string) {
+	s.updateTask(taskID, func(t *DownloadTask) {
+		t.State = DownloadFailed
+		t.Message = message
+		t.FinishedAt = time.Now().UnixMilli()
+	})
+	s.emit("download:failed", map[string]any{"bvid": bvid, "message": message, "taskId": taskID})
+}
+
 // fetchTo 下载到一个临时文件再原子改名。
 //
 // 直接写目标文件的话，用户在中途打开目录会看到一个「大小还在涨」的半成品，
 // 而且失败时留下的是看起来正常的文件。
-func (s *DownloadService) fetchTo(ctx context.Context, stream *bilibili.AudioStream, target, bvid, title string) (int64, error) {
+func (s *DownloadService) fetchTo(ctx context.Context, stream *bilibili.AudioStream, target, taskID, bvid, title string) (int64, error) {
 	tmp := target + ".part"
 	f, err := os.Create(tmp)
 	if err != nil {
@@ -293,7 +488,7 @@ func (s *DownloadService) fetchTo(ctx context.Context, stream *bilibili.AudioStr
 		if strings.TrimSpace(rawURL) == "" {
 			continue
 		}
-		written, lastErr = s.copyFrom(ctx, rawURL, f, bvid, title)
+		written, lastErr = s.copyFrom(ctx, rawURL, f, taskID, bvid, title)
 		if lastErr == nil {
 			break
 		}
@@ -320,7 +515,7 @@ func (s *DownloadService) fetchTo(ctx context.Context, stream *bilibili.AudioStr
 	return written, nil
 }
 
-func (s *DownloadService) copyFrom(ctx context.Context, rawURL string, dst *os.File, bvid, title string) (int64, error) {
+func (s *DownloadService) copyFrom(ctx context.Context, rawURL string, dst *os.File, taskID, bvid, title string) (int64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return 0, err
@@ -339,6 +534,14 @@ func (s *DownloadService) copyFrom(ctx context.Context, rawURL string, dst *os.F
 	}
 
 	total := resp.ContentLength
+	if total < 0 {
+		// 服务端没给 Content-Length（分块传输）：面板按「未知总长」显示，
+		// 不去猜一个假的总数，否则进度条会算出 >100% 的怪值。
+		total = 0
+	}
+	if total > 0 {
+		s.updateTask(taskID, func(t *DownloadTask) { t.Total = total })
+	}
 	var written int64
 	buf := make([]byte, 256<<10)
 	lastReport := time.Now()
@@ -352,6 +555,7 @@ func (s *DownloadService) copyFrom(ctx context.Context, rawURL string, dst *os.F
 			// 节流：最多每 400ms 报一次，避免大文件刷爆事件通道
 			if time.Since(lastReport) > 400*time.Millisecond {
 				lastReport = time.Now()
+				s.updateTask(taskID, func(t *DownloadTask) { t.Done = written })
 				s.emit("download:progress", map[string]any{
 					"bvid":  bvid,
 					"title": title,
@@ -373,13 +577,16 @@ func (s *DownloadService) copyFrom(ctx context.Context, rawURL string, dst *os.F
 // Status 返回下载目录与正在下载的任务（供设置界面展示）。
 func (s *DownloadService) Status() map[string]any {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	ids := make([]string, 0, len(s.running))
 	for id := range s.running {
 		ids = append(ids, id)
 	}
+	snapshot := s.tasksLocked()
+	s.mu.Unlock()
 	dir, _ := s.Dir()
-	return map[string]any{"dir": dir, "running": ids}
+	snapshot["dir"] = dir
+	snapshot["running"] = ids
+	return snapshot
 }
 
 /* --------------------------------------------------------------------------

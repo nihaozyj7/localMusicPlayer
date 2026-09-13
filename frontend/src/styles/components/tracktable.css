@@ -105,6 +105,16 @@
   color: var(--text-1);
 }
 
+/* 队列视图的表头是静态文本（顺序由用户拖拽决定，排序对它没有意义）：
+   去掉「可点击」的视觉暗示，避免出现点了没反应的假按钮。 */
+.tracks__sort[data-static] {
+  cursor: default;
+}
+
+.tracks__sort[data-static]:hover {
+  color: inherit;
+}
+
 /* 表头 # 与数据行的序号统一居中，避免「#」和最上面的数字错位。 */
 .tracks__head .col-index {
   display: grid;
@@ -242,6 +252,38 @@
 
 .track.is-drop-after {
   box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* —— 歌单多选：行内勾选框（占用原来的「#」列）—— */
+.track__check {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-xs);
+  border: 1.5px solid var(--border-2);
+  color: transparent;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.track__check svg {
+  width: 12px;
+  height: 12px;
+}
+
+.track[data-selectable="1"] {
+  cursor: pointer;
+}
+
+.track[aria-selected="true"] {
+  background: var(--surface-active);
+}
+
+.track[aria-selected="true"] .track__check {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* —— 序号 / 播放态 —— */

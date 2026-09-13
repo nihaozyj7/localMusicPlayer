@@ -103,6 +103,25 @@ export function openCoverPanel(id) {
   requestAnimationFrame(() => layer.setAttribute("data-state", "opened"));
   // 后端才是封面集合的真相来源（可能有文件内嵌的多张），打开时拉一次
   refreshSet();
+  // 来源列表用于提示文案（设置页也会拉，但用户可能没开过设置）
+  ensureProviders();
+}
+
+/** 拉一次后端注册的封面来源，避免提示里写死来源名（加了 QQ 音乐后老文案就对不上了） */
+async function ensureProviders() {
+  if (state.coverProviders?.length || !isWails()) return;
+  try {
+    const res = await backend.coverProviders();
+    if (Array.isArray(res?.providers) && res.providers.length) state.coverProviders = res.providers;
+  } catch {
+    /* 只是提示文案，拿不到就算了 */
+  }
+}
+
+/** 提示文案里的来源列表 */
+function providerLabel() {
+  const list = state.coverProviders || [];
+  return list.length ? list.join(" / ") : "iTunes / 网易云 / QQ 音乐 / Deezer / MusicBrainz";
 }
 
 export function closeCoverPanel() {
@@ -370,8 +389,8 @@ async function runSearch() {
   const keyword = (bodyEl?.querySelector("#cover-keyword")?.value || "").trim();
   status(
     keyword
-      ? `正在按「${keyword}」同时查询多个来源（iTunes / 网易云 / Deezer / MusicBrainz）…`
-      : "正在同时查询多个来源（iTunes / 网易云 / Deezer / MusicBrainz）…"
+      ? `正在按「${keyword}」同时查询多个来源（${providerLabel()}）…`
+      : `正在同时查询多个来源（${providerLabel()}）…`
   );
   try {
     // 只传关键词：需求要求面板上不再有歌手/专辑输入框。

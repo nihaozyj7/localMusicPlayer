@@ -143,3 +143,25 @@ func TestOnlineCoverTogglePersists(t *testing.T) {
 		t.Fatal("onlineCover=false 未落盘")
 	}
 }
+
+// TestAILyricsCleanTogglePersists 「自动匹配歌词时使用 AI 清洗元数据」开关要落盘。
+//
+// 这类布尔开关最容易踩设计约束 #8：前端 SYNCED_KEYS 里加了键，
+// 但 Go 侧 Config 字段或 applyPatch 白名单漏了一处，就会被静默丢弃，
+// 表现为「关掉它、重启又自动打开了」。
+func TestAILyricsCleanTogglePersists(t *testing.T) {
+	svc, _ := newCfgFixture(t)
+	if !svc.Get().AILyricsClean {
+		t.Fatal("AILyricsClean 默认应为 true（与加入开关之前的行为一致）")
+	}
+	if _, err := svc.Set(map[string]any{"aiLyricsClean": false}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := bootstrap.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Get().AILyricsClean {
+		t.Fatal("aiLyricsClean=false 未落盘")
+	}
+}

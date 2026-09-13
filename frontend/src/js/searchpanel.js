@@ -25,7 +25,7 @@
 
 import { $, bindCoverFallback, icon, toast } from "./dom.js";
 import { backend, isWails } from "./bridge.js";
-import { commit, playContext, registerOnlineSong, state } from "./store.js";
+import { playContext, registerOnlineSong, state } from "./store.js";
 import { esc, fmtCount, fmtTime } from "./utils.js";
 
 /* --------------------------------------------------------------------------
@@ -36,7 +36,6 @@ let overlay = null;
 let input = null;
 let clearBtn = null;
 let body = null;
-let tabsEl = null;
 let headline = null;
 
 /** 在线搜索的请求序号：晚发出的请求回来得早时会覆盖新结果，必须丢弃 */
@@ -160,25 +159,24 @@ function buildOverlay() {
   overlay.innerHTML = `
     <div class="search-overlay__panel" role="dialog" aria-modal="true" aria-label="搜索">
       <div class="search-overlay__search">
-        ${icon("search", "search-overlay__search-icon")}
-        <input class="search-overlay__input" id="search-input" type="text"
-          placeholder="输入关键词后按回车搜索" autocomplete="off" spellcheck="false"
-          aria-label="搜索关键词" />
-        <button class="search-overlay__clear" id="search-clear" type="button"
-          data-tip="清空搜索" aria-label="清空搜索" hidden>${icon("close")}</button>
+        <!-- 搜索图标与「清空」按钮都放进输入框内部（.search-overlay__field）：
+             以前它们和「关闭」按钮排成一排，看起来是三个并排按钮，
+             既分不清哪个是输入框，两个 × 也容易被认成重复的关闭按钮。 -->
+        <div class="search-overlay__field">
+          ${icon("search", "search-overlay__search-icon")}
+          <input class="search-overlay__input" id="search-input" type="text"
+            placeholder="输入关键词后按回车搜索" autocomplete="off" spellcheck="false"
+            aria-label="搜索关键词" />
+          <button class="search-overlay__clear" id="search-clear" type="button"
+            data-tip="清空搜索" aria-label="清空搜索" hidden>${icon("close")}</button>
+        </div>
         <button class="search-overlay__close" type="button" data-search-close
           data-tip="关闭（结果会保留）" aria-label="关闭搜索">${icon("close")}</button>
       </div>
       <div class="search-overlay__history" id="search-history" hidden></div>
       <div class="search-overlay__head">
-        <div class="search-overlay__tabs" id="search-tabs" role="tablist">
-          <button class="search-overlay__tab" type="button" role="tab" data-search-tab="online" aria-pressed="true">
-            ${icon("music")}<span>在线歌曲</span>
-          </button>
-          <button class="search-overlay__tab" type="button" role="tab" data-search-tab="local" aria-pressed="false">
-            ${icon("playlist")}<span>本地曲库</span>
-          </button>
-        </div>
+        <!-- 需求：本地搜索已挪到「本地歌曲」列表上方的筛选框，
+             这里只保留在线搜索，不再有「在线 / 本地」标签页。 -->
         <span class="search-overlay__headline" id="search-headline"></span>
       </div>
       <div class="search-overlay__body" id="search-body"></div>
@@ -186,7 +184,6 @@ function buildOverlay() {
 
   document.body.appendChild(overlay);
 
-  tabsEl = overlay.querySelector("#search-tabs");
   body = overlay.querySelector("#search-body");
   headline = overlay.querySelector("#search-headline");
   input = overlay.querySelector("#search-input");
@@ -231,29 +228,10 @@ function buildOverlay() {
   });
 
   // 输入时只更新「清空按钮」的可见性，绝不让外壳整体重渲染（那会丢焦点）
+  // 输入时只更新「清空按钮」的可见性，绝不让外壳整体重渲染（那会丢焦点）
   input.addEventListener("input", () => {
     syncClearButton();
     updateHistoryVisibility();
-    // 本地结果可以边打边看（弹层已经打开时实时刷新）
-    if (state.searchOpen && state.searchTab === "local") renderBody();
-  });
-
-  tabsEl.addEventListener("click", (e) => {
-    const tab = e.target.closest("[data-search-tab]")?.dataset.searchTab;
-    if (!tab) return;
-    state.searchTab = tab;
-    tabsEl.querySelectorAll("[data-search-tab]").forEach((b) => {
-      b.setAttribute("aria-pressed", String(b.dataset.searchTab === tab));
-    });
-    const keyword = (input?.value || "").trim();
-    if (tab === "online") {
-      // 已经搜过同一个关键词就直接复用结果，不重复打接口
-      if (onlineResults.length && onlineQuery === keyword) renderBody();
-      else if (keyword) runOnlineSearch(keyword);
-      else body.innerHTML = emptyHint("输入关键词后按回车搜索在线歌曲");
-    } else {
-      renderBody();
-    }
   });
 
   overlay.addEventListener("click", (e) => {
@@ -272,11 +250,10 @@ function buildOverlay() {
       if (act === "download") downloadOnline(song);
       return;
     }
-    // 整行点击 = 播放 / 试听
+    // 整行点击 = 试听
     const row = e.target.closest("[data-search-id]");
     if (!row) return;
-    if (row.dataset.searchOnline === "1") previewOnline(row.dataset.searchId);
-    else playLocal(row.dataset.searchId);
+    previewOnline(row.dataset.searchId);
   });
 
   // 键盘可达：结果行支持 Enter / 空格
@@ -285,8 +262,7 @@ function buildOverlay() {
     const row = e.target.closest?.("[data-search-id]");
     if (!row) return;
     e.preventDefault();
-    if (row.dataset.searchOnline === "1") previewOnline(row.dataset.searchId);
-    else playLocal(row.dataset.searchId);
+    previewOnline(row.dataset.searchId);
   });
 
   syncClearButton();
@@ -345,14 +321,12 @@ function submitSearch() {
   }
   addHistory(keyword);
   updateHistoryVisibility();
-  if (state.searchTab === "online") runOnlineSearch(keyword);
-  else renderBody();
+  runOnlineSearch(keyword);
 }
 
 /** 清空按钮：输入框与结果一起清掉 */
 export function clearSearch({ focus = false } = {}) {
   if (input) input.value = "";
-  state.query = "";
   onlineResults = [];
   onlineQuery = "";
   searchSeq += 1; // 作废进行中的请求
@@ -361,11 +335,7 @@ export function clearSearch({ focus = false } = {}) {
   if (built && body) {
     body.innerHTML = emptyHint("输入关键词后按回车开始搜索");
     headline.textContent = "";
-    tabsEl?.querySelectorAll("[data-search-tab]").forEach((b) => {
-      b.setAttribute("aria-pressed", String(b.dataset.searchTab === state.searchTab));
-    });
   }
-  commit();
   if (focus) input?.focus();
 }
 
@@ -375,41 +345,6 @@ export function clearSearch({ focus = false } = {}) {
 
 function emptyHint(text) {
   return `<div class="search-overlay__empty">${icon("search")}<span>${esc(text)}</span></div>`;
-}
-
-function renderBody() {
-  if (!built) return;
-  if (state.searchTab === "online") renderOnline();
-  else renderLocal();
-}
-
-function renderLocal() {
-  const keyword = (input?.value || state.query || "").trim();
-  headline.textContent = keyword ? `本地匹配 ${fmtCount(matchLocal(keyword).length)} 首` : "";
-  if (!keyword) {
-    body.innerHTML = emptyHint("输入关键词后按回车，这里会列出本地曲库里匹配的歌曲");
-    return;
-  }
-  const items = matchLocal(keyword);
-  if (!items.length) {
-    body.innerHTML = emptyHint("本地曲库里没有匹配的歌曲，试试「在线歌曲」标签");
-    return;
-  }
-  body.innerHTML = items
-    .map(
-      (song) => `
-      <div class="search-row" data-search-id="${esc(song.id)}" role="button" tabindex="0">
-        <span class="search-row__cover"><img src="${esc(song.cover || "")}" alt="" loading="lazy" /></span>
-        <span class="search-row__main">
-          <span class="search-row__title">${esc(song.title)}</span>
-          <span class="search-row__sub">${esc(song.artist)}${song.album ? ` · ${esc(song.album)}` : ""}</span>
-        </span>
-        <span class="search-row__time u-num">${fmtTime(song.duration)}</span>
-        <span class="search-row__source">本地</span>
-      </div>`
-    )
-    .join("");
-  body.querySelectorAll("img").forEach(bindCoverFallback);
 }
 
 function renderOnline() {
@@ -453,18 +388,6 @@ function renderOnline() {
   body.querySelectorAll(".search-row__cover img").forEach(bindCoverFallback);
 }
 
-/** 本地曲库里按关键词匹配（标题 / 歌手 / 专辑 / 格式） */
-function matchLocal(keyword) {
-  const q = keyword.toLowerCase();
-  return state.songs.filter(
-    (s) =>
-      (s.title || "").toLowerCase().includes(q) ||
-      (s.artist || "").toLowerCase().includes(q) ||
-      (s.album || "").toLowerCase().includes(q) ||
-      (s.ext || "").toLowerCase().includes(q)
-  );
-}
-
 /* --------------------------------------------------------------------------
    在线搜索
    -------------------------------------------------------------------------- */
@@ -500,13 +423,6 @@ async function runOnlineSearch(keyword) {
 /* --------------------------------------------------------------------------
    行内动作
    -------------------------------------------------------------------------- */
-
-function playLocal(songId) {
-  const song = state.songs.find((s) => s.id === songId);
-  if (!song) return;
-  const ids = matchLocal((input?.value || "").trim()).map((s) => s.id);
-  playContext(ids.length ? ids : [songId], Math.max(0, ids.indexOf(songId)), { type: "local-search", id: null });
-}
 
 /**
  * 试听在线歌曲。
@@ -584,5 +500,3 @@ export function initSearchPanel() {
   // 输入框失焦时不关弹层（用户要能点结果），只把清空按钮状态同步一下
   input?.addEventListener("blur", () => syncClearButton());
 }
-
-export const _internals = { matchLocal };
