@@ -205,6 +205,22 @@ export function OpenCacheDir(kind) {
 }
 
 /**
+ * PickLocal 弹出系统文件选择器，让用户从本地挑一张图片当封面。
+ * 
+ * 与联网搜索的区别只在「图从哪来」：这里读文件、体检、转成 data URL 预览，
+ * 之后走的是完全相同的「候选 → 勾选 → 应用」流程 ——
+ * 前端把结果当成一张候选塞进列表，用户再点「应用」。
+ * 
+ * 只有能解码的格式才有意义：标准库注册的是 JPEG / PNG / GIF，
+ * 所以文件过滤器也只承诺这几种（选别的会在体检那一步被明确挡下来）。
+ * 用户取消选择时返回 Cancelled=true，不是错误。
+ * @returns {$CancellablePromise<$models.CoverResult>}
+ */
+export function PickLocal() {
+    return $Call.ByID(3535642170);
+}
+
+/**
  * Remove 删除第 index 张**缓存**封面（内嵌项删不掉，只能用 Reset 清缓存）。
  * @param {string} songID
  * @param {number} index

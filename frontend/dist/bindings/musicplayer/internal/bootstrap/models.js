@@ -11,6 +11,7 @@
  * @property {number} glassAlpha
  * @property {string} nativeBackdrop - NativeBackdrop 窗口原生材质：off | auto | mica | acrylic | tabbed。 只有 Windows 会用得上，且必须在创建窗口时指定，改了要重启应用。
  * @property {boolean} animations
+ * @property {string} animationsSpeed - AnimationsSpeed 界面过渡速度：fast（0.2s）| medium（0.35s）| slow（0.5s）。 前端把它换算成 --dur 令牌，全站动效（含各种弹出层）都从这一个令牌取值。
  * @property {boolean} accentFromCover
  * @property {boolean} showAlbumColumn
  * @property {boolean} showLyrics
@@ -32,7 +33,11 @@
  * @property {boolean} embedMeta - EmbedMeta 是否把抓到的封面/歌词写回歌曲文件自身的标签。 默认关闭：写标签会改写用户的音乐文件，必须是用户明确开启的行为。 关闭时封面与歌词仍然可用，只是放在缓存目录里（见 internal/metacache）。
  * @property {string} rowClickAction - —— 交互 —— RowClickAction 单击歌曲行的行为： next  —— 加入「下一首播放」（默认，不打断当前播放） play  —— 立即播放 append —— 追加到播放列表末尾
  * @property {string} listDensity - ListDensity 列表密度：compact | cozy | roomy。 原来每张表头各有一个密度按钮，现在统一到设置里，对所有列表生效。
- * @property {boolean} showDesktopLyrics - ShowDesktopLyrics 是否显示桌面歌词（悬浮在窗口上的歌词）。
+ * @property {string} coverSeed - —— 封面取色（cover-dark 主题）—— CoverSeed / CoverSeed2 是上一次从封面里提取得出的主色（十六进制）。 为什么要落盘：主题是在页面脚本跑起来之后才套用的，而取色还要等封面 图片解码完 —— 于是「启动 → 先用主题里写死的占位灰 → 取完色再整体重绘」， 肉眼看就是先黑一下、颜色还偏灰。把上次的取色结果记下来，Go 侧就能在 页面首屏之前把它写进 <html>，首帧直接就是对的颜色（见 early_theme.go）。
+ * @property {string} coverSeed2
+ * @property {boolean} showDesktopLyrics - ShowDesktopLyrics 是否显示桌面歌词（独立透明置顶窗口）。
+ * @property {boolean} showDesktopWallpaper - ShowDesktopWallpaper 是否显示桌面背景歌词（铺满桌面、压在桌面图标之下的 壁纸层窗口，见 desktop_wallpaper.go）。 与 ShowDesktopLyrics 是**二选一**：两者都在回答同一个问题「歌词放在桌面的 哪儿」，同时开着既是双份资源，视觉上也是两条歌词叠在一起。互斥由 WindowService.setDesktopMode 单点保证，配置里同时为 true 时以 wallpaper 优先 （见 main.go 的启动恢复）。
+ * @property {boolean} sleepAfterSong - SleepAfterSong 定时停止的「播放完歌曲（延长到歌曲播放结束）」选项。 打开后：倒计时到点时**不立刻暂停**，而是等当前这首播完再停。 这是「睡眠定时」的常见语义 —— 用户想听到正在听的这首结束， 而不是在副歌中间被掐掉。
  * @property {string} shuffleMode - ShuffleMode 随机播放行为：reshuffle | once。
  * @property {boolean} coverCarousel - —— 封面轮播（播放详情页）—— CoverCarousel 是否轮播多张封面。 刻意做成**全局偏好**而不是每首一份：一首歌有几张封面是数据， 「要不要轮着看」是习惯；放进每首歌里会出现「这首开、那首关」， 用户根本记不住自己在哪首开的。
  * @property {number} coverCarouselInterval - CoverCarouselInterval 轮播间隔（秒），下限 2 秒，默认 10 秒。
@@ -40,6 +45,8 @@
  * @property {string} aiApiKey
  * @property {boolean} aiThinking
  * @property {string} aiModelId
+ * @property {string} aiVendor - AIVendor 模型类型（厂商）。思考模式的开关字段各家不同 （reasoning_effort / thinking / enable_thinking / reasoning …）， 必须知道调的是哪家才能发出正确的请求体；auto = 按接口地址与模型名猜。 取值见 ai_vendor.go 的 aiVendorCatalog。
+ * @property {boolean} aiLyricsClean - AILyricsClean 自动匹配歌词时，是否先用 AI 清洗元数据。 AI 清洗能明显提高脏文件名的歌词命中率，但一次调用要 8~18 秒， 而歌词自动匹配发生在每次切歌的路径上 —— 所以必须给用户一个开关， 让他在「命中率」与「等待时间」之间自己选。
  * @property {Folder[] | null} folders
  * @property {FilterRule[] | null} filterRules
  * @property {string[] | null} likedIds

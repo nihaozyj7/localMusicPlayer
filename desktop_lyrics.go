@@ -67,23 +67,48 @@ func (s *WindowService) desktopLyricsWindow() *application.WebviewWindow {
 // SetDesktopLyrics 打开/关闭桌面歌词窗口。
 //
 // 由底栏「桌面歌词」按钮与设置里的同名开关调用。
+//
+// 它与「桌面背景歌词」是一组单选按钮（见 desktop_wallpaper.go#setDesktopMode）：
+// 打开窗口歌词会先把背景歌词关掉，反过来也一样。
 func (s *WindowService) SetDesktopLyrics(on bool) map[string]any {
-	s.desktopMu.Lock()
-	s.desktopOn = on
-	s.desktopMu.Unlock()
-
 	if !on {
-		if w := s.desktopLyricsWindow(); w != nil {
-			w.Close()
-		}
+		s.closeDesktopLyricsWindow()
 		return map[string]any{"ok": true, "enabled": false}
 	}
+	return s.setDesktopMode(desktopModeLyrics)
+}
+
+// closeDesktopLyricsWindow 关掉（并记为「已被操作过」）桌面歌词窗口。
+//
+// 幂等：窗口本来就不在也只是把状态清干净。
+func (s *WindowService) closeDesktopLyricsWindow() {
+	s.desktopMu.Lock()
+	s.desktopOn = false
+	// 记下「已经有人操作过」：启动恢复的兜底路径据此退让（见 WindowService）
+	s.desktopTouched = true
+	s.desktopMu.Unlock()
+
+	if w := s.desktopLyricsWindow(); w != nil {
+		w.Close()
+	}
+}
+
+// openDesktopLyricsWindow 打开歌词窗口并立刻推一次当前状态。
+func (s *WindowService) openDesktopLyricsWindow() map[string]any {
+	s.desktopMu.Lock()
+	s.desktopOn = true
+	// 记下「已经有人操作过」：启动恢复的兜底路径据此退让（见 WindowService）
+	s.desktopTouched = true
+	s.desktopMu.Unlock()
 
 	win := s.ensureDesktopLyrics()
 	// 立刻把当前状态推一次：窗口刚创建时还没有任何事件，
 	// 不推的话它会一直停在「等待播放」的空态。
 	s.pushDesktopLyrics()
 	if win == nil {
+		s.desktopMu.Lock()
+		s.desktopOn = false
+		s.desktopMu.Unlock()
 		return map[string]any{"ok": false, "enabled": false, "reason": "窗口创建失败"}
 	}
 	return map[string]any{"ok": true, "enabled": true}
@@ -177,6 +202,16 @@ func (s *WindowService) UpdateDesktopLyrics(payload map[string]any) desktopLyric
 // 不主动拉一次的话，新窗口会一直等到下一次换行才有内容。
 func (s *WindowService) DesktopLyricsState() desktopLyricsSnapshot {
 	return s.desktopState()
+}
+
+// DesktopLyricsTouched 报告「桌面歌词开关是否已经被用户/前端操作过」。
+//
+// 启动恢复的兜底路径用它来决定要不要出手：用户已经自己做过选择，
+// 恢复逻辑就必须退让，不能过一会儿又把窗口冒出来。
+func (s *WindowService) DesktopLyricsTouched() bool {
+	s.desktopMu.Lock()
+	defer s.desktopMu.Unlock()
+	return s.desktopTouched
 }
 
 // MarkDesktopLyricsReady 由歌词窗口在加载完成后调用，立刻把状态推给自己。

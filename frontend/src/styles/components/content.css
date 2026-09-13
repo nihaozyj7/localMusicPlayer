@@ -41,14 +41,24 @@
   text-overflow: ellipsis;
 }
 
-.content-header__tools {
+/* 右侧动作区：静态的本地筛选框 + 动态重绘的工具条。
+   分两层是为了让筛选框不被 #content-tools 的 innerHTML 重绘冲掉
+   （否则每敲一个字都会丢焦点）。 */
+.content-header__actions {
   display: flex;
   align-items: center;
+  gap: var(--sp-3);
   flex: 1 1 auto;
   justify-content: flex-end;
   min-width: 0;
-  gap: var(--sp-2);
   margin-left: auto;
+}
+
+.content-header__tools {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--sp-2);
 }
 
 /* —— 按钮 —— */
@@ -296,6 +306,11 @@
     gap: var(--sp-3);
     padding: 0 var(--sp-4);
   }
+
+  /* 头部动作区变挤：筛选框收窄，只留最必要的宽度 */
+  .content-filter__field {
+    flex-basis: 140px;
+  }
 }
 
 @media (max-width: 1060px) {
@@ -315,19 +330,24 @@
   .content-header__tools .select {
     display: none;
   }
+
+  /* 头部已经放不下筛选框：整条隐藏（原先它单独占一行，现在在工具条里） */
+  .content-filter {
+    display: none;
+  }
 }
 
 /* ==========================================================================
-   本地歌曲筛选栏（在「本地歌曲」列表上方）
+   本地歌曲筛选栏（需求：挪到「重新扫描」按钮左边，尺寸缩小）
    --------------------------------------------------------------------------
-   需求：本地搜索从「在线搜索弹层」里挪出来，单独放在本地歌曲上方。
-   它是 #content-body 之外的静态节点，输入时只重绘列表，不重建输入框。
+   它被放进 .content-header__actions，与动态重绘的工具条 #content-tools 并列：
+   筛选框自己是静态节点，输入时只重绘列表，不重建输入框，焦点与输入法状态
+   都不会被打断。
    ========================================================================== */
 .content-filter {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-5) 0;
+  gap: var(--sp-2);
   min-width: 0;
 }
 
@@ -341,10 +361,10 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  flex: 0 1 420px;
+  flex: 0 1 190px;
   min-width: 0;
-  height: 34px;
-  padding: 0 var(--sp-3);
+  height: 28px;
+  padding: 0 var(--sp-2);
   border-radius: var(--r-sm);
   background: var(--surface-1);
   border: var(--hairline);
@@ -357,8 +377,8 @@
 }
 
 .content-filter__icon {
-  width: 15px;
-  height: 15px;
+  width: 13px;
+  height: 13px;
   flex: none;
   color: var(--text-3);
 }
@@ -371,7 +391,7 @@
   border: none;
   outline: none;
   color: var(--text-1);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
 }
 
 .content-filter__input::placeholder {
@@ -405,8 +425,9 @@
 
 .content-filter__count {
   flex: none;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   color: var(--text-3);
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 /* 歌单多选模式下工具条上的「已选 N 首」 */

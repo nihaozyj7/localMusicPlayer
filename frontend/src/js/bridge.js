@@ -192,6 +192,12 @@ export const backend = {
   reloadThemes: () => call(bindings?.Themes?.Reload),
   themeDir: () => call(bindings?.Themes?.Dir),
   revealThemeDir: () => call(bindings?.Themes?.RevealDir),
+  // AI 提示词用的参考资料：主题目录 / 当前主题文件 / 目录里已有的主题（真实路径）
+  themeReference: (currentId) => call(bindings?.Themes?.Reference, currentId),
+  // 导入主题：后端弹系统目录选择器，把选中的文件夹里的主题 CSS 复制进主题目录
+  importTheme: () => call(bindings?.Themes?.Import),
+  // 移除主题：后端删掉主题目录里的那个 CSS 文件（内置主题会被拒绝并给出原因）
+  deleteTheme: (id) => call(bindings?.Themes?.Delete, id),
 
   /* ---- 配置 ---- */
   getConfig: () => call(bindings?.Config?.Get),
@@ -233,6 +239,13 @@ export const backend = {
   desktopLyricsState: () => call(bindings?.Window?.DesktopLyricsState),
   desktopLyricsReady: () => call(bindings?.Window?.MarkDesktopLyricsReady),
   updateDesktopLyrics: (payload) => call(bindings?.Window?.UpdateDesktopLyrics, payload),
+  // 桌面背景歌词：铺满桌面、垫在桌面图标之下的窗口（见 desktop_wallpaper.go）。
+  // 与桌面歌词是单选 —— 互斥在后端由 SetDesktopLyrics / SetDesktopWallpaper
+  // 共用同一个入口保证，前端 desktop-mode.js 也做一遍。
+  desktopWallpaper: (on) => call(bindings?.Window?.SetDesktopWallpaper, Boolean(on)),
+  desktopWallpaperState: () => call(bindings?.Window?.DesktopWallpaperState),
+  desktopWallpaperReady: () => call(bindings?.Window?.MarkDesktopWallpaperReady),
+  updateDesktopWallpaper: (payload) => call(bindings?.Window?.UpdateDesktopWallpaper, payload),
 
   /* ---- 在线歌曲 ---- */
   onlineSearch: (keyword, page, pageSize) => call(bindings?.Online?.Search, keyword, page, pageSize),
@@ -262,13 +275,20 @@ export const backend = {
   reloadSkins: () => call(bindings?.Skins?.Reload),
   skinDir: () => call(bindings?.Skins?.Dir),
   revealSkinDir: () => call(bindings?.Skins?.RevealDir),
+  // AI 提示词用的参考资料：样式目录 / 示例包 _template / 当前样式包 / 已有样式包（真实路径）
+  skinReference: (currentId) => call(bindings?.Skins?.Reference, currentId),
+  // 导入样式包：后端弹系统目录选择器，把选中的样式包目录复制进皮肤目录
+  importSkin: () => call(bindings?.Skins?.Import),
+  // 移除样式包：后端连整个目录一起删（内置三款在程序里，不在可删列表里）
+  deleteSkin: (id) => call(bindings?.Skins?.Delete, id),
 
   /* ---- 封面（本地歌曲，支持多张） ---- */
   // override 里可以给 keyword（纯关键词搜索）或 title/artist/album（精细搜索）
   coverLookupSong: (songId, override = {}) => call(bindings?.Cover?.Lookup, songId, override),
   // 一次把所有来源的候选都取回来（已下载 + 已校验），前端并排展示
   coverLookupSongAll: (songId, override = {}) => call(bindings?.Cover?.LookupAll, songId, override),
-  coverFetchURL: (url) => call(bindings?.Cover?.Fetch, url),
+  // 从本地挑一张图片当封面：后端弹系统文件选择器，返回与联网候选同构的结果
+  coverPickLocal: () => call(bindings?.Cover?.PickLocal),
   // 这首歌的封面集合：缓存里的（可增删/切换）+ 文件内嵌的（只读展示）
   coverList: (songId) => call(bindings?.Cover?.List, songId),
   // 追加一张并设为当前生效；embed 显式传入「是否写回歌曲文件」
@@ -280,10 +300,6 @@ export const backend = {
     call(bindings?.Cover?.AddMany, songId, previews, embed),
   coverSetActive: (songId, index) => call(bindings?.Cover?.SetActive, songId, index),
   coverRemove: (songId, index) => call(bindings?.Cover?.Remove, songId, index),
-  // 旧接口保留（单张语义 = 追加一张并设为当前）
-  coverApply: (songId, imageURL, preview, embed = null) =>
-    call(bindings?.Cover?.ApplyWith, songId, imageURL, preview, embed),
-  coverReset: (songId) => call(bindings?.Cover?.Reset, songId),
   coverCurrent: (songId) => call(bindings?.Cover?.Current, songId),
   // 启动时一次性回填「缓存里已有的封面集合」，这样换过的封面重启后还在
   coverCachedSets: () => call(bindings?.Cover?.CachedSets),

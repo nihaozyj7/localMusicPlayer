@@ -138,6 +138,10 @@ func main() {
 	lyricsSvc.setAI(aiSvc)
 	state.lyricsSvc = lyricsSvc
 
+	// 主题 / 样式服务需要应用句柄来弹「导入文件夹」的选择器（见各自的 Import）。
+	themeSvc := NewThemeService(themeMgr)
+	skinSvc := NewSkinService(skinMgr)
+
 	var browserArgs []string
 	if port := strings.TrimSpace(os.Getenv("MUSICPLAYER_DEBUG_PORT")); port != "" {
 		browserArgs = append(browserArgs, "--remote-debugging-port="+port)
@@ -150,8 +154,8 @@ func main() {
 			application.NewService(state.librarySvc),
 			application.NewService(NewPlaylistService(store)),
 			application.NewService(state.lyricsSvc),
-			application.NewService(NewThemeService(themeMgr)),
-			application.NewService(NewSkinService(skinMgr)),
+			application.NewService(themeSvc),
+			application.NewService(skinSvc),
 			application.NewService(NewConfigService(store)),
 			application.NewService(NewMediaService(mediaSrv, songs)),
 			application.NewService(state.loudnessSvc),
@@ -171,7 +175,14 @@ func main() {
 				if state.skins != nil {
 					skinsHandler = state.skins.Handler()
 				}
+				earlyTheme := earlyThemeHandler(store, themeMgr)
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					// 首帧主题：必须在静态资源之前拦下来，否则会被当成
+					// 「不存在的文件」而 404（index.html 的 <head> 里同步引用它）。
+					if r.URL.Path == earlyThemePath {
+						earlyTheme.ServeHTTP(w, r)
+						return
+					}
 					if strings.HasPrefix(r.URL.Path, onlinePrefix) {
 						online.ServeHTTP(w, r)
 						return
@@ -200,10 +211,14 @@ func main() {
 	state.app = app
 	state.librarySvc.app = app
 	state.windowSvc.app = app
+	themeSvc.app = app
+	skinSvc.app = app
 	// 下载服务需要应用句柄来弹「选择保存位置」的目录对话框，
 	// 并把进度/结果通过事件推给前端
 	state.downloadSvc.app = app
 	state.downloadSvc.setEmitter(emit)
+	// 封面服务需要应用句柄来弹「选择本地图片」的文件对话框
+	state.coverSvc.app = app
 	state.coverSvc.setEmitter(emit)
 	// 下载目录变了要让曲库重载文件夹（下载目录是隐式扫描根）并重扫一次，
 	// 这样刚迁移过去的歌会立刻出现在「本地歌曲」里。
@@ -238,21 +253,21 @@ func main() {
 	state.window = app.Window.NewWithOptions(winOpts)
 	state.windowSvc.activeBackdrop = backdropMode
 
-	// 主窗口关闭 = 退出应用：桌面歌词是独立的置顶窗口，不跟着关的话它会
-	// 单独留在桌面上，应用也不会退出（DisableQuitOnLastWindowClosed=false
-	// 只在「最后一个窗口」关闭时才退出）。这里在主窗口收到 WindowClosing 时
-	// 顺手把歌词窗口也关掉。
+	// 主窗口关闭 = 退出应用：桌面歌词与桌面背景歌词都是独立的额外窗口，
+	// 不跟着关的话它们会单独留在桌面上，应用也不会退出
+	// （DisableQuitOnLastWindowClosed=false 只在「最后一个窗口」关闭时才退出）。
+	// 这里在主窗口收到 WindowClosing 时顺手把这两个模式一起关掉
+	// （走单选入口，它本身就是「全关」）。
 	//
 	// 用 goroutine 而不是同步调用：窗口关闭事件跑在主线程上，而
 	// WebviewWindow.Close() 内部走 InvokeSync，同步调用会死锁。
 	state.window.OnWindowEvent(events.Common.WindowClosing, func(*application.WindowEvent) {
-		go state.windowSvc.SetDesktopLyrics(false)
+		go state.windowSvc.setDesktopMode(desktopModeOff)
 	})
-	// 上次退出时开着桌面歌词的话，这里把它恢复出来
-	// （必须在主窗口创建之后：歌词窗口会读取主屏尺寸来定位自己）
-	if store.Get().ShowDesktopLyrics {
-		state.windowSvc.SetDesktopLyrics(true)
-	}
+	// 上次退出时开着桌面歌词 / 桌面背景歌词的话，这里记下来，等应用真的 Run
+	// 起来之后再恢复。不能在此时直接打开：那一刻 Wails 的窗口实现还没就绪，
+	// WebviewWindow.Show() 会直接返回，窗口根本创建不出来（详见 early_theme.go）。
+	restoreDesktopModeOnStartup(app, store, state.windowSvc)
 
 	app.OnShutdown(func() {
 		if state.watch != nil {

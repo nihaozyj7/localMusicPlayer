@@ -507,6 +507,134 @@ function openAddToPlaylist(songId) {
 }
 
 /* --------------------------------------------------------------------------
+   定位到当前播放
+   --------------------------------------------------------------------------
+   需求：歌单 / 曲库这种长列表里换歌之后，列表**不会跟着滚动**，用户根本
+   不知道现在播到哪一首（正在播的那一行在滚动区之外）。这里给出统一的
+   「定位」能力，三个地方共用：
+
+     · 曲库 / 歌单的工具条按钮（shell.js）
+     · 底栏「播放列表」面板（playerbar.js）
+     · 播放列表（队列）视图 —— 用的就是同一套曲目表格
+
+   当前播放行在列表里存在时：滚到它、闪一下（.is-located，让用户确认
+   「找的就是这一行」）。不存在时如实说明，不做「静默什么都不发生」。
+   -------------------------------------------------------------------------- */
+
+/** 落点提示的动画时长：与 tracktable.css 的 track-locate 保持一致 */
+const LOCATE_HIGHLIGHT_MS = 1500;
+
+/** 给一个条目加上「刚定位到这里」的落点提示 */
+export function highlightLocated(el) {
+  if (!el) return;
+  el.classList.remove("is-located");
+  void el.offsetWidth; // 强制重排：连续点两次也能重新触发动画
+  el.classList.add("is-located");
+  window.setTimeout(() => el.classList.remove("is-located"), LOCATE_HIGHLIGHT_MS);
+}
+
+/**
+ * 把某个元素滚进视野。
+ *
+ * 优先用 scrollIntoView：它自己认 sticky 表头与 scroll-padding，
+ * 不用手写偏移量。队列视图里那个条目已经可见时会产生「真实滚动」，
+ * 被外层容器拦下来会抛异常（浏览器差异），因此兜底按容器滚。
+ */
+function scrollAndHighlight(el) {
+  if (!el) return;
+  try {
+    el.scrollIntoView({ block: "nearest", inline: "nearest" });
+  } catch {
+    scrollIntoContainer(el);
+  }
+  highlightLocated(el);
+}
+
+/**
+ * 兜底：只让「最近的可滚动祖先」动，不牵扯整页。
+ *
+ * 为什么不直接算「祖先滚动容器」：在个别布局下让浏览器接管滚动没动静
+ * （元素确实在滚动区之外、但祖先链上没有可滚动盒）。这时手工算一次，
+ * 保证按钮不会变成「点了没反应」。
+ */
+function scrollIntoContainer(el) {
+  const scroller = el.closest(".content-body, .queue-panel__body");
+  if (!scroller) return;
+  const elRect = el.getBoundingClientRect();
+  const scRect = scroller.getBoundingClientRect();
+  const stickyPad = scroller.classList.contains("content-body") ? 34 + 16 : 8;
+  const visibleTop = scRect.top + stickyPad;
+  if (elRect.top < visibleTop) {
+    scroller.scrollTop -= visibleTop - elRect.top;
+  } else if (elRect.bottom > scRect.bottom) {
+    scroller.scrollTop += elRect.bottom - scRect.bottom;
+  }
+}
+
+/** 在指定的曲目表格里找到当前播放行（没有就返回 null） */
+function currentRowIn(root) {
+  const id = state.currentId;
+  if (!id) return null;
+  const row = root.querySelector(`.track[data-id="${CSS.escape(id)}"]`);
+  return row ? { el: row } : null;
+}
+
+/** 队列面板里的当前播放条目（没有就返回 null） */
+function currentQueueItem() {
+  const id = state.currentId;
+  if (!id) return null;
+  const body = document.querySelector("#queue-panel-body");
+  return body?.querySelector(`.queue-item[data-queue-id="${CSS.escape(id)}"]`) || null;
+}
+
+/**
+ * 曲库 / 歌单视图的「定位到当前播放」。
+ *
+ * 列表可能已经被搜素 / 筛选裁掉了那一行（state.visibleSongs 里没有它），
+ * 这时不做任何越权操作 —— 只提示原因，避免用户以为按钮坏了。
+ */
+export function locateCurrentSong({ notify = true } = {}) {
+  if (!state.currentId) {
+    if (notify) toast("当前没有正在播放的歌曲", { tone: "info", duration: 1600 });
+    return false;
+  }
+  const body = document.getElementById("content-body");
+  const found = body ? currentRowIn(body) : null;
+  if (!found) {
+    if (notify) {
+      toast("当前播放的歌曲不在这个列表里", {
+        tone: "info",
+        duration: 2200,
+      });
+    }
+    return false;
+  }
+  scrollAndHighlight(found.el);
+  return true;
+}
+
+/**
+ * 播放列表面板（底栏「播放列表」按钮弹出的那块）的「定位到当前播放」。
+ *
+ * 面板没打开时会先打开它 —— 按钮就在面板标题栏上，正常不会走到这条路，
+ * 但外部调用（例如以后的快捷键）也不该悄悄失败。
+ */
+export function locateCurrentQueueItem({ notify = true } = {}) {
+  if (!state.queue.length) {
+    if (notify) toast("播放列表是空的", { tone: "info", duration: 1600 });
+    return false;
+  }
+  const item = currentQueueItem();
+  if (!item) {
+    if (notify) toast("当前播放的歌曲不在播放列表里", { tone: "info", duration: 2200 });
+    return false;
+  }
+  scrollAndHighlight(item);
+  return true;
+}
+
+
+/* --------------------------------------------------------------------------
    队列拖拽排序（SortableJS）
    --------------------------------------------------------------------------
    需求：不要自己实现拖拽逻辑；并且「拖拽排序后界面要真的看到效果」。

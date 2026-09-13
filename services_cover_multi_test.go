@@ -428,6 +428,81 @@ func TestCoverServiceUnknownSong(t *testing.T) {
 	}
 }
 
+// 选择本地图片：读文件 → 体检 → data URL 预览，结构与联网候选一致。
+func TestCoverServiceLocalCoverReadsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cover.png")
+	if err := os.WriteFile(path, solidPNG(t, color.RGBA{10, 20, 30, 255}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := localCover(path)
+	if !res.OK {
+		t.Fatalf("本地图片应可用，实际 %+v", res)
+	}
+	if res.Provider != "本地图片" {
+		t.Fatalf("来源标记应为「本地图片」，实际 %q", res.Provider)
+	}
+	if res.Source != "cover.png" {
+		t.Fatalf("Source 应是文件名，实际 %q", res.Source)
+	}
+	if !strings.HasPrefix(res.Preview, "data:image/png;base64,") {
+		t.Fatalf("应给出 data URL 预览，实际 %.40s", res.Preview)
+	}
+	if res.Width != 72 || res.Height != 72 {
+		t.Fatalf("尺寸应被记下来: %+v", res)
+	}
+	if res.Cancelled {
+		t.Fatal("成功读图时不该带 cancelled")
+	}
+}
+
+// 本地图片的坏输入要在「选图」这一步就报清楚，而不是等到「应用」才失败。
+func TestCoverServiceLocalCoverRejectsBadInput(t *testing.T) {
+	dir := t.TempDir()
+
+	if res := localCover(filepath.Join(dir, "nope.png")); res.OK || res.Message == "" {
+		t.Fatalf("不存在的文件应报错: %+v", res)
+	}
+	if res := localCover(dir); res.OK || !strings.Contains(res.Message, "文件夹") {
+		t.Fatalf("文件夹应被明确拒绝: %+v", res)
+	}
+
+	bad := filepath.Join(dir, "not-image.txt")
+	if err := os.WriteFile(bad, []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res := localCover(bad); res.OK || !strings.Contains(res.Message, "不能用") {
+		t.Fatalf("非图片应被拒绝: %+v", res)
+	}
+
+	// 纯白占位图和联网候选同一套规则：不能进封面集合
+	blank := filepath.Join(dir, "blank.png")
+	img := image.NewRGBA(image.Rect(0, 0, 72, 72))
+	for y := 0; y < 72; y++ {
+		for x := 0; x < 72; x++ {
+			img.Set(x, y, color.RGBA{255, 255, 255, 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blank, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res := localCover(blank); res.OK {
+		t.Fatalf("纯白占位图应被拒绝: %+v", res)
+	}
+}
+
+// 没有应用句柄（单测 / 浏览器预览）时，PickLocal 要明确报错而不是静默返回空封面。
+func TestCoverServicePickLocalWithoutApp(t *testing.T) {
+	svc, _, _ := newCoverSvcForTest(t)
+	if _, err := svc.PickLocal(); err == nil {
+		t.Fatal("没有应用句柄时 PickLocal 应报错")
+	}
+}
+
 // ClearCache 要把多封面的所有文件都清掉。
 func TestCoverServiceClearCache(t *testing.T) {
 	svc, cache, _ := newCoverSvcForTest(t)

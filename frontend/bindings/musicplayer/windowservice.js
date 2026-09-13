@@ -11,6 +11,10 @@
 // @ts-ignore: Unused imports
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails/runtime.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 /**
  * Backdrop 返回窗口原生材质（Mica / Acrylic…）的状态。
  * 
@@ -31,14 +35,46 @@ export function Close() {
 }
 
 /**
- * DesktopLyricsState 读取桌面歌词的当前状态（自带开关状态，界面据此回填按钮）。
- *
- * 注意：桌面歌词窗口不在时依然返回「配置里是否开启」，而不是报错 ——
- * 前端只想知道「现在该显示开还是关」。
- * @returns {$CancellablePromise<{ text?: string, playing?: boolean, fontSize?: number, enabled?: boolean }>}
+ * DesktopLyricsState 读当前状态。
+ * 
+ * 歌词窗口加载完成后用它做一次初始同步：事件是「之后」才来的，
+ * 不主动拉一次的话，新窗口会一直等到下一次换行才有内容。
+ * @returns {$CancellablePromise<$models.desktopLyricsSnapshot>}
  */
 export function DesktopLyricsState() {
     return $Call.ByID(3272880628);
+}
+
+/**
+ * DesktopLyricsTouched 报告「桌面歌词开关是否已经被用户/前端操作过」。
+ * 
+ * 启动恢复的兜底路径用它来决定要不要出手：用户已经自己做过选择，
+ * 恢复逻辑就必须退让，不能过一会儿又把窗口冒出来。
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function DesktopLyricsTouched() {
+    return $Call.ByID(2596763195);
+}
+
+/**
+ * DesktopWallpaperState 读当前状态。
+ * 
+ * 背景歌词窗口加载完成后用它做一次初始同步：事件是「之后」才来的，
+ * 不主动拉一次的话，新窗口会一直空着直到下一次换行。
+ * @returns {$CancellablePromise<$models.desktopWallpaperSnapshot>}
+ */
+export function DesktopWallpaperState() {
+    return $Call.ByID(80366688);
+}
+
+/**
+ * DesktopWallpaperTouched 报告「背景歌词开关是否已经被用户/前端操作过」。
+ * 
+ * 与 DesktopLyricsTouched 同一个用途：启动恢复的兜底路径靠它退让。
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function DesktopWallpaperTouched() {
+    return $Call.ByID(4099891399);
 }
 
 /**
@@ -58,13 +94,25 @@ export function IsMaximized() {
 }
 
 /**
- * MarkDesktopLyricsReady 桌面歌词窗口的页面加载完成后调用：把当前状态补发一次。
+ * MarkDesktopLyricsReady 由歌词窗口在加载完成后调用，立刻把状态推给自己。
  * 
- * 创建窗口与页面挂载监听之间有先后差，只靠广播的话新窗口会一直空着。
- * @returns {$CancellablePromise<{ text?: string, playing?: boolean, fontSize?: number, enabled?: boolean }>}
+ * 页面加载完成与窗口创建之间有时序差：创建时推的那一次事件页面可能还没
+ * 注册好监听，所以页面这边必须主动要一次。
+ * @returns {$CancellablePromise<$models.desktopLyricsSnapshot>}
  */
 export function MarkDesktopLyricsReady() {
     return $Call.ByID(4065798619);
+}
+
+/**
+ * MarkDesktopWallpaperReady 由背景歌词窗口在加载完成后调用，立刻把状态推给自己。
+ * 
+ * 页面加载完成与窗口创建之间有时序差：创建时推的那一次事件页面可能还没
+ * 注册好监听，所以页面这边必须主动要一次。
+ * @returns {$CancellablePromise<$models.desktopWallpaperSnapshot>}
+ */
+export function MarkDesktopWallpaperReady() {
+    return $Call.ByID(1378957625);
 }
 
 /**
@@ -87,12 +135,29 @@ export function Restart() {
 }
 
 /**
- * SetDesktopLyrics 开 / 关桌面歌词窗口（会立刻创建或隐藏那个透明窗口）。
+ * SetDesktopLyrics 打开/关闭桌面歌词窗口。
+ * 
+ * 由底栏「桌面歌词」按钮与设置里的同名开关调用。
+ * 
+ * 它与「桌面背景歌词」是一组单选按钮（见 desktop_wallpaper.go#setDesktopMode）：
+ * 打开窗口歌词会先把背景歌词关掉，反过来也一样。
  * @param {boolean} on
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
 export function SetDesktopLyrics(on) {
     return $Call.ByID(285307357, on);
+}
+
+/**
+ * SetDesktopWallpaper 打开/关闭桌面背景歌词窗口。
+ * 
+ * 由底栏「桌面背景歌词」按钮与设置里的同名开关调用。
+ * 与桌面歌词二选一：打开它会把窗口歌词先关掉（见 setDesktopMode）。
+ * @param {boolean} on
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function SetDesktopWallpaper(on) {
+    return $Call.ByID(3416753057, on);
 }
 
 /**
@@ -121,13 +186,23 @@ export function ToggleMaximize() {
 }
 
 /**
- * UpdateDesktopLyrics 主窗口把当前歌词行推给后端，由后端广播给桌面歌词窗口。
+ * UpdateDesktopLyrics 主窗口在「歌词行变化 / 播放状态变化」时调用。
  * 
- * 用推送而不是让歌词窗口自己轮询：两个窗口共享不了播放器状态，
- * 轮询还会在暂停时白白唤醒。
- * @param {{ [_ in string]?: any }} payload
- * @returns {$CancellablePromise<{ text?: string, playing?: boolean, fontSize?: number, enabled?: boolean }>}
+ * 前端做了节流（只在内容真的变化时调用），所以这里不再去重。
+ * @param {{ [_ in string]?: any } | null} payload
+ * @returns {$CancellablePromise<$models.desktopLyricsSnapshot>}
  */
 export function UpdateDesktopLyrics(payload) {
     return $Call.ByID(760874120, payload);
+}
+
+/**
+ * UpdateDesktopWallpaper 主窗口在「换歌 / 歌词行变化 / 播放状态变化」时调用。
+ * 
+ * 前端做了节流（只在内容真的变化时调用），所以这里不再去重。
+ * @param {{ [_ in string]?: any } | null} payload
+ * @returns {$CancellablePromise<$models.desktopWallpaperSnapshot>}
+ */
+export function UpdateDesktopWallpaper(payload) {
+    return $Call.ByID(4095740398, payload);
 }

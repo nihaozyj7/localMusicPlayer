@@ -1,22 +1,27 @@
 /* ==========================================================================
-   coverpanel.js — 封面面板（搜索 / 多选 / 多封面管理 / 轮播）
+   coverpanel.js — 封面管理面板（联网搜索 / 本地图片 / 多选 / 多封面管理 / 轮播）
    --------------------------------------------------------------------------
    入口：
      · 播放详情页头部「封面」按钮（与轮播开关同一个按钮组）；
      · 每首歌的「更多」菜单里的「更换封面…」。
 
-   面板能做四件事：
+   面板能做五件事：
      1. **联网搜索**：只填一个关键词（需求：去掉歌手/专辑输入框），
         后端多来源聚合（iTunes / 网易云 / Deezer / MusicBrainz）一次返回全部候选；
-     2. **多选 + 应用**：候选可以勾选多张，点「应用」一次性加入这首歌的封面集合；
-     3. **管理已有封面**：切当前生效、删除、把文件内嵌封面收进缓存；点应用后
+     2. **选择本地图片**：与「联网搜索」同一行，选完直接变成下面的一张候选，
+        之后的流程完全一致（勾选 → 应用）；
+     3. **多选 + 应用**：候选可以勾选多张，点「应用」一次性加入这首歌的封面集合。
+        **联网搜索的结果默认全不选**（来源杂、噪声大，由用户自己挑），
+        **本地选来的图默认全选**（那是用户刚刚明确挑中的）；
+     4. **管理已有封面**：切当前生效、删除、把文件内嵌封面收进缓存；点应用后
         **立刻写入**（缓存 + 按开关写进歌曲文件），没有第二道确认；
-     4. **轮播开关**：与头部按钮组里的开关是同一份状态（都落在后端缓存索引里）。
+     5. **轮播开关**：与头部按钮组里的开关是同一份状态（都落在后端缓存索引里）。
 
    为什么封面要经过后端：
      页面 CSP 是 img-src 'self'，第三方图片直连会被浏览器拒绝；
      而且多数图床校验 Referer。后端 /online/cover 做同源代理，
      这里展示的候选图是后端下载后回传的 data URL，同样不涉及跨源。
+     本地图片也走后端：系统文件选择器只有 Go 侧能弹，读回后同样给成 data URL。
    ========================================================================== */
 
 import { icon, toast } from "./dom.js";
@@ -24,13 +29,14 @@ import { backend, isWails } from "./bridge.js";
 import { coverOfRaw } from "./utils.js";
 import { commit, setCoverSet, state } from "./store.js";
 import { notifyCoverChanged } from "./playerhost.js";
+import { animationMs } from "./runtime-tokens.js";
 let built = false;
 let layer = null;
 let bodyEl = null;
 let songId = null;
-/** 搜索回来的候选（含 preview data URL） */
+/** 搜索 / 本地选图回来的候选（含 preview data URL） */
 let candidates = [];
-/** 候选的勾选集合（下标） */
+/** 选中的候选（存**对象引用**而不是下标：本地选图会插到最前面，下标会整体错位） */
 let selected = new Set();
 /** 当前封面集合（后端返回的权威结构） */
 let currentSet = null;
@@ -62,8 +68,7 @@ function build() {
     const act = e.target.closest("[data-cover-act]")?.dataset.coverAct;
     if (!act) return;
     if (act === "search") runSearch();
-    if (act === "url") applyURL();
-    if (act === "reset") resetCover();
+    if (act === "local") pickLocal();
     if (act === "toggle") toggleCandidate(Number(e.target.closest("[data-cover-idx]")?.dataset.coverIdx));
     if (act === "select-all") selectAll();
     if (act === "apply") applySelected();
@@ -127,9 +132,11 @@ function providerLabel() {
 export function closeCoverPanel() {
   if (!layer) return;
   layer.setAttribute("data-state", "closed");
+  // 等过渡真的放完再 hidden：面板宽度/透明度都由 --dur 驱动，
+  // 固定写 200ms 会在用户把动画调慢（0.35s / 0.5s）时把尾巴切掉。
   setTimeout(() => {
     if (layer.getAttribute("data-state") === "closed") layer.hidden = true;
-  }, 200);
+  }, animationMs() + 40);
 }
 
 async function refreshSet() {
@@ -194,10 +201,15 @@ function render(song) {
             value="${escapeAttr(song.title || "")}" />
           <button class="btn btn--primary btn--sm" type="button" data-cover-act="search"
             ${busy ? "disabled" : ""}>${icon("search")}<span>联网搜索</span></button>
+          <button class="btn btn--sm" type="button" data-cover-act="local">
+            ${icon("image")}<span>选择本地图片</span>
+          </button>
         </div>
         <div class="cover-panel__hint">
           下载来的文件常常没有标签，标题是从文件名推出来的，直接搜不容易命中；
-          在这里填一个更准确的关键词会准很多。搜索结果可以多选，再点「应用」。
+          在这里填一个更准确的关键词会准很多。也可以直接选一张本地图片 ——
+          两种结果都会出现在下面：联网搜索默认不勾选，本地图片默认已勾选，
+          确认后点「应用」。
         </div>
       </div>
 
@@ -205,16 +217,7 @@ function render(song) {
       <div class="cover-panel__grid" id="cover-grid"></div>
       <div class="cover-panel__selectbar" id="cover-selectbar" hidden></div>
 
-      <div class="cover-panel__url">
-        <input class="field" id="cover-url" type="text" placeholder="或粘贴一个图片地址（https://…）"
-          autocomplete="off" spellcheck="false" aria-label="图片地址" />
-        <button class="btn btn--sm" type="button" data-cover-act="url">${icon("file")}<span>使用这个地址</span></button>
-      </div>
-
       <div class="cover-panel__foot">
-        <button class="btn btn--sm btn--danger" type="button" data-cover-act="reset">
-          ${icon("refresh")}<span>恢复原始封面</span>
-        </button>
         <button class="btn btn--sm" type="button" data-cover-act="open-cache">
           ${icon("folder")}<span>打开缓存目录</span>
         </button>
@@ -303,7 +306,7 @@ function renderToolbar() {
   }
 }
 
-/* —— 搜索候选（多选） —— */
+/* —— 候选（联网搜索 + 本地图片，多选） —— */
 function renderCandidates() {
   const grid = bodyEl?.querySelector("#cover-grid");
   if (!grid) return;
@@ -314,7 +317,7 @@ function renderCandidates() {
   }
   grid.innerHTML = candidates
     .map((c, i) => {
-      const on = selected.has(i);
+      const on = selected.has(c);
       return `
       <button class="cover-card" type="button" role="checkbox" aria-checked="${on}"
         data-cover-act="toggle" data-cover-idx="${i}" data-selected="${on}">
@@ -358,12 +361,13 @@ function renderSelectbar() {
    -------------------------------------------------------------------------- */
 
 function toggleCandidate(index) {
-  if (!Number.isFinite(index)) return;
-  if (selected.has(index)) selected.delete(index);
-  else selected.add(index);
+  const item = candidates[index];
+  if (!item) return;
+  if (selected.has(item)) selected.delete(item);
+  else selected.add(item);
   const card = bodyEl?.querySelector(`[data-cover-idx="${index}"]`);
   if (card) {
-    const on = selected.has(index);
+    const on = selected.has(item);
     card.dataset.selected = String(on);
     card.setAttribute("aria-checked", String(on));
   }
@@ -372,7 +376,7 @@ function toggleCandidate(index) {
 
 function selectAll() {
   if (selected.size === candidates.length) selected.clear();
-  else candidates.forEach((_, i) => selected.add(i));
+  else candidates.forEach((c) => selected.add(c));
   renderCandidates();
 }
 
@@ -383,8 +387,10 @@ async function runSearch() {
     return;
   }
   busy = true;
-  candidates = [];
-  selected = new Set();
+  // 本地选的图是用户明确挑的，搜索只是「再找几张」，不该把它冲掉
+  const locals = candidates.filter((c) => c.local);
+  candidates = [...locals];
+  selected = new Set(locals);
   renderCandidates();
   const keyword = (bodyEl?.querySelector("#cover-keyword")?.value || "").trim();
   status(
@@ -401,12 +407,12 @@ async function runSearch() {
     const list = await backend.coverLookupSongAll(songId, override);
     const arr = Array.isArray(list) ? list.filter((c) => c?.ok && c.preview) : [];
     if (arr.length) {
-      candidates = arr;
-      // 默认全部勾选：常见诉求就是「把这几张都存下来」，一键应用即可
-      arr.forEach((_, i) => selected.add(i));
+      // 搜索回来的**默认全不选**：一次列出很多张，替用户全选容易误加一堆噪声图
+      candidates = [...locals, ...arr.map((c) => ({ ...c, local: false }))];
       const providers = [...new Set(arr.map((c) => c.provider).filter(Boolean))];
       status(`找到 ${arr.length} 张（来源：${providers.join(" / ") || "未知"}），勾选后点「应用」`);
     } else {
+      candidates = [...locals];
       const msg = Array.isArray(list) ? list.find((c) => c?.message)?.message : "";
       status(msg || "没有找到匹配的封面（也可能是匹配到的都是空白图，已自动丢弃）");
     }
@@ -418,36 +424,59 @@ async function runSearch() {
   }
 }
 
+/**
+ * 选择本地图片。
+ *
+ * 后端弹系统文件选择器、读文件、体检，然后把图片给成 data URL ——
+ * 前端拿到的东西与联网候选**结构完全一样**，所以直接塞进候选列表即可：
+ * 展示、勾选、应用、写回文件这几步一点都不用分叉。
+ * 默认勾选（这是用户刚刚亲手挑的图），与搜索结果的「默认全不选」相反。
+ */
+async function pickLocal() {
+  if (!isWails()) {
+    status("浏览器预览下没有系统文件选择器，请在应用里试");
+    return;
+  }
+  status("正在读取图片…");
+  try {
+    const res = await backend.coverPickLocal();
+    if (!res || res.cancelled) {
+      status(""); // 用户取消：不打扰，只把「正在读取」清掉
+      return;
+    }
+    if (!res.ok || !res.preview) {
+      status(res?.message || "这张图片没法用作封面");
+      return;
+    }
+    const item = {
+      preview: res.preview,
+      provider: res.provider || "本地图片",
+      source: res.source || "",
+      width: res.width,
+      height: res.height,
+      local: true,
+    };
+    // 插到最前面：刚挑的图要立刻可见，而不是被一屏搜索结果挤到下面
+    candidates.unshift(item);
+    selected.add(item);
+    renderCandidates();
+    status(`已加入本地图片${res.source ? `（${res.source}）` : ""}，确认后点「应用」`);
+  } catch (err) {
+    status(`选择图片失败：${err?.message ?? err}`);
+  }
+}
+
 /** 应用勾选的候选：一次性加入封面集合并立刻写入 */
 async function applySelected() {
-  const previews = [...selected].sort((a, b) => a - b).map((i) => candidates[i]?.preview).filter(Boolean);
+  const previews = candidates
+    .filter((c) => selected.has(c))
+    .map((c) => c.preview)
+    .filter(Boolean);
   if (!previews.length) {
     status("先勾选至少一张封面");
     return;
   }
   await writeCovers(() => backend.coverAddMany(songId, previews, state.config.embedMeta === true));
-}
-
-async function applyURL() {
-  const input = bodyEl?.querySelector("#cover-url");
-  const url = (input?.value || "").trim();
-  if (!url) {
-    status("请先填写图片地址");
-    return;
-  }
-  status("正在下载图片…");
-  try {
-    const fetched = await backend.coverFetchURL(url);
-    if (!fetched?.ok || !fetched.preview) {
-      status(fetched?.message || "这张图片取不到");
-      return;
-    }
-    await writeCovers(() =>
-      backend.coverAdd(songId, url, fetched.preview, state.config.embedMeta === true)
-    );
-  } catch (err) {
-    status(`取图失败：${err?.message ?? err}`);
-  }
 }
 
 /** 把已有的某张设为当前生效 */
@@ -524,20 +553,6 @@ function toggleEmbed() {
       : "封面只保存在缓存目录（不改动音乐文件）",
     { duration: 2200 }
   );
-}
-
-async function resetCover() {
-  status("正在清空…");
-  try {
-    const res = await backend.coverReset(songId);
-    currentSet = { items: [], embedded: currentSet?.embedded || [], active: 0 };
-    setCoverSet(songId, null);
-    renderSet();
-    notifyCoverChanged();
-    status(res?.note || "已恢复原始封面");
-  } catch (err) {
-    status(`恢复失败：${err?.message ?? err}`);
-  }
 }
 
 /* --------------------------------------------------------------------------

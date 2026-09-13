@@ -26,6 +26,7 @@ import { backend, isWails } from "./bridge.js";
 import { audioElement, seekTo } from "./audio.js";
 import { commit, playNext, playPrev, songById, state, togglePlay } from "./store.js";
 import { DEFAULT_COVER, clamp, coverOf, esc } from "./utils.js";
+import { animationMs } from "./runtime-tokens.js";
 
 import {
   SKIN_API_VERSION,
@@ -34,10 +35,17 @@ import {
   loadExternalSkin,
   parseLrc,
   resolveSkin,
+  unregisterSkin,
 } from "@musicplayer/player-skins";
 
-/** 与 playerview.css 里的 --pv-slide-dur 保持一致 */
-const OPEN_CLOSE_MS = 260;
+/**
+ * 播放详情页滑入 / 滑出，等的是 playerview.css 里的 --pv-slide-dur
+ * （= --dur × 1.3）。以前写死 260ms，但「过渡速度」变成用户可调之后，
+ * 写死就会在 0.35s / 0.5s 档把滑出的尾巴切掉。
+ */
+function openCloseMs() {
+  return Math.round(animationMs() * 1.3);
+}
 
 /**
  * 用户数据目录里的皮肤由后端托管在同源 `/skins/<id>/<file>` 下
@@ -188,13 +196,46 @@ export function currentLyricLine() {
 }
 
 /**
+ * 当前歌词的三行窗口：上一行 / 当前行 / 下一行。
+ *
+ * 桌面背景歌词是铺满整屏的，只画一行太单薄，所以要多给上下两行做上下文
+ * （窗口歌词只有一条窄条，用不上，所以那边仍然用 currentLyricLine）。
+ * 三行一次性算好再推，省得让背景窗口自己去解析歌词 —— 它连歌词缓存都够不到。
+ */
+export function currentLyricWindow() {
+  const empty = { prev: "", text: "", next: "" };
+  const song = currentSong();
+  if (!song) return empty;
+  const cached = lyricsCache.get(song.id);
+  if (!cached?.lines?.length) return empty;
+  const idx = findLyricIndex(cached.lines, state.position);
+  if (idx < 0) return empty;
+  return {
+    prev: cached.lines[idx - 1]?.text || "",
+    text: cached.lines[idx].text || "",
+    next: cached.lines[idx + 1]?.text || "",
+  };
+}
+
+/**
+ * 当前生效的封面地址（含多封面轮播的下标）。
+ *
+ * 桌面背景歌词必须用**和详情页同一张**封面，否则「桌面上的背景」与窗口里的
+ * 背景会对不上、还会在轮播时两边各走各的。所以这里不自己取封面，
+ * 而是走与皮肤完全相同的 mediaSnapshot。
+ */
+export function currentCoverSrc() {
+  return mediaSnapshot().cover;
+}
+
+/**
  * 应用一段「外部来源」的歌词（用户手动匹配，或在线接口返回）。
  *
  * 除了更新内存里的渲染缓存，还会把它写进后端缓存：
  * 只放内存的话，关掉应用再打开就没了（这是实测到的问题）。
  * 是否同时嵌入音频文件由设置决定，显式传过去避免配置同步的防抖竞态。
  */
-export function applyOnlineLyrics(songId, text, source = "online", options = {}) {
+export async function applyOnlineLyrics(songId, text, source = "online", options = {}) {
   if (!songId || !text) return false;
   lyricsCache.set(songId, { lines: parseLrc(text), text, source });
   autoMatched.add(songId);
@@ -202,9 +243,19 @@ export function applyOnlineLyrics(songId, text, source = "online", options = {})
 
   if (!options.transient && isWails()) {
     const embed = options.embed ?? state.config.embedMeta === true;
-    backend.lyricsSave(songId, text, source, embed).catch((err) => {
+    try {
+      const res = await backend.lyricsSave(songId, text, source, embed);
+      // 后端在「应用」这一步会把字级歌词（逐字 / QRC / KRC）归一化成行级，
+      // 并用归一化后的文本写缓存与内嵌文件。用返回值刷新前端缓存，
+      // 否则界面与桌面歌词会一直显示 <00:12.00> 这类逐字标记。
+      const saved = typeof res?.lrc === "string" && res.lrc ? res.lrc : text;
+      if (saved !== text) {
+        lyricsCache.set(songId, { lines: parseLrc(saved), text: saved, source });
+        lastPushed.lyricsText = null;
+      }
+    } catch (err) {
       console.warn("[lyrics] 写入缓存失败", err);
-    });
+    }
   }
 
   // 正在看这首 → 立刻重新推给皮肤
@@ -220,6 +271,15 @@ export function applyOnlineLyrics(songId, text, source = "online", options = {})
 const skinFailures = [];
 
 /**
+ * 已经注册进包里的第三方样式 id。
+ *
+ * 重扫时要拿它跟后端返回的清单对账：上一次加载过、这一次扫不到的
+ * 说明磁盘上已经没有了（用户在资源管理器里删了，或者在设置里点了移除），
+ * 必须注销掉 —— 只加不减的话，按钮组里会永远留着一个已经删掉的样式。
+ */
+const externalSkinIds = new Set();
+
+/**
  * 发现全部可用样式：内置三种已在包里注册，这里只补用户数据目录里的第三方皮肤。
  * 幂等：只扫一次；用户丢了新样式后可以调 reloadSkins 重扫。
  */
@@ -230,11 +290,32 @@ async function ensureSkins() {
   return skinsReady;
 }
 
+/**
+ * 启动时就扫一次样式目录（设置界面用）。
+ *
+ * 以前样式只在「第一次打开播放详情页」时才扫描，于是刚启动就进设置，
+ * 看到的永远只有内置三款 —— 用户会以为第三方样式没被识别。
+ */
+export async function preloadSkins() {
+  try {
+    await ensureSkins();
+  } catch (err) {
+    console.warn("[skins] 启动扫描样式失败", err);
+  }
+  return listSkins();
+}
+
 async function discoverSkins() {
   if (!isWails()) return listSkins();
   try {
     const list = await backend.listSkins();
-    for (const info of Array.isArray(list) ? list : []) {
+    const items = Array.isArray(list) ? list : [];
+    // 失败清单要跟着这次扫描重建：留着上一次的记录会让「已经修好的样式」
+    // 一直挂在「加载失败」里（用户改了文件、重扫，提示却不变）。
+    skinFailures.length = 0;
+
+    const found = new Set();
+    for (const info of items) {
       if (!info?.id || !info?.module) continue;
       const base = `${SKINS_PREFIX}${encodeURIComponent(info.id)}/`;
       try {
@@ -246,10 +327,19 @@ async function discoverSkins() {
             (s) => base + String(s).replace(/^\/+/, "")
           ),
         });
+        externalSkinIds.add(info.id);
+        found.add(info.id);
       } catch (err) {
         skinFailures.push({ id: info.id, reason: err?.message ?? String(err) });
         console.warn(`[skins] 样式「${info.id}」加载失败：`, err);
       }
+    }
+
+    // 以磁盘为准：这次没扫到的第三方样式从注册表里摘掉
+    for (const id of [...externalSkinIds]) {
+      if (found.has(id)) continue;
+      externalSkinIds.delete(id);
+      unregisterSkin(id);
     }
   } catch (err) {
     console.warn("[skins] 皮肤目录扫描失败", err);
@@ -262,6 +352,22 @@ export async function reloadSkins() {
   skinsReady = null;
   await ensureSkins();
   paintSkinButtons();
+}
+
+/**
+ * 移除一个第三方样式（后端删目录 + 前端立刻按磁盘重扫）。
+ *
+ * 删掉的正好是当前生效的那个时，把配置切回默认样式：不然配置会一直指向
+ * 一个不存在的 id，下次打开详情页只会悄悄回退，用户以为「设置没保存」。
+ */
+export async function removeSkin(id) {
+  await backend.deleteSkin(id);
+  await reloadSkins();
+  const alive = listSkins().some((s) => s.id === id);
+  if (!alive && (state.pvMode === id || state.config.playerViewMode === id)) {
+    setPlayerViewMode(resolveSkin("").skin?.id || "");
+  }
+  return { removed: !alive, skinIds: listSkins().map((s) => s.id) };
 }
 
 /** 供设置界面展示「哪些样式加载失败了」 */
@@ -482,6 +588,28 @@ function mountSkin(id) {
   // 挂载完成后立刻推一次全量快照：皮肤不需要自己再拉一遍数据
   ctx.push({ type: "mount", ...mediaSnapshot(), ...playbackSnapshot(), options: optionsSnapshot() });
   watchResize();
+  // 新皮肤（尤其带整窗背景层的）落下时统一从「关闭态」起步，
+  // 由 renderPlayerView 翻到「打开态」触发一次滑入淡入 —— 换样式也一样流畅。
+  setSkinBackground("closed");
+}
+
+/* --------------------------------------------------------------------------
+   整窗背景层的进出场
+   --------------------------------------------------------------------------
+   背景层（`.skin-bg`，沉浸类样式用）由宿主放在 `.playerview` 之外，因为它要
+   盖住侧边栏与主内容。它以前只跟着皮肤的 mount / unmount 切 hidden，
+   于是「详情页在滑动、背景却硬切」：关闭时背景一直盖着整个窗口、
+   到卸载那一刻才瞬间消失，进详情页时也是啪地出现 —— 背景越复杂越难看。
+
+   现在由宿主在同一个地方（renderPlayerView）给它打 data-state，
+   与 `.playerview` 用同一套时长与缓动做「向下滑出 + 淡出 / 向上滑入 + 淡入」。
+   注意 hidden 仍然由皮肤包控制（它决定「这张样式要不要背景」），
+   这里只管「显示与消失的过程」。
+   -------------------------------------------------------------------------- */
+
+function setSkinBackground(state) {
+  const bg = host.backgroundRoot;
+  if (bg) bg.dataset.state = state;
 }
 
 function unmountSkin() {
@@ -617,6 +745,8 @@ export async function renderPlayerView() {
   if (!open) {
     if (view.dataset.state !== "closed") {
       view.dataset.state = "closed";
+      // 背景层跟着一起向下滑出淡出（它不在 .playerview 里，必须显式同步）
+      setSkinBackground("closed");
       if (host.closeTimer) clearTimeout(host.closeTimer);
       host.closeTimer = setTimeout(() => {
         host.closeTimer = null;
@@ -624,7 +754,7 @@ export async function renderPlayerView() {
         view.hidden = true;
         unmountSkin();
         resetPushed();
-      }, OPEN_CLOSE_MS + 20);
+      }, openCloseMs() + 20);
     }
     return;
   }
@@ -633,17 +763,30 @@ export async function renderPlayerView() {
     clearTimeout(host.closeTimer);
     host.closeTimer = null;
   }
-  // 先解除 hidden 再标 opened，让 transition 真正发生（同一帧内切换不触发过渡）
   view.hidden = false;
-  if (view.dataset.state !== "opened") view.dataset.state = "opened";
 
   await ensureSkins();
   paintSkinButtons();
 
   const wanted = state.pvMode || state.config.playerViewMode || "";
-  if (host.mountedId !== wanted) {
+  const remounted = host.mountedId !== wanted;
+  if (remounted) {
     mountSkin(wanted);
     resetPushed();
+  }
+
+  /**
+   * 打开详情页的入场动效。
+   *
+   * 必须在**元素已经参与渲染**之后才能改 data-state：从 display:none 直接跳到
+   * 结束态不会产生过渡（浏览器不把「刚出现的元素」当作过渡起点），
+   * 表现就是「关的时候有滑出动画，开的时候啪地出现」。
+   * 所以这里先强制一次样式重算，再翻状态；背景层同理（换样式时它也要重新入场）。
+   */
+  if (view.dataset.state !== "opened" || remounted) {
+    void view.offsetHeight;
+    view.dataset.state = "opened";
+    setSkinBackground("opened");
   }
 
   // 「更换封面」对在线试听曲目没有意义（没有本地文件可写）

@@ -48,3 +48,23 @@ import * as $models from "./models.js";
  * 前端根据自己的设置决定要不要轮换显示 Items。服务端只负责给数据。
  * @typedef {$models.CoverSet} CoverSet
  */
+
+/**
+ * SkinPackRef 用户皮肤目录里的一个样式包。
+ * @typedef {$models.SkinPackRef} SkinPackRef
+ */
+
+/**
+ * SkinReference 播放界面样式（皮肤）的参考资料。
+ * @typedef {$models.SkinReference} SkinReference
+ */
+
+/**
+ * ThemeFileRef 主题目录里的一个主题文件。
+ * @typedef {$models.ThemeFileRef} ThemeFileRef
+ */
+
+/**
+ * ThemeReference 外观主题的参考资料。
+ * @typedef {$models.ThemeReference} ThemeReference
+ */

@@ -23,6 +23,57 @@ func writeFile(t *testing.T, path, body string) {
 	}
 }
 
+/* --------------------------------------------------------------------------
+   删除样式包
+   --------------------------------------------------------------------------
+   需求：设置里要能直接把一个样式移除掉，删完再扫描不能还留在列表里。
+   -------------------------------------------------------------------------- */
+
+func TestManagerDelete(t *testing.T) {
+	dataDir := t.TempDir()
+	m, err := NewManager(dataDir)
+	if err != nil {
+		t.Fatalf("创建皮肤管理器失败: %v", err)
+	}
+
+	packDir := filepath.Join(m.Dir(), "gone")
+	writeFile(t, filepath.Join(packDir, "skin.js"), "export default {}")
+	writeFile(t, filepath.Join(packDir, "skin.css"), "/* x */")
+	if err := m.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.Get("gone"); !ok {
+		t.Fatal("准备好的样式没被扫到")
+	}
+
+	if err := m.Delete("gone"); err != nil {
+		t.Fatalf("删除失败: %v", err)
+	}
+	// 目录与列表必须同时消失：只删目录不重扫就是「删了还在」的老问题
+	if _, err := os.Stat(packDir); !os.IsNotExist(err) {
+		t.Fatal("删除后目录仍然存在")
+	}
+	if _, ok := m.Get("gone"); ok {
+		t.Fatal("删除后列表里还有 gone")
+	}
+
+	// 不存在的 id
+	if err := m.Delete("no-such-skin"); err == nil {
+		t.Fatal("不存在的样式应报错")
+	}
+	// 模板目录以下划线开头、不参与扫描，因此也不在可删列表里
+	if err := m.Delete(TemplateDirName); err == nil {
+		t.Fatal("模板目录应拒绝删除")
+	}
+	// id 是前端传来的字符串，不能被拿去拼路径删到目录外的东西
+	if err := m.Delete(".."); err == nil {
+		t.Fatal("非法 id 应报错")
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "player-skins")); err != nil {
+		t.Fatalf("样式根目录不能被删掉: %v", err)
+	}
+}
+
 func TestManagerScanAndManifest(t *testing.T) {
 	dataDir := t.TempDir()
 	root := filepath.Join(dataDir, "player-skins")
@@ -349,5 +400,92 @@ func TestHandlerPrefixConstant(t *testing.T) {
 	// 中间件与 handler 内部裁剪必须用同一个前缀；这里顺带钉住它的形状
 	if Prefix != "/skins/" {
 		t.Fatalf("Prefix = %q", Prefix)
+	}
+}
+
+/* --------------------------------------------------------------------------
+   导入样式包
+   -------------------------------------------------------------------------- */
+
+func TestManagerImportDir(t *testing.T) {
+	m, err := NewManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	src := filepath.Join(t.TempDir(), "my-skin")
+	writeFile(t, filepath.Join(src, "skin.js"), "export default {}")
+	writeFile(t, filepath.Join(src, "skin.css"), ".a{color:red}")
+	writeFile(t, filepath.Join(src, "assets", "icon.svg"), "<svg/>")
+
+	res, err := m.ImportDir(src)
+	if err != nil {
+		t.Fatalf("导入失败: %v", err)
+	}
+	if !res.Imported || res.ID != "my-skin" {
+		t.Fatalf("导入结果不对: %+v", res)
+	}
+	if _, ok := m.Get("my-skin"); !ok {
+		t.Fatal("导入后应能被扫描到")
+	}
+	// 子目录里的资源也要一起复制（皮肤常常带图标 / 字体）
+	if _, err := os.Stat(filepath.Join(m.Dir(), "my-skin", "assets", "icon.svg")); err != nil {
+		t.Fatalf("子目录没有被复制: %v", err)
+	}
+
+	// 同名目录已存在 → 拒绝，不覆盖用户的文件
+	if _, err := m.ImportDir(src); err == nil {
+		t.Fatal("同名样式应被拒绝")
+	}
+
+	// 缺少入口 → 不算样式包
+	bad := filepath.Join(t.TempDir(), "not-a-skin")
+	writeFile(t, filepath.Join(bad, "readme.txt"), "hi")
+	if _, err := m.ImportDir(bad); err == nil {
+		t.Fatal("没有 skin.js 的目录应被拒绝")
+	}
+
+	// _ 开头：扫描会跳过，导入前就拒绝
+	draft := filepath.Join(t.TempDir(), "_draft")
+	writeFile(t, filepath.Join(draft, "skin.js"), "")
+	if _, err := m.ImportDir(draft); err == nil {
+		t.Fatal("_ 开头的目录应被拒绝")
+	}
+
+	// 传进来的不是目录
+	if _, err := m.ImportDir(filepath.Join(src, "skin.js")); err == nil {
+		t.Fatal("文件路径应被拒绝")
+	}
+}
+
+// AI 生成的目录常常是 player-skins/<样式id>/，用户很可能选中最外层：
+// 只有一个合法子目录时自动往下走一层。
+func TestManagerImportDirResolvesParentFolder(t *testing.T) {
+	m, err := NewManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outer := filepath.Join(t.TempDir(), "player-skins")
+	writeFile(t, filepath.Join(outer, "neon", "skin.js"), "export default {}")
+	writeFile(t, filepath.Join(outer, "neon", "skin.css"), ".a{}")
+
+	res, err := m.ImportDir(outer)
+	if err != nil {
+		t.Fatalf("外层文件夹应当自动定位到内层样式包: %v", err)
+	}
+	if res.ID != "neon" || !res.Imported {
+		t.Fatalf("导入结果不对: %+v", res)
+	}
+	if _, ok := m.Get("neon"); !ok {
+		t.Fatal("内层样式包没有被导入")
+	}
+
+	// 有多个候选时不能瞎猜
+	multi := filepath.Join(t.TempDir(), "many")
+	writeFile(t, filepath.Join(multi, "a", "skin.js"), "")
+	writeFile(t, filepath.Join(multi, "b", "skin.js"), "")
+	if _, err := m.ImportDir(multi); err == nil {
+		t.Fatal("多个候选样式包时应报错")
 	}
 }

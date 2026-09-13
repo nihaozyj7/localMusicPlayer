@@ -14,15 +14,26 @@
     -->
     <title>音乐播放器</title>
     <!--
+      首帧主题（同步阻塞脚本，必须放在样式表前面）：
+      主题本来是由 JS 在启动时套用的，而在 JS 跑起来之前页面用的是根元素上
+      写死的 data-theme="dark-minimal"（近黑）。于是浅色主题会「先黑再白」，
+      封面取色主题会「先黑 → 再占位灰 → 再取色重绘」。
+      这个脚本由 Go 侧按磁盘上的真实配置即时生成（见 early_theme.go）：
+      它把 data-theme / data-mode / --seed / --seed-2 直接写在 <html> 上，
+      首帧就是对的颜色。外链而非内联是为了不放开 CSP 的 'unsafe-inline'。
+      浏览器预览（没有 Go 后端）下它 404，脚本不会执行，行为与以前完全一致。
+    -->
+    <script src="/early-theme.js"></script>
+    <!--
       运行时样式表（空即可）：
       主题切换、毛玻璃强度、用户自定义主题都通过 CSSOM 往这两个 <style> 里 insertRule。
       预置在 HTML 里而不是用 JS 创建，可以避免被 CSP 判为「动态内联样式」。
     -->
     <style id="runtime-tokens"></style>
     <style id="swatch-styles"></style>
-    <script type="module" crossorigin src="/assets/index-C1Zres4M.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/bridge-CiGPKscV.js">
-    <link rel="stylesheet" crossorigin href="/assets/style-idzzDm86.css">
+    <script type="module" crossorigin src="/assets/index-DIncFb_9.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/bridge-B8JBWU-B.js">
+    <link rel="stylesheet" crossorigin href="/assets/style-JFRrIj88.css">
   </head>
   <body>
     <!-- ==================================================================
@@ -259,6 +270,16 @@
           <path d="M9 21h6" />
         </symbol>
 
+        <!-- 桌面背景歌词：把播放界面的背景铺满桌面、垫在桌面图标之下。
+             用「一幅有太阳和山的画」表达「这是一张背景/壁纸」，右下角那一横
+             是压在画上的歌词行 —— 与上面那个「悬浮面板」图标区分开。 -->
+        <symbol id="i-desktop-wallpaper" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="18" rx="2.6" />
+          <circle cx="7.4" cy="8.4" r="1.7" />
+          <path d="M2.4 16.2l4.6-4.1 3.1 2.7 3.3-2.9 2.6 2.3" />
+          <path d="M13.2 19.4h6" />
+        </symbol>
+
         <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="4" />
           <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4" />
@@ -429,21 +450,23 @@
             <h1 class="content-header__title" id="content-title">所有歌曲</h1>
             <p class="content-header__subtitle" id="content-subtitle">0 首 · 0 个文件夹</p>
           </div>
-          <div class="content-header__tools" id="content-tools"></div>
-        </div>
-        <!-- 本地歌曲的搜索筛选框（需求：放在「本地歌曲」上方）。
-             它是 #content-body 之外的静态节点：输入时只重绘列表，
-             不会重建输入框，因此焦点与输入法状态不会被打断。 -->
-        <div class="content-filter" id="content-filter" hidden>
-          <div class="content-filter__field">
-            <svg class="content-filter__icon" aria-hidden="true"><use href="#i-search" /></svg>
-            <input class="content-filter__input" id="content-filter-input" type="text"
-              placeholder="筛选本地歌曲（标题 / 歌手 / 专辑 / 格式）" autocomplete="off" spellcheck="false"
-              aria-label="筛选本地歌曲" />
-            <button class="content-filter__clear" id="content-filter-clear" type="button" hidden
-              aria-label="清空筛选"><svg><use href="#i-close" /></svg></button>
+          <div class="content-header__actions">
+            <!-- 本地歌曲的搜索筛选框（需求：挪到「重新扫描」左边并缩小尺寸）。
+                 它仍然是 #content-body 之外的静态节点：输入时只重绘列表，
+                 不会重建输入框，因此焦点与输入法状态不会被打断。 -->
+            <div class="content-filter" id="content-filter" hidden>
+              <div class="content-filter__field">
+                <svg class="content-filter__icon" aria-hidden="true"><use href="#i-search" /></svg>
+                <input class="content-filter__input" id="content-filter-input" type="text"
+                  placeholder="筛选本地歌曲" autocomplete="off" spellcheck="false"
+                  aria-label="筛选本地歌曲" />
+                <button class="content-filter__clear" id="content-filter-clear" type="button" hidden
+                  aria-label="清空筛选"><svg><use href="#i-close" /></svg></button>
+              </div>
+              <span class="content-filter__count" id="content-filter-count"></span>
+            </div>
+            <div class="content-header__tools" id="content-tools"></div>
           </div>
-          <span class="content-filter__count" id="content-filter-count"></span>
         </div>
         <div class="content-body" id="content-body"></div>
       </main>
@@ -546,9 +569,20 @@
             <button class="mode-btn" id="btn-lyrics-match" type="button" data-tip="手动匹配歌词" aria-label="手动匹配歌词">
               <svg><use href="#i-lyric-match" /></svg>
             </button>
-            <button class="mode-btn" id="btn-desktop-lyrics" type="button" aria-pressed="false" data-tip="桌面歌词" aria-label="桌面歌词">
-              <svg><use href="#i-desktop-lyrics" /></svg>
-            </button>
+            <!-- 桌面歌词 / 桌面背景歌词：这两个是**一组单选按钮**（选了一个就不能
+                 选另一个，切换逻辑见 desktop-mode.js）。
+                 包成一组不只是为了好看：role="radiogroup" + 每个按钮 role="radio"，
+                 读屏软件才会把「两者只能选一个」这件事念出来，
+                 而两个各自独立的开关按钮是表达不出这层关系的。
+                 注意高亮用的是 aria-checked（radio 的语义），不是 aria-pressed。 -->
+            <div class="mode-group" role="radiogroup" aria-label="桌面歌词方式">
+              <button class="mode-btn" id="btn-desktop-lyrics" type="button" role="radio" aria-checked="false" data-tip="桌面歌词" aria-label="桌面歌词">
+                <svg><use href="#i-desktop-lyrics" /></svg>
+              </button>
+              <button class="mode-btn" id="btn-desktop-wallpaper" type="button" role="radio" aria-checked="false" data-tip="桌面背景歌词" aria-label="桌面背景歌词">
+                <svg><use href="#i-desktop-wallpaper" /></svg>
+              </button>
+            </div>
             <button class="mode-btn" id="btn-sleep" type="button" aria-pressed="false" data-tip="定时停止" aria-label="定时停止">
               <svg><use href="#i-clock" /></svg>
               <span class="mode-btn__badge" id="sleep-count" hidden></span>
@@ -572,6 +606,9 @@
         <span class="queue-panel__title">播放列表</span>
         <span class="u-spacer"></span>
         <span class="queue-panel__count" id="queue-panel-count">0 首</span>
+        <button class="queue-panel__btn" id="queue-locate" type="button" data-tip="定位到当前播放" aria-label="定位到当前播放">
+          <svg><use href="#i-disc" /></svg>
+        </button>
         <button class="queue-panel__btn" id="queue-clear" type="button" data-tip="清空列表" aria-label="清空列表">
           <svg><use href="#i-trash" /></svg>
         </button>
@@ -648,13 +685,13 @@
       </div>
     </section>
 
-    <div class="cover-layer" id="cover-layer" data-state="closed" hidden aria-label="封面搜索">
-      <div class="cover-layer__panel" role="dialog" aria-modal="true" aria-label="封面搜索">
+    <div class="cover-layer" id="cover-layer" data-state="closed" hidden aria-label="封面管理">
+      <div class="cover-layer__panel" role="dialog" aria-modal="true" aria-label="封面管理">
         <div class="cover-layer__head">
           <svg class="cover-layer__icon" aria-hidden="true"><use href="#i-image" /></svg>
-          <span class="cover-layer__title">封面搜索</span>
+          <span class="cover-layer__title">封面管理</span>
           <span class="u-spacer"></span>
-          <button class="cover-layer__close" type="button" data-cover-close aria-label="关闭封面搜索">
+          <button class="cover-layer__close" type="button" data-cover-close aria-label="关闭封面管理">
             <svg><use href="#i-close" /></svg>
           </button>
         </div>

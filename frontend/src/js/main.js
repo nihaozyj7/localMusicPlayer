@@ -28,7 +28,16 @@ import {
   togglePlay,
   startMockTicker,
 } from "./store.js";
-import { bindShell, doRescan, navigate, renderShell, toggleSettings, openSettings } from "./shell.js";
+import {
+  bindShell,
+  doRescan,
+  navigate,
+  renderShell,
+  refreshSettingsLayer,
+  settingsLayerOpen,
+  toggleSettings,
+  openSettings,
+} from "./shell.js";
 import { initPlayerBar, paintPlayerBar, toggleQueuePanel } from "./playerbar.js";
 import {
   applyVolume,
@@ -40,18 +49,28 @@ import {
 } from "./audio.js";
 import {
   closePlayer,
+  currentCoverSrc,
   currentLyricLine,
+  currentLyricWindow,
   ensureLyricsLoaded,
   nextCover,
   openPlayer,
+  preloadSkins,
   renderPlayerView,
   setPlayerViewMode,
   syncPlaybackState,
   togglePlayer,
 } from "./playerhost.js";
-import { applyResolvedTheme, applyCoverSeed, discoverThemes, extractCoverSeed, getTheme } from "./theme.js";
+import { applyResolvedTheme, applyCoverSeed, discoverThemes, extractCoverSeed, getTheme, normalizeSeed } from "./theme.js";
+import { coverOf } from "./utils.js";
 import { refreshBackdropState } from "./backdrop.js";
 import { desktopLyricsEnabled, pushDesktopLyrics } from "./desktop-lyrics.js";
+import {
+  desktopWallpaperEnabled,
+  probeDesktopWallpaperSupport,
+  pushDesktopWallpaper,
+} from "./desktop-wallpaper.js";
+import { syncDesktopModeButtons } from "./desktop-mode.js";
 import { initSearchPanel } from "./searchpanel.js";
 import { initDownloads } from "./downloads.js";
 // 只为副作用而导入：它把底栏「手动匹配歌词」按钮（#btn-lyrics-match，静态写在
@@ -124,8 +143,10 @@ function tick() {
   // 选中行同步必须在 renderShell 之后：重建表格时行是新的，要重新对齐一次
   paintTrackSelection();
   paintPlayerBar();
+  syncCoverAccent();
   renderPlayerView();
   paintDesktopLyrics();
+  paintDesktopWallpaper();
   syncPlaybackState();
   // 真实播放：切歌 / 播放暂停状态变化时同步到 <audio>，并套用响度补偿
   syncAudio();
@@ -169,6 +190,30 @@ function paintDesktopLyrics() {
   });
 }
 
+/**
+ * 桌面背景歌词：每帧把「当前画面」推给那个铺在桌面图标之下的窗口。
+ *
+ * 结构与桌面歌词完全对称，只是内容更多一点（三行歌词 + 曲目 + 封面），
+ * 因为那个窗口是整屏的、只画一行会太空。封面在这里就被降采样成小图
+ * （见 desktop-wallpaper.js#coverThumb），推到那边的是一张几 KB 的缩略图 ——
+ * 这是「不让两份渲染各付一次全尺寸封面」的关键。
+ */
+function paintDesktopWallpaper() {
+  const enabled = desktopWallpaperEnabled();
+  if (enabled && state.playing) ensureLyricsLoaded();
+  const lines = enabled ? currentLyricWindow() : { prev: "", text: "", next: "" };
+  const song = currentSong();
+  pushDesktopWallpaper({
+    ...lines,
+    playing: Boolean(state.playing),
+    // 整屏尺寸下字号要更大：桌面歌词那条是 ×1.5，这里 ×2.6
+    fontSize: Math.round((Number(state.config.lyricsFontSize) || 16) * 2.6),
+    cover: enabled ? currentCoverSrc() : "",
+    title: song?.title || "",
+    artist: song?.artist || "",
+  });
+}
+
 /* --------------------------------------------------------------------------
    主题
    -------------------------------------------------------------------------- */
@@ -183,9 +228,12 @@ function updateThemeButton() {
 
 async function initTheme() {
   await discoverThemes();
+  // 取色必须在套主题之前：--bg-app / --glass-bg 都是从 --seed 派生的，
+  // 先套一遍主题再用新种子套第二遍，就是启动时那一下「先黑再变色」。
+  await primeCoverAccent();
   await applyResolvedTheme(state.config);
   updateThemeButton();
-  bindCoverAccent();
+  // 之后每次换歌 / 换封面由主循环的 syncCoverAccent 兜住（见上）
 
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", async () => {
     if (state.config.themeMode === "system") {
@@ -226,17 +274,128 @@ async function hydrateCachedCovers() {
   }
 }
 
-/** 封面取色 → 写入 --seed 令牌（开关打开时生效） */function bindCoverAccent() {
-  const img = $("#bar-cover-img");
-  if (!img) return;
-  img.addEventListener("load", () => {
-    if (!state.config.accentFromCover) return;
-    // 默认封面是灰阶占位图，取色没有意义，跳过
-    if (img.dataset.coverFallbackDone === "1") return;
-    const seed = extractCoverSeed(img);
-    if (seed) applyCoverSeed(seed, seed);
-  });
+/* --------------------------------------------------------------------------
+   封面取色 → 写入 --seed 令牌（开关打开时生效）
+   --------------------------------------------------------------------------
+   以前的写法是给底栏封面 <img> 挂一个 load 监听，在回调里取色。它有两个坑，
+   症状都是「颜色卡在第一首」：
+
+     1. 兜底封面是一次性的：bindCoverFallback 在图片加载失败时会置
+        dataset.coverFallbackDone="1"（防止默认封面再失败时无限递归），
+        而那个标记**再也没人清掉**。于是只要中途出现过一次「没有封面的歌」，
+        后面每首歌取色都被当成「又在默认封面上」直接 return。
+     2. 时机不保证：底栏封面可能在监听挂上之前就已经 load 完成
+        （complete=true 的图不会再触发 load），那一次取色就永久丢失。
+
+   现在改为：主循环里发现「当前封面变了」就自己驱动一次取色 —— 用一个独立的
+   Image 对象加载（失败就用底栏封面兜底），结果按封面地址缓存，切歌来回横跳
+   也不会重复解码。取完色会重套一次主题，让依赖种子色的派生令牌同步更新。
+   -------------------------------------------------------------------------- */
+/** 上次取色的封面地址（同时也是「这一轮取到哪了」的状态） */
+let accentCoverSrc = "";
+/** coverSrc → 种子色；空串代表「这张取不到色」。避免同一张图反复解码。 */
+const seedCache = new Map();
+/** coverSrc → Promise<string>：同一张图并发只解码一次 */
+const seedJobs = new Map();
+
+function sameOriginSafeImage() {
+  const img = new Image();
+  // 与 <img> 走同一套缓存与 CSP
+  img.decoding = "async";
+  img.alt = "";
+  return img;
 }
+
+/** 需要为这张封面取色吗？（开关关着 / 地址没变就跳过） */
+function accentNeeded(src) {
+  if (!state.config.accentFromCover) return false;
+  if (!src) return false;
+  return src !== accentCoverSrc;
+}
+
+/**
+ * 取某张封面的主色（十六进制），结果进缓存。取不到时 resolve("")。
+ *
+ * 优先让底栏那个 <img> 直接把像素交出来：它早就画出来了，省一次加载与解码。
+ */
+function extractSeed(src) {
+  if (seedCache.has(src)) return Promise.resolve(seedCache.get(src));
+  if (seedJobs.has(src)) return seedJobs.get(src);
+
+  const job = new Promise((resolve) => {
+    const finish = (hex) => {
+      seedCache.set(src, hex);
+      seedJobs.delete(src);
+      resolve(hex);
+    };
+
+    const el = $("#bar-cover-img");
+    if (el && el.getAttribute("src") === src && el.complete && el.naturalWidth > 0) {
+      finish(normalizeSeed(extractCoverSeed(el)));
+      return;
+    }
+
+    // 底栏封面还没画好 / 已经不是这张了：用一个独立 Image 加载，
+    // 不依赖底栏节点，也不怕它被重建替换。
+    const probe = sameOriginSafeImage();
+    probe.addEventListener("load", () => finish(normalizeSeed(extractCoverSeed(probe))));
+    // 取不到色（默认占位图、跨域被拦）就记为「没有」，别再试
+    probe.addEventListener("error", () => finish(""));
+    probe.src = src;
+  });
+
+  seedJobs.set(src, job);
+  return job;
+}
+
+/** 把取色结果落到令牌 + 配置上；有变化时重套主题，让派生令牌跟着变 */
+async function applySeed(hex) {
+  if (!hex) return;
+  if (!applyCoverSeed(hex, hex)) return;
+  await flushConfigSync();
+  await applyResolvedTheme(state.config);
+  updateThemeButton();
+}
+
+/* --------------------------------------------------------------------------
+   启动时的取色
+   --------------------------------------------------------------------------
+   必须在**第一次 applyResolvedTheme 之前**跑：主题里的 --bg-app / --glass-bg
+   都是从 --seed 派生出来的，先用占位色套一遍、取完色再套一遍，就是肉眼可见的
+   「先黑一下 / 先灰一下再变成真正的颜色」。先把种子拿到手，第一帧就是对的。
+
+   上一次的种子由 Go 侧在页面加载前就写在 <html> 上了（early_theme.go），
+   所以这一步通常只是「确认一致」，真正的重绘只在换歌或换了封面时发生。
+   -------------------------------------------------------------------------- */
+async function primeCoverAccent() {
+  if (!state.config.accentFromCover) return;
+  const song = state.currentId ? songById(state.currentId) : null;
+  const src = song ? coverOf(song) : "";
+  if (!src) return;
+  accentCoverSrc = src;
+  await applySeed(await extractSeed(src));
+}
+
+/**
+ * 每帧同步一次：底栏封面地址变了就（重新）取色。
+ *
+ * 之所以每帧看一眼而不是只绑 load 事件：底栏封面可能「同一首歌也换了封面」
+ * （手动匹配 / 自动匹配），把它绑在唯一的「封面地址」上最不容易漏。
+ */
+function syncCoverAccent() {
+  if (!state.config.accentFromCover) {
+    accentCoverSrc = "";
+    return;
+  }
+  const img = $("#bar-cover-img");
+  const src = img?.getAttribute("src") || "";
+  if (!src) return;
+  if (!accentNeeded(src)) return;
+
+  accentCoverSrc = src;
+  extractSeed(src).then(applySeed);
+}
+
 
 /* --------------------------------------------------------------------------
    快捷键
@@ -581,6 +740,13 @@ async function main() {
   await bootstrap();
   applyPreviewParams();
   await initTheme();
+  // 第三方播放界面样式在启动时就扫一遍。
+  // 以前样式只在「第一次打开播放详情页」时才扫描，于是刚启动就进设置的话，
+  // 样式列表里永远只有内置三款 —— 用户会以为放进去的样式没被识别。
+  // 这里不 await：样式要动态 import，扫慢了不该拖住首屏。
+  void preloadSkins().then(() => {
+    if (settingsLayerOpen()) refreshSettingsLayer();
+  });
   // 窗口原生材质（Mica / Acrylic）现在是否生效，决定了页面要不要让出底色
   await refreshBackdropState();
 
@@ -594,6 +760,11 @@ async function main() {
     onOpenPlayer: togglePlayer,
     onToggleQueue: () => toggleQueuePanel(),
   });
+  // 桌面歌词 / 桌面背景歌词是一组单选：先把两个按钮的选中态对齐配置，
+  // 再探一次当前系统支不支持「窗口垫到桌面图标之下」（不支持就把入口置灰）。
+  // 都不 await —— 它们不该拖住首屏。
+  syncDesktopModeButtons();
+  void probeDesktopWallpaperSupport();
   bindWindowControls();
   bindShortcuts();
   bindBackendEvents();

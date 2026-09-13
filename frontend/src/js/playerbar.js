@@ -13,9 +13,10 @@ import { $, bindCoverFallback, icon, openMenu, toast } from "./dom.js";
 import { createSlider } from "./slider.js";
 import { applyVolume, seekTo } from "./audio.js";
 import { addSongsTo } from "./playlists.js";
-import { setRuntimeToken } from "./runtime-tokens.js";
+import { locateCurrentQueueItem } from "./tracks.js";
+import { animationMs, setRuntimeToken } from "./runtime-tokens.js";
 import { applyGlassAlpha, resolvedGlassAlpha, resolvedGlassBlur } from "./theme.js";
-import { applyDesktopLyrics } from "./desktop-lyrics.js";
+import { applyDesktopMode, DESKTOP_MODE } from "./desktop-mode.js";
 import {
   LIKED_ID,
   clearQueue,
@@ -85,6 +86,7 @@ export function initPlayerBar({ onOpenPlayer, onToggleQueue }) {
     volumeIcon: $("#icon-volume"),
     volume: $("#volume"),
     desktopLyrics: $("#btn-desktop-lyrics"),
+    desktopWallpaper: $("#btn-desktop-wallpaper"),
     playlist: $("#btn-playlist"),
     sleep: $("#btn-sleep"),
     options: $("#btn-options"),
@@ -153,8 +155,10 @@ export function initPlayerBar({ onOpenPlayer, onToggleQueue }) {
     if (onToggleQueue) onToggleQueue();
     else toggleQueuePanel();
   });
-  // 桌面歌词：切换悬浮歌词窗口（真正的「窗口歌词」不再是占位）。
+  // 桌面歌词 / 桌面背景歌词：一组单选按钮，切换的是两个真实窗口
+  // （真正的开/关与互斥交给 desktop-mode.js，这里只负责转发点击）
   els.desktopLyrics?.addEventListener("click", () => toggleDesktopLyrics());
+  els.desktopWallpaper?.addEventListener("click", () => toggleDesktopWallpaper());
   els.sleep?.addEventListener("click", () => toggleSleepPanel());
   els.options?.addEventListener("click", () => {
     if (state.queueOpen) toggleQueuePanel(false);
@@ -215,7 +219,6 @@ function openAddToPlaylistMenu(anchor) {
    底栏「播放列表」按钮打开：在播放控件上方浮出一块面板，列出当前队列。
    直接操作 state.queue，重绘由 paintPlayerBar 的节流驱动 —— 不做监听器堆叠。
    -------------------------------------------------------------------------- */
-const PANEL_MS = 200;
 let panelCloseTimer = null;
 let panelBound = false;
 let panelKey = "";
@@ -249,7 +252,7 @@ function renderQueuePanel() {
       panelCloseTimer = setTimeout(() => {
         panelCloseTimer = null;
         if (!state.queueOpen) panel.hidden = true;
-      }, PANEL_MS);
+      }, animationMs() + 40);
     }
   }
 
@@ -296,6 +299,9 @@ function bindQueuePanel() {
   if (!panel) return;
 
   $("#queue-close")?.addEventListener("click", () => toggleQueuePanel(false));
+  // 「定位到当前播放」：面板里队列可能很长（几百首），换歌之后一样找不到
+  // 正在播的那一条。与曲库 / 歌单工具条上的同名按钮是同一个能力。
+  $("#queue-locate")?.addEventListener("click", () => locateCurrentQueueItem());
   $("#queue-clear")?.addEventListener("click", () => {
     clearQueue();
     toast("播放列表已清空");
@@ -343,14 +349,40 @@ function bindQueuePanel() {
 }
 
 /* --------------------------------------------------------------------------
-   桌面歌词 / 定时停止 / 播放选项
+   桌面歌词 / 桌面背景歌词（一组单选按钮）
    -------------------------------------------------------------------------- */
+
 export function toggleDesktopLyrics() {
-  // 真正的开/关交给 desktop-lyrics.js：它要开一个独立的透明置顶窗口，
-  // 并且要处理「窗口创建失败」这种情况（失败时不能只是嘴上说打开了）。
-  applyDesktopLyrics(!state.config.showDesktopLyrics);
+  toggleDesktopModeWithToast(
+    state.config.showDesktopLyrics ? DESKTOP_MODE.off : DESKTOP_MODE.lyrics,
+    { on: "已开启桌面歌词", off: "已关闭桌面歌词" }
+  );
+}
+
+export function toggleDesktopWallpaper() {
+  toggleDesktopModeWithToast(
+    state.config.showDesktopWallpaper ? DESKTOP_MODE.off : DESKTOP_MODE.wallpaper,
+    { on: "已开启桌面背景歌词", off: "已关闭桌面背景歌词" }
+  );
+}
+
+/**
+ * 切模式并提示结果。
+ *
+ * 为什么要等结果再提示、而不是点了就先说「已开启」：这两个模式都要真实创建
+ * 窗口，而桌面背景歌词还依赖系统的桌面窗口结构 —— 它确实会失败。
+ * 先报成功再让用户看到桌面上什么都没有，比不提示更糟。
+ */
+async function toggleDesktopModeWithToast(mode, { on, off }) {
+  const res = await applyDesktopMode(mode);
   commit();
-  toast(state.config.showDesktopLyrics ? "已开启桌面歌词" : "已关闭桌面歌词", { duration: 1400 });
+  if (res.ok !== false) {
+    toast(mode === DESKTOP_MODE.off ? off : on, { duration: 1400 });
+    return res;
+  }
+  toast(`打不开：${res.reason || res.error || "未知原因"}`, { tone: "warning", duration: 3200 });
+  if (res.restored) toast("已保留原来的桌面歌词设置", { duration: 1800 });
+  return res;
 }
 
 /** 剩余时长文案：1 小时 05 分 / 05:20 */
@@ -391,7 +423,7 @@ function closeSleepPanel() {
   panel.setAttribute("data-state", "closed");
   setTimeout(() => {
     if (panel.getAttribute("data-state") === "closed") panel.hidden = true;
-  }, 180);
+  }, animationMs() + 40);
   $("#btn-sleep")?.setAttribute("aria-pressed", String(Boolean(state.sleepTimer)));
 }
 
@@ -422,18 +454,22 @@ function initSleepPanel(body) {
       </div>
       <div class="sleep-panel__scale"><span>0</span><span>150</span><span>300 分钟</span></div>
     </div>
+    <div class="sleep-panel__option">
+      <div class="sleep-panel__option-main">
+        <span class="sleep-panel__option-label">歌曲播放完成后停止</span>
+        <span class="sleep-panel__option-sub">倒计时结束后不立刻停，等这首播完再停</span>
+      </div>
+      <button class="switch" type="button" role="switch" data-sleep-act="after-song"
+        aria-checked="false" aria-label="歌曲播放完成后停止"></button>
+    </div>
     <div class="sleep-panel__row">
-      <button class="btn btn--sm sleep-panel__after" type="button" data-sleep-act="after-song"
-        aria-pressed="false">
-        <svg><use href="#i-clock" /></svg><span>播放完歌曲</span>
-      </button>
       <button class="btn btn--sm" type="button" data-sleep-act="off">
         <svg><use href="#i-close" /></svg><span>取消定时</span>
       </button>
     </div>
     <div class="sleep-panel__hint">
-      「播放完歌曲」= 延长到歌曲播放结束：倒计时到点时如果这首还没播完，
-      会等它播完再停（不会在副歌中间掐掉）。拖到 0 分钟即取消定时；设置从松手那一刻开始倒计时。
+      「歌曲播放完成后停止」打开时，倒计时到点如果这首还没播完，会等它播完再停
+      （不会在副歌中间掐掉）。拖到 0 分钟即取消定时；设置从松手那一刻开始倒计时。
     </div>`;
 
   sleepSlider = createSlider($("#sleep-slider"), {
@@ -460,7 +496,7 @@ function initSleepPanel(body) {
       return;
     }
     if (act === "after-song") {
-      // 「播放完歌曲」是倒计时的一个修饰项，不是独立的定时模式：
+      // 「歌曲播放完成后停止」是倒计时的一个修饰项，不是独立的定时模式：
       // 打开后倒计时到点不会立刻停，而是等当前这首播完（见 checkSleepTimer）。
       const next = !state.config.sleepAfterSong;
       state.config.sleepAfterSong = next;
@@ -538,16 +574,16 @@ function syncSleepPanel() {
   if (subEl) subEl.textContent = "拖动上面的条设置分钟数";
 }
 
-/** 「播放完歌曲」按钮的按下态跟随配置 */
+/** 「歌曲播放完成后停止」开关的状态跟随配置 */
 function syncSleepAfterToggle() {
   const btn = document.querySelector("[data-sleep-act='after-song']");
-  if (btn) btn.setAttribute("aria-pressed", String(state.config.sleepAfterSong === true));
+  if (btn) btn.setAttribute("aria-checked", String(state.config.sleepAfterSong === true));
 }
 
 /**
  * 定时停止到点。
  *
- * 「播放完歌曲」（延长到歌曲播放结束）打开时**不立刻暂停**，而是切换成
+ * 「歌曲播放完成后停止」（延长到歌曲播放结束）打开时**不立刻暂停**，而是切换成
  * after-song 状态：等当前这首自然播完，由 store/audio 的 ended 逻辑暂停。
  * 不开就是老行为：到点立即暂停。
  */
@@ -582,7 +618,7 @@ function toggleOptionsPanel() {
     panel.setAttribute("data-state", "closed");
     setTimeout(() => {
       if (panel.getAttribute("data-state") === "closed") panel.hidden = true;
-    }, 180);
+    }, animationMs() + 40);
   }
   $("#btn-options")?.setAttribute("aria-pressed", String(open));
 }
@@ -614,6 +650,10 @@ function initOptionsPanel() {
       <button class="switch" id="opt-desktop-lyrics" type="button" role="switch" aria-checked="${state.config.showDesktopLyrics}"></button>
     </div>
     <div class="option-row">
+      <span class="option-row__label">桌面背景歌词</span>
+      <button class="switch" id="opt-desktop-wallpaper" type="button" role="switch" aria-checked="${state.config.showDesktopWallpaper}"></button>
+    </div>
+    <div class="option-row">
       <span class="option-row__label">背景不透明度</span>
       <div class="rangeslider">
         ${sliderHtml("opt-alpha")}
@@ -630,6 +670,7 @@ function initOptionsPanel() {
 
   $("#options-close")?.addEventListener("click", () => toggleOptionsPanel());
   $("#opt-desktop-lyrics")?.addEventListener("click", () => toggleDesktopLyrics());
+  $("#opt-desktop-wallpaper")?.addEventListener("click", () => toggleDesktopWallpaper());
 
   // 点击面板外 / 按 Esc 关闭选项面板
   document.addEventListener("pointerdown", (e) => {
@@ -710,6 +751,7 @@ export function paintPlayerBar() {
     volume: $("#volume"),
     volumeIcon: $("#icon-volume"),
     desktopLyrics: $("#btn-desktop-lyrics"),
+    desktopWallpaper: $("#btn-desktop-wallpaper"),
     playlist: $("#btn-playlist"),
   };
 
@@ -801,8 +843,11 @@ export function paintPlayerBar() {
   els.playlist?.setAttribute("aria-pressed", String(Boolean(state.queueOpen)));
   if (state.queueOpen) renderQueuePanel();
 
-  /* 桌面歌词 / 定时停止 / 选项 的按下态 */
-  els.desktopLyrics?.setAttribute("aria-pressed", String(Boolean(state.config.showDesktopLyrics)));
+  /* 桌面歌词 / 桌面背景歌词（一组单选）的选中态。
+     每帧重写是有意的：后端有可能开窗失败并把配置回滚，
+     这里跟着配置走，按钮就不会停在「已开启」上骗人。 */
+  els.desktopLyrics?.setAttribute("aria-checked", String(Boolean(state.config.showDesktopLyrics)));
+  els.desktopWallpaper?.setAttribute("aria-checked", String(Boolean(state.config.showDesktopWallpaper)));
   // 到点就停：放在每帧的轻量同步里，倒计时结束后立刻暂停
   checkSleepTimer();
   const sleepBtn = $("#btn-sleep");

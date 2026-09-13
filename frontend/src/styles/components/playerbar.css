@@ -476,10 +476,53 @@
   color: var(--accent);
 }
 
-/* 开关类按钮（显示歌词 / 桌面歌词 / 播放列表）：按下时高亮 */
+/* 开关类按钮（显示歌词 / 播放列表 / 定时停止）：按下时高亮 */
 .mode-btn[aria-pressed="true"] {
   color: var(--accent);
   background: var(--surface-2);
+}
+
+/* —— 单选按钮组：桌面歌词 / 桌面背景歌词 ——
+   两者互斥（见 desktop-mode.js），所以在外观上也连成一组，
+   而不是像旁边那些按钮一样各自独立地挂在工具栏上。 */
+.mode-group {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 1px;
+  padding: 2px;
+  border-radius: calc(var(--btn-radius) + 2px);
+  background: var(--surface-1);
+}
+
+/* 组里按钮缩到 28px：加上上下各 2px 的内边距正好 32px，
+   与旁边那些独立按钮在同一条基线上，不会把工具栏顶高。 */
+.mode-group .mode-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.mode-group .mode-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* role=radio 的选中态用 aria-checked 表达（不是 aria-pressed） */
+.mode-group .mode-btn[aria-checked="true"] {
+  color: var(--accent);
+  background: var(--surface-2);
+}
+
+/* 不支持桌面背景歌词的平台（非 Windows）：入口置灰并保留 tooltip 里的原因 */
+.mode-group .mode-btn[aria-disabled="true"] {
+  color: var(--text-3);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mode-group .mode-btn[aria-disabled="true"]:hover {
+  background: none;
+  color: var(--text-3);
 }
 
 .mode-btn__badge {

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<!-- wp-window 是桌面背景歌词窗口的页面标记。
+     desktopwallpaper.css 里所有会碰到 html/body 的规则都必须挂在它下面：
+     构建配置 cssCodeSplit:false 会把这张页面的 CSS 与主界面合并成一个文件
+     （所有页面的 <link> 最终指向同一个 style-*.css），不限定作用域的话，
+     「整窗铺满背景」这条会顺手把主界面也一起铺了。 -->
+<html lang="zh-CN" class="wp-window">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws:"
+    />
+    <title>桌面背景歌词</title>
+    <!--
+      独立页面：桌面背景歌词窗口（见 Go 侧 desktop_wallpaper.go）。
+
+      刻意**不复用** index.html：那个页面会连带加载整套外壳、曲库与列表，
+      而这个窗口整块只是一张「会唱歌的壁纸」。既然需求上担心双份资源，
+      这里就只加载真正要画的三样东西 —— 背景图、遮罩、几行歌词。
+
+      数据来源：主窗口把「封面缩略图 / 当前歌词行 / 曲目信息」推给 Go 后端
+      （WindowService.UpdateDesktopWallpaper），后端再用 app.Event.Emit 广播
+      desktop:wallpaper 事件 —— Wails v3 的事件是广播给所有窗口的。
+    -->
+    <link rel="stylesheet" href="./styles/desktopwallpaper.css" />
+  </head>
+  <body>
+    <div class="wp" id="wp" data-state="idle">
+      <!-- 背景层：三块拼出「播放器详情页的那张背景」——
+           降采样封面（大范围铺开）+ 主题遮罩 + 四角压暗。 -->
+      <img class="wp__img" id="wp-img" alt="" />
+      <div class="wp__veil" id="wp-veil"></div>
+      <div class="wp__grain"></div>
+
+      <!-- 歌词：上一行 / 当前行 / 下一行。当前行在中间、字号最大。 -->
+      <div class="wp__lyrics" id="wp-lyrics">
+        <p class="wp__line wp__line--prev" id="wp-prev"></p>
+        <p class="wp__line wp__line--now" id="wp-now">未在播放</p>
+        <p class="wp__line wp__line--next" id="wp-next"></p>
+      </div>
+
+      <!-- 曲目信息：压在最下面，和详情页一样是「小字副标题」 -->
+      <div class="wp__meta" id="wp-meta" hidden>
+        <p class="wp__title" id="wp-title"></p>
+        <p class="wp__artist" id="wp-artist"></p>
+      </div>
+
+      <p class="wp__tip" id="wp-tip">桌面背景歌词 · 播放歌曲后歌词会跟着壁纸显示</p>
+    </div>
+    <script type="module" src="./js/desktop-wallpaper-window.js"></script>
+  </body>
+</html>

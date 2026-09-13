@@ -20,8 +20,30 @@
   --skin-bg-scale: 1.14;
   --skin-bg-brightness: 0.85;
   --skin-bg-veil: var(--immersive-veil, rgba(0, 0, 0, 0.4));
+
+  /* —— 进出场 ——
+     背景层不在 .playerview 里面（它要盖住侧边栏与主内容），所以详情页的
+     滑入 / 滑出不会带上它。以前它只跟着皮肤的挂载切换 hidden（display:none），
+     结果就是「详情页在滑、背景硬切」——背景越复杂越明显。
+
+     这里给出与 .playerview 完全一致的一套：默认（关闭态）在下方 38px 且全透明，
+     宿主打上 data-state="opened" 后回到原位并显形。
+     两个元素用的是同一组时长与缓动令牌，因此整体是一块布在滑动，
+     而不是上面在滑、下面在闪。 */
+  opacity: 0;
+  transform: translateY(38px);
+  transition:
+    opacity var(--pv-slide-dur) var(--ease-out),
+    transform var(--pv-slide-dur) var(--ease-slide);
+  will-change: opacity, transform;
 }
 
+.skin-bg[data-state="opened"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* 没有背景可显示时（皮肤没声明 background / 封面为空）整块不渲染 */
 .skin-bg[hidden] {
   display: none;
 }
@@ -32,6 +54,9 @@
   object-fit: cover;
   filter: blur(var(--skin-bg-blur)) saturate(1.5) brightness(var(--skin-bg-brightness));
   transform: scale(var(--skin-bg-scale));
+  /* 图要解码完才画得出来，所以从透明开始、load 之后淡入（见 background-layer.js）：
+     否则「整块背景已经淡入到位、图却突然砸上来」，复杂背景尤其明显。 */
+  opacity: 0;
   transition: opacity var(--dur) var(--ease);
 }
 

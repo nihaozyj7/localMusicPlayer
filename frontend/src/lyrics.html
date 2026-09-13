@@ -1,5 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<!-- dl-window 是桌面歌词窗口的页面标记：desktoplyrics.css 里对 html/body 的
+     「整窗透明」规则必须挂在它下面。构建配置 cssCodeSplit:false 会把这张页面的
+     CSS 和主界面的 CSS 合并成一个文件（两个 <link> 指向同一个 style-*.css），
+     不限定作用域的话，那条 background:transparent!important 会一起作用到主界面，
+     把主窗口的底色打穿（浅色主题下露出窗口的近黑底色 = 一整片黑）。 -->
+<html lang="zh-CN" class="dl-window">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />

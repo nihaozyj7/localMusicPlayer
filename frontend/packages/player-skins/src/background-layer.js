@@ -20,6 +20,10 @@
  * @property {(src: string) => void} setImage 设置背景图（同图重复设置会跳过）
  * @property {(style?: { blur?: number, veil?: string, scale?: number, brightness?: number }) => void} setStyle
  * @property {() => void} destroy 清空内容并隐藏容器
+ *
+ * 进出的**过程**（滑入淡入 / 滑出淡出）不在这里，由宿主统一驱动：
+ * 宿主给容器打 `data-state="opened" | "closed"`，样式在 background-layer.css 里。
+ * 本文件只负责「有没有背景可显示」。
  */
 
 /**
@@ -45,13 +49,35 @@ export function createBackgroundLayer(host) {
   let src = "";
   let enabled = false;
 
+  // 封面图（data URL 或同源 URL）要解码完才能画出来。以前它就这么出现，
+  // 于是「整块背景淡入完成 → 图突然砸上来」——复杂背景尤其明显。
+  // 这里让图自己淡入（CSS 里本来就写好了这张图的 opacity 过渡，只是没人触发）。
+  if (img) {
+    img.addEventListener("load", () => {
+      img.style.opacity = "1";
+    });
+    img.addEventListener("error", () => {
+      img.style.opacity = "0";
+    });
+  }
+
+  /** 容器只在「这张样式要背景」且「真的有图」时才渲染 */
+  function sync() {
+    host.hidden = !enabled || !src;
+  }
+
   /** 同一张图不要重复赋值：重复写 src 会让浏览器重新解码一次大图（掉帧） */
   function setImage(next) {
     const value = next || "";
     if (value === src) return;
     src = value;
-    if (img) img.src = value;
-    host.hidden = !enabled || !value;
+    if (img) {
+      // 已经在显示上一张时先别清空，否则切歌瞬间会闪一下空白；
+      // 只有「还没有任何图」时才从 0 开始淡入。
+      if (!img.naturalWidth) img.style.opacity = "0";
+      img.src = value;
+    }
+    sync();
   }
 
   return {
@@ -62,7 +88,7 @@ export function createBackgroundLayer(host) {
      */
     setEnabled(on) {
       enabled = Boolean(on);
-      host.hidden = !enabled || !src;
+      sync();
     },
     setImage,
     /**

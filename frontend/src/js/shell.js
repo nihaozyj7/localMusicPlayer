@@ -4,6 +4,7 @@
 
 import Sortable from "sortablejs";
 import { $, $$, icon, openMenu, toast } from "./dom.js";
+import { animationMs } from "./runtime-tokens.js";
 import {
   renderSettings,
   handleSettingsAction,
@@ -35,7 +36,7 @@ import {
   setSelectedSongs,
   state,
 } from "./store.js";
-import { bindTrackEvents, playAllVisible, renderEmpty, renderTracks } from "./tracks.js";
+import { bindTrackEvents, locateCurrentSong, playAllVisible, renderEmpty, renderTracks } from "./tracks.js";
 import { esc, fmtCount, fmtDurationCn, fmtTime, naturalCompare } from "./utils.js";
 
 const VIEW_TITLES = {
@@ -104,6 +105,12 @@ function toolbarHtml() {
   const playAll = `
     <button class="btn btn--primary" type="button" data-tool="play-all">${icon("play")}<span>播放全部</span></button>`;
 
+  // 「定位到当前播放」：长列表里换歌之后列表不会自己滚动，用户找不到正在播的
+  // 那一行。这个按钮把它滚到眼前并闪一下（见 tracks.js#locateCurrentSong）。
+  // 三种有曲目列表的视图都给，位置固定在「播放全部」右边。
+  const locate = `
+    <button class="btn btn--icon" type="button" data-tool="locate" data-tip="定位到当前播放" aria-label="定位到当前播放">${icon("disc")}</button>`;
+
   const sortSel = `
     <div class="select">
       <select class="select__field" id="select-sort" aria-label="排序方式">
@@ -127,7 +134,7 @@ function toolbarHtml() {
     // 反转顺序按钮已移除（需求）：排序改为在列表里直接拖拽。
     return `
       <button class="btn" type="button" data-tool="queue-clear">${icon("trash")}<span>清空列表</span></button>
-      ${playAll}`;
+      ${playAll}${locate}`;
   }
 
   if (v === "playlist") {
@@ -142,7 +149,7 @@ function toolbarHtml() {
         <button class="btn btn--sm btn--danger" type="button" data-tool="sel-remove" ${n ? "" : "disabled"}>${icon("trash")}<span>移除所选</span></button>
         <button class="btn btn--sm btn--primary" type="button" data-tool="pl-select">${icon("close")}<span>完成</span></button>`;
     }
-    return `${sortSel}${playAll}
+    return `${sortSel}${playAll}${locate}
       <button class="btn" type="button" data-tool="pl-select">${icon("check")}<span>多选</span></button>
       <button class="btn" type="button" data-tool="pl-add">${icon("plus")}<span>添加</span></button>
       <button class="btn btn--icon" type="button" data-tool="pl-more" data-tip="歌单操作">${icon("more")}</button>`;
@@ -150,7 +157,7 @@ function toolbarHtml() {
 
   return `
     <button class="btn" type="button" data-tool="rescan">${icon("refresh")}<span>重新扫描</span></button>
-    ${sortSel}${playAll}`;
+    ${sortSel}${playAll}${locate}`;
 }
 
 /**
@@ -163,9 +170,10 @@ let lastTools = "";
 /* --------------------------------------------------------------------------
    本地歌曲筛选栏
    --------------------------------------------------------------------------
-   需求：本地搜索从「在线搜索弹层」里独立出来，放在本地歌曲上方。
+   需求：本地搜索从「在线搜索弹层」里独立出来；后来又挪进头部工具条，
+   紧挨在「重新扫描」左边（见 index.html 的 .content-header__actions）。
    关键词存在 state.query（store 的 recalcVisible 已经在用它过滤）。
-   输入框是 #content-body 之外的静态节点，所以输入时不会重绘输入框本身，
+   输入框是 #content-tools 之外的静态节点，所以输入时不会重绘输入框本身，
    焦点与输入法状态都不会被打断。
    -------------------------------------------------------------------------- */
 function filterEls() {
@@ -296,9 +304,10 @@ export function closeSettings() {
   const layer = document.getElementById("settings-layer");
   if (!layer) return;
   layer.setAttribute("data-state", "closed");
+  // 等过渡放完再 hidden：时长跟着设置里的「过渡速度」走（见 runtime-tokens.js）
   setTimeout(() => {
     if (layer.getAttribute("data-state") === "closed") layer.hidden = true;
-  }, 220);
+  }, animationMs() + 40);
 }
 
 export function toggleSettings(section = null) {
@@ -369,7 +378,7 @@ export function navigate(view, playlistId = null) {
     panel.setAttribute("data-state", "closed");
     setTimeout(() => {
       if (!state.queueOpen) panel.hidden = true;
-    }, 220);
+    }, animationMs() + 40);
   }
   commit();
 }
@@ -616,6 +625,11 @@ async function handleTool(tool) {
       break;
     case "play-all":
       playAllVisible(false);
+      break;
+    case "locate":
+      // 当前播放行在列表里就滚过去并闪一下；不在（被筛选裁掉 / 歌单里没有）
+      // 就如实提示，而不是点了没反应。
+      locateCurrentSong();
       break;
     case "queue-clear":
       clearQueue();

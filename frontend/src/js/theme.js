@@ -8,7 +8,8 @@
    ========================================================================== */
 
 import { backend, isWails } from "./bridge.js";
-import { setRuntimeTokens, replaceStyleRules } from "./runtime-tokens.js";
+import { animationDurationValue, setRuntimeTokens, replaceStyleRules } from "./runtime-tokens.js";
+import { state } from "./store.js";
 
 /** 内置主题登记表（新增主题时可在此追加，或依赖后端自动扫描） */
 const BUILTIN_THEMES = [
@@ -49,33 +50,87 @@ export function getTheme(id) {
  * 后端模式：扫描用户主题目录并把每个主题的 CSS 注入为独立样式表。
  * 这样用户往 %APPDATA%\MusicPlayer\themes\ 丢一个 CSS 文件，
  * 打开设置界面就能看到新主题 —— 不需要改任何前端文件（需求 A8）。
+ *
+ * 每次扫描都是**以磁盘为准的整体同步**，而不是只往上加：
+ * 用户在资源管理器里删掉一个主题 CSS、或者在设置里点了「移除」之后，
+ * 注册表里那个主题必须跟着消失。只加不减的话，列表会永远留着它，
+ * 点它还会切到一个已经不存在的主题上。
  */
 export async function discoverThemes() {
   if (!isWails()) return registry;
   try {
     const res = await backend.listThemes();
+    // 后端一个主题都没返回只可能是调用出了岔子（内置三款由后端在启动时
+    // 写入主题目录，正常情况下一定扫得到）。这时保持现状，不要清空列表。
     if (!Array.isArray(res) || !res.length) return registry;
 
     for (const t of res) {
       if (!t?.id) continue;
       const css = await backend.loadTheme(t.id);
       if (typeof css === "string" && css.trim()) injectTheme(t.id, css);
-
-      const existing = registry.find((x) => x.id === t.id);
-      const entry = {
-        id: t.id,
-        name: t.name || t.id,
-        mode: t.mode || "dark",
-        swatch: Array.isArray(t.swatch) ? t.swatch : [],
-        builtin: Boolean(t.builtin) || Boolean(existing?.builtin),
-      };
-      if (existing) Object.assign(existing, entry);
-      else registry.push(entry);
     }
+    syncThemeRegistry(res);
   } catch (err) {
     console.warn("[theme] 主题目录扫描失败", err);
   }
   return registry;
+}
+
+/**
+ * 把注册表对齐到后端这次的扫描结果（原地改，外部拿到的引用一直有效）。
+ *
+ * 分两步：先按后端清单更新 / 补齐，再把「这次没扫到」的旧条目连同它们的
+ * 样式表一起丢掉 —— 后者正是「手动删了主题、再扫描还在」的修法。
+ */
+function syncThemeRegistry(list) {
+  const next = [];
+  const seen = new Set();
+
+  for (const t of list) {
+    if (!t?.id || seen.has(t.id)) continue;
+    seen.add(t.id);
+    const entry = {
+      id: t.id,
+      name: t.name || t.id,
+      mode: t.mode || "dark",
+      swatch: Array.isArray(t.swatch) ? t.swatch : [],
+      builtin: Boolean(t.builtin),
+    };
+    const existing = registry.find((x) => x.id === t.id);
+    if (existing) {
+      Object.assign(existing, entry);
+      next.push(existing);
+    } else {
+      next.push(entry);
+    }
+  }
+
+  for (const old of registry) {
+    if (next.includes(old)) continue;
+    // 一并撤掉它注入的样式表：留着的话，下次导入一个同名 id 的主题时
+    // 旧规则还在，会出现「同一个 data-theme 命中两套令牌」。
+    replaceStyleRules(`theme-file-${old.id}`, "");
+  }
+
+  registry.length = 0;
+  registry.push(...next);
+  return registry;
+}
+
+/**
+ * 移除一个用户主题：后端删掉主题目录里的那个 CSS 文件，前端立刻按磁盘重扫。
+ *
+ * 这里不碰「当前用的是哪个主题」——删掉的正好是当前主题时，调用方紧接着调
+ * applyResolvedTheme(config) 就会自动回退到一个仍然存在的主题（它本来就会
+ * 校验注册表）。把这两件事分开，theme.js 也不必反过来依赖 store。
+ *
+ * 返回 { removed, themeIds }：removed=false 表示后端没有删成（例如内置主题）。
+ */
+export async function removeTheme(id) {
+  await backend.deleteTheme(id);
+  await discoverThemes();
+  const removed = !registry.some((t) => t.id === id);
+  return { removed, themeIds: registry.map((t) => t.id) };
 }
 
 /**
@@ -122,13 +177,39 @@ export async function applyResolvedTheme(config) {
   // 否则无论切到哪个主题都会显示成配置里的 22px（主题自己的 26px 就看不到了）。
   setRuntimeTokens({
     "--glass-blur": config.glassBlurCustom ? `${config.glassBlur}px` : null,
-    "--dur": config.animations === false ? "0.001ms" : null,
+    // --dur 是全站唯一的过渡时长令牌：动画开关与「过渡速度」都只改它
+    "--dur": animationDurationValue(config),
+    // 封面取色的种子色跟着配置一起重新下发。
+    //
+    // 为什么要在这里做（而不只是取到色时写一次）：运行时令牌表的优先级
+    // **高于** :root[data-theme] 里的主题令牌，一旦写进去就会一直压着主题。
+    // 换了主题却不把种子重发一遍，新主题就会用着上一个主题的种子色 ——
+    // 反过来，没开「主题色跟随封面」/ 当前主题不消费种子时，种子里必须清空，
+    // 主题自己的默认色才能生效。
+    "--seed": seedFor(config, themeId),
+    "--seed-2": seedFor(config, themeId, true),
   });
 
   forceStyleRefresh();
   // 用户手动调过面板透明度时，换主题后按新主题的底色重新套一遍
   if (config.glassAlphaCustom) applyGlassAlpha(config.glassAlpha);
   return themeId;
+}
+
+/**
+ * 取配置里的封面种子色（secondary = 次色），没记录时返回 null（= 不覆盖，
+ * 用主题自己的默认值）。
+ *
+ * 只有**消费** --seed 的主题才下发：内置主题里目前只有 cover-dark 用种子色
+ * 派生底色，其它主题拿到它不会有任何效果，反而会让「主题自带的颜色是不是
+ * 被盖住了」变得难以判断。自定义主题若声明了 --seed，也一并受益。
+ */
+function seedFor(config, themeId, secondary = false) {
+  if (!config || config.accentFromCover !== true) return null;
+  // 目前只有 cover-dark 会消费 --seed（用户主题若照着写也会生效）
+  if (themeId !== "cover-dark") return null;
+  const hex = normalizeSeed(secondary ? config.coverSeed2 : config.coverSeed);
+  return hex || null;
 }
 
 /* --------------------------------------------------------------------------
@@ -224,40 +305,131 @@ export function resolvedGlassBlur() {
   return Number.isFinite(n) ? n : 22;
 }
 
-/**
- * 把当前封面主色写入 --seed / --seed-2（供 cover-dark 等主题使用）。
- * 真实实现由 Go 侧解码封面取色；这里用占位色保证预览可用。
- */
-export function applyCoverSeed(seedHex, seed2Hex) {
-  setRuntimeTokens({
-    "--seed": seedHex || null,
-    "--seed-2": seed2Hex || null,
-  });
+/** 把 #rgb / #rrggbb / rgb() 统一成小写 #rrggbb（认不出来返回 ""） */
+export function normalizeSeed(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const hex = text.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+  if (hex) {
+    let h = hex[1].toLowerCase();
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return `#${h}`;
+  }
+  const rgb = text.match(/rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i);
+  if (rgb) {
+    const to = (n) => Math.max(0, Math.min(255, Math.round(Number(n)))).toString(16).padStart(2, "0");
+    return `#${to(rgb[1])}${to(rgb[2])}${to(rgb[3])}`;
+  }
+  return "";
 }
 
-/** 从图片元素提取平均色（浏览器预览用的简易取色） */
+/**
+ * 把当前封面主色写入 --seed / --seed-2（供 cover-dark 等主题使用），
+ * 并写回配置 / localStorage。
+ *
+ * 写回配置是为了「下一次启动的首帧」：Go 侧在页面加载前就把上次的取色结果
+ * 挂到 <html> 上（见 early_theme.go），否则封面取色主题每次启动都要经历
+ * 「先黑 → 占位灰 → 取色重绘」三段。
+ *
+ * 只负责写令牌与持久化；调用方在 active 时再套一次 applyResolvedTheme，
+ * 让依赖种子色的派生令牌（面板底色 / 强调色）跟着更新。
+ */
+export function applyCoverSeed(seedHex, seed2Hex) {
+  const seed = normalizeSeed(seedHex);
+  const seed2 = normalizeSeed(seed2Hex) || seed;
+  if (!seed) return false;
+
+  setRuntimeTokens({ "--seed": seed, "--seed-2": seed2 });
+
+  if (state.config.coverSeed !== seed || state.config.coverSeed2 !== seed2) {
+    state.config.coverSeed = seed;
+    state.config.coverSeed2 = seed2;
+    rememberSeed();
+    return true;
+  }
+  return false;
+}
+
+/* --------------------------------------------------------------------------
+   主题 / 取色的本地快照（只服务于浏览器预览与调试）
+   --------------------------------------------------------------------------
+   真实应用的首帧主题由 Go 侧按配置文件生成（见 early_theme.go），
+   这里记一份只是为了在没有后端的预览环境里也能复现同样的时序。
+   -------------------------------------------------------------------------- */
+export const SEED_STORAGE_KEY = "music-player.cover-seed.v1";
+
+function rememberSeed() {
+  try {
+    localStorage.setItem(
+      SEED_STORAGE_KEY,
+      JSON.stringify({
+        seed: state.config.coverSeed || "",
+        seed2: state.config.coverSeed2 || "",
+        theme: state.config.theme || "",
+      })
+    );
+  } catch {
+    /* 隐私模式等写不进去时忽略：只影响预览 */
+  }
+}
+
+/**
+ * 从图片元素提取主色（浏览器预览与「主题色跟随封面」都用它）。
+ *
+ * 为什么不是简单平均：整张图平均下来往往是一片灰（封面里的黑边、白色标题
+ * 会把颜色冲淡），取色主题就变成「看不出取了个什么色」。这里按**饱和度**
+ * 加权，并跳过近乎无彩 / 过暗的像素，结果更接近人眼认定的「封面主色」。
+ * 彩色像素一个都没有时（纯黑白封面）再退回普通平均，保证总有结果。
+ */
 export function extractCoverSeed(imgEl) {
   try {
     const canvas = document.createElement("canvas");
-    const size = 24;
+    const size = 32;
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     ctx.drawImage(imgEl, 0, 0, size, size);
     const { data } = ctx.getImageData(0, 0, size, size);
-    let r = 0;
-    let g = 0;
-    let b = 0;
+
+    let wr = 0;
+    let wg = 0;
+    let wb = 0;
+    let weight = 0;
+    let ar = 0;
+    let ag = 0;
+    let ab = 0;
     let n = 0;
+
     for (let i = 0; i < data.length; i += 4) {
       if (data[i + 3] < 8) continue;
-      r += data[i];
-      g += data[i + 1];
-      b += data[i + 2];
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      ar += r;
+      ag += g;
+      ab += b;
       n += 1;
+
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      if (max < 26) continue; // 几乎全黑：多半是封面边框
+      const sat = max === 0 ? 0 : (max - min) / max;
+      if (sat < 0.12) continue; // 近乎无彩：属于背景/文字
+      // 饱和度越高越能代表「主色」；再按亮度轻微加权，偏亮的更显眼
+      const w = sat * sat * (0.35 + max / 255);
+      wr += r * w;
+      wg += g * w;
+      wb += b * w;
+      weight += w;
     }
-    if (!n) return null;
-    return `rgb(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)})`;
+
+    const pick = weight > 0
+      ? [wr / weight, wg / weight, wb / weight]
+      : n > 0
+        ? [ar / n, ag / n, ab / n]
+        : null;
+    if (!pick) return null;
+    return `rgb(${pick.map((v) => Math.round(Math.max(0, Math.min(255, v)))).join(", ")})`;
   } catch {
     return null; // 跨域或 data URL 限制时静默失败
   }

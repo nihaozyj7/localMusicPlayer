@@ -133,6 +133,143 @@ func (m *Manager) Dir() string { return m.dir }
 // OpenFolderPath 返回皮肤根目录（资源管理器打开用）。
 func (m *Manager) OpenFolderPath() string { return m.dir }
 
+// ImportResult 一次「从文件夹导入样式包」的结果。
+type ImportResult struct {
+	ID       string `json:"id"`
+	Imported bool   `json:"imported"`
+}
+
+// ImportDir 把一个用户选中的样式包目录复制进皮肤根目录。
+//
+// 合法性判定直接复用扫描时的规则（scanSkin）：目录里必须能找到一个入口
+// （默认 skin.js，或 skin.json 里指定的 module），否则就不是样式包。
+// 目录名会作为皮肤 id，因此不能以 _ / . 开头 —— 那类目录扫描时会跳过，
+// 导进来也「看不见」，不如在这里直接说清楚。
+//
+// 同名目录已存在时拒绝导入（而不是覆盖）：皮肤是用户自己写的，
+// 静默盖掉他的文件比多一次改名麻烦得多。
+func (m *Manager) ImportDir(src string) (ImportResult, error) {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return ImportResult{}, fmt.Errorf("没有选择文件夹")
+	}
+	st, err := os.Stat(src)
+	if err != nil || !st.IsDir() {
+		return ImportResult{}, fmt.Errorf("不是有效的文件夹：%s", src)
+	}
+	packDir, name, info, err := m.resolveSkinSource(src)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	if strings.HasPrefix(name, "_") || strings.HasPrefix(name, ".") {
+		return ImportResult{}, fmt.Errorf("文件夹名不能以 _ 或 . 开头（这类目录会被扫描跳过），请改名后再导入")
+	}
+	target := filepath.Join(m.dir, name)
+	if st, err := os.Stat(target); err == nil && st.IsDir() {
+		return ImportResult{}, fmt.Errorf("样式目录里已经有同名的「%s」，请改名或删除后再导入", name)
+	}
+	if err := copyTree(packDir, target); err != nil {
+		return ImportResult{}, fmt.Errorf("复制样式包失败：%w", err)
+	}
+	if err := m.Reload(); err != nil {
+		return ImportResult{}, err
+	}
+	return ImportResult{ID: info.ID, Imported: true}, nil
+}
+
+// resolveSkinSource 定位「真正是样式包」的那个目录。
+//
+// 直接用选中目录本身；它不是样式包时，再看一层子目录 —— AI 生成的目录结构
+// 往往是 player-skins/<样式id>/，用户很可能选中最外层。此时若只有一个合法
+// 子目录就自动往下走一层；有多个候选则宁可报错，也不猜用户想要哪一个。
+func (m *Manager) resolveSkinSource(src string) (string, string, SkinInfo, error) {
+	name := filepath.Base(filepath.Clean(src))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return "", "", SkinInfo{}, fmt.Errorf("无法识别文件夹名")
+	}
+	if info, ok := m.scanSkin(src, name); ok {
+		return src, name, info, nil
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return "", "", SkinInfo{}, fmt.Errorf("读取文件夹失败：%w", err)
+	}
+	candidates := []string{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		child := filepath.Join(src, e.Name())
+		if _, ok := m.scanSkin(child, e.Name()); ok {
+			candidates = append(candidates, e.Name())
+		}
+	}
+	if len(candidates) == 1 {
+		child := filepath.Join(src, candidates[0])
+		if info, ok := m.scanSkin(child, candidates[0]); ok {
+			return child, candidates[0], info, nil
+		}
+	}
+	if len(candidates) > 1 {
+		return "", "", SkinInfo{}, fmt.Errorf("这个文件夹里有 %d 个样式包，请选中其中具体的那一个再导入", len(candidates))
+	}
+	return "", "", SkinInfo{}, fmt.Errorf("这不是有效的样式包：目录里要有 skin.js（或 skin.json 指定的入口模块）")
+}
+
+// copyTree 递归复制目录（皮肤是纯静态资源：只认普通文件，符号链接一律跳过）。
+func copyTree(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		s := filepath.Join(src, e.Name())
+		d := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if err := copyTree(s, d); err != nil {
+				return err
+			}
+			continue
+		}
+		if !e.Type().IsRegular() {
+			continue
+		}
+		data, err := os.ReadFile(s)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(d, data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Delete 删除一个样式包（连同它的整个目录）。
+//
+// 删除对象只认「扫描出来的那个目录」（info.Dir），而不是拿前端传来的 id
+// 去拼路径：id 是用户可以随便写的字符串，拼路径等于把删除权交出去。
+// 再叠一道 withinDir + 「不能等于根目录」的检查，确保删不掉样式根目录本身
+// 或目录之外的任何东西。
+func (m *Manager) Delete(id string) error {
+	info, ok := m.Get(id)
+	if !ok {
+		return fmt.Errorf("样式不存在: %s", id)
+	}
+	target := filepath.Clean(info.Dir)
+	root := filepath.Clean(m.dir)
+	if target == "" || target == root || !withinDir(root, target) {
+		return fmt.Errorf("拒绝删除样式根目录或目录之外的内容: %s", id)
+	}
+	if err := os.RemoveAll(target); err != nil {
+		return fmt.Errorf("删除样式失败: %w", err)
+	}
+	return m.Reload()
+}
+
 // List 返回全部皮肤（按目录名排序）。
 func (m *Manager) List() []SkinInfo {
 	out := make([]SkinInfo, 0, len(m.order))

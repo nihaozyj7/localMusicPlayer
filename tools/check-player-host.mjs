@@ -316,6 +316,129 @@ async function main() {
     JSON.stringify(applyFlow)
   );
 
+  /* 7. 详情页进出场：整窗背景层必须和详情页一起渐变，不能硬切
+        （沉浸样式的背景层在 .playerview 之外，最容易掉队）
+        判定方式：逐帧采样两者的 opacity，只要出现过中间值就说明真的在做渐变；
+        同时要求同一帧上两者的数值基本一致 —— 这就是「整体一致」的含义。 */
+  const anim = await evaluate(`(async () => {
+    const pv = document.getElementById("playerview");
+    const bg = document.getElementById("skin-background");
+    const raf = () => new Promise((r) => requestAnimationFrame(r));
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    document.querySelector("[data-cover-close]")?.click();
+
+    /** 连续若干帧同时采样两个元素的透明度（约 40 帧 ≈ 660ms，覆盖整段过渡） */
+    async function trackPair(frames = 40) {
+      const pvSeries = [];
+      const bgSeries = [];
+      for (let i = 0; i < frames; i += 1) {
+        pvSeries.push(Number(getComputedStyle(pv).opacity));
+        bgSeries.push(Number(getComputedStyle(bg).opacity));
+        await raf();
+      }
+      return { pv: pvSeries, bg: bgSeries };
+    }
+
+    // 先确保详情页是打开的，并切到带整窗背景层的「沉浸」
+    window.__app.openPlayer();
+    document.querySelector('[data-pv-skin="immersive"]')?.click();
+    await wait(900);
+
+    window.__app.closePlayer();
+    const closing = await trackPair();
+    const closed = { pvHidden: pv.hidden, bgHidden: bg.hidden, pvState: pv.dataset.state };
+
+    window.__app.openPlayer();
+    const opening = await trackPair();
+    const opened = {
+      pv: Number(getComputedStyle(pv).opacity),
+      bg: Number(getComputedStyle(bg).opacity),
+      pvState: pv.dataset.state,
+      bgState: bg.dataset.state,
+    };
+
+    // 收尾：切回内置经典样式（后面的用例按默认样式断言）
+    document.querySelector('[data-pv-skin="classic"]')?.click();
+    await wait(400);
+    return { closing, closed, opening, opened };
+  })()`);
+
+  /** 过渡进行中的采样点数：出现过中间值才说明是渐变而不是硬切 */
+  const midFrames = (series) => (series || []).filter((v) => v > 0.02 && v < 0.98).length;
+  /** 同一帧上两者离得最远差多少（都在过渡中时才比较） */
+  const maxDrift = (pair) => {
+    let worst = 0;
+    const pv = pair?.pv || [];
+    const bg = pair?.bg || [];
+    for (let i = 0; i < Math.min(pv.length, bg.length); i += 1) {
+      if (pv[i] <= 0.02 || pv[i] >= 0.98) continue;
+      if (bg[i] <= 0.02 || bg[i] >= 0.98) continue;
+      worst = Math.max(worst, Math.abs(pv[i] - bg[i]));
+    }
+    return worst;
+  };
+  check(
+    "关闭详情页：背景层与详情页同步向下滑出淡出（不是硬切）",
+    midFrames(anim?.closing?.pv) > 0 &&
+      midFrames(anim?.closing?.bg) > 0 &&
+      maxDrift(anim?.closing) < 0.05,
+    `pv 中间帧=${midFrames(anim?.closing?.pv)} bg 中间帧=${midFrames(
+      anim?.closing?.bg
+    )} 最大偏差=${maxDrift(anim?.closing).toFixed(3)}`
+  );
+  check(
+    "打开详情页：背景层与详情页同步向上滑入淡入（不是硬切）",
+    midFrames(anim?.opening?.pv) > 0 &&
+      midFrames(anim?.opening?.bg) > 0 &&
+      maxDrift(anim?.opening) < 0.05,
+    `pv 中间帧=${midFrames(anim?.opening?.pv)} bg 中间帧=${midFrames(
+      anim?.opening?.bg
+    )} 最大偏差=${maxDrift(anim?.opening).toFixed(3)}`
+  );
+  check(
+    "动画收尾：关闭后两者都收起，重新打开后两者都到位",
+    anim?.closed?.pvHidden === true &&
+      anim?.closed?.bgHidden === true &&
+      anim?.opened?.pvState === "opened" &&
+      anim?.opened?.bgState === "opened" &&
+      anim?.opened?.bg === 1,
+    JSON.stringify({ closed: anim?.closed, opened: anim?.opened })
+  );
+
+  /* 8. 设置里的主题 / 样式卡片：选中热区是卡片内部的按钮，且内置项不出现「移除」
+        （删除按钮只能放在按钮外面 —— 嵌套 button 会被解析器拆开，卡片结构会散） */
+  const cards = await evaluate(`(async () => {
+    const shell = await import("/js/shell.js");
+    shell.openSettings();
+    await new Promise((r) => setTimeout(r, 400));
+    const themes = [...document.querySelectorAll("#sec-appearance .themecard")];
+    const skins = [...document.querySelectorAll("#sec-player .skincard")];
+    return {
+      themes: themes.length,
+      themesWithPick: themes.filter((c) => c.querySelectorAll(".themecard__pick").length === 1).length,
+      themeRemovables: themes.filter((c) => c.querySelector(".carddel")).length,
+      skins: skins.length,
+      skinsWithPick: skins.filter((c) => c.querySelectorAll(".skincard__pick").length === 1).length,
+      nestedButtons: document.querySelectorAll("button button").length,
+      activeSkins: skins.filter((c) => c.dataset.active === "true").length,
+    };
+  })()`);
+  check(
+    "主题 / 样式卡片：选中按钮在卡片内、没有 button 嵌套",
+    cards?.themes > 0 &&
+      cards?.themesWithPick === cards?.themes &&
+      cards?.skins === 3 &&
+      cards?.skinsWithPick === 3 &&
+      cards?.nestedButtons === 0 &&
+      cards?.activeSkins === 1,
+    JSON.stringify(cards)
+  );
+  check(
+    "内置主题 / 样式不提供「移除」（避免删了又被程序重新生成）",
+    cards?.themeRemovables === 0,
+    `可移除的主题卡片 = ${cards?.themeRemovables}`
+  );
+
   check("没有 console 报错 / 未捕获异常", errors.length === 0, errors.slice(0, 3).join(" | "));
 
   ws.close();

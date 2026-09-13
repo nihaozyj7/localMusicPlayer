@@ -17,6 +17,7 @@
 import { $, toast } from "./dom.js";
 import { backend, isWails, on } from "./bridge.js";
 import { esc } from "./utils.js";
+import { animationMs } from "./runtime-tokens.js";
 
 /** 后端推来的任务列表（保持后端顺序：先发的在前） */
 let tasks = [];
@@ -150,7 +151,7 @@ export function closePanel() {
   panelEl.setAttribute("data-state", "closed");
   setTimeout(() => {
     if (!open && panelEl) panelEl.hidden = true;
-  }, 180);
+  }, animationMs() + 40);
 }
 
 function renderPanel() {

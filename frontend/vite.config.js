@@ -131,20 +131,28 @@ export default defineConfig({
   build: {
     outDir: distDir,
     emptyOutDir: true,
-    // 两个入口：
-    //   index.html   主界面
-    //   lyrics.html  桌面歌词窗口（独立透明页面，见 desktop_lyrics.go）
-    // 歌词窗口刻意不复用 index.html：那个页面会连带加载整套外壳与曲库初始化，
-    // 对一个「只显示一行字」的透明小窗来说既慢又容易露出不该有的底色。
+    // 三个入口：
+    //   index.html     主界面
+    //   lyrics.html    桌面歌词窗口（独立透明页面，见 desktop_lyrics.go）
+    //   wallpaper.html 桌面背景歌词窗口（铺在桌面图标之下的壁纸层，见 desktop_wallpaper.go）
+    // 后两张页面刻意都不复用 index.html：那个页面会连带加载整套外壳与曲库初始化，
+    // 对一个「只显示一行字」的透明小窗、和一张「会唱歌的壁纸」来说既慢又容易
+    // 露出不该有的底色 —— 更重要的是，那正是需求里担心的「双份资源」。
     rollupOptions: {
       input: {
         index: path.join(srcDir, "index.html"),
         lyrics: path.join(srcDir, "lyrics.html"),
+        wallpaper: path.join(srcDir, "wallpaper.html"),
       },
     },
     // WebView2 / Edge 版本足够新，可以放心用现代语法，省掉一堆降级辅助代码
     target: "chrome120",
     assetsDir: "assets",
+    // 两个入口共用一份 CSS 产物（两个 HTML 的 <link> 指向同一个 style-*.css）。
+    // 代价：任何「只服务于某张页面」的样式表都会同时作用到另一张页面上。
+    // 所以页面级样式里的全局选择器（html / body / :root）必须自带作用域 ——
+    // 例：desktoplyrics.css 的整窗透明规则锁在 html.dl-window 下，否则那条
+    // background:transparent!important 会把主界面 body 的 --bg-window 打穿。
     cssCodeSplit: false,
     sourcemap: false,
     reportCompressedSize: false,

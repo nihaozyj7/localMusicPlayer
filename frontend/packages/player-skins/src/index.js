@@ -71,6 +71,39 @@ export function getSkin(id) {
 }
 
 /**
+ * 注销一个**运行时加载**的第三方样式（内置三种不能注销）。
+ *
+ * 为什么需要它：注册表是「只加不减」的话，用户把样式包目录删掉、宿主重扫之后，
+ * 按钮组里那个样式仍然在（点它还会去 import 一个已经不存在的模块）。
+ * 宿主在重扫时用本函数把「这次没扫到的」清掉，注册表才是磁盘的真话。
+ *
+ * 连它注入过的 <link> 一起摘掉：留着的话下次用同名 id 重新导入时，
+ * 旧样式表会继续生效，出现「同一个 id 两套 CSS 同时命中」的怪现象。
+ *
+ * @param {string} id
+ * @returns {boolean} 是否真的移除了一个已注册的样式
+ */
+export function unregisterSkin(id) {
+  const key = String(id ?? "").trim();
+  if (!key) return false;
+  // 内置样式来自包本身，磁盘上没有对应目录，永远不注销
+  if (BUILTIN_SKINS.some((s) => s.id === key)) return false;
+
+  // 无 DOM 环境（单测）里没有 <link> 可摘，只清注册表
+  const links = typeof document === "undefined" ? [] : document.querySelectorAll(`link[data-skin="${cssAttr(key)}"]`);
+  for (const link of links) link.remove();
+  for (const used of [...injectedStyles]) {
+    if (used.startsWith(`${key}:`)) injectedStyles.delete(used);
+  }
+  return registry.delete(key);
+}
+
+/** 把 id 安全地塞进属性选择器（id 来自磁盘目录名，可能带引号之类的怪字符） */
+function cssAttr(value) {
+  return String(value).replace(/["\\]/g, "\\$&");
+}
+
+/**
  * 取样式；id 不认识时退回默认样式（并把原因回传给调用方，便于提示用户）。
  * @param {string} id
  * @returns {{ skin: import("./contract.js").PlayerSkin, fellBack: boolean }}

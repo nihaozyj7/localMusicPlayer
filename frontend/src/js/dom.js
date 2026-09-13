@@ -3,6 +3,7 @@
    ========================================================================== */
 
 import { DEFAULT_COVER, esc, uid } from "./utils.js";
+import { animationFastMs, animationMs } from "./runtime-tokens.js";
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -36,10 +37,9 @@ let menuCloseTimer = null;
 /** 关-开快速交替时的序号：过期的收尾回调不许把新菜单藏起来 */
 let menuSeq = 0;
 
-// JS 里等动画结束用的毫秒数，必须 ≥ CSS 里的 --dur-fast（120ms）。
-// 拿的是固定值而不是计算样式：减少动态效果 / 关掉动画时 CSS 时长会变成
-// 0.001ms，这里多等 20ms 完全无感，但读计算样式会引入同步布局，不划算。
-const MENU_EXIT_MS = 140;
+// 菜单退出等的是 CSS 里的 --dur-fast（= --dur × 0.6，见 tokens.css）。
+// 以前这里是写死的 140ms，但「过渡速度」变成用户可调之后，写死就会在
+// 0.35s / 0.5s 档把菜单的淡出切掉 —— 所以在真正关闭时才读一次 --dur。
 
 /**
  * 打开浮层菜单
@@ -136,7 +136,7 @@ export function openMenu({ x, y, items, anchor, onPick, align = "left" }) {
       if (seq !== menuSeq) return;
       m.hidden = true;
       m.innerHTML = "";
-    }, MENU_EXIT_MS);
+    }, animationFastMs() + 20);
   };
 }
 
@@ -149,10 +149,9 @@ export function closeMenu() {
    -------------------------------------------------------------------------- */
 const backdrop = () => document.getElementById("modal-backdrop");
 
-/** 弹窗关闭动画的收尾定时器与序号（理由同 MENU_EXIT_MS） */
+/** 弹窗关闭动画的收尾定时器与序号（时长同样跟 --dur 走） */
 let modalCloseTimer = null;
 let modalSeq = 0;
-const MODAL_EXIT_MS = 220;
 
 /**
  * 打开弹窗
@@ -208,7 +207,7 @@ export function openModal(opts) {
       if (seq !== modalSeq) return;
       bd.hidden = true;
       bd.innerHTML = "";
-    }, MODAL_EXIT_MS);
+    }, animationMs() + 20);
   };
 
   // 取消按钮可能不只是「关掉」：例如改下载目录时，「不迁移」也是一个有效选择。
@@ -273,7 +272,7 @@ export function toast(message, { tone = "info", duration = 2800, icon: ic = null
   if (duration > 0) {
     setTimeout(() => {
       node.classList.add("is-leaving");
-      setTimeout(() => node.remove(), 220);
+      setTimeout(() => node.remove(), animationMs() + 20);
     }, duration);
   }
   return {

@@ -625,6 +625,13 @@ func (s *LyricsService) AutoMatch(songID string) (lyrics.Result, error) {
 		return lyrics.Result{LRC: "", Source: lyrics.SourceNone}, nil
 	}
 
+	// 有的来源会给「字级」歌词（逐字时间戳 / QRC / KRC）。本程序只认行级，
+	// 而且这份文本之后可能被写进歌曲文件，所以在落缓存之前先归一化一次。
+	lrc = lyrics.NormalizeLineLevel(lrc)
+	if strings.TrimSpace(lrc) == "" {
+		return lyrics.Result{LRC: "", Source: lyrics.SourceNone}, nil
+	}
+
 	// 匹配到就落缓存：下一次打开（甚至离线）也还在，这是「第二次打开又没有了」的修法。
 	// 写缓存失败不影响本次显示，所以忽略错误只记日志。
 	s.saveToCache(songID, lrc, "online:"+provider)
@@ -641,8 +648,8 @@ func (s *LyricsService) AutoMatch(songID string) (lyrics.Result, error) {
 // embed 是显式传入的（nil = 按配置走）：前端配置是防抖同步的，
 // 「刚开开关就应用歌词」时后端读到的可能还是旧值。
 func (s *LyricsService) Save(songID, lrc, source string, embed *bool) (map[string]any, error) {
-	lrc = strings.TrimSpace(lrc)
-	if lrc == "" {
+	raw := strings.TrimSpace(lrc)
+	if raw == "" {
 		return nil, errors.New("歌词内容为空")
 	}
 	if strings.TrimSpace(source) == "" {
@@ -651,11 +658,29 @@ func (s *LyricsService) Save(songID, lrc, source string, embed *bool) (map[strin
 	if s.cache == nil {
 		return nil, errors.New("歌词缓存不可用")
 	}
+
+	// 用户点「应用」时把字级歌词筛成行级：本程序只支持行级高亮，
+	// 而且下一步可能把它内嵌进歌曲文件 —— 逐字标记进了文件就会变成
+	// 别的播放器里的「正文」，所以必须在写入之前处理。
+	wasWordLevel := lyrics.HasWordTiming(raw)
+	lrc = lyrics.NormalizeLineLevel(raw)
+	if strings.TrimSpace(lrc) == "" {
+		return nil, errors.New("歌词内容为空")
+	}
+
 	if _, err := s.cache.SaveLyrics(songID, lrc, source); err != nil {
 		return nil, err
 	}
 
-	out := map[string]any{"ok": true, "cached": true, "source": source, "embedded": false}
+	out := map[string]any{
+		"ok":        true,
+		"cached":    true,
+		"source":    source,
+		"embedded":  false,
+		"lrc":       lrc,
+		"lineLevel": !wasWordLevel,
+		"converted": wasWordLevel,
+	}
 	song, ok := s.songs(songID)
 	if !ok {
 		// 在线试听曲目：没有本地文件可写，缓存就是全部
@@ -759,6 +784,8 @@ func errText(err error) string {
 // ThemeService 主题接口
 type ThemeService struct {
 	mgr *theme.Manager
+	// app 用于「导入主题」时弹系统目录选择器（main 里装配，测试时可空）。
+	app *application.App
 }
 
 // NewThemeService 构造服务
@@ -789,6 +816,52 @@ func (s *ThemeService) Dir() string { return s.mgr.Dir() }
 
 // RevealDir 在资源管理器中打开主题目录
 func (s *ThemeService) RevealDir() error { return revealPath(s.mgr.Dir()) }
+
+// Delete 删除一个主题（只删主题目录里的那个 CSS 文件，不碰其它任何东西）。
+//
+// 内置主题不能删（每次启动都会重新生成），由 internal/theme 给出可读原因。
+// 删完 manager 会自己重扫，前端拿到的是磁盘的最新状态。
+func (s *ThemeService) Delete(id string) error {
+	if s == nil || s.mgr == nil {
+		return errors.New("主题服务未就绪")
+	}
+	return s.mgr.Delete(id)
+}
+
+// Import 弹出系统目录选择器，把选中的文件夹里的主题 CSS 导入主题目录。
+//
+// 返回 { cancelled, imported: []string, skipped: []string }：
+// 用户取消时只有 cancelled=true；校验不通过时返回错误（前端弹错误提示），
+// 部分文件不合格时 imported/skipped 会同时有值，让前端能如实汇报。
+func (s *ThemeService) Import() (map[string]any, error) {
+	if s == nil || s.mgr == nil {
+		return nil, errors.New("主题服务未就绪")
+	}
+	if s.app == nil {
+		return nil, errors.New("当前环境不支持系统目录选择器")
+	}
+	selected, err := s.app.Dialog.OpenFile().
+		SetTitle("选择要导入的主题文件夹").
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		CanCreateDirectories(false).
+		PromptForSingleSelection()
+	if err != nil {
+		return nil, fmt.Errorf("打开目录选择器失败: %w", err)
+	}
+	if strings.TrimSpace(selected) == "" {
+		return map[string]any{"cancelled": true}, nil
+	}
+	res, err := s.mgr.ImportDir(selected)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"cancelled": false,
+		"imported":  res.Imported,
+		"skipped":   res.Skipped,
+	}, nil
+}
 
 // ---------------------------------------------------------------------------
 // Config 服务
@@ -1173,6 +1246,26 @@ type WindowService struct {
 	desktopText     string
 	desktopPlaying  bool
 	desktopFontSize int
+	// desktopTouched 记录「用户/前端是否已经自己操作过桌面歌词开关」。
+	//
+	// 启动恢复（early_theme.go#restoreDesktopLyricsOnStartup）在超时兜底那条
+	// 路径上会晚 20 秒才动手。如果这期间用户已经手动关掉了歌词窗口，恢复逻辑
+	// 不能再把它打开 —— 那个「我刚关掉它又自己冒出来」比不出现还烦人。
+	desktopTouched bool
+
+	// —— 桌面背景歌词（垫在桌面图标之下的壁纸层，见 desktop_wallpaper.go）——
+	//
+	// 与上面那组是**同一组单选按钮的两个选项**，所以两边的开关状态各自独立、
+	// 但任意时刻至多只有一个是开的。互斥由 setDesktopMode 单点保证。
+	wallpaperMu      sync.Mutex
+	wallpaperOn      bool
+	wallpaperTouched bool
+	wallpaper        desktopWallpaperContent
+	// wallpaperProbed 记录「平台能力是不是已经探测过」。
+	// 探测要枚举桌面窗口，没必要每次换行（每几秒一次）都做。
+	wallpaperProbed    bool
+	wallpaperSupported bool
+	wallpaperReason    string
 }
 
 // NewWindowService 构造服务（app 由 main 在创建应用后注入）
@@ -1365,14 +1458,16 @@ func sanitizeFileName(name string) string {
 }
 
 func revealPath(path string) error {
-	// 用 executil 创建进程：Windows GUI 程序直接 exec 控制台程序会闪出黑窗
+	// 用 executil.CommandVisible 而不是 Command：Windows 上 explorer 是 GUI
+	// 程序，带 SW_HIDE / CREATE_NO_WINDOW 启动时它新建的文件夹窗口也会是隐藏的
+	// （用户看到「提示成功但没反应」）。ffmpeg 这类控制台程序才需要隐藏窗口。
 	switch runtime.GOOS {
 	case "windows":
-		return executil.Command("explorer", path).Start()
+		return executil.CommandVisible("explorer", path).Start()
 	case "darwin":
-		return executil.Command("open", path).Start()
+		return executil.CommandVisible("open", path).Start()
 	default:
-		return executil.Command("xdg-open", path).Start()
+		return executil.CommandVisible("xdg-open", path).Start()
 	}
 }
 
@@ -1392,8 +1487,16 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			c.NativeBackdrop = bootstrap.NormalizeBackdropMode(asString(raw, c.NativeBackdrop))
 		case "animations":
 			c.Animations = asBool(raw, c.Animations)
+		case "animationsSpeed":
+			c.AnimationsSpeed = bootstrap.NormalizeAnimationsSpeed(asString(raw, c.AnimationsSpeed))
 		case "accentFromCover":
 			c.AccentFromCover = asBool(raw, c.AccentFromCover)
+		case "coverSeed":
+			// 封面取色的结果（前端算好之后写回）：只接受 #rgb / #rrggbb，
+			// 其它内容一律忽略 —— 这个值会被 early_theme.go 直接拼进 CSS。
+			c.CoverSeed = sanitizeSeedColor(asString(raw, c.CoverSeed))
+		case "coverSeed2":
+			c.CoverSeed2 = sanitizeSeedColor(asString(raw, c.CoverSeed2))
 		case "showAlbumColumn":
 			c.ShowAlbumColumn = asBool(raw, c.ShowAlbumColumn)
 		case "showLyrics":
@@ -1553,6 +1656,27 @@ func asBool(v any, def bool) bool {
 		return b
 	}
 	return def
+}
+
+// sanitizeSeedColor 规范化封面取色的结果：只保留 #rgb / #rrggbb，其它一律丢弃。
+//
+// 这个值会被 early_theme.go 直接拼进 <html> 的行内样式，所以必须在这里收紧；
+// 非法输入（用户手改配置、旧版本字段）返回空串 = 「没有取色记录」。
+func sanitizeSeedColor(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) != 4 && len(v) != 7 {
+		return ""
+	}
+	if v[0] != '#' {
+		return ""
+	}
+	for _, r := range v[1:] {
+		isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+		if !isHex {
+			return ""
+		}
+	}
+	return strings.ToLower(v)
 }
 
 // readSongCache 读取元数据缓存里登记过的文件路径（导出 m3u 用，避免再次扫盘）

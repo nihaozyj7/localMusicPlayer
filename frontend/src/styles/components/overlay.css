@@ -111,6 +111,31 @@
   color: var(--accent);
 }
 
+/* 「定位到当前播放」的落点提示：面板里条目本来就少，但长队列拖起来一样找不到。
+   与曲目表格用同一套反馈（见 tracktable.css 的 .track.is-located）。 */
+.queue-item.is-located {
+  animation: queue-locate 1.5s var(--ease-out) 1;
+}
+
+@keyframes queue-locate {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+  35% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .queue-item.is-located {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
+  }
+}
+
 .queue-item__index {
   flex: none;
   width: 20px;
@@ -403,6 +428,35 @@
   font-size: var(--fs-xs);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+}
+
+/* 开关样式的选项行：「歌曲播放完成后停止」（左侧文案 + 右侧开关，单选） */
+.sleep-panel__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  border: var(--hairline);
+}
+
+.sleep-panel__option-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sleep-panel__option-label {
+  font-size: var(--fs-md);
+  color: var(--text-1);
+}
+
+.sleep-panel__option-sub {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
 }
 
 .sleep-panel__row {

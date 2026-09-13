@@ -4,10 +4,22 @@
    整块区域默认必须**完全透明**：只显示歌词文字，不能有任何底色/边框/阴影容器，
    否则会变成一块盖在桌面上的色块。
 
-   两条硬约束：
+   三条硬约束：
      1. HTML 与 BODY 都要 background: transparent —— Wails 只把 WebView2 的
         默认背景设成透明，页面自己铺了底色照样是不透明的；
-     2. 不悬浮时一个字都不要用不透明背景（含 ::selection、滚动条）。
+     2. body::before（base.css 的主界面背景光斑层）必须显式关掉：
+        它是 position:fixed + inset:0 的整窗层，画的是 --bg-canvas 的白色
+        radial-gradient（alpha 0.035~0.075）。把这些「透明」写进 body 的
+        background 是**管不住**它的 —— 伪元素有自己的背景与环境，所以窗口上
+        会留下一层能明显看出来的浅色半透明色块（"蒙灰"感）；
+     3. 不悬浮时一个字都不要用不透明背景（含 ::selection、滚动条）。
+
+   ⚠ 作用域必须锁在 .dl-window（lyrics.html 的 <html class="dl-window">）：
+   构建配置里 cssCodeSplit:false 会把这张页面的 CSS 与主界面 CSS 合并成一个
+   文件，两个页面共用同一份 style-*.css。写成裸的 html, body 时，这条
+   background:transparent!important 会打到主界面上，把 body 的
+   background-color: var(--bg-window) 压掉 —— 窗口底色（近黑）直接透出来，
+   浅色主题下就是「大面积黑色、UI 看不见」。
 
    交互（需求）：
      · 鼠标移入窗口 → 变成「常规窗口」：出现底色、圆角、边框与悬浮控制栏
@@ -16,19 +28,34 @@
    注意以前窗口是半透明的一层，会让桌面看起来蒙了灰；现在默认不铺任何底色。
    ========================================================================== */
 
-html,
-body {
+html.dl-window,
+html.dl-window body {
   margin: 0;
   padding: 0;
   width: 100%;
   height: 100%;
-  /* 默认完全透明。显式写 !important 是为了压掉任何可能被加进来的半透明底色。 */
+  /* 默认完全透明。显式写 !important 是为了压掉 base.css 的 body 底色
+     （两个页面共用一份合并后的 CSS，见文件头）。 */
   background: transparent !important;
   overflow: hidden;
   /* 桌面歌词不需要文本选择，避免拖动时误选 */
   user-select: none;
   -webkit-user-select: none;
   font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+}
+
+/* 关掉主界面的背景光斑层（base.css 的 body::before）。
+   cssCodeSplit:false 让这张页面与主界面共用同一份 style-*.css（见文件头），
+   所以 base.css 的 body::before 也作用在这里：它是铺满整窗的
+   position:fixed + inset:0 层，背景是 --bg-canvas 的白色 radial-gradient
+   （alpha 0.075 / 0.05 / 0.035）。即使 html/body 的 background 都是
+   transparent，这层伪元素照样会画出来，在深色桌面上就是一块看得见的
+   浅色半透明矩形。
+
+   body::before 本身没有声明 display，因此这里改成 none 不会被过渡动画
+   拖住（它只 transition opacity），是立即生效的。 */
+html.dl-window body::before {
+  display: none !important;
 }
 
 /* 整窗可拖动：Wails v3 通过这个自定义属性识别拖动区域（不是 -webkit-app-region）。

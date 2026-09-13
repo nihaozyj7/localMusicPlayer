@@ -27,6 +27,7 @@ import { $, bindCoverFallback, icon, toast } from "./dom.js";
 import { backend, isWails } from "./bridge.js";
 import { playContext, registerOnlineSong, state } from "./store.js";
 import { esc, fmtCount, fmtTime } from "./utils.js";
+import { animationMs } from "./runtime-tokens.js";
 
 /* --------------------------------------------------------------------------
    模块状态（弹层实例只创建一次）
@@ -301,7 +302,7 @@ export function closeOverlay() {
   overlay.setAttribute("data-state", "closed");
   setTimeout(() => {
     if (!state.searchOpen && overlay) overlay.hidden = true;
-  }, 180);
+  }, animationMs() + 40);
 }
 
 function syncClearButton() {

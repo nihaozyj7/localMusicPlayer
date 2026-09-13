@@ -28,6 +28,7 @@
  * @property {string} preview - data URL，直接喂给 <img>
  * @property {string} message
  * @property {boolean} embedded - 是否已写回歌曲文件
+ * @property {boolean} [cancelled] - Cancelled 用户主动取消了系统文件选择器（不是错误，界面保持原样即可）
  * @property {number} [width] - Width/Height 图片实际尺寸（校验时解出来的，界面可以显示「500×500」）
  * @property {number} [height]
  */
@@ -43,6 +44,75 @@
  * @property {CoverItem[] | null} embedded - 文件内嵌的（只读展示）
  * @property {number} active
  * @property {string} [message]
+ */
+
+/**
+ * SkinPackRef 用户皮肤目录里的一个样式包。
+ * @typedef {Object} SkinPackRef
+ * @property {string} id
+ * @property {string} name
+ * @property {string} dir - 包目录绝对路径
+ * @property {string} module - 入口 js 绝对路径
+ * @property {string[] | null} styles - 样式表绝对路径（可能为空）
+ */
+
+/**
+ * SkinReference 播放界面样式（皮肤）的参考资料。
+ * @typedef {Object} SkinReference
+ * @property {string} dir - 样式根目录：第三方样式包都放这里
+ * @property {string} example - 示例样式包 _template 的目录；空 = 本机没有
+ * @property {string} current - 当前样式包目录；空 = 当前用的是内置样式
+ * @property {string} currentId - 前端传入的当前样式 id（原样回传，便于提示词里说明）
+ * @property {SkinPackRef[] | null} packs - 目录里已有的第三方样式包
+ */
+
+/**
+ * ThemeFileRef 主题目录里的一个主题文件。
+ * @typedef {Object} ThemeFileRef
+ * @property {string} id
+ * @property {string} name
+ * @property {string} mode
+ * @property {string} file - 主题 CSS 绝对路径
+ * @property {boolean} builtin
+ */
+
+/**
+ * ThemeReference 外观主题的参考资料。
+ * @typedef {Object} ThemeReference
+ * @property {string} dir
+ * @property {string} currentId - 当前主题 id（前端传入或按目录匹配）
+ * @property {string} currentName - 当前主题显示名
+ * @property {string} currentFile - 当前主题 CSS 绝对路径；空 = 没匹配到
+ * @property {ThemeFileRef[] | null} files - 目录里已有的主题（含内置三款）
+ */
+
+/**
+ * desktopLyricsSnapshot 桌面歌词窗口要显示的内容。
+ * @typedef {Object} desktopLyricsSnapshot
+ * @property {boolean} enabled
+ * @property {string} text
+ * @property {boolean} playing
+ * @property {number} fontSize
+ */
+
+/**
+ * desktopWallpaperSnapshot 推给背景歌词窗口的完整状态（内容 + 开关 + 平台能力）。
+ * @typedef {Object} desktopWallpaperSnapshot
+ * @property {boolean} enabled
+ * @property {string} text - —— 歌词 —— 当前行
+ * @property {string} prev - 上一行（淡显，给一点上下文）
+ * @property {string} next - 下一行（淡显）
+ * @property {boolean} playing
+ * @property {number} fontSize
+ * @property {string} title - —— 曲目 ——
+ * @property {string} artist
+ * @property {string} cover - Cover 是**小尺寸**封面（主窗口用 canvas 降采样后的 data URL）。 桌面背景本来就是大范围模糊的，用原图既慢又看不出差别。
+ * @property {string} veil - —— 背景观感（与主题/皮肤一致，避免桌面与主界面两个颜色）——
+ * @property {number} blur
+ * @property {number} scale
+ * @property {number} brightness
+ * @property {boolean} supported - Supported 当前系统是否支持「窗口垫到桌面图标之下」。 不支持的平台（非 Windows、或找不到桌面窗口）上前端会把这个按钮禁掉。
+ * @property {string} reason
  */
 
 // In interface mode, this file is likely to contain just comments.

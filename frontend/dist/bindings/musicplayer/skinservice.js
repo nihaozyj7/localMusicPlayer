@@ -22,6 +22,22 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails
 // @ts-ignore: Unused imports
 import * as skins$0 from "./internal/skins/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
+/**
+ * Delete 删除一个第三方样式包（连同它的整个目录）。
+ * 
+ * 内置三款样式打包在程序里、磁盘上没有对应目录，因此不在可删列表里
+ * （列表里也不会有它们）。删完 manager 会自己重扫，前端拿到最新状态。
+ * @param {string} id
+ * @returns {$CancellablePromise<void>}
+ */
+export function Delete(id) {
+    return $Call.ByID(1604778599, id);
+}
+
 /**
  * Dir 皮肤根目录路径
  * @returns {$CancellablePromise<string>}
@@ -31,11 +47,31 @@ export function Dir() {
 }
 
 /**
+ * Import 弹出系统目录选择器，把选中的样式包目录复制进皮肤目录。
+ * 
+ * 返回 { cancelled, id, imported }：用户取消时只有 cancelled=true；
+ * 目录不是合法样式包 / 同名已存在时返回错误（前端弹错误提示）。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function Import() {
+    return $Call.ByID(392996993);
+}
+
+/**
  * List 皮肤列表
  * @returns {$CancellablePromise<skins$0.SkinInfo[] | null>}
  */
 export function List() {
     return $Call.ByID(2450810548);
+}
+
+/**
+ * Reference 收集皮肤参考资料；currentID 是当前生效的样式 id（前端 state.pvMode）。
+ * @param {string} currentID
+ * @returns {$CancellablePromise<$models.SkinReference>}
+ */
+export function Reference(currentID) {
+    return $Call.ByID(2864796001, currentID);
 }
 
 /**

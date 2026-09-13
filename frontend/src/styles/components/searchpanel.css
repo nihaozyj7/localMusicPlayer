@@ -30,10 +30,13 @@
 
 /* 隐藏态必须真的不参与命中测试 —— 与 layers.css 同一个坑：
    上面写了 display: flex，会盖掉 [hidden] 的默认 display: none，
-   于是弹层虽然 hidden，却仍然透明地铺满整窗，吃掉所有点击。 */
-.search-overlay[hidden],
-.search-overlay[data-state="closed"] {
+   于是弹层虽然 hidden，却仍然透明地铺满整窗，吃掉所有点击。
+   注意关闭态**不能**写 display: none：那会掐断关闭过渡（详见 layers.css 的说明）。 */
+.search-overlay[hidden] {
   display: none;
+}
+
+.search-overlay[data-state="closed"] {
   pointer-events: none;
 }
 

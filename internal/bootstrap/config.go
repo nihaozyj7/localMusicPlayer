@@ -91,8 +91,11 @@ type Config struct {
 	GlassAlpha int    `json:"glassAlpha"`
 	// NativeBackdrop 窗口原生材质：off | auto | mica | acrylic | tabbed。
 	// 只有 Windows 会用得上，且必须在创建窗口时指定，改了要重启应用。
-	NativeBackdrop  string `json:"nativeBackdrop"`
-	Animations      bool   `json:"animations"`
+	NativeBackdrop string `json:"nativeBackdrop"`
+	Animations     bool   `json:"animations"`
+	// AnimationsSpeed 界面过渡速度：fast（0.2s）| medium（0.35s）| slow（0.5s）。
+	// 前端把它换算成 --dur 令牌，全站动效（含各种弹出层）都从这一个令牌取值。
+	AnimationsSpeed string `json:"animationsSpeed"`
 	AccentFromCover bool   `json:"accentFromCover"`
 	ShowAlbumColumn bool   `json:"showAlbumColumn"`
 	ShowLyrics      bool   `json:"showLyrics"`
@@ -137,8 +140,26 @@ type Config struct {
 	// 原来每张表头各有一个密度按钮，现在统一到设置里，对所有列表生效。
 	ListDensity string `json:"listDensity"`
 
+	// —— 封面取色（cover-dark 主题）——
+	// CoverSeed / CoverSeed2 是上一次从封面里提取得出的主色（十六进制）。
+	//
+	// 为什么要落盘：主题是在页面脚本跑起来之后才套用的，而取色还要等封面
+	// 图片解码完 —— 于是「启动 → 先用主题里写死的占位灰 → 取完色再整体重绘」，
+	// 肉眼看就是先黑一下、颜色还偏灰。把上次的取色结果记下来，Go 侧就能在
+	// 页面首屏之前把它写进 <html>，首帧直接就是对的颜色（见 early_theme.go）。
+	CoverSeed  string `json:"coverSeed"`
+	CoverSeed2 string `json:"coverSeed2"`
+
 	// ShowDesktopLyrics 是否显示桌面歌词（独立透明置顶窗口）。
 	ShowDesktopLyrics bool `json:"showDesktopLyrics"`
+	// ShowDesktopWallpaper 是否显示桌面背景歌词（铺满桌面、压在桌面图标之下的
+	// 壁纸层窗口，见 desktop_wallpaper.go）。
+	//
+	// 与 ShowDesktopLyrics 是**二选一**：两者都在回答同一个问题「歌词放在桌面的
+	// 哪儿」，同时开着既是双份资源，视觉上也是两条歌词叠在一起。互斥由
+	// WindowService.setDesktopMode 单点保证，配置里同时为 true 时以 wallpaper 优先
+	// （见 main.go 的启动恢复）。
+	ShowDesktopWallpaper bool `json:"showDesktopWallpaper"`
 	// SleepAfterSong 定时停止的「播放完歌曲（延长到歌曲播放结束）」选项。
 	//
 	// 打开后：倒计时到点时**不立刻暂停**，而是等当前这首播完再停。
@@ -228,6 +249,7 @@ func DefaultConfig() *Config {
 		GlassAlpha:      62,
 		NativeBackdrop:  "off",
 		Animations:      true,
+		AnimationsSpeed: "fast",
 		ShowAlbumColumn: true,
 		ShowLyrics:      true,
 		PlayMode:        "sequence",
@@ -263,9 +285,10 @@ func DefaultConfig() *Config {
 		RowClickAction: "next",
 		ListDensity:    "cozy",
 
-		ShowDesktopLyrics: false,
-		SleepAfterSong:    false,
-		ShuffleMode:       "reshuffle",
+		ShowDesktopLyrics:    false,
+		ShowDesktopWallpaper: false,
+		SleepAfterSong:       false,
+		ShuffleMode:          "reshuffle",
 
 		// 封面轮播默认关闭：多封面时才会有意义，用户明确打开才动
 		CoverCarousel:         false,
@@ -320,6 +343,21 @@ func NormalizeRowClickAction(v string) string {
 
 // ListDensities 列表密度可选值
 var ListDensities = []string{"compact", "cozy", "roomy"}
+
+// AnimationsSpeeds 界面过渡速度可选值（与前端 settings.js 的分段控件一一对应）。
+// 默认 fast = 0.2s；medium / slow 分别是 0.35s / 0.5s。
+var AnimationsSpeeds = []string{"fast", "medium", "slow"}
+
+// NormalizeAnimationsSpeed 规范化过渡速度，非法值落回 fast（与历史默认 200ms 一致）。
+func NormalizeAnimationsSpeed(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	for _, ok := range AnimationsSpeeds {
+		if ok == v {
+			return v
+		}
+	}
+	return "fast"
+}
 
 // normalizeLyricsSources 规范化歌词来源优先级。
 //
@@ -573,6 +611,7 @@ func normalize(cfg *Config) {
 	}
 	cfg.RowClickAction = NormalizeRowClickAction(cfg.RowClickAction)
 	cfg.ListDensity = NormalizeListDensity(cfg.ListDensity)
+	cfg.AnimationsSpeed = NormalizeAnimationsSpeed(cfg.AnimationsSpeed)
 	if cfg.ShuffleMode != "once" {
 		cfg.ShuffleMode = "reshuffle"
 	}
@@ -615,6 +654,13 @@ func normalize(cfg *Config) {
 		if cfg.Playlists[i].SongIDs == nil {
 			cfg.Playlists[i].SongIDs = []string{}
 		}
+	}
+
+	// 桌面歌词 / 桌面背景歌词是一组**单选**按钮。手改配置（或者从更早的版本
+	// 升上来）把它们同时写成 true 时，这里就地收敛成「以背景歌词为准」——
+	// 否则每次启动都会同时恢复两个消费资源的窗口，画面上还是两条歌词叠着。
+	if cfg.ShowDesktopWallpaper && cfg.ShowDesktopLyrics {
+		cfg.ShowDesktopLyrics = false
 	}
 }
 

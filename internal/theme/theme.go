@@ -162,6 +162,132 @@ func (m *Manager) CSS(id string) (string, error) {
 // OpenFolderPath 返回主题目录（供资源管理器打开）
 func (m *Manager) OpenFolderPath() string { return m.dir }
 
+// ImportResult 一次「从文件夹导入主题」的结果。
+//
+// Imported 给出真正落地的主题 id（取自 :root[data-theme="…"]，与文件名不一定相同）；
+// Skipped 逐条说明哪个文件为什么没进来（模板、隐藏文件、缺选择器…），
+// 让前端能把「导入了 0 个」讲清楚，而不是只报一句失败。
+type ImportResult struct {
+	Imported []string `json:"imported"`
+	Skipped  []string `json:"skipped"`
+}
+
+// ImportDir 把用户选中的文件夹里的主题 CSS 复制进主题目录。
+//
+// 合法性判定：文件夹里至少有一个 .css，且该文件里出现
+// :root[data-theme="…"] 选择器 —— 主题本来就只声明这组令牌，
+// 随手选到图片文件夹 / 空白目录会被明确挡下来。
+// 只导入一层（主题目录是平的，不支持嵌套子目录）。
+func (m *Manager) ImportDir(src string) (ImportResult, error) {
+	res := ImportResult{Imported: []string{}, Skipped: []string{}}
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return res, fmt.Errorf("没有选择文件夹")
+	}
+	st, err := os.Stat(src)
+	if err != nil || !st.IsDir() {
+		return res, fmt.Errorf("不是有效的文件夹：%s", src)
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return res, fmt.Errorf("读取文件夹失败：%w", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".css") {
+			continue
+		}
+		name := e.Name()
+		base := strings.TrimSuffix(name, filepath.Ext(name))
+		if strings.HasPrefix(base, "_") || strings.HasPrefix(base, ".") {
+			res.Skipped = append(res.Skipped, name+"（模板 / 隐藏文件不参与导入）")
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(src, name))
+		if err != nil {
+			res.Skipped = append(res.Skipped, name+"（读不到文件）")
+			continue
+		}
+		sel := reRootSel.FindSubmatch(raw)
+		if len(sel) != 2 {
+			res.Skipped = append(res.Skipped, name+"（缺少 :root[data-theme=\"…\"] 选择器，不像主题）")
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(m.dir, name), raw, 0o644); err != nil {
+			res.Skipped = append(res.Skipped, name+"（写入失败："+err.Error()+"）")
+			continue
+		}
+		res.Imported = append(res.Imported, string(sel[1]))
+	}
+	switch {
+	case len(res.Imported) > 0:
+		if err := m.Reload(); err != nil {
+			return res, err
+		}
+		return res, nil
+	case len(res.Skipped) > 0:
+		return res, fmt.Errorf("没有导入任何主题：%s", strings.Join(res.Skipped, "；"))
+	default:
+		// 用户可能选中了「装着主题的子文件夹」的外层目录：这时明确指出往里一层，
+		// 比只回一句「没有 .css」有用。
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			names, err := os.ReadDir(filepath.Join(src, e.Name()))
+			if err != nil {
+				continue
+			}
+			for _, n := range names {
+				if !n.IsDir() && strings.HasSuffix(strings.ToLower(n.Name()), ".css") {
+					return res, fmt.Errorf("文件夹里没有 .css 主题文件；主题在子文件夹「%s」里，请选中它再导入", e.Name())
+				}
+			}
+		}
+		return res, fmt.Errorf("文件夹里没有 .css 主题文件")
+	}
+}
+
+// Delete 删除一个用户主题（只删主题目录里的那一个 CSS 文件）。
+//
+// 为什么内置主题不允许删：它们是**每次启动时**由 syncBuiltin 从二进制里补写到
+// 主题目录的，删掉只会在下次启动又冒出来。与其让用户看到「删了又回来」，
+// 不如在这里直接说清楚。
+//
+// 删除之后立刻重扫一遍：列表是「磁盘的真话」，不重扫就会出现
+// 「文件删了、界面还在」——这正是本方法要修掉的问题。
+func (m *Manager) Delete(id string) error {
+	key := strings.TrimSpace(id)
+	info, ok := m.byID[key]
+	if !ok {
+		return fmt.Errorf("主题不存在: %s", id)
+	}
+	if info.Builtin {
+		return fmt.Errorf("「%s」是内置主题，程序每次启动都会重新生成，不能删除", info.Name)
+	}
+	if strings.TrimSpace(info.File) == "" {
+		return fmt.Errorf("主题 %s 没有对应的文件", id)
+	}
+	// 双保险：只允许删主题目录里的文件。File 是扫描时自己拼出来的，
+	// 正常不会跑到目录外，但删除是不可撤销的动作，值得再确认一次。
+	if !withinDir(m.dir, info.File) {
+		return fmt.Errorf("拒绝删除主题目录之外的文件: %s", info.File)
+	}
+	if err := os.Remove(info.File); err != nil {
+		return fmt.Errorf("删除主题失败: %w", err)
+	}
+	return m.Reload()
+}
+
+// withinDir 判断 target 是否落在 dir 之内（相等也算）。
+func withinDir(dir, target string) bool {
+	rel, err := filepath.Rel(dir, target)
+	if err != nil {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	return rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
 // BuiltinIDs 内置主题 id 列表
 func (m *Manager) BuiltinIDs() []string {
 	out := []string{}

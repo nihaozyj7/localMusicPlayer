@@ -27,8 +27,16 @@ const DEFAULT_CONFIG = {
   glassAlphaCustom: false, // 用户是否手动调整过面板透明度（true 才按配置实时合成）
   nativeBackdrop: "off", // 窗口原生材质：off | auto | mica | acrylic | tabbed（改了要重启）
   animations: true,
+  // 过渡速度：fast（0.2s，默认）| medium（0.35s）| slow（0.5s）。
+  // 与 Go 侧 bootstrap.Config.AnimationsSpeed 保持一致。
+  animationsSpeed: "fast",
   sidebarWidth: 232,
   accentFromCover: false,
+  // 封面取色的结果（#rrggbb）。由前端解码封面得到，然后随配置写回后端 ——
+  // 后端在页面加载前用它生成首帧主题（见 early_theme.go），
+  // 这样封面取色主题启动时不会先黑一下再重绘。
+  coverSeed: "",
+  coverSeed2: "",
   showAlbumColumn: true,
   showLyrics: true,
   playMode: "sequence",
@@ -44,7 +52,9 @@ const DEFAULT_CONFIG = {
   lyricsLines: 7,
   // 桌面歌词：独立的透明置顶窗口（区别于详情页里的歌词区）
   showDesktopLyrics: false,
-  // 定时停止：「播放完歌曲」= 倒计时到点后等当前这首播完再停（延长到歌曲结束）
+  // 桌面背景歌词：与桌面歌词是二选一的一组单选按钮（见 desktop-mode.js）
+  showDesktopWallpaper: false,
+  // 定时停止：「歌曲播放完成后停止」= 倒计时到点后等当前这首播完再停（延长到歌曲结束）
   sleepAfterSong: false,
 
   /* 随机播放行为：reshuffle（打乱后播完重新打乱）| once（打乱后顺序播完即停） */
@@ -987,7 +997,10 @@ const SYNCED_KEYS = [
   "glassAlpha",
   "nativeBackdrop",
   "animations",
+  "animationsSpeed",
   "accentFromCover",
+  "coverSeed",
+  "coverSeed2",
   "showAlbumColumn",
   "showLyrics",
   "playMode",
@@ -1001,6 +1014,7 @@ const SYNCED_KEYS = [
   "lyricsLines",
   "lyricsSources",
   "showDesktopLyrics",
+  "showDesktopWallpaper",
   "sleepAfterSong",
   "shuffleMode",
   "aiBaseUrl",

@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"context"
@@ -162,6 +162,36 @@ func TestLyricsSaveEmbedsIntoFile(t *testing.T) {
 	}
 	if got.LRC != "[00:05.00]写进文件的歌词" {
 		t.Fatalf("内嵌歌词内容不对: %q", got.LRC)
+	}
+}
+
+// 字级歌词（逐字时间戳）在「应用」时先归一化成行级，再写缓存与歌曲文件。
+func TestLyricsSaveNormalizesWordLevel(t *testing.T) {
+	f := newLyricsFixture(t)
+
+	res, err := f.svc.Save("t_m4a", "[00:12.00]<00:12.00>你<00:12.30>好", "online:qq", boolPtr(true))
+	if err != nil {
+		t.Fatalf("Save 失败: %v", err)
+	}
+	if res["lrc"] != "[00:12.00]你好" {
+		t.Fatalf("返回的歌词应当是行级，实际 %v", res["lrc"])
+	}
+	if res["converted"] != true || res["lineLevel"] != false {
+		t.Fatalf("应当标记为「做过字级转换」: %+v", res)
+	}
+
+	// 清掉缓存层，只从文件里读：写进文件的也必须已经是行级
+	f.setConfig(t, map[string]any{"lyricsSources": []any{"embedded"}})
+	svc2 := f.reload(t)
+	got, err := svc2.Load("t_m4a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Source != lyrics.SourceEmbedded {
+		t.Fatalf("歌词没有写进文件（来源 %q）", got.Source)
+	}
+	if got.LRC != "[00:12.00]你好" {
+		t.Fatalf("内嵌进文件的应是行级歌词，实际 %q", got.LRC)
 	}
 }
 

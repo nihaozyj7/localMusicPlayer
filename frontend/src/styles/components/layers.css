@@ -45,19 +45,26 @@
 }
 
 /* --------------------------------------------------------------------------
-   隐藏态必须是「真的不参与命中测试」
+   隐藏态：只有 [hidden] 才 display: none
    --------------------------------------------------------------------------
-   [hidden] 的浏览器默认样式是 display: none，但下面这条规则里写了
-   display: flex —— 优先级更高的类选择器会把它盖掉，于是层虽然 hidden，
-   却仍然占满整个窗口、透明地待在原地，把底下所有按钮的点击全部吃掉
-   （表现为「点任何按钮都没反应」，而且完全看不出原因：层是 opacity:0）。
-   所以这里显式兜住隐藏态，并且再加一道 pointer-events 保险。
+   [hidden] 的浏览器默认样式是 display: none，但上面写了 display: flex ——
+   优先级更高的类选择器会把它盖掉，于是层虽然 hidden，却仍然占满整个窗口、
+   透明地待在原地，把底下所有按钮的点击全部吃掉（表现为「点任何按钮都没反应」）。
+   所以必须显式兜住 [hidden]。
+
+   关闭态**刻意不再写 display: none**：那样会在 setAttribute("data-state","closed")
+   的同一帧把元素从渲染树上摘掉，关闭过渡根本没机会播放（表现为「打开有动画、
+   关闭是啪地消失」）。现在关闭期间保持 display:flex + opacity:0，由 JS 在过渡
+   结束后补上 hidden（等待时长跟 --dur 走，见 runtime-tokens.js#animationMs）。
+   代价是这一小段时间元素仍在布局里 —— 用 pointer-events 兜住命中测试即可。
    -------------------------------------------------------------------------- */
 .settings-layer[hidden],
-.cover-layer[hidden],
+.cover-layer[hidden] {
+  display: none;
+}
+
 .settings-layer[data-state="closed"],
 .cover-layer[data-state="closed"] {
-  display: none;
   pointer-events: none;
 }
 
@@ -245,16 +252,6 @@
   flex-wrap: wrap;
 }
 
-.cover-panel__url {
-  display: flex;
-  gap: var(--sp-2);
-}
-
-.cover-panel__url .field {
-  flex: 1;
-  min-width: 0;
-}
-
 .cover-panel__status {
   min-height: 18px;
   font-size: var(--fs-sm);
@@ -352,15 +349,21 @@
   flex: 1;
 }
 
-/* —— 关键词搜索行 —— */
+/* —— 搜索行：关键词 + 联网搜索 + 选择本地图片 ——
+   窗口窄时允许换行，否则三个控件会把输入框挤到几乎没法用。 */
 .cover-panel__search {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--sp-2);
 }
 
 .cover-panel__search .field {
-  flex: 1;
+  flex: 1 1 180px;
   min-width: 0;
+}
+
+.cover-panel__search .btn {
+  flex: none;
 }
 
 /* —— 候选多选：选中态 + 勾选角标 + 底部应用条 —— */

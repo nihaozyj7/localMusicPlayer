@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	"musicplayer/internal/bootstrap"
 	"musicplayer/internal/coverfetch"
 	"musicplayer/internal/meta"
@@ -35,6 +37,9 @@ type CoverService struct {
 
 	// songs 由 main 注入：按 id 查本地歌曲（拿标题/歌手/专辑/路径）
 	songs func(id string) (bootstrap.Song, bool)
+	// app 由 main 注入：只有「选择本地图片」需要它弹系统文件选择器。
+	// 其它封面能力（联网搜索 / 缓存 / 写回）都是纯后端逻辑，不依赖窗口。
+	app *application.App
 	// ai 用于自动匹配前清洗脏元数据（可选，见 services_ai.go）
 	ai *AiService
 	// emitFn 事件发送
@@ -68,6 +73,8 @@ type CoverResult struct {
 	Preview  string `json:"preview"` // data URL，直接喂给 <img>
 	Message  string `json:"message"`
 	Embedded bool   `json:"embedded"` // 是否已写回歌曲文件
+	// Cancelled 用户主动取消了系统文件选择器（不是错误，界面保持原样即可）
+	Cancelled bool `json:"cancelled,omitempty"`
 	// Width/Height 图片实际尺寸（校验时解出来的，界面可以显示「500×500」）
 	Width  int `json:"width,omitempty"`
 	Height int `json:"height,omitempty"`
@@ -299,6 +306,82 @@ func (s *CoverService) Fetch(rawURL string) (CoverResult, error) {
 		Preview: dataURL(mime, data.Body),
 		Width:   info.Width, Height: info.Height,
 	}, nil
+}
+
+// maxLocalImageBytes 单张本地图片的体积上限。
+//
+// 封面用不着几十 MB 的原图；设上限是为了避免用户误选一个巨大文件后，
+// 在 base64 编码 + 跨进程传输（data URL 还会膨胀约 1/3）上把界面卡住。
+const maxLocalImageBytes = 32 << 20
+
+// PickLocal 弹出系统文件选择器，让用户从本地挑一张图片当封面。
+//
+// 与联网搜索的区别只在「图从哪来」：这里读文件、体检、转成 data URL 预览，
+// 之后走的是完全相同的「候选 → 勾选 → 应用」流程 ——
+// 前端把结果当成一张候选塞进列表，用户再点「应用」。
+//
+// 只有能解码的格式才有意义：标准库注册的是 JPEG / PNG / GIF，
+// 所以文件过滤器也只承诺这几种（选别的会在体检那一步被明确挡下来）。
+// 用户取消选择时返回 Cancelled=true，不是错误。
+func (s *CoverService) PickLocal() (CoverResult, error) {
+	if s.app == nil {
+		return CoverResult{}, errors.New("当前环境不支持系统文件选择器")
+	}
+	selected, err := s.app.Dialog.OpenFile().
+		SetTitle("选择一张图片作为封面").
+		CanChooseFiles(true).
+		CanChooseDirectories(false).
+		AddFilter("图片", "*.jpg;*.jpeg;*.png;*.gif").
+		AddFilter("所有文件", "*.*").
+		PromptForSingleSelection()
+	if err != nil {
+		return CoverResult{}, fmt.Errorf("打开文件选择器失败: %w", err)
+	}
+	path := strings.TrimSpace(selected)
+	if path == "" {
+		return CoverResult{Cancelled: true}, nil
+	}
+	return localCover(path), nil
+}
+
+// localCover 读一个本地图片文件并体检，返回可直接当候选用的结果。
+//
+// 单独拆出来（而不是塞在 PickLocal 里）是为了能直接测：系统文件选择器在
+// 单元测试里根本跑不起来，而「读文件 → 体检 → data URL」这段才是真正会出错的地方。
+func localCover(path string) CoverResult {
+	st, err := os.Stat(path)
+	if err != nil {
+		return CoverResult{Message: "读不到这个文件：" + errText(err)}
+	}
+	if st.IsDir() {
+		return CoverResult{Message: "这是一个文件夹，请选择图片文件"}
+	}
+	if st.Size() > maxLocalImageBytes {
+		return CoverResult{
+			Message: fmt.Sprintf("图片太大了（%.1f MB），请选一张小于 %d MB 的",
+				float64(st.Size())/(1<<20), maxLocalImageBytes>>20),
+		}
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return CoverResult{Message: "读取文件失败：" + errText(err)}
+	}
+	// 和联网候选同一套体检：解不出来、尺寸过小、纯白占位图都在这里挡掉。
+	// 不能等到「应用」时才报错 —— 那样用户已经白选了一次。
+	info, err := coverfetch.InspectImage(body)
+	if err != nil {
+		return CoverResult{Message: "这张图不能用：" + err.Error()}
+	}
+	mime := coverfetch.NormalizeMIME("", body)
+	return CoverResult{
+		OK:       true,
+		Provider: "本地图片",
+		Source:   filepath.Base(path),
+		Preview:  dataURL(mime, body),
+		Width:    info.Width,
+		Height:   info.Height,
+	}
 }
 
 // Apply 把用户选中的封面设为这首歌的封面。
@@ -593,7 +676,7 @@ func (s *CoverService) List(songID string) (CoverSet, error) {
 	}
 	set := s.coverSetOf(songID)
 	if len(set.Items) == 0 && len(set.Embedded) == 0 {
-		set.Message = "这首歌还没有封面（可以联网搜索、粘贴图片地址，或从文件内嵌相册里挑一张）"
+		set.Message = "这首歌还没有封面（可以联网搜索、选择本地图片，或从文件内嵌相册里挑一张）"
 	}
 	return set, nil
 }

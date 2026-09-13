@@ -15,12 +15,40 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails
 // @ts-ignore: Unused imports
 import * as theme$0 from "./internal/theme/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
+/**
+ * Delete 删除一个主题（只删主题目录里的那个 CSS 文件，不碰其它任何东西）。
+ * 
+ * 内置主题不能删（每次启动都会重新生成），由 internal/theme 给出可读原因。
+ * 删完 manager 会自己重扫，前端拿到的是磁盘的最新状态。
+ * @param {string} id
+ * @returns {$CancellablePromise<void>}
+ */
+export function Delete(id) {
+    return $Call.ByID(1207602595, id);
+}
+
 /**
  * Dir 主题目录路径
  * @returns {$CancellablePromise<string>}
  */
 export function Dir() {
     return $Call.ByID(2215236143);
+}
+
+/**
+ * Import 弹出系统目录选择器，把选中的文件夹里的主题 CSS 导入主题目录。
+ * 
+ * 返回 { cancelled, imported: []string, skipped: []string }：
+ * 用户取消时只有 cancelled=true；校验不通过时返回错误（前端弹错误提示），
+ * 部分文件不合格时 imported/skipped 会同时有值，让前端能如实汇报。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function Import() {
+    return $Call.ByID(910012421);
 }
 
 /**
@@ -38,6 +66,18 @@ export function List() {
  */
 export function Load(id) {
     return $Call.ByID(4291046516, id);
+}
+
+/**
+ * Reference 收集主题参考资料；currentID 是当前生效的主题 id。
+ * 
+ * 主题 id 取自 CSS 里的 :root[data-theme="…"]，与文件名不一定相同，所以这里
+ * 直接返回**文件名对应的绝对路径**（Info.File），而不是让前端拿 id 去猜路径。
+ * @param {string} currentID
+ * @returns {$CancellablePromise<$models.ThemeReference>}
+ */
+export function Reference(currentID) {
+    return $Call.ByID(3236787989, currentID);
 }
 
 /**

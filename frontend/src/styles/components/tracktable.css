@@ -213,6 +213,50 @@
    各写一半，正是「列表高亮和正在播放的不是同一首歌」的根源。
    现在统一：选中 = 正在播放 = state.currentId，标记只用 aria-current。 */
 
+/* —— 「定位到当前播放」的落点提示 ——
+   点工具条上的定位按钮后，当前行已经滚到眼前了，但它和普通高亮长得一样，
+   长列表里一眼认不出来。所以额外闪一下：只描边、不动布局（box-shadow 不占空间），
+   动画结束由 JS 摘掉 class。 */
+.track.is-located {
+  animation: track-locate 1.5s var(--ease-out) 1;
+}
+
+@keyframes track-locate {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+  35% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
+/* 关了动画时 --dur 归零，这条闪一下的动画会瞬间跑到终点（等于没闪）：
+   补一个静态描边，保证「点了有反应」。 */
+:root {
+  --locate-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track.is-located {
+    animation: none;
+    box-shadow: var(--locate-ring);
+  }
+}
+
+/* 吸顶表头下面的滚动留白：定位时把目标行停在表头下方，而不是贴到表头底下。
+   scroll-margin-top 给 scrollIntoView 用；scroll-padding-top 给滚动容器自己用
+   （两条路径都留着，见 tracks.js#scrollAndHighlight）。 */
+.track {
+  scroll-margin-top: calc(34px + var(--sp-4));
+}
+
+.content-body {
+  scroll-padding-top: calc(34px + var(--sp-4));
+}
+
 /* —— 拖拽 —— */
 .track__handle {
   display: grid;

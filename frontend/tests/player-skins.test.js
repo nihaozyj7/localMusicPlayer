@@ -24,6 +24,7 @@ import {
   parseLrc,
   registerSkin,
   resolveSkin,
+  unregisterSkin,
   escapeHtml,
 } from "@musicplayer/player-skins";
 
@@ -150,7 +151,25 @@ test("registerSkin：第三方样式注册后能被取到，并在清单里按 o
   assert.equal(getSkin("test-skin"), skin);
   assert.equal(listSkins()[0].id, "test-skin", "order 更小的应排在最前");
   // 清理，避免影响其它用例
-  registerSkin({ id: "test-skin", name: "测试样式", order: 999, mount() {} });
+  unregisterSkin("test-skin");
+});
+
+test("unregisterSkin：注销后列表里不再有它（「删了还在」的修法之一）", () => {
+  registerSkin({ id: "temp-skin", name: "临时样式", order: 777, mount() {} });
+  assert.ok(getSkin("temp-skin"));
+  assert.equal(unregisterSkin("temp-skin"), true);
+  assert.equal(getSkin("temp-skin"), null);
+  assert.equal(
+    listSkins().some((s) => s.id === "temp-skin"),
+    false,
+    "注销后不应再出现在样式清单里"
+  );
+  // 幂等：再注销一次什么都不做
+  assert.equal(unregisterSkin("temp-skin"), false);
+  // 内置样式永远不注销（它们来自包本身，磁盘上没有对应目录）
+  assert.equal(unregisterSkin("classic"), false);
+  assert.ok(getSkin("classic"));
+  assert.equal(unregisterSkin(""), false);
 });
 
 /* --------------------------------------------------------------------------

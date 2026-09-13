@@ -525,7 +525,10 @@
   font-weight: var(--fw-medium);
 }
 
-/* —— 播放界面样式（皮肤）卡片 —— */
+/* —— 播放界面样式（皮肤）卡片 ——
+   卡片本身是 <div>，里面两个按钮：占满卡片的「选中」按钮 + 右上角的「移除」。
+   之所以不再是「整张卡片就是一个 <button>」：直接在按钮里再放一个按钮是非法
+   HTML，解析器会把外层按钮提前闭合，卡片结构会散。 */
 .skincard {
   position: relative;
   display: flex;
@@ -543,12 +546,22 @@
     transform var(--dur-fast) var(--ease);
 }
 
+.skincard__pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  width: 100%;
+  flex: 1 1 auto;
+  text-align: left;
+}
+
 .skincard:hover {
   background: var(--surface-2);
   transform: translateY(-2px);
 }
 
-.skincard[aria-pressed="true"] {
+.skincard[data-active="true"] {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent) inset;
 }
@@ -611,12 +624,22 @@
     transform var(--dur-fast) var(--ease);
 }
 
+/* 与 .skincard__pick 同样的道理：选中热区是内层按钮，移除按钮在外层 */
+.themecard__pick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  width: 100%;
+  flex: 1 1 auto;
+  text-align: left;
+}
+
 .themecard:hover {
   background: var(--surface-2);
   transform: translateY(-2px);
 }
 
-.themecard[aria-pressed="true"] {
+.themecard[data-active="true"] {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent) inset;
 }
@@ -658,6 +681,47 @@
   color: var(--accent-text);
   font-size: 10px;
   font-weight: var(--fw-semibold);
+}
+
+/* —— 卡片右下角的「移除」按钮 ——
+   放在右下角而不是右上角：右上角是「内置 / 第三方」徽标的位置，两者叠在一起
+   会互相盖住。文字行（id）通常很短，右下角正好空着。
+   常显而不是悬停才出现：它就是这个设置的入口，藏起来会让人以为没有这个功能。 */
+.carddel {
+  position: absolute;
+  right: var(--sp-2);
+  bottom: var(--sp-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--r-full);
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: var(--hairline);
+  font-size: var(--fs-xs);
+  transition:
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
+}
+
+.carddel svg {
+  width: 13px;
+  height: 13px;
+}
+
+.carddel:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--surface-3);
+}
+
+/* 带「移除」按钮的卡片底部多留一行：按钮是绝对定位的，不留就会被 id 文字压住 */
+.skincard:has(.carddel),
+.themecard:has(.carddel) {
+  padding-bottom: calc(var(--sp-3) + 26px);
 }
 
 .themes__add {
