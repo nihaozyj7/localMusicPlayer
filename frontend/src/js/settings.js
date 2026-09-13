@@ -768,7 +768,7 @@ function aiCard() {
 /**
  * 播放界面样式（皮肤）卡片。
  *
- * 三种内置样式已经从主程序抽到独立包 @musicplayer/player-skins，
+ * 内置样式已经从主程序抽到独立包 @musicplayer/player-skins，
  * 用户还可以往数据目录 `<数据目录>/player-skins/<id>/` 丢一个第三方样式
  * （skin.js + 可选 skin.css / skin.json），点「重新扫描样式」即可出现。
  * 卡片里同时放着轮播的两个设置 —— 它们本来就属于「播放界面怎么显示」。
@@ -818,7 +818,7 @@ function playerCard() {
         <div class="card__icon">${icon("disc")}</div>
         <div class="card__titles">
           <div class="card__title">播放界面样式</div>
-          <div class="card__desc">内置三种样式来自独立包 player-skins（接口版本 ${PLAYER_SKIN_API_VERSION}）；把第三方样式放进样式目录即可扩展</div>
+          <div class="card__desc">内置样式来自独立包 player-skins（接口版本 ${PLAYER_SKIN_API_VERSION}）；把第三方样式放进样式目录即可扩展</div>
         </div>
         <div class="card__actions">
           <button class="btn btn--sm" type="button" data-act="reload-skins">${icon("refresh")}<span>重新扫描样式</span></button>

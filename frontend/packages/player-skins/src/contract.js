@@ -136,7 +136,7 @@ export const PATCH_TYPES = [
  * @property {string} [description]
  * @property {boolean} [background] 需要整窗背景层
  * @property {string[]} [styles] CSS 相对路径（外部皮肤用；内置皮肤由打包器引入）
- * @property {boolean} [builtin] 是否内置样式（内置三种省略此字段，视为 true）
+ * @property {boolean} [builtin] 是否内置样式（内置样式省略此字段，视为 true）
  * @property {string} [source] 外部样式的来源描述（目录名，便于排错）
  * @property {(ctx: SkinContext) => void} mount
  * @property {(ctx: SkinContext, patch: {type: string} & Record<string, any>) => void} [update]

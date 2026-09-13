@@ -3,7 +3,27 @@
 播放详情页的**样式包**（皮肤）：负责背景渲染、歌词渲染与交互；
 音频、进度、曲目、封面、歌词文本、设置项全部由宿主提供并主动推送。
 
-三种内置样式：`classic`（经典唱片）· `immersive`（沉浸）· `minimal`（简约）。
+八种内置样式（按样式按钮组顺序）：
+
+| id          | 名称              | 需要整窗背景层 | 一句话                                            |
+| ----------- | ----------------- | -------------- | ------------------------------------------------- |
+| `classic`   | 经典              | 否             | 左唱片右歌词，信息最完整                          |
+| `immersive` | 沉浸              | 是             | 封面虚化铺满整窗，歌词浮在中间                    |
+| `minimal`   | 简约              | 否             | 无封面，居中歌词                                  |
+| `anime`     | 二次元手绘        | 是             | 漫画分镜 + 网点纸，逐字弹跳与马克笔扫光           |
+| `cosmos`    | 深邃宇宙          | 是             | 透视星场 + 轨道行星，纵深运镜与星尘歌词           |
+| `wasteland` | 科幻末世          | 是             | 废墟控制台与故障艺术，等宽文字解码动效            |
+| `arcade`    | 游戏风            | 是             | 街机框体 + 计分 HUD，对话盒式打字与震屏           |
+| `magia`     | 魔法阵 · 手绘次元 | 是             | 手绘夜景 + 旋转魔法阵（原第三方样式，已并入内置） |
+
+四个特效样式（`anime` / `cosmos` / `wasteland` / `arcade`）共用两个零件：
+
+- `createFxLyrics(host, opts)`（`src/fx-lyrics.js` + `src/fx-lyrics.css`）：
+  把每行拆成**字素单元**，支持逐字入场、逐字点亮（卡拉OK）、运动残影。
+- `createCamera(target, opts)`（`src/fx-camera.js`）：
+  层叠不可通约正弦驱动的「运镜」，换歌时给一个 sin² 包络的换镜脉冲。
+
+两者都遵循同一条性能约定：**只写 transform、只在可见时跑、不给每个字素加 will-change**。
 
 ## 为什么单独成包
 
@@ -75,7 +95,7 @@ import { createLyricsView, createBackgroundLayer, parseLrc, findLyricIndex } fro
 - `createLyricsView(host, { escape, onSeek, onOpenFolder })`：
   歌词滚动区（自动居中高亮 + 用户滚动时让位 1.2 秒 + 点行/回车跳转 + 空态）。
   返回值 `{ element, scrollElement, setLines, setActive, setPosition, destroy, lines, activeIndex }`。
-  三种内置样式共用它，差别只在 CSS 令牌上。
+  经典 / 沉浸 / 简约三种样式共用它，差别只在 CSS 令牌上。
 - `createBackgroundLayer(host)`：
   整窗背景层 `{ setEnabled, setImage, setStyle, destroy }`，视觉参数是
   CSS 变量 `--skin-bg-blur / -scale / -brightness / -veil`。

@@ -1,0 +1,529 @@
+/* ==========================================================================
+   arcade.css — 内置样式「游戏风」（id: arcade）
+   ========================================================================== */
+
+.app[data-mode="arcade"] {
+  --ag-void: color-mix(in oklab, var(--bg-app) 30%, #150b2e);
+  --ag-void-2: color-mix(in oklab, var(--bg-app) 22%, #2a0f45);
+  --ag-neon: #ff4fd8;
+  --ag-cyan: #43e8ff;
+  --ag-yellow: #ffd23f;
+  --ag-green: #5cff8f;
+  --ag-red: #ff4d6d;
+  --ag-anim: 1;
+  --fxl-accent: var(--ag-yellow);
+  --fxl-glow: color-mix(in oklab, var(--ag-yellow) 60%, transparent);
+}
+
+.app[data-mode="arcade"] .skin-bg {
+  background: none;
+}
+
+.app[data-mode="arcade"] .ag-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--ag-void) 0, var(--ag-void-2) 54%, #0b0616 100%);
+}
+
+/* 带横条的大太阳（合成波招牌） */
+.app[data-mode="arcade"] .ag-bg__sun {
+  position: absolute;
+  /* 压在舞台一侧而不是正中间：正中间会正好垫在歌词列后面，
+     横条纹会把右半边的文字穿得看不清。 */
+  left: 27%;
+  top: 12%;
+  width: min(42vmin, 440px);
+  height: min(42vmin, 440px);
+  margin-left: calc(min(42vmin, 440px) / -2);
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--ag-yellow) 0, #ff8a2b 62%, var(--ag-neon) 100%);
+  opacity: 0.44;
+  mask-image: repeating-linear-gradient(180deg, #000 0 14px, rgba(0, 0, 0, 0.15) 14px 20px);
+  -webkit-mask-image: repeating-linear-gradient(180deg, #000 0 14px, rgba(0, 0, 0, 0.15) 14px 20px);
+}
+
+/* 网格地平线 */
+.app[data-mode="arcade"] .ag-bg__grid {
+  position: absolute;
+  left: -60%;
+  right: -60%;
+  bottom: -12%;
+  height: 60%;
+  transform: perspective(320px) rotateX(76deg);
+  transform-origin: 50% 100%;
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--ag-neon) 60%, transparent) 0 2px,
+      transparent 2px 66px
+    ),
+    repeating-linear-gradient(0deg, color-mix(in oklab, var(--ag-cyan) 52%, transparent) 0 2px, transparent 2px 52px);
+  opacity: 0.65;
+  animation: ag-grid calc(var(--ag-anim) * 2.6s) linear infinite;
+}
+
+/* 8-bit 浮动像素块 */
+.app[data-mode="arcade"] .ag-bg__pixels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.app[data-mode="arcade"] .ag-pixel {
+  position: absolute;
+  left: var(--x, 50%);
+  top: var(--y, 50%);
+  width: var(--s, 10px);
+  height: var(--s, 10px);
+  opacity: 0;
+  animation: ag-float calc(var(--ag-anim) * var(--t, 14s)) steps(8, end) infinite;
+  animation-delay: var(--d, 0s);
+}
+
+.app[data-mode="arcade"] .ag-pixel--a {
+  background: var(--ag-cyan);
+}
+
+.app[data-mode="arcade"] .ag-pixel--b {
+  background: var(--ag-neon);
+}
+
+/* 方格抖动弹带 */
+.app[data-mode="arcade"] .ag-bg__dither {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 22%;
+  opacity: 0.34;
+  background-image:
+    linear-gradient(45deg, #000 25%, transparent 25% 75%, #000 75%),
+    linear-gradient(45deg, #000 25%, transparent 25% 75%, #000 75%);
+  background-size: 6px 6px;
+  background-position:
+    0 0,
+    3px 3px;
+  mask-image: linear-gradient(0deg, #000 0, transparent 100%);
+  -webkit-mask-image: linear-gradient(0deg, #000 0, transparent 100%);
+}
+
+.app[data-mode="arcade"] .ag-bg__scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.32) 0 2px, transparent 2px 4px);
+  opacity: 0.6;
+}
+
+/* chrome 透明化 */
+.app[data-mode="arcade"][data-view="player"] .titlebar,
+.app[data-mode="arcade"][data-view="player"] .playerbar,
+.app[data-mode="arcade"][data-view="player"] .sidebar {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.app[data-mode="arcade"][data-view="player"]:before,
+.app[data-mode="arcade"][data-view="player"]:after {
+  opacity: 0;
+}
+
+/* 详情页让出底色：整窗背景层（.skin-bg）在 .playerview 之下，
+   这里不把 .playerview 的底色清掉，背景就永远看不见。 */
+.playerview[data-skin="arcade"] {
+  background: none;
+}
+
+/* --------------------------------------------------------------------------
+   舞台：街机框体
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="arcade"] .playerview__stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: clamp(12px, 3vmin, 52px);
+  align-items: stretch;
+  padding: clamp(8px, 2.2vmin, 28px) clamp(12px, 3.4vmin, 56px) clamp(10px, 2.6vmin, 34px);
+}
+
+.playerview[data-skin="arcade"] .ag-cam {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  will-change: transform;
+}
+
+.playerview[data-skin="arcade"] .ag-stage {
+  display: grid;
+  grid-template-rows: auto auto;
+  align-content: center;
+  justify-items: center;
+  gap: clamp(12px, 2.4vmin, 30px);
+  min-height: 0;
+  min-width: 0;
+}
+
+.playerview[data-skin="arcade"] .ag-cab {
+  position: relative;
+  width: clamp(168px, 33vmin, 360px);
+  aspect-ratio: 4 / 3.4;
+}
+
+.playerview[data-skin="arcade"] .ag-cab__shell {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 3px solid var(--ag-cyan);
+  background: linear-gradient(180deg, #1b1036 0, #120a26 60%, #0a0618 100%);
+  box-shadow:
+    0 0 0 3px #0a0618,
+    0 0 26px color-mix(in oklab, var(--ag-cyan) 40%, transparent),
+    inset 0 0 30px rgba(0, 0, 0, 0.7);
+}
+
+.playerview[data-skin="arcade"] .ag-cab__screen {
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #05030d;
+  border: 2px solid color-mix(in oklab, var(--ag-neon) 60%, transparent);
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.85);
+}
+
+.playerview[data-skin="arcade"] .ag-art {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  /* 8-bit 观感：先按小尺寸采样再放大 */
+  image-rendering: pixelated;
+  transform: scale(1.02);
+  filter: saturate(1.35) contrast(1.1);
+}
+
+.playerview[data-skin="arcade"] .ag-cab__scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.36) 0 2px, transparent 2px 4px);
+}
+
+.playerview[data-skin="arcade"] .ag-cab__badge {
+  position: absolute;
+  left: -12px;
+  top: -14px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: var(--ag-yellow);
+  color: #1a1030;
+  font-family: var(--font-num);
+  font-size: 11px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.1em;
+  box-shadow: 0 0 16px color-mix(in oklab, var(--ag-yellow) 60%, transparent);
+}
+
+.playerview[data-skin="arcade"] .ag-cab__hud {
+  display: grid;
+  gap: 5px;
+  font-family: var(--font-num);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--ag-cyan);
+}
+
+.playerview[data-skin="arcade"] .ag-hud__row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
+.playerview[data-skin="arcade"] .ag-hp {
+  display: flex;
+  gap: 4px;
+}
+
+.playerview[data-skin="arcade"] .ag-hp i {
+  flex: 1 1 auto;
+  height: 9px;
+  background: var(--ag-green);
+  box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.35);
+  opacity: 0.25;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.playerview[data-skin="arcade"] .ag-hp i[data-on="true"] {
+  opacity: 1;
+}
+
+.playerview[data-skin="arcade"] .ag-xp {
+  position: relative;
+  display: block;
+  height: 9px;
+  background: color-mix(in oklab, var(--ag-neon) 20%, transparent);
+  overflow: hidden;
+}
+
+.playerview[data-skin="arcade"] .ag-xp i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--ag-yellow) 0 6px,
+    color-mix(in oklab, var(--ag-yellow) 55%, transparent) 6px 9px
+  );
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--dur) linear;
+}
+
+.playerview[data-skin="arcade"] .ag-cab[data-playing="false"] .ag-cab__shell {
+  filter: saturate(0.7) brightness(0.88);
+}
+
+.playerview[data-skin="arcade"] .ag-meta {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  max-width: 100%;
+  text-align: center;
+}
+
+.playerview[data-skin="arcade"] .ag-meta__plate {
+  padding: 1px 10px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--ag-cyan) 22%, transparent);
+  border: 1px solid color-mix(in oklab, var(--ag-cyan) 55%, transparent);
+  color: var(--ag-cyan);
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.28em;
+}
+
+.playerview[data-skin="arcade"] .ag-meta__title {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-num);
+  font-size: clamp(14px, 2vmin, 23px);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-1);
+  -webkit-text-stroke: 0.4px color-mix(in oklab, var(--ag-neon) 62%, transparent);
+  text-shadow: 0 2px 0 color-mix(in oklab, var(--ag-neon) 35%, transparent);
+}
+
+.playerview[data-skin="arcade"] .ag-meta__artist {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-num);
+  font-size: var(--fs-sm);
+  color: color-mix(in oklab, var(--ag-cyan) 62%, var(--text-2));
+}
+
+.playerview[data-skin="arcade"] .ag-score {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 5px;
+  font-family: var(--font-num);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: color-mix(in oklab, var(--ag-yellow) 82%, transparent);
+}
+
+.playerview[data-skin="arcade"] .ag-score__value {
+  font-size: 13px;
+  font-weight: var(--fw-bold);
+  color: var(--ag-yellow);
+  font-variant-numeric: tabular-nums;
+}
+
+.playerview[data-skin="arcade"] .ag-combo {
+  padding: 1px 7px;
+  border-radius: 3px;
+  border: 1px solid color-mix(in oklab, var(--ag-neon) 55%, transparent);
+  color: var(--ag-neon);
+}
+
+.playerview[data-skin="arcade"] .ag-combo[data-hot="true"] {
+  background: color-mix(in oklab, var(--ag-neon) 26%, transparent);
+  box-shadow: 0 0 14px color-mix(in oklab, var(--ag-neon) 55%, transparent);
+}
+
+/* --------------------------------------------------------------------------
+   歌词：对话盒 + 打字机
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="arcade"] .ag-lyrics {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: radial-gradient(
+    118% 96% at 36% 50%,
+    color-mix(in oklab, var(--ag-void) 72%, transparent) 0,
+    color-mix(in oklab, var(--ag-void) 34%, transparent) 46%,
+    transparent 78%
+  );
+}
+
+.playerview[data-skin="arcade"] .ag-lyrics .fxl {
+  --fxl-size: var(--ag-lsize, 17px);
+  --fxl-size-active: calc(var(--ag-lsize, 17px) * 1.24);
+  --fxl-dim: 0.3;
+}
+
+.playerview[data-skin="arcade"] .fxl__line {
+  font-family: var(--font-num);
+  letter-spacing: 0.03em;
+}
+
+.playerview[data-skin="arcade"] .fxl__line[data-state="active"] {
+  color: var(--text-1);
+  padding-left: 12px;
+}
+
+/* 对话盒：当前行左侧的方块光标 + 一层半透明底 */
+.playerview[data-skin="arcade"] .fxl__line[data-state="active"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  background: var(--ag-yellow);
+  box-shadow: 0 0 12px color-mix(in oklab, var(--ag-yellow) 70%, transparent);
+  animation: ag-cursor calc(var(--ag-anim) * 0.9s) steps(1, end) infinite;
+}
+
+.playerview[data-skin="arcade"] .fxl__line[data-state="active"] {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--ag-cyan) 10%, transparent) 0, transparent 66%);
+  border-left: 2px solid color-mix(in oklab, var(--ag-cyan) 70%, transparent);
+}
+
+.playerview[data-skin="arcade"] .fxl__u {
+  animation-name: ag-type;
+  animation-duration: calc(var(--ag-anim) * 380ms);
+  animation-timing-function: steps(3, end);
+}
+
+.playerview[data-skin="arcade"] .fxl__u[data-hold="done"] {
+  color: var(--ag-green);
+  text-shadow: none;
+}
+
+.playerview[data-skin="arcade"] .fxl__u[data-hold="now"] {
+  background: var(--ag-yellow);
+  color: #1a1030;
+  text-shadow: none;
+  box-shadow: 0 0 12px color-mix(in oklab, var(--ag-yellow) 70%, transparent);
+}
+
+/* --------------------------------------------------------------------------
+   关键帧
+   -------------------------------------------------------------------------- */
+@keyframes ag-type {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0.52em, 0);
+    clip-path: inset(0 0 62% 0);
+  }
+
+  60% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes ag-cursor {
+  0%,
+  52% {
+    opacity: 1;
+  }
+
+  53%,
+  100% {
+    opacity: 0.08;
+  }
+}
+
+@keyframes ag-grid {
+  from {
+    background-position:
+      0 0,
+      0 0;
+  }
+
+  to {
+    background-position:
+      0 0,
+      0 52px;
+  }
+}
+
+@keyframes ag-float {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0);
+  }
+
+  16% {
+    opacity: 0.9;
+  }
+
+  84% {
+    opacity: 0.7;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(14px, -34vh, 0);
+  }
+}
+
+/* 关掉界面动画 */
+.playerview[data-skin="arcade"] [data-anim="off"] .fxl__line[data-state="active"]::before {
+  animation-play-state: paused;
+}
+
+.app[data-mode="arcade"] .ag-bg[data-anim="off"] .ag-bg__grid,
+.app[data-mode="arcade"] .ag-bg[data-anim="off"] .ag-pixel {
+  animation-play-state: paused;
+}
+
+@media (max-width: 980px) {
+  .playerview[data-skin="arcade"] .ag-cab {
+    width: clamp(126px, 26vmin, 240px);
+  }
+}
+
+@media (max-width: 820px) {
+  .playerview[data-skin="arcade"] .ag-meta__plate,
+  .playerview[data-skin="arcade"] .ag-score {
+    display: none;
+  }
+
+  .playerview[data-skin="arcade"] .ag-cab {
+    width: clamp(108px, 22vmin, 190px);
+  }
+}

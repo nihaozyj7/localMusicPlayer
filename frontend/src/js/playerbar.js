@@ -843,11 +843,11 @@ export function paintPlayerBar() {
   els.playlist?.setAttribute("aria-pressed", String(Boolean(state.queueOpen)));
   if (state.queueOpen) renderQueuePanel();
 
-  /* 桌面歌词 / 桌面背景歌词（一组单选）的选中态。
+  /* 桌面歌词 / 桌面背景歌词（两个独立开关，互斥由 desktop-mode.js 保证）的按下态。
      每帧重写是有意的：后端有可能开窗失败并把配置回滚，
      这里跟着配置走，按钮就不会停在「已开启」上骗人。 */
-  els.desktopLyrics?.setAttribute("aria-checked", String(Boolean(state.config.showDesktopLyrics)));
-  els.desktopWallpaper?.setAttribute("aria-checked", String(Boolean(state.config.showDesktopWallpaper)));
+  els.desktopLyrics?.setAttribute("aria-pressed", String(Boolean(state.config.showDesktopLyrics)));
+  els.desktopWallpaper?.setAttribute("aria-pressed", String(Boolean(state.config.showDesktopWallpaper)));
   // 到点就停：放在每帧的轻量同步里，倒计时结束后立刻暂停
   checkSleepTimer();
   const sleepBtn = $("#btn-sleep");

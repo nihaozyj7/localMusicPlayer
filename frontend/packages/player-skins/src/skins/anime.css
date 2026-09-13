@@ -1,0 +1,613 @@
+/* ==========================================================================
+   anime.css — 内置样式「二次元手绘」（id: anime）
+   --------------------------------------------------------------------------
+   作用域约定（与包内其它样式一致）：
+     · 整窗背景与 chrome 透明化挂在 .app[data-mode="anime"] 下；
+     · 舞台与歌词挂在 .playerview[data-skin="anime"] 下。
+
+   配色不写死成「白纸」：纸色从 --bg-app 派生（深色主题下是一张压在暗桌上的
+   旧漫画纸），墨线用 --text-1，强调色固定为珊瑚粉 —— 这是这个样式的身份，
+   不跟随主题换色（主题只负责背景明暗与文字明暗）。
+   ========================================================================== */
+
+.app[data-mode="anime"] {
+  --an-ink: color-mix(in oklab, var(--text-1) 86%, #2b3a63);
+  --an-paper: color-mix(in oklab, var(--bg-app) 46%, #ecdfc6);
+  --an-paper-2: color-mix(in oklab, var(--bg-app) 62%, #d9c9ab);
+  --an-shadow: color-mix(in oklab, var(--bg-app) 72%, #2b3a63);
+  --an-coral: #ff7096;
+  --an-coral-soft: color-mix(in oklab, #ff7096 40%, transparent);
+  --an-sky: color-mix(in oklab, var(--bg-app) 26%, #8fd0ef);
+  --an-hill: color-mix(in oklab, var(--bg-app) 52%, #7fc79a);
+  --an-sun: color-mix(in oklab, #ffd76e 78%, var(--bg-app));
+  --an-anim: 1;
+  --fxl-accent: var(--an-coral);
+  --fxl-glow: color-mix(in oklab, var(--an-coral) 55%, transparent);
+}
+
+.app[data-mode="anime"] .skin-bg {
+  background: none;
+}
+
+.app[data-mode="anime"] .an-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: linear-gradient(
+    176deg,
+    var(--an-sky) 0,
+    color-mix(in oklab, var(--an-sky) 42%, var(--an-paper)) 52%,
+    var(--an-paper) 100%
+  );
+}
+
+/* 纸纹：两层极淡的重复渐变，静止不动（合成器友好） */
+.app[data-mode="anime"] .an-bg__paper {
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  mix-blend-mode: multiply;
+  background-image:
+    repeating-linear-gradient(7deg, rgba(43, 58, 99, 0.05) 0 1px, transparent 1px 5px),
+    repeating-linear-gradient(93deg, rgba(43, 58, 99, 0.04) 0 1px, transparent 1px 9px);
+}
+
+.app[data-mode="anime"] .an-bg__sun {
+  position: absolute;
+  right: 9%;
+  top: 9%;
+  width: min(20vmin, 210px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--an-sun);
+  box-shadow:
+    0 0 0 3px var(--an-ink),
+    0 0 0 16px color-mix(in oklab, var(--an-sun) 34%, transparent);
+  opacity: 0.92;
+  animation: an-sun calc(var(--an-anim) * 18s) linear infinite;
+}
+
+.app[data-mode="anime"] .an-bg__clouds {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.app[data-mode="anime"] .an-bg__clouds span {
+  position: absolute;
+  display: block;
+  height: 8vmin;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--an-paper) 66%, #ffffff);
+  border: 2px solid color-mix(in oklab, var(--an-ink) 32%, transparent);
+  opacity: 0.42;
+  filter: blur(2px);
+}
+
+.app[data-mode="anime"] .an-bg__clouds span:nth-child(1) {
+  left: 6%;
+  top: 14%;
+  width: 30vmin;
+  animation: an-drift calc(var(--an-anim) * 62s) linear infinite;
+}
+
+.app[data-mode="anime"] .an-bg__clouds span:nth-child(2) {
+  left: 46%;
+  top: 26%;
+  width: 22vmin;
+  animation: an-drift calc(var(--an-anim) * 88s) linear infinite reverse;
+}
+
+.app[data-mode="anime"] .an-bg__clouds span:nth-child(3) {
+  left: 24%;
+  top: 40%;
+  width: 16vmin;
+  opacity: 0.5;
+  animation: an-drift calc(var(--an-anim) * 74s) linear infinite;
+}
+
+.app[data-mode="anime"] .an-bg__hills {
+  position: absolute;
+  left: -12%;
+  right: -12%;
+  bottom: -14%;
+  height: 46%;
+  border-radius: 46% 54% 0 0 / 88% 92% 0 0;
+  background: var(--an-hill);
+  border-top: 3px solid var(--an-ink);
+  box-shadow: 0 -22px 0 -6px color-mix(in oklab, var(--an-hill) 62%, var(--bg-app));
+}
+
+/* 半调网点：漫画网点纸，压在左下角 */
+.app[data-mode="anime"] .an-bg__tone {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 38%;
+  height: 42%;
+  opacity: 0.3;
+  mask-image: radial-gradient(120% 100% at 0% 100%, #000 0, transparent 72%);
+  -webkit-mask-image: radial-gradient(120% 100% at 0% 100%, #000 0, transparent 72%);
+  background-image: radial-gradient(circle at 3px 3px, var(--an-ink) 1.35px, transparent 1.6px);
+  background-size: 9px 9px;
+}
+
+/* 放射速度线 */
+.app[data-mode="anime"] .an-bg__speed {
+  position: absolute;
+  left: 34%;
+  top: 42%;
+  width: 200vmax;
+  height: 200vmax;
+  margin: -100vmax 0 0 -100vmax;
+  opacity: 0.14;
+  background: repeating-conic-gradient(from 0deg, var(--an-ink) 0deg 0.35deg, transparent 0.35deg 4.2deg);
+  animation: an-spin calc(var(--an-anim) * 240s) linear infinite;
+  mask-image: radial-gradient(closest-side, transparent 12%, #000 46%, transparent 72%);
+  -webkit-mask-image: radial-gradient(closest-side, transparent 12%, #000 46%, transparent 72%);
+}
+
+.app[data-mode="anime"] .an-bg__petals {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.app[data-mode="anime"] .an-petal {
+  position: absolute;
+  left: var(--x, 50%);
+  top: -6vh;
+  width: 9px;
+  height: 7px;
+  border-radius: 60% 40% 60% 40%;
+  background: var(--an-coral);
+  opacity: 0;
+  transform: scale(var(--s, 1));
+  animation: an-petal-fall calc(var(--an-anim) * var(--t, 14s)) linear infinite;
+  animation-delay: var(--d, 0s);
+}
+
+.app[data-mode="anime"] .an-bg__frame {
+  position: absolute;
+  inset: 10px;
+  border: 2.5px solid var(--an-ink);
+  border-radius: 14px;
+  opacity: 0.55;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 6px color-mix(in oklab, var(--an-paper) 50%, transparent);
+}
+
+/* --------------------------------------------------------------------------
+   chrome 透明化：任何实色面板压在手绘背景上都会破掉「一整张画」的感觉
+   -------------------------------------------------------------------------- */
+.app[data-mode="anime"][data-view="player"] .titlebar,
+.app[data-mode="anime"][data-view="player"] .playerbar,
+.app[data-mode="anime"][data-view="player"] .sidebar {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.app[data-mode="anime"][data-view="player"]:before,
+.app[data-mode="anime"][data-view="player"]:after {
+  opacity: 0;
+}
+
+/* 详情页让出底色：整窗背景层（.skin-bg）在 .playerview 之下，
+   这里不把 .playerview 的底色清掉，背景就永远看不见。 */
+.playerview[data-skin="anime"] {
+  background: none;
+}
+
+/* --------------------------------------------------------------------------
+   舞台
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="anime"] .playerview__stage {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: clamp(10px, 2.6vmin, 48px);
+  align-items: stretch;
+  padding: clamp(8px, 2.2vmin, 28px) clamp(12px, 3.4vmin, 56px) clamp(10px, 2.6vmin, 34px);
+}
+
+.playerview[data-skin="anime"] .an-cam {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  will-change: transform;
+}
+
+.playerview[data-skin="anime"] .an-stage {
+  display: grid;
+  grid-template-rows: auto auto;
+  align-content: center;
+  justify-items: center;
+  gap: clamp(12px, 2.4vmin, 30px);
+  min-height: 0;
+  min-width: 0;
+}
+
+.playerview[data-skin="anime"] .an-panel {
+  position: relative;
+  width: clamp(150px, 30vmin, 330px);
+  aspect-ratio: 1;
+  padding: 11px;
+  border: 3px solid var(--an-ink);
+  border-radius: 12px;
+  background: var(--an-paper);
+  box-shadow: 7px 8px 0 var(--an-shadow);
+  transform: rotate(-1.4deg);
+}
+
+.playerview[data-skin="anime"] .an-panel__art {
+  position: absolute;
+  inset: 11px;
+  overflow: hidden;
+  border: 2px solid var(--an-ink);
+  border-radius: 7px;
+  background: var(--an-paper-2);
+}
+
+.playerview[data-skin="anime"] .an-art {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  transform: scale(1.02);
+  animation: an-breathe calc(var(--an-anim) * 9s) ease-in-out infinite;
+}
+
+.playerview[data-skin="anime"] .an-panel__tape {
+  position: absolute;
+  width: 64px;
+  height: 20px;
+  background: color-mix(in oklab, var(--an-coral) 34%, transparent);
+  border: 1.5px solid color-mix(in oklab, var(--an-ink) 40%, transparent);
+  opacity: 0.9;
+}
+
+.playerview[data-skin="anime"] .an-panel__tape--l {
+  left: -14px;
+  top: 14px;
+  transform: rotate(-32deg);
+}
+
+.playerview[data-skin="anime"] .an-panel__tape--r {
+  right: -14px;
+  bottom: 18px;
+  transform: rotate(-28deg);
+}
+
+.playerview[data-skin="anime"] .an-panel__spark {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  background: var(--an-coral);
+  clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%);
+  animation: an-twinkle calc(var(--an-anim) * 2.6s) ease-in-out infinite;
+}
+
+.playerview[data-skin="anime"] .an-panel__spark--a {
+  left: -16px;
+  top: -14px;
+}
+
+.playerview[data-skin="anime"] .an-panel__spark--b {
+  right: -18px;
+  bottom: -10px;
+  animation-delay: calc(var(--an-anim) * -1.3s);
+}
+
+.playerview[data-skin="anime"] .an-meta {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  max-width: 100%;
+  text-align: center;
+}
+
+.playerview[data-skin="anime"] .an-meta__kicker {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.32em;
+  color: var(--an-coral);
+  text-transform: uppercase;
+}
+
+.playerview[data-skin="anime"] .an-meta__title {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: clamp(15px, 2.1vmin, 25px);
+  font-weight: var(--fw-bold);
+  color: var(--text-1);
+  text-shadow: 2px 2px 0 color-mix(in oklab, var(--an-paper) 70%, transparent);
+}
+
+.playerview[data-skin="anime"] .an-meta__rule {
+  width: clamp(56px, 11vmin, 140px);
+  height: 3px;
+  border-radius: 2px;
+  background: var(--an-ink);
+  transform-origin: left center;
+  animation: an-draw calc(var(--an-anim) * 1.4s) var(--fxl-ease) both;
+}
+
+.playerview[data-skin="anime"] .an-meta__artist {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.playerview[data-skin="anime"] .an-eq {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 15px;
+  margin-top: 7px;
+}
+
+.playerview[data-skin="anime"] .an-eq span {
+  width: 4px;
+  height: 100%;
+  border-radius: 2px 2px 0 0;
+  background: var(--an-ink);
+  transform-origin: 50% 100%;
+  animation: an-eq calc(var(--an-anim) * 0.9s) ease-in-out infinite;
+}
+
+.playerview[data-skin="anime"] .an-eq span:nth-child(2) {
+  animation-delay: calc(var(--an-anim) * -0.22s);
+}
+
+.playerview[data-skin="anime"] .an-eq span:nth-child(3) {
+  animation-delay: calc(var(--an-anim) * -0.44s);
+}
+
+.playerview[data-skin="anime"] .an-eq span:nth-child(4) {
+  animation-delay: calc(var(--an-anim) * -0.13s);
+}
+
+.playerview[data-skin="anime"] .an-eq span:nth-child(5) {
+  animation-delay: calc(var(--an-anim) * -0.35s);
+}
+
+.playerview[data-skin="anime"] .an-panel[data-playing="false"] ~ .an-meta .an-eq span {
+  animation-play-state: paused;
+  transform: scaleY(0.24);
+  opacity: 0.55;
+}
+
+/* --------------------------------------------------------------------------
+   歌词：马克笔扫光 + 逐字弹跳
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="anime"] .an-lyrics {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  /* 一层极淡的底衬：背景是手绘线条与网点时，纯文字会被线条穿过 */
+  background: radial-gradient(
+    120% 94% at 34% 50%,
+    color-mix(in oklab, var(--an-paper) 62%, transparent) 0,
+    color-mix(in oklab, var(--an-paper) 24%, transparent) 42%,
+    transparent 76%
+  );
+}
+
+.playerview[data-skin="anime"] .an-lyrics .fxl {
+  --fxl-size: var(--an-lsize, 17px);
+  --fxl-size-active: calc(var(--an-lsize, 17px) * 1.34);
+  --fxl-dim: 0.46;
+}
+
+.playerview[data-skin="anime"] .fxl__line[data-state="active"] {
+  transform: translateX(3px) rotate(-0.5deg);
+}
+
+/* 马克笔涂色：当前行背后扫过一道荧光笔 */
+.playerview[data-skin="anime"] .fxl__line[data-state="active"]::before {
+  content: "";
+  position: absolute;
+  left: -1%;
+  top: 54%;
+  z-index: -1;
+  width: 102%;
+  height: 0.66em;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    transparent 0,
+    var(--an-coral-soft) 8%,
+    color-mix(in oklab, var(--an-coral) 62%, transparent) 60%,
+    var(--an-coral-soft) 96%,
+    transparent 100%
+  );
+  transform: scaleX(0) skewX(-8deg);
+  transform-origin: left center;
+  animation: an-marker calc(var(--an-anim) * 0.66s) cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.playerview[data-skin="anime"] .fxl__u {
+  animation-name: an-jelly;
+  animation-duration: calc(var(--an-anim) * 560ms);
+  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.playerview[data-skin="anime"] .fxl__u[data-hold="done"] {
+  color: var(--an-ink);
+}
+
+.playerview[data-skin="anime"] .fxl__u[data-hold="now"] {
+  color: var(--an-coral);
+  text-shadow: 0 0 16px var(--an-coral-soft);
+}
+
+/* --------------------------------------------------------------------------
+   关键帧
+   -------------------------------------------------------------------------- */
+@keyframes an-jelly {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0.5em, 0) scale(0.5, 0.36) rotate(-9deg);
+    filter: blur(6px);
+  }
+
+  62% {
+    opacity: 1;
+    transform: translate3d(0, -0.1em, 0) scale(1.14, 0.92) rotate(2.4deg);
+    filter: blur(0);
+  }
+
+  82% {
+    transform: translate3d(0, 0.03em, 0) scale(0.97, 1.06) rotate(-0.8deg);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1, 1) rotate(0deg);
+  }
+}
+
+@keyframes an-marker {
+  0% {
+    transform: scaleX(0) skewX(-8deg);
+    opacity: 0;
+  }
+
+  30% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: scaleX(1) skewX(-8deg);
+    opacity: 1;
+  }
+}
+
+@keyframes an-draw {
+  0% {
+    transform: scaleX(0);
+  }
+
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes an-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes an-sun {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes an-drift {
+  from {
+    transform: translate3d(-8vw, 0, 0);
+  }
+
+  to {
+    transform: translate3d(108vw, 0, 0);
+  }
+}
+
+@keyframes an-petal-fall {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(var(--s, 1));
+    opacity: 0;
+  }
+
+  10% {
+    opacity: 0.75;
+  }
+
+  90% {
+    opacity: 0.65;
+  }
+
+  100% {
+    transform: translate3d(var(--px, 8vw), 112vh, 0) rotate(var(--pr, 540deg)) scale(var(--s, 1));
+    opacity: 0;
+  }
+}
+
+@keyframes an-breathe {
+  0%,
+  100% {
+    transform: scale(1.02) rotate(0deg);
+  }
+
+  50% {
+    transform: scale(1.08) rotate(0.6deg);
+  }
+}
+
+@keyframes an-twinkle {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.7) rotate(0deg);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.1) rotate(90deg);
+  }
+}
+
+@keyframes an-eq {
+  0%,
+  100% {
+    transform: scaleY(0.24);
+  }
+
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* 关掉界面动画：循环动画一律暂停（入场动画由 fx-lyrics.css 处理） */
+.playerview[data-skin="anime"] [data-anim="off"] .an-art,
+.playerview[data-skin="anime"] [data-anim="off"] .an-eq span,
+.playerview[data-skin="anime"] [data-anim="off"] .an-panel__spark,
+.playerview[data-skin="anime"] [data-anim="off"] .an-meta__rule {
+  animation-play-state: paused;
+}
+
+.app[data-mode="anime"] .an-bg[data-anim="off"] .an-bg__sun,
+.app[data-mode="anime"] .an-bg[data-anim="off"] .an-bg__speed,
+.app[data-mode="anime"] .an-bg[data-anim="off"] .an-bg__clouds span,
+.app[data-mode="anime"] .an-bg[data-anim="off"] .an-petal {
+  animation-play-state: paused;
+}
+
+/* 窄窗口：继续左右两栏，把分镜格收小 */
+@media (max-width: 980px) {
+  .playerview[data-skin="anime"] .an-panel {
+    width: clamp(112px, 24vmin, 220px);
+  }
+}
+
+@media (max-width: 820px) {
+  .playerview[data-skin="anime"] .an-meta__kicker,
+  .playerview[data-skin="anime"] .an-eq {
+    display: none;
+  }
+
+  .playerview[data-skin="anime"] .an-panel {
+    width: clamp(92px, 20vmin, 170px);
+  }
+}

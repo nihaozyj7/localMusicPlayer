@@ -61,9 +61,10 @@ export function desktopWallpaperEnabled() {
 /** 把「桌面背景歌词」按钮与设置里同名开关的选中态同步成当前配置值。 */
 export function syncDesktopWallpaperButtons() {
   const on = desktopWallpaperEnabled();
-  // 与桌面歌词是一组单选（role="radio"），所以是 aria-checked 而不是 aria-pressed
+  // 底栏那个是独立的开关按钮（与桌面歌词互斥由 desktop-mode.js 保证），
+  // 所以按 aria-pressed 表达按下态；设置里的开关是 role="switch"，继续用 aria-checked。
   const btn = document.getElementById("btn-desktop-wallpaper");
-  if (btn) btn.setAttribute("aria-checked", String(on));
+  if (btn) btn.setAttribute("aria-pressed", String(on));
   const sw = document.getElementById("opt-desktop-wallpaper");
   if (sw) sw.setAttribute("aria-checked", String(on));
 }

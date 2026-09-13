@@ -1,0 +1,202 @@
+/* ==========================================================================
+   fx-lyrics.css — 特效歌词渲染器（fx-lyrics.js）的骨架样式
+   --------------------------------------------------------------------------
+   这里只有「四个特效样式共用」的部分：排版、滚动、入场动画、逐字点亮、
+   运动残影。**色彩与个性**一律由各皮肤自己的 CSS 覆盖 —— 皮肤通过
+   --fxl-accent / --fxl-glow / --fxl-active 这几个令牌控制强调色。
+
+   性能约定：
+     · .fxl 是尺寸容器（container-type: size），padding-block 用 50cqh 撑出
+       「第一句 / 最后一句也能滚到正中」的空间，不需要 JS 计算；
+     · 入场动画只作用于 .fxl__u（inline-block），走合成器；
+     · --i 是字素下标，延迟按 min(--i, 14) 截断，长句不会等到天荒地老；
+     · 行级「扫光 / 残影」都挂在 [data-state="active"] 上 —— 状态一变，
+       选择器开始匹配，动画自然重放，不需要 JS 去重启动画。
+   ========================================================================== */
+
+.fxl {
+  --fxl-size: 17px;
+  --fxl-size-active: 24px;
+  --fxl-dim: 0.34;
+  --fxl-measure: 860px;
+  --fxl-gap: 3px;
+  --fxl-accent: var(--accent);
+  --fxl-glow: transparent;
+  --fxl-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  container-type: size;
+  mask-image: linear-gradient(180deg, transparent 0, #000 15%, #000 85%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 15%, #000 85%, transparent 100%);
+}
+
+.fxl__scroll {
+  /* relative 是必需的：歌词行的 offsetTop 必须相对滚动容器量，
+     否则 offsetParent 会落到更外层，「自动居中」算出来的 scrollTop 全是错的。 */
+  position: relative;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  padding-block: max(40%, 26vh);
+  padding-block: 50cqh;
+}
+
+.fxl__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.fxl__inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fxl-gap);
+  width: 100%;
+  max-width: var(--fxl-measure);
+  margin: 0 auto;
+}
+
+.fxl__line {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 3px 2px;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: var(--fxl-size);
+  line-height: 1.46;
+  color: var(--text-1);
+  text-align: left;
+  opacity: var(--fxl-dim);
+  transform-origin: 0 50%;
+  transition:
+    opacity var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    font-size var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+
+.fxl[data-passive="1"] .fxl__line {
+  cursor: default;
+}
+
+.fxl:not([data-passive="1"]) .fxl__line {
+  cursor: pointer;
+}
+
+.fxl__line[data-state="past"] {
+  opacity: calc(var(--fxl-dim) * 0.72);
+}
+
+.fxl__line[data-state="active"] {
+  opacity: 1;
+  font-size: var(--fxl-size-active);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+/* 皮肤的「扫光 / 马克笔 / 对话盒」等装饰都是 .fxl__line 的 ::before；
+   这里把文字提到定位层（z-index:1），装饰用负 z-index，两者的上下顺序
+   就与祖先有没有创建层叠上下文无关了 —— 否则装饰会盖住文字。 */
+.fxl__text {
+  position: relative;
+  z-index: 1;
+}
+
+.fxl__line[data-state="active"]::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  padding: inherit;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  color: var(--fxl-accent);
+  filter: blur(7px);
+  opacity: 0;
+  animation: fxl-echo calc(var(--dur-slow) * 1.6) var(--fxl-ease) both;
+}
+
+/* 字素单元：入场 + 逐字点亮 */
+.fxl__u {
+  display: inline-block;
+  white-space: pre;
+  font-size: calc(1em * var(--fxl-ch, 1));
+  animation: fxl-in calc(var(--dur) * 2.6) var(--fxl-ease) both;
+  animation-delay: calc(min(var(--i), 14) * 24ms);
+  /* 刻意不写 will-change：一首歌几十行 × 每行几十个字 = 上千个元素，
+     逐个提升成合成层会把显存和图层树撑爆（实测表现为整片文字糊掉）。
+     入场是一次性短动画，浏览器自己会在动画期间提升，不需要提前声明。 */
+}
+
+.fxl__u[data-space="1"] {
+  animation: none;
+}
+
+.fxl__u[data-hold="done"] {
+  color: var(--fxl-accent);
+}
+
+.fxl__u[data-hold="now"] {
+  color: var(--fxl-accent);
+  text-shadow: 0 0 18px var(--fxl-glow);
+}
+
+.fxl__empty {
+  display: grid;
+  place-items: center;
+  min-height: 40%;
+  padding: var(--sp-5);
+  color: var(--text-3);
+  font-size: var(--fs-md);
+  text-align: center;
+}
+
+@keyframes fxl-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0.44em, 0) scale(0.62, 0.44) rotate(-4deg);
+    filter: blur(7px);
+  }
+
+  56% {
+    opacity: 1;
+    transform: translate3d(0, -0.07em, 0) scale(1.07, 1.05) rotate(1.2deg);
+    filter: blur(0);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1, 1) rotate(0deg);
+    filter: blur(0);
+  }
+}
+
+@keyframes fxl-echo {
+  0% {
+    opacity: 0.5;
+    transform: translate3d(-1.6%, 0.1em, 0) scale(1.02);
+    filter: blur(9px);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(2.4%, -0.08em, 0) scale(0.99);
+    filter: blur(13px);
+  }
+}
+
+/* 用户关掉界面动画：入场 / 残影 / 呼吸一律停 */
+[data-anim="off"] .fxl__u,
+[data-anim="off"] .fxl__line[data-state="active"]::after {
+  animation: none;
+}
+
+[data-anim="off"] .fxl__u {
+  opacity: 1;
+  filter: none;
+  transform: none;
+}

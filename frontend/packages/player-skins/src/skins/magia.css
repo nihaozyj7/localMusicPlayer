@@ -1,0 +1,1324 @@
+﻿/* ==========================================================================
+   skin.css — 播放界面样式「魔法阵 · 手绘次元」（id: magia）
+   --------------------------------------------------------------------------
+   作用域约定（应用的硬性要求）：
+     · 播放详情页内的元素一律以  .playerview[data-skin="magia"] 开头；
+     · 详情页之外的外壳（标题栏 / 底栏 / 侧边栏 / 整窗背景层）以
+       .app[data-mode="magia"] 开头。
+   因为 .playerview 是 .app 的后代，凡「背景层与舞台都会用到」的公共视觉
+   （调色板、魔法阵、手绘图形）只写一次，挂在 .app[data-mode="magia"] 下，
+   两边同时命中，避免同一套样式抄两遍后各自漂移。
+
+   所有颜色都由主题令牌派生（--accent / --heart / --text-* / --bg-app），
+   不写死任何一个色值，因此深浅色主题、封面取色主题都会自动跟随。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   0. 调色板 —— 由主题令牌派生，换主题/切深浅色自动跟随
+   -------------------------------------------------------------------------- */
+.app[data-mode="magia"] {
+  /* 主色 = 强调色；副色 = 强调色与点缀色混合，得到「魔法」的第二色相 */
+  --mg-a1: var(--accent);
+  --mg-a2: color-mix(in oklab, var(--accent) 56%, var(--heart));
+  --mg-a3: color-mix(in oklab, var(--accent) 24%, var(--heart));
+
+  /* 线条 / 光晕 / 纸面 */
+  --mg-line: color-mix(in oklab, var(--accent) 40%, transparent);
+  --mg-line-2: color-mix(in oklab, var(--accent) 17%, transparent);
+  --mg-glow: color-mix(in oklab, var(--accent) 46%, transparent);
+  --mg-glow-2: color-mix(in oklab, var(--heart) 32%, transparent);
+  --mg-ink: color-mix(in oklab, var(--text-1) 64%, transparent);
+  --mg-ink-2: color-mix(in oklab, var(--text-1) 26%, transparent);
+  --mg-paper: color-mix(in oklab, var(--bg-app) 70%, var(--text-1));
+  --mg-scrim: color-mix(in oklab, var(--bg-app) 90%, transparent);
+
+  /* 动效总开关：1 = 正常，0 = 关闭（由 JS 按 ctx.options().animations 写行内值）。
+     所有关键帧时长都乘上它，关掉动画时动画时长归零、直接停在终态。 */
+  --mg-anim: 1;
+
+  /* 由 JS 每帧写入的运镜 / 脉冲量 */
+  --mg-cam-x: 0;
+  --mg-cam-y: 0;
+  --mg-cam-z: 1;
+  --mg-cam-r: 0;
+  --mg-pulse: 0;
+  --mg-cut: 0;
+  /* 节拍包络：每拍从 1 衰减到 0，由 JS 按播放位置算出。
+     --mg-beat-ms 是学出来的每拍毫秒数，用来把 EQ 也踩到同一个拍上。 */
+  --mg-beat: 0;
+  --mg-beat-ms: 500;
+}
+
+/* 读色探针：JS 用它把 var(--mg-a1) 解析成 canvas 能用的 rgb()。 */
+.app[data-mode="magia"] .mg-probe {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   1. 外壳 chrome：详情页展开时让标题栏 / 侧边栏退到背景里，底栏留一层
+   -------------------------------------------------------------------------- */
+.app[data-mode="magia"][data-view="player"]::before,
+.app[data-mode="magia"][data-view="player"]::after {
+  opacity: 0;
+}
+
+.app[data-mode="magia"][data-view="player"] .titlebar {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.app[data-mode="magia"][data-view="player"] .sidebar {
+  background: none;
+  border-right-color: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* 底栏保留一层薄纱：传输按钮压在繁复的手绘背景上必须还能读 */
+.app[data-mode="magia"][data-view="player"] .playerbar {
+  background: linear-gradient(
+    0deg,
+    var(--mg-scrim) 0,
+    color-mix(in oklab, var(--bg-app) 46%, transparent) 62%,
+    transparent 100%
+  );
+  border-top-color: var(--mg-line-2);
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.42)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.42)) saturate(var(--glass-saturate));
+}
+
+/* --------------------------------------------------------------------------
+   2. 整窗背景层（ctx.backgroundRoot = .skin-bg）
+   -------------------------------------------------------------------------- */
+.app[data-mode="magia"] .skin-bg {
+  background: var(--bg-app);
+}
+
+.app[data-mode="magia"] .mg-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  contain: content;
+}
+
+/* 背景层每一层都铺满整窗。这里逐个列出类名而不是写 `> *`：
+   皮肤的选择器要能一眼看清影响了哪些元素，避免出现「万能选择器」。 */
+.app[data-mode="magia"] .mg-bg__sky,
+.app[data-mode="magia"] .mg-bg__art,
+.app[data-mode="magia"] .mg-bg__grid,
+.app[data-mode="magia"] .mg-bg__rays,
+.app[data-mode="magia"] .mg-bg__sigil,
+.app[data-mode="magia"] .mg-bg__particles,
+.app[data-mode="magia"] .mg-bg__streaks,
+.app[data-mode="magia"] .mg-bg__veil,
+.app[data-mode="magia"] .mg-bg__petals,
+.app[data-mode="magia"] .mg-bg__scan,
+.app[data-mode="magia"] .mg-bg__flash {
+  position: absolute;
+  inset: 0;
+}
+
+/* 天空：主题底色 + 两团随强调色走的辉光，深浅色都能成立 */
+.app[data-mode="magia"] .mg-bg__sky {
+  background:
+    radial-gradient(120% 90% at 74% 8%, var(--mg-glow) 0, transparent 58%),
+    radial-gradient(90% 70% at 6% 96%, var(--mg-glow-2) 0, transparent 62%),
+    linear-gradient(180deg, color-mix(in oklab, var(--bg-app) 88%, var(--mg-a2)) 0, var(--bg-app) 62%, color-mix(in oklab, var(--bg-app) 86%, var(--text-1)) 100%);
+  opacity: 0.9;
+}
+
+/* 手绘美术层：跟随运镜做反向位移（视差）。
+   注意：这里的 transform 只留给运镜用，「呼吸」动画放在内层 .mg-art 上 ——
+   两者写在同一元素上时动画会盖掉基础 transform，元素会被拉回原点。 */
+.app[data-mode="magia"] .mg-bg__art {
+  transform: translate3d(calc(var(--mg-cam-x) * -0.5px), calc(var(--mg-cam-y) * -0.35px), 0);
+  transform-origin: 62% 46%;
+  opacity: 0.72;
+  mix-blend-mode: screen;
+}
+
+.app[data-mode="magia"] .mg-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  animation: mg-breathe calc(var(--mg-anim) * 26s) ease-in-out infinite;
+}
+
+/* 浅色主题下 screen 混合会把线条洗白，改成正常混合并提高一点不透明度 */
+.app[data-mode="magia"] .mg-bg__art[data-blend="plain"] {
+  mix-blend-mode: normal;
+  opacity: 0.68;
+}
+
+/* 透视网格地板：矩形与线条，滚动即「运镜」 */
+.app[data-mode="magia"] .mg-bg__grid {
+  left: -30%;
+  right: -30%;
+  top: auto;
+  bottom: -18%;
+  height: 68%;
+  transform: perspective(660px) rotateX(74deg);
+  transform-origin: 50% 100%;
+  background-image:
+    repeating-linear-gradient(0deg, var(--mg-line-2) 0 1px, transparent 1px 68px),
+    repeating-linear-gradient(90deg, var(--mg-line-2) 0 1px, transparent 1px 68px);
+  mask-image: linear-gradient(180deg, transparent 0, #000 46%, #000 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 46%, #000 100%);
+  animation: mg-grid-run calc(var(--mg-anim) * 7s) linear infinite;
+  opacity: 0.7;
+}
+
+/* 放射光：repeating-conic-gradient 做的「魔法光束」 */
+.app[data-mode="magia"] .mg-bg__rays {
+  background: repeating-conic-gradient(
+    from 0deg at 50% 50%,
+    var(--mg-glow) 0deg 1.6deg,
+    transparent 1.6deg 11deg
+  );
+  mask-image: radial-gradient(closest-side, transparent 12%, #000 42%, transparent 78%);
+  -webkit-mask-image: radial-gradient(closest-side, transparent 12%, #000 42%, transparent 78%);
+  animation: mg-spin calc(var(--mg-anim) * 64s) linear infinite;
+  opacity: calc(0.42 + var(--mg-beat) * 0.4);
+}
+
+/* 巨大魔法阵：比视口还大，慢慢转。
+   用负的 margin-right 把它推向左边的唱片，别让环线横穿歌词。 */
+.app[data-mode="magia"] .mg-bg__sigil {
+  display: grid;
+  place-items: center;
+  transform: translate3d(calc(var(--mg-cam-x) * 0.6px), calc(var(--mg-cam-y) * 0.45px), 0);
+  opacity: calc(0.28 + var(--mg-beat) * 0.24);
+}
+
+.app[data-mode="magia"] .mg-bg__sigil .mg-sig {
+  width: min(122vmin, 1060px);
+  height: min(122vmin, 1060px);
+  margin-right: 46%;
+  animation: mg-breathe calc(var(--mg-anim) * 18s) ease-in-out infinite;
+}
+
+/* 粒子画布 */
+.app[data-mode="magia"] .mg-bg__particles {
+  width: 100%;
+  height: 100%;
+  opacity: 0.92;
+}
+
+/* 斜向速度线：纯 CSS，永不停歇的「动效底噪」 */
+.app[data-mode="magia"] .mg-bg__streaks {
+  background-image: repeating-linear-gradient(
+    74deg,
+    var(--mg-line-2) 0 1px,
+    transparent 1px 42px
+  );
+  mask-image: linear-gradient(150deg, #000 0, transparent 42%, transparent 62%, #000 100%);
+  -webkit-mask-image: linear-gradient(150deg, #000 0, transparent 42%, transparent 62%, #000 100%);
+  animation: mg-streak-run calc(var(--mg-anim) * 12s) linear infinite;
+  opacity: 0.5;
+}
+
+/* 暗角 + 顶部/底部压暗：保证歌词与按钮的对比度 */
+.app[data-mode="magia"] .mg-bg__veil {
+  background:
+    radial-gradient(115% 88% at 50% 44%, transparent 34%, color-mix(in oklab, var(--bg-app) 78%, transparent) 100%),
+    linear-gradient(180deg, color-mix(in oklab, var(--bg-app) 62%, transparent) 0, transparent 22%),
+    linear-gradient(0deg, color-mix(in oklab, var(--bg-app) 70%, transparent) 0, transparent 26%);
+}
+
+/* 飘落的花瓣：二次元场景的固定班底，纯 CSS 逐个动，不占 JS */
+.app[data-mode="magia"] .mg-bg__petals {
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.app[data-mode="magia"] .mg-petal {
+  position: absolute;
+  top: -8vh;
+  left: var(--x, 50%);
+  width: calc(13px * var(--s, 1));
+  height: calc(10px * var(--s, 1));
+  border-radius: 64% 0 64% 0;
+  background: linear-gradient(
+    140deg,
+    color-mix(in oklab, var(--mg-a2) 82%, transparent),
+    color-mix(in oklab, var(--text-1) 22%, transparent)
+  );
+  opacity: 0.5;
+  will-change: transform;
+  animation: mg-petal calc(var(--mg-anim) * var(--t, 14s)) linear infinite;
+  animation-delay: var(--d, 0s);
+}
+
+.app[data-mode="magia"] .mg-bg[data-anim="off"] .mg-bg__petals {
+  display: none;
+}
+
+/* 扫描线：一条从上往下扫的细亮线 */
+.app[data-mode="magia"] .mg-bg__scan {
+  background: linear-gradient(
+    180deg,
+    transparent 0,
+    transparent 42%,
+    color-mix(in oklab, var(--accent) 34%, transparent) 50%,
+    transparent 58%,
+    transparent 100%
+  );
+  animation: mg-scan calc(var(--mg-anim) * 8.5s) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  opacity: 0.2;
+}
+
+/* 切歌 / 换行时的白闪（由 --mg-cut 驱动，无定时器） */
+.app[data-mode="magia"] .mg-bg__flash {
+  background: radial-gradient(80% 60% at 50% 46%, var(--mg-a1) 0, transparent 66%);
+  opacity: calc(var(--mg-cut) * 0.18 + var(--mg-beat) * 0.055);
+}
+
+/* --------------------------------------------------------------------------
+   3. 手绘美术（.mg-art 内的图形）—— 二次元手绘动画背景
+   -------------------------------------------------------------------------- */
+.app[data-mode="magia"] .mg-art__moon {
+  fill: color-mix(in oklab, var(--text-1) 17%, transparent);
+  stroke: color-mix(in oklab, var(--text-1) 56%, transparent);
+  stroke-width: 1.2;
+}
+
+.app[data-mode="magia"] .mg-art__moonloom {
+  fill: color-mix(in oklab, var(--accent) 9%, transparent);
+  stroke: none;
+  filter: blur(26px);
+}
+
+.app[data-mode="magia"] .mg-art__crater {
+  fill: color-mix(in oklab, var(--text-1) 8%, transparent);
+  stroke: none;
+}
+
+.app[data-mode="magia"] .mg-art__post {
+  fill: color-mix(in oklab, var(--bg-app) 80%, var(--mg-a1));
+  stroke: color-mix(in oklab, var(--accent) 52%, transparent);
+  stroke-width: 1.3;
+}
+
+.app[data-mode="magia"] .mg-art__torii {
+  fill: color-mix(in oklab, var(--bg-app) 80%, var(--mg-a1));
+  stroke: color-mix(in oklab, var(--accent) 58%, transparent);
+  stroke-width: 1.4;
+}
+
+.app[data-mode="magia"] .mg-art__ridge {
+  fill: color-mix(in oklab, var(--bg-app) 62%, var(--mg-a2));
+  stroke: color-mix(in oklab, var(--accent) 30%, transparent);
+  stroke-width: 1.1;
+}
+
+.app[data-mode="magia"] .mg-art__ridge--far {
+  fill: color-mix(in oklab, var(--bg-app) 82%, var(--mg-a2));
+  opacity: 0.75;
+}
+
+.app[data-mode="magia"] .mg-art__ridge--near {
+  fill: color-mix(in oklab, var(--bg-app) 92%, var(--mg-a1));
+}
+
+.app[data-mode="magia"] .mg-art__tower {
+  fill: color-mix(in oklab, var(--bg-app) 88%, var(--mg-a1));
+  stroke: color-mix(in oklab, var(--accent) 34%, transparent);
+  stroke-width: 1;
+}
+
+.app[data-mode="magia"] .mg-art__antenna {
+  fill: none;
+  stroke: color-mix(in oklab, var(--accent) 46%, transparent);
+  stroke-width: 1;
+}
+
+.app[data-mode="magia"] .mg-art__win {
+  fill: var(--mg-a1);
+  opacity: 0.55;
+  animation: mg-wink calc(var(--mg-anim) * 5.4s) steps(1, end) infinite;
+}
+
+.app[data-mode="magia"] .mg-art__cloud {
+  fill: color-mix(in oklab, var(--text-1) 9%, transparent);
+  stroke: color-mix(in oklab, var(--text-1) 30%, transparent);
+  stroke-width: 1.1;
+}
+
+.app[data-mode="magia"] .mg-art__brush {
+  fill: color-mix(in oklab, var(--accent) 12%, transparent);
+  stroke: none;
+}
+
+.app[data-mode="magia"] .mg-art__spark {
+  fill: var(--mg-a1);
+  opacity: 0.7;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mg-twinkle calc(var(--mg-anim) * 4.2s) ease-in-out infinite;
+}
+
+.app[data-mode="magia"] .mg-art__dot {
+  fill: color-mix(in oklab, var(--accent) 40%, transparent);
+}
+
+.app[data-mode="magia"] .mg-art__tone {
+  opacity: 0.42;
+}
+
+.app[data-mode="magia"] .mg-art__frame,
+.app[data-mode="magia"] .mg-art__frame2 {
+  fill: none;
+  stroke: color-mix(in oklab, var(--accent) 26%, transparent);
+  stroke-width: 1.2;
+}
+
+.app[data-mode="magia"] .mg-art__frame2 {
+  stroke: color-mix(in oklab, var(--text-1) 16%, transparent);
+}
+
+.app[data-mode="magia"] .mg-art__band {
+  fill: none;
+  stroke: color-mix(in oklab, var(--accent) 22%, transparent);
+  stroke-width: 1;
+}
+
+/* --------------------------------------------------------------------------
+   4. 魔法阵（.mg-sig）—— 背景层与舞台共用，所以挂在 .app 作用域下
+   -------------------------------------------------------------------------- */
+.app[data-mode="magia"] .mg-sig {
+  display: block;
+  overflow: visible;
+}
+
+.app[data-mode="magia"] .mg-sig__spin {
+  transform-origin: 100px 100px;
+  transform-box: view-box;
+}
+
+.app[data-mode="magia"] .mg-sig__spin--a {
+  animation: mg-spin calc(var(--mg-anim) * 96s) linear infinite;
+}
+
+.app[data-mode="magia"] .mg-sig__spin--b {
+  animation: mg-spin-rev calc(var(--mg-anim) * 62s) linear infinite;
+}
+
+.app[data-mode="magia"] .mg-sig__spin--c {
+  animation: mg-spin calc(var(--mg-anim) * 34s) linear infinite;
+}
+
+.app[data-mode="magia"] .mg-sig__line {
+  fill: none;
+  stroke: var(--mg-line);
+  stroke-width: 1.1;
+  vector-effect: non-scaling-stroke;
+}
+
+.app[data-mode="magia"] .mg-sig__line--strong {
+  stroke: color-mix(in oklab, var(--accent) 68%, transparent);
+  stroke-width: 1.4;
+}
+
+.app[data-mode="magia"] .mg-sig__line--faint {
+  stroke: var(--mg-line-2);
+}
+
+.app[data-mode="magia"] .mg-sig__star {
+  fill: color-mix(in oklab, var(--accent) 7%, transparent);
+  stroke: color-mix(in oklab, var(--accent) 52%, transparent);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.app[data-mode="magia"] .mg-sig__rune {
+  fill: none;
+  stroke: color-mix(in oklab, var(--accent) 62%, transparent);
+  stroke-width: 1;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.app[data-mode="magia"] .mg-sig__core {
+  fill: color-mix(in oklab, var(--accent) 20%, transparent);
+  stroke: color-mix(in oklab, var(--accent) 76%, transparent);
+  stroke-width: 1.3;
+  vector-effect: non-scaling-stroke;
+}
+
+/* --------------------------------------------------------------------------
+   5. 舞台骨架（ctx.root = #playerview-stage 内的 .mg-shell）
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="magia"] {
+  background: none;
+}
+
+.playerview[data-skin="magia"] .playerview__stage {
+  position: relative;
+}
+
+.playerview[data-skin="magia"] .mg-shell {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  gap: clamp(6px, 1.2vmin, 16px);
+  padding: clamp(8px, 1.6vmin, 22px) clamp(14px, 2.6vmin, 38px) clamp(10px, 2vmin, 26px);
+  box-sizing: border-box;
+  color: var(--text-1);
+  pointer-events: none;
+  isolation: isolate;
+  /* 歌词基准字号：由 JS 按 ctx.options().lyricsFontSize 覆盖 */
+  --mg-lyric-size: 26px;
+  /* 唱片直径：曲目信息在唱片上方，竖着要给它留位置，
+     所以比只放唱片时收一档；矮窗口另有媒体查询再收。 */
+  --mg-disc: clamp(160px, 32vmin, 360px);
+}
+
+/* HUD：矩形与线条做的取景框 */
+.playerview[data-skin="magia"] .mg-hud {
+  position: absolute;
+  inset: clamp(6px, 1.1vmin, 14px);
+  pointer-events: none;
+  opacity: 0.85;
+  z-index: 4;
+}
+
+.playerview[data-skin="magia"] .mg-hud__corner {
+  position: absolute;
+  width: clamp(18px, 3.2vmin, 42px);
+  height: clamp(18px, 3.2vmin, 42px);
+  border: 0 solid var(--mg-line);
+}
+
+.playerview[data-skin="magia"] .mg-hud__corner--tl {
+  top: 0;
+  left: 0;
+  border-top-width: 2px;
+  border-left-width: 2px;
+}
+
+.playerview[data-skin="magia"] .mg-hud__corner--tr {
+  top: 0;
+  right: 0;
+  border-top-width: 2px;
+  border-right-width: 2px;
+}
+
+.playerview[data-skin="magia"] .mg-hud__corner--bl {
+  bottom: 0;
+  left: 0;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+}
+
+.playerview[data-skin="magia"] .mg-hud__corner--br {
+  bottom: 0;
+  right: 0;
+  border-bottom-width: 2px;
+  border-right-width: 2px;
+}
+
+.playerview[data-skin="magia"] .mg-hud__rail {
+  position: absolute;
+  background-image: repeating-linear-gradient(
+    180deg,
+    var(--mg-line-2) 0 1px,
+    transparent 1px 14px
+  );
+  width: 1px;
+  top: 14%;
+  bottom: 14%;
+  opacity: 0.8;
+}
+
+.playerview[data-skin="magia"] .mg-hud__rail--l {
+  left: 3px;
+}
+
+.playerview[data-skin="magia"] .mg-hud__rail--r {
+  right: 3px;
+}
+
+.playerview[data-skin="magia"] .mg-hud__edge {
+  position: absolute;
+  height: 1px;
+  left: 18%;
+  right: 18%;
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--mg-line) 0 2px,
+    transparent 2px 10px
+  );
+  opacity: calc(0.5 + var(--mg-beat) * 0.5);
+}
+
+.playerview[data-skin="magia"] .mg-hud__edge--t {
+  top: 0;
+}
+
+.playerview[data-skin="magia"] .mg-hud__edge--b {
+  bottom: 0;
+}
+
+/* 换歌闪白 */
+.playerview[data-skin="magia"] .mg-flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(70% 58% at 50% 48%, var(--mg-a1) 0, transparent 68%);
+  opacity: calc(var(--mg-cut) * 0.14);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* 两栏：左「场景」，右「歌词」 */
+.playerview[data-skin="magia"] .mg-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.06fr);
+  /* 行高显式给足：歌词栏要有一个确定的高度才能做滚动与居中 */
+  grid-template-rows: minmax(0, 1fr);
+  gap: clamp(8px, 2.4vmin, 44px);
+  min-height: 0;
+  z-index: 2;
+}
+
+.playerview[data-skin="magia"] .mg-scene {
+  position: relative;
+  display: grid;
+  /* 曲目信息在唱片上方；两行都是内容高度 + align-content: center，
+     于是「标题 + 唱片」作为一整组在竖向上居中，
+     不会出现唱片下面空一大片、上面又贴着标题的情况。 */
+  grid-template-rows: auto auto;
+  align-content: center;
+  justify-items: center;
+  align-items: center;
+  gap: clamp(6px, 1.4vmin, 18px);
+  min-width: 0;
+  min-height: 0;
+}
+
+/* --------------------------------------------------------------------------
+   6. 场景：光环 / 相机 / 魔法阵 / 唱片 / 元信息
+   -------------------------------------------------------------------------- */
+/* 光环：用负 margin 居中而不是 translate(-50%,-50%)，
+   因为下面的 mg-breathe 动画要用 transform 做缩放，两者不能抢同一个属性。 */
+.playerview[data-skin="magia"] .mg-scene__halo {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: calc(var(--mg-disc) * 2.5);
+  height: calc(var(--mg-disc) * 2.5);
+  margin: calc(var(--mg-disc) * -1.25) 0 0 calc(var(--mg-disc) * -1.25);
+  background:
+    radial-gradient(closest-side, var(--mg-glow) 0, transparent 62%),
+    radial-gradient(closest-side, var(--mg-glow-2) 0, transparent 46%);
+  opacity: calc(0.28 + var(--mg-pulse) * 0.3);
+  pointer-events: none;
+  animation: mg-breathe calc(var(--mg-anim) * 9s) ease-in-out infinite;
+}
+
+.playerview[data-skin="magia"] .mg-scene__beam {
+  position: absolute;
+  left: 50%;
+  top: -6%;
+  width: calc(var(--mg-disc) * 1.5);
+  height: 112%;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, var(--mg-glow) 0, transparent 74%);
+  clip-path: polygon(44% 0, 56% 0, 82% 100%, 18% 100%);
+  opacity: calc(0.16 + var(--mg-pulse) * 0.16 + var(--mg-beat) * 0.2);
+  pointer-events: none;
+}
+
+/* 舞台投影线：.mg-camera 是 1.9×唱片直径的方框，
+   唱片下沿落在距底部约 24% 处，这两条就贴着它。 */
+.playerview[data-skin="magia"] .mg-scene__floor {
+  position: absolute;
+  left: 50%;
+  bottom: 19%;
+  width: calc(var(--mg-disc) * 1.85);
+  height: calc(var(--mg-disc) * 0.2);
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--mg-glow) 0, transparent 74%);
+  pointer-events: none;
+}
+
+.playerview[data-skin="magia"] .mg-scene__floorline {
+  position: absolute;
+  left: 50%;
+  bottom: 15%;
+  width: calc(var(--mg-disc) * 1.5);
+  height: 1px;
+  transform: translateX(-50%);
+  background: linear-gradient(90deg, transparent, var(--mg-line), transparent);
+  opacity: 0.7;
+}
+
+/* 运镜容器：位移/旋转/缩放在这里叠加 */
+.playerview[data-skin="magia"] .mg-camera {
+  position: relative;
+  display: grid;
+  place-items: center;
+  transform:
+    translate3d(calc(var(--mg-cam-x) * 1px), calc(var(--mg-cam-y) * 1px), 0)
+    rotate(calc(var(--mg-cam-r) * 1deg))
+    scale(var(--mg-cam-z));
+  transform-origin: 50% 56%;
+  will-change: transform;
+}
+
+.playerview[data-skin="magia"] .mg-ring,
+.playerview[data-skin="magia"] .mg-disc {
+  grid-area: 1 / 1;
+}
+
+.playerview[data-skin="magia"] .mg-ring {
+  position: relative;
+  width: calc(var(--mg-disc) * 1.9);
+  height: calc(var(--mg-disc) * 1.9);
+  pointer-events: none;
+}
+
+.playerview[data-skin="magia"] .mg-ring .mg-sig {
+  width: 100%;
+  height: 100%;
+  opacity: calc(0.5 + var(--mg-pulse) * 0.22 + var(--mg-beat) * 0.3);
+  /* .mg-sig 自身没有关键帧动画，可以安全地拿来做每拍的呼吸缩放 */
+  transform: scale(calc(1 + var(--mg-beat) * 0.05));
+}
+
+.playerview[data-skin="magia"] .mg-disc {
+  position: relative;
+  z-index: 2;
+  width: var(--mg-disc);
+  height: var(--mg-disc);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+}
+
+.playerview[data-skin="magia"] .mg-disc__aura {
+  position: absolute;
+  inset: -14%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--mg-glow) 0, transparent 70%);
+  opacity: calc(0.5 + var(--mg-pulse) * 0.4 + var(--mg-beat) * 0.34);
+  filter: blur(6px);
+  transition: opacity var(--dur) var(--ease);
+}
+
+.playerview[data-skin="magia"] .mg-disc__artwrap {
+  position: absolute;
+  inset: 6.5%;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px var(--mg-line),
+    0 18px 48px color-mix(in oklab, var(--bg-app) 72%, transparent);
+  transition: transform var(--dur) var(--ease);
+}
+
+.playerview[data-skin="magia"] .mg-disc__art {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  transform: scale(1.1);
+  animation: mg-vinyl calc(var(--mg-anim) * 240s) linear infinite;
+}
+
+.playerview[data-skin="magia"] .mg-disc__sheen {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    118deg,
+    transparent 34%,
+    color-mix(in oklab, var(--text-1) 26%, transparent) 47%,
+    transparent 58%
+  );
+  animation: mg-sheen calc(var(--mg-anim) * 5.6s) ease-in-out infinite;
+  opacity: 0.75;
+}
+
+.playerview[data-skin="magia"] .mg-disc__rim {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    var(--mg-a1) 0 2deg,
+    transparent 2deg 14deg,
+    var(--mg-a2) 14deg 16deg,
+    transparent 16deg 30deg
+  );
+  mask-image: radial-gradient(closest-side, transparent 88%, #000 89%, #000 100%);
+  -webkit-mask-image: radial-gradient(closest-side, transparent 88%, #000 89%, #000 100%);
+  animation: mg-spin calc(var(--mg-anim) * 26s) linear infinite;
+  opacity: calc(0.72 + var(--mg-beat) * 0.28);
+}
+
+.playerview[data-skin="magia"] .mg-disc__pin {
+  position: absolute;
+  width: 9%;
+  height: 9%;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--bg-app) 82%, var(--accent));
+  box-shadow: 0 0 0 1px var(--mg-line), 0 0 14px var(--mg-glow);
+}
+
+/* 鼠标悬停 / 按下不再做任何缩放动效：唱片保持静止，只有光标形状提示可点。
+   键盘聚焦仍然给一圈焦点环（那不是鼠标交互动效）。 */
+.playerview[data-skin="magia"] .mg-disc:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 50%;
+}
+
+/* 元信息 */
+.playerview[data-skin="magia"] .mg-meta {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  max-width: 100%;
+  text-align: center;
+  z-index: 3;
+}
+
+.playerview[data-skin="magia"] .mg-meta__kicker {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--mg-a2);
+  opacity: 0.9;
+}
+
+.playerview[data-skin="magia"] .mg-meta__title {
+  font-size: clamp(15px, 2.1vmin, 24px);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.01em;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 2px 18px color-mix(in oklab, var(--bg-app) 82%, transparent);
+}
+
+.playerview[data-skin="magia"] .mg-meta__rule {
+  width: clamp(48px, 9vmin, 128px);
+  height: 2px;
+  margin: 3px 0 4px;
+  background: linear-gradient(90deg, transparent, var(--mg-a2), transparent);
+  animation: mg-rule calc(var(--mg-anim) * 3.4s) ease-in-out infinite;
+}
+
+.playerview[data-skin="magia"] .mg-meta__artist {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playerview[data-skin="magia"] .mg-eq {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 14px;
+  margin-top: 6px;
+}
+
+.playerview[data-skin="magia"] .mg-eq__bar {
+  width: 3px;
+  height: 100%;
+  border-radius: 1px;
+  background: linear-gradient(180deg, var(--mg-a1), var(--mg-a2));
+  transform-origin: 50% 100%;
+  transform: scaleY(0.3);
+  animation: mg-eq calc(var(--mg-anim) * 0.9s) ease-in-out infinite;
+}
+
+.playerview[data-skin="magia"] .mg-shell[data-playing="false"] .mg-eq__bar {
+  animation-play-state: paused;
+  transform: scaleY(0.16);
+  opacity: 0.5;
+}
+
+.playerview[data-skin="magia"] .mg-eq__bar:nth-child(1) {
+  animation-duration: calc(var(--mg-anim) * var(--mg-beat-ms, 500) * 0.00144s);
+}
+
+.playerview[data-skin="magia"] .mg-eq__bar:nth-child(2) {
+  animation-duration: calc(var(--mg-anim) * var(--mg-beat-ms, 500) * 0.0021s);
+  animation-delay: calc(var(--mg-anim) * -0.24s);
+}
+
+.playerview[data-skin="magia"] .mg-eq__bar:nth-child(3) {
+  animation-duration: calc(var(--mg-anim) * var(--mg-beat-ms, 500) * 0.00126s);
+  animation-delay: calc(var(--mg-anim) * -0.4s);
+}
+
+.playerview[data-skin="magia"] .mg-eq__bar:nth-child(4) {
+  animation-duration: calc(var(--mg-anim) * var(--mg-beat-ms, 500) * 0.00188s);
+  animation-delay: calc(var(--mg-anim) * -0.12s);
+}
+
+.playerview[data-skin="magia"] .mg-eq__bar:nth-child(5) {
+  animation-duration: calc(var(--mg-anim) * var(--mg-beat-ms, 500) * 0.00156s);
+  animation-delay: calc(var(--mg-anim) * -0.34s);
+}
+
+/* --------------------------------------------------------------------------
+   7. 歌词：逐字 / 逐词入场，字号各异
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="magia"] .mg-lyrics {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: auto;
+  /* 歌词区自己就是一个「尺寸容器」：下面的 50cqh 留白要按它自己的高度算 */
+  container-type: size;
+  /* 一层极淡的底衬：背景是手绘线条时，纯文字容易被线条穿过 */
+  background: radial-gradient(
+    118% 92% at 38% 50%,
+    color-mix(in oklab, var(--bg-app) 58%, transparent) 0,
+    transparent 74%
+  );
+}
+
+/* 左缘的「咒文轴」：一条竖线 + 刻度 */
+.playerview[data-skin="magia"] .mg-lyrics__spine {
+  position: absolute;
+  left: 0;
+  top: 6%;
+  bottom: 6%;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--mg-line), transparent);
+}
+
+.playerview[data-skin="magia"] .mg-lyrics__spine-mark {
+  position: absolute;
+  left: -4px;
+  width: 9px;
+  height: 1px;
+  background: var(--mg-a2);
+  animation: mg-mark calc(var(--mg-anim) * 6s) ease-in-out infinite;
+}
+
+.playerview[data-skin="magia"] .mg-lyrics__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* relative 是必需的：歌词行的 offsetTop 要相对滚动容器量，
+     否则 offsetParent 会落到更外层，居中算出来的 scrollTop 全是错的。 */
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  /* 上下各留出「半个歌词区」的空白，第一句与最后一句才有空间被滚到正中。
+     先给一个按宽度算的兜底值，再用 50cqh（歌词区高度的 50%）覆盖 ——
+     窗口很矮时兜底值会把内容顶出可视区，50cqh 才是对的；
+     不支持容器查询的老内核会丢掉第二条声明，仍然能用。 */
+  padding-block: max(38%, 26vh);
+  padding-block: 50cqh;
+  mask-image: linear-gradient(180deg, transparent 0, #000 16%, #000 84%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 16%, #000 84%, transparent 100%);
+}
+
+.playerview[data-skin="magia"] .mg-lyrics__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.playerview[data-skin="magia"] .mg-lyrics__inner {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(2px, 0.5vmin, 8px);
+  padding-left: clamp(8px, 1.6vmin, 22px);
+  text-align: left;
+}
+
+.playerview[data-skin="magia"] .mg-line {
+  display: block;
+  width: 100%;
+  padding: 3px 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: calc(var(--mg-lyric-size) * 0.92);
+  line-height: 1.42;
+  color: var(--text-1);
+  text-align: left;
+  opacity: 0.34;
+  cursor: pointer;
+  transform-origin: 0 50%;
+  transition:
+    opacity var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    filter var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+  filter: blur(0.6px);
+}
+
+/* 歌词行的悬停不再加亮 / 去模糊：点击跳转功能保留，但不给鼠标反馈动效。
+   可点性靠常驻的 cursor: pointer 表达。 */
+.playerview[data-skin="magia"] .mg-line[data-state="past"] {
+  opacity: 0.24;
+}
+
+.playerview[data-skin="magia"] .mg-line[data-state="active"] {
+  opacity: 1;
+  filter: none;
+  font-size: calc(var(--mg-lyric-size) * 1.16);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+  text-shadow:
+    0 0 18px var(--mg-glow),
+    0 2px 14px color-mix(in oklab, var(--bg-app) 74%, transparent);
+  transform: translateX(calc(2px + var(--mg-pulse) * 6px));
+}
+
+.playerview[data-skin="magia"] .mg-line[data-kind="interlude"] {
+  color: var(--text-3);
+  font-style: italic;
+  opacity: 0.5;
+}
+
+/* 逐字 / 逐词单位：每个单位的字号、入场延迟、下沉量都不同 */
+.playerview[data-skin="magia"] .mg-unit {
+  display: inline-block;
+  font-size: calc(1em * var(--mg-s, 1));
+  color: inherit;
+  /* 420ms 而不是 620ms：入场更快，配合 JS 按拍推出来的 --mg-d，
+     每个字都在自己被唱到之前就已经落位，不会出现「上一句结束还有字没渲染」 */
+  animation: mg-pop calc(var(--mg-anim) * 420ms) cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--mg-anim) * var(--mg-d, 0) * 1ms);
+  will-change: transform, opacity;
+}
+
+.playerview[data-skin="magia"] .mg-unit[data-hold="now"] {
+  color: var(--mg-a1);
+  text-shadow: 0 0 22px var(--mg-glow), 0 0 44px var(--mg-glow-2);
+}
+
+.playerview[data-skin="magia"] .mg-unit[data-hold="done"] {
+  color: color-mix(in oklab, var(--mg-a2) 72%, var(--text-1));
+}
+
+.playerview[data-skin="magia"] .mg-line:focus-visible {
+  outline: none;
+  opacity: 0.85;
+  box-shadow: inset 2px 0 0 var(--mg-a2);
+}
+
+/* 无歌词空态 */
+.playerview[data-skin="magia"] .mg-empty {
+  display: grid;
+  place-items: center;
+  gap: var(--sp-2);
+  min-height: 46%;
+  text-align: center;
+  color: var(--text-3);
+}
+
+.playerview[data-skin="magia"] .mg-empty__glyph {
+  font-size: calc(var(--mg-lyric-size) * 1.6);
+  color: var(--mg-a2);
+  opacity: 0.8;
+  animation: mg-breathe calc(var(--mg-anim) * 4.6s) ease-in-out infinite;
+}
+
+.playerview[data-skin="magia"] .mg-empty__text {
+  font-size: var(--fs-md);
+}
+
+/* --------------------------------------------------------------------------
+   8. 关键帧
+   -------------------------------------------------------------------------- */
+@keyframes mg-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes mg-spin-rev {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+@keyframes mg-vinyl {
+  from {
+    transform: scale(1.1) rotate(0deg);
+  }
+
+  to {
+    transform: scale(1.1) rotate(360deg);
+  }
+}
+
+@keyframes mg-pop {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0.46em, 0) scale(0.5) rotate(-9deg);
+    filter: blur(7px);
+  }
+
+  56% {
+    opacity: 1;
+    transform: translate3d(0, -0.09em, 0) scale(1.08) rotate(1.6deg);
+    filter: blur(0);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+    filter: blur(0);
+  }
+}
+
+@keyframes mg-breathe {
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.95;
+    transform: scale(1.035);
+  }
+}
+
+@keyframes mg-sheen {
+  0% {
+    transform: translate3d(-42%, 0, 0) rotate(0.001deg);
+  }
+
+  55%,
+  100% {
+    transform: translate3d(42%, 0, 0) rotate(0.001deg);
+  }
+}
+
+@keyframes mg-grid-run {
+  from {
+    background-position: 0 0, 0 0;
+  }
+
+  to {
+    background-position: 0 68px, 68px 0;
+  }
+}
+
+@keyframes mg-streak-run {
+  from {
+    background-position: 0 0;
+  }
+
+  to {
+    background-position: 168px 0;
+  }
+}
+
+@keyframes mg-scan {
+  0% {
+    transform: translateY(-60%);
+    opacity: 0;
+  }
+
+  12% {
+    opacity: 0.4;
+  }
+
+  88% {
+    opacity: 0.4;
+  }
+
+  100% {
+    transform: translateY(60%);
+    opacity: 0;
+  }
+}
+
+@keyframes mg-petal {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+    opacity: 0;
+  }
+
+  8% {
+    opacity: 0.55;
+  }
+
+  92% {
+    opacity: 0.5;
+  }
+
+  100% {
+    transform: translate3d(var(--mg-px, 6vw), 118vh, 0) rotate(var(--mg-pr, 540deg));
+    opacity: 0;
+  }
+}
+
+@keyframes mg-twinkle {
+  0%,
+  100% {
+    opacity: 0.18;
+    transform: scale(0.7);
+  }
+
+  50% {
+    opacity: 0.85;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes mg-wink {
+  0%,
+  92% {
+    opacity: 0.55;
+  }
+
+  94%,
+  100% {
+    opacity: 0.08;
+  }
+}
+
+@keyframes mg-rule {
+  0%,
+  100% {
+    transform: scaleX(0.5);
+    opacity: 0.5;
+  }
+
+  50% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+@keyframes mg-eq {
+  0%,
+  100% {
+    transform: scaleY(0.24);
+  }
+
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes mg-mark {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+
+  50% {
+    transform: translateY(52vh);
+    opacity: 1;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   9. 关掉「界面动画」/ 关掉歌词栏 / 窄窗口与矮窗口
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="magia"] .mg-shell[data-anim="off"] .mg-line[data-state="active"] {
+  transform: none;
+}
+
+.playerview[data-skin="magia"] .mg-shell[data-anim="off"] .mg-unit {
+  animation: none;
+}
+
+/* 详情页关掉歌词时，场景独占整宽 */
+.playerview[data-skin="magia"][data-lyrics="off"] .mg-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.playerview[data-skin="magia"][data-lyrics="off"] .mg-lyrics {
+  display: none;
+}
+
+.playerview[data-skin="magia"][data-lyrics="off"] .mg-camera {
+  transform:
+    translate3d(calc(var(--mg-cam-x) * 1px), calc(var(--mg-cam-y) * 1px), 0)
+    scale(calc(var(--mg-cam-z) * 1.14));
+}
+
+@media (max-width: 1000px) {
+  .playerview[data-skin="magia"] .mg-shell {
+    --mg-disc: clamp(112px, 24vmin, 240px);
+  }
+}
+
+/* 窄窗口不改成上下堆叠：堆叠会把歌词挤成一条缝，
+   而是继续左右两栏、把唱片收小。 */
+@media (max-width: 860px) {
+  .playerview[data-skin="magia"] .mg-shell {
+    --mg-disc: clamp(92px, 21vmin, 180px);
+  }
+
+  .playerview[data-skin="magia"] .mg-meta__kicker {
+    display: none;
+  }
+
+  .playerview[data-skin="magia"] .mg-eq {
+    display: none;
+  }
+
+  .playerview[data-skin="magia"] .mg-lyrics__spine {
+    display: none;
+  }
+}
+
+/* 曲目信息搬到唱片上方之后，竖着要留出它的高度，
+   矮窗口必须把唱片收得更多，否则唱片会顶到标题上。 */
+@media (max-height: 780px) {
+  .playerview[data-skin="magia"] .mg-shell {
+    --mg-disc: clamp(108px, 26vmin, 260px);
+  }
+}
+
+@media (max-height: 620px) {
+  .playerview[data-skin="magia"] .mg-shell {
+    --mg-disc: clamp(88px, 21vmin, 190px);
+  }
+
+  .playerview[data-skin="magia"] .mg-meta__kicker {
+    display: none;
+  }
+
+  .playerview[data-skin="magia"] .mg-eq {
+    display: none;
+  }
+}

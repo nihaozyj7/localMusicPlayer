@@ -89,7 +89,7 @@ function makeCtx() {
     root: stage,
     backgroundRoot,
     // 这个窗口不持有播放器：皮肤若想读缓冲进度会拿到 null，
-    // 内置三种样式都不用它（它们只依赖宿主推的 playback 快照）。
+    // 内置样式都不用（它们只依赖宿主推的 playback 快照）。
     audio: null,
     defaultCover: DEFAULT_COVER,
     get themeId() {

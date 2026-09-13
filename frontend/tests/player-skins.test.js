@@ -4,7 +4,7 @@
    覆盖三块**纯逻辑**：
      1. LRC 解析与定位（高亮错行的锅基本都在这里）；
      2. 皮肤契约（缺字段 / 接口版本不符要在加载时就报出来）；
-     3. 注册表（内置三种、排序、不认识 id 的兜底）。
+     3. 注册表（内置样式清单与排序、不认识 id 的兜底）。
    DOM 行为（挂载、歌词滚动、整窗背景层）由无头浏览器自检负责：
      node tools/check-player-host.mjs
    ========================================================================== */
@@ -117,23 +117,34 @@ test("inspectSkinModule：分别识别 default / skin 导出与缺失", () => {
    注册表
    -------------------------------------------------------------------------- */
 
-test("内置三种样式都在注册表里，且顺序稳定（经典 → 沉浸 → 简约）", () => {
-  assert.equal(BUILTIN_SKINS.length, 3);
+test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸 → 简约 → 四个特效 → 魔法阵）", () => {
+  // 内置样式是「产品的一部分」：这个清单变了就必须有人显式改这里，
+  // 免得新增样式时漏注册、或者顺序被无意打乱。
   assert.deepEqual(
     listSkins().map((s) => s.id),
-    ["classic", "immersive", "minimal"]
+    ["classic", "immersive", "minimal", "anime", "cosmos", "wasteland", "arcade", "magia"]
+  );
+  assert.deepEqual(
+    BUILTIN_SKINS.map((s) => s.id),
+    ["classic", "immersive", "minimal", "anime", "cosmos", "wasteland", "arcade", "magia"]
   );
   for (const skin of BUILTIN_SKINS) {
     assert.equal(typeof skin.mount, "function", `${skin.id} 缺 mount`);
     assert.equal(typeof skin.update, "function", `${skin.id} 缺 update`);
     assert.equal(typeof skin.destroy, "function", `${skin.id} 缺 destroy`);
     assert.equal(skin.apiVersion, SKIN_API_VERSION);
+    assert.ok(skin.order >= 10 && skin.order < 100, `${skin.id} 的 order 应落在内置区间`);
   }
 });
 
-test("沉浸是唯一需要整窗背景层的内置样式", () => {
+test("需要整窗背景层的内置样式（沉浸 / 特效类）都声明了 background", () => {
   const withBg = BUILTIN_SKINS.filter((s) => s.background).map((s) => s.id);
-  assert.deepEqual(withBg, ["immersive"]);
+  assert.deepEqual(withBg, ["immersive", "anime", "cosmos", "wasteland", "arcade", "magia"]);
+  // 经典与简约是「不铺满整窗」的两种：一个左唱片右歌词，一个只留文字
+  assert.deepEqual(
+    BUILTIN_SKINS.filter((s) => !s.background).map((s) => s.id),
+    ["classic", "minimal"]
+  );
 });
 
 test("resolveSkin：不认识的 id 回退到默认样式并标记 fellBack", () => {

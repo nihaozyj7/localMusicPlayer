@@ -269,7 +269,7 @@ const skinFailures = [];
 const externalSkinIds = new Set();
 
 /**
- * 发现全部可用样式：内置三种已在包里注册，这里只补用户数据目录里的第三方皮肤。
+ * 发现全部可用样式：内置样式已在包里注册，这里只补用户数据目录里的第三方皮肤。
  * 幂等：只扫一次；用户丢了新样式后可以调 reloadSkins 重扫。
  */
 let skinsReady = null;
@@ -957,7 +957,7 @@ export function availableSkins() {
     id: s.id,
     name: s.name,
     icon: s.icon || "disc",
-    // 内置的三种来自包（builtin 未声明），运行时加载的会显式标 false
+    // 内置的来自包（builtin 未声明），运行时加载的会显式标 false
     builtin: s.builtin !== false,
     source: s.source || "",
   }));
