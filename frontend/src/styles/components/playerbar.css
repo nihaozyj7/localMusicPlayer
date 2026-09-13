@@ -1,39 +1,75 @@
 /* ==========================================================================
    playerbar.css — 底部常驻播放控件
-   左（封面/信息/爱心） · 中（控制 + 进度） · 右（音量/循环/播放页）
+   --------------------------------------------------------------------------
+   结构：
+     .playerbar__progress  上面一整行：已播时间 ── 进度条 ── 总时长
+     .playerbar__row       下面一行：
+        .playerbar__now    【封面】曲目名 + 歌手·专辑  喜欢  添加到歌单
+        .playerbar__center 上一首 / 播放暂停 / 下一首
+        .playerbar__tools  音量  播放顺序  桌面歌词  播放列表  全屏
+   背景不自己铺：主界面渐变由 .app::after 提供（高度 = --h-playerbar），
+   沉浸模式下两者都会让位给封面虚化图。
    ========================================================================== */
 
 .playerbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(380px, 2fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   align-items: center;
-  gap: var(--sp-4);
+  row-gap: var(--sp-1);
   height: var(--h-playerbar);
-  padding: 0 var(--sp-4);
-  background: var(--glass-bg-strong);
-  backdrop-filter: var(--panel-blur);
-  -webkit-backdrop-filter: var(--panel-blur);
-  border-top: var(--hairline);
-  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
+  padding: var(--sp-2) var(--sp-4) var(--sp-3);
+  background: none;
   position: relative;
 }
 
-.playerbar::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 1px;
-  background: var(--glass-highlight);
-  opacity: 0.7;
-  pointer-events: none;
-}
-
-/* —— 左区：当前曲目 —— */
-.playerbar__now {
+/* —— 上排：进度条 —— */
+.playerbar__progress {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
+  width: 100%;
   min-width: 0;
+}
+
+.progress__time {
+  flex: none;
+  width: 42px;
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.progress__time--total {
+  text-align: right;
+}
+
+/* —— 下排：三块，中间那块必须相对整条播放控件居中 ——
+   用绝对定位 + translateX(-50%)，而不是 flex 均分：
+   flex 的居中只保证"左右剩余空间相等"，一旦左边曲目信息比右边工具宽
+   （实际就是如此），传输控制就会被推到偏左的位置。
+   绝对定位让它严格落在窗口中线上，与两侧内容宽度无关。
+
+   两侧各留 --transport-zone（中间块的半径，含余量），
+   保证任何宽度下两侧内容都不会盖到中间那块上。 */
+.playerbar__row {
+  --transport-zone: 168px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+/* —— ① 左区：当前曲目 + 收藏 + 添加到歌单 —— */
+.playerbar__now {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: calc(50% - var(--transport-zone));
 }
 
 .playerbar__cover {
@@ -92,6 +128,7 @@
 
 .playerbar__meta {
   min-width: 0;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -115,6 +152,7 @@
   text-overflow: ellipsis;
 }
 
+/* 爱心 / 添加到歌单 共用一套按钮外观 */
 .playerbar__heart {
   flex: none;
   display: grid;
@@ -124,7 +162,7 @@
   border-radius: var(--r-full);
   color: var(--heart-off);
   transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
-    transform var(--dur-fast) var(--ease);
+    transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
 
 .playerbar__heart svg {
@@ -149,14 +187,29 @@
   fill: currentColor;
 }
 
-/* —— 中区：控制 + 进度 —— */
+/* 「添加到歌单」只是一个普通图标按钮，不该继承爱心色 */
+.playerbar__add {
+  color: var(--text-2);
+}
+
+.playerbar__add:hover {
+  color: var(--text-1);
+}
+
+.playerbar__add:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* —— ② 中区：传输控制（严格居中） —— */
 .playerbar__center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-width: 0;
 }
 
 .transport {
@@ -213,28 +266,7 @@
   filter: brightness(0.92);
 }
 
-/* —— 进度条 / 音量条（共用 .slider）—— */
-.progress {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  width: 100%;
-  max-width: 620px;
-}
-
-.progress__time {
-  flex: none;
-  width: 40px;
-  font-family: var(--font-num);
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-3);
-}
-
-.progress__time--total {
-  text-align: right;
-}
-
+/* —— ③ 进度条 / 音量条（共用 .slider）—— */
 .slider {
   --track-h: 4px;
   --thumb-size: 12px;
@@ -342,12 +374,15 @@
   opacity: 1;
 }
 
-/* —— 右区：音量 / 循环 / 播放页 —— */
+/* —— ③ 右区：音量 / 模式 / 歌词 / 列表 / 全屏 ——
+   同样给中间的绝对定位块留出余量，保证两侧不会叠上去。 */
 .playerbar__tools {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: var(--sp-1);
+  flex: 0 1 auto;
+  max-width: calc(50% - var(--transport-zone, 168px));
   min-width: 0;
 }
 
@@ -378,7 +413,7 @@
 }
 
 .volume__slider {
-  width: 96px;
+  width: 88px;
   flex: none;
 }
 
@@ -386,13 +421,14 @@
   --thumb-size: 11px;
 }
 
-/* 循环方式按钮：显示当前模式 */
+/* 圆形图标按钮：播放模式 / 桌面歌词 / 播放列表 / 全屏 */
 .mode-btn {
   position: relative;
   display: grid;
   place-items: center;
   width: 32px;
   height: 32px;
+  flex: none;
   border-radius: var(--r-full);
   color: var(--text-2);
   transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
@@ -418,28 +454,49 @@
   color: var(--accent);
 }
 
+/* 开关类按钮（显示歌词 / 桌面歌词 / 播放列表）：按下时高亮 */
+.mode-btn[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--surface-2);
+}
+
 .mode-btn__badge {
   position: absolute;
-  right: 2px;
-  bottom: 2px;
-  display: none;
+  right: 0;
+  bottom: 0;
+  display: grid;
   place-items: center;
-  width: 12px;
-  height: 12px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
   border-radius: var(--r-full);
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--surface-3);
+  color: var(--text-3);
   font-family: var(--font-num);
   font-size: 9px;
   font-weight: var(--fw-bold);
   line-height: 1;
 }
 
+/* 单曲循环才显示「1」角标 */
+.mode-btn[data-mode] .mode-btn__badge {
+  display: none;
+}
+
 .mode-btn[data-mode="loop-one"] .mode-btn__badge {
   display: grid;
 }
 
-/* 播放页样式切换 */
+/* 播放列表数量角标：队列为空（JS 写入空串）时不显示 */
+#btn-playlist .mode-btn__badge:empty {
+  display: none;
+}
+
+#btn-playlist[aria-pressed="true"] {
+  background: var(--surface-2);
+}
+
+/* 播放页样式切换（播放界面头部用） */
 .viewmode {
   display: flex;
   align-items: center;
@@ -475,29 +532,44 @@
   color: var(--accent-text);
 }
 
-/* —— 窄窗口 —— */
+/* —— 窄窗口 ——
+   注意：`max-width: calc(50% - var(--transport-zone))` 只有 ≤100%
+   才会真正生效（否则被裁成 0）。所以窗口变窄时要同步调小
+   --transport-zone，否则两侧一被裁，内容就会挤到中间块下面去。 */
 @media (max-width: 1240px) {
   .volume__slider {
     width: 64px;
   }
+
+  .playerbar__row {
+    --transport-zone: 152px;
+  }
 }
 
 @media (max-width: 1060px) {
-  .playerbar {
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 1.6fr) auto;
+  .volume__slider {
+    width: 52px;
   }
 
-  .viewmode {
+  .playerbar__add {
     display: none;
+  }
+
+  .playerbar__row {
+    --transport-zone: 142px;
   }
 }
 
-@media (max-width: 860px) {
+@media (max-width: 960px) {
   .volume__slider {
     display: none;
   }
 
-  .playerbar__heart {
+  .playerbar__sub {
     display: none;
+  }
+
+  .playerbar__row {
+    --transport-zone: 130px;
   }
 }

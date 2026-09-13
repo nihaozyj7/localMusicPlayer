@@ -122,7 +122,26 @@ export async function applyResolvedTheme(config) {
     "--dur": config.animations === false ? "0.001ms" : null,
   });
 
+  forceStyleRefresh();
   return themeId;
+}
+
+/**
+ * 强制重算全页样式。
+ *
+ * 为什么要这么绕：主题令牌来自 @import 进来的样式表，实测在 WebView2/Chromium 上
+ * 只改根节点的 data-theme 时，**已经存在的元素**不会重新解析 var(--…) ——
+ * 它们的计算样式停在旧主题上。症状就是切到浅色主题后，侧边栏文字仍然是
+ * 深色主题的浅灰（还带着旧主题的旧数值），落在浅色背景上几乎看不见。
+ * 新建的元素是正常的，所以这个问题只在"切换主题"时暴露。
+ *
+ * 改一下 body 上那个不参与任何样式的 data-route 属性，会让整棵子树失效重算，
+ * 但不重建 DOM，因此不丢焦点、不闪屏。
+ */
+function forceStyleRefresh() {
+  const body = document.body;
+  if (!body) return;
+  body.dataset.styleEpoch = String((Number(body.dataset.styleEpoch) || 0) + 1);
 }
 
 /** 读取当前主题实际生效的毛玻璃模糊半径（px） */

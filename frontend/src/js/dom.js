@@ -2,7 +2,7 @@
    dom.js — DOM 小工具、菜单 / 弹窗 / Toast
    ========================================================================== */
 
-import { esc, uid } from "./utils.js";
+import { DEFAULT_COVER, esc, uid } from "./utils.js";
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -153,6 +153,14 @@ export function openModal(opts) {
     bd.onclick = null;
   };
 
+  // 取消按钮可能不只是「关掉」：例如改下载目录时，「不迁移」也是一个有效选择。
+  // 所以给 onCancel 一个机会先做事，返回 false 才阻止关闭。
+  const cancel = async () => {
+    const res = await opts.onCancel?.(bd.querySelector(".modal"));
+    if (res === false) return;
+    close();
+  };
+
   const collect = () => {
     const out = {};
     modal.querySelectorAll("[data-field]").forEach((n) => {
@@ -161,8 +169,10 @@ export function openModal(opts) {
     return out;
   };
 
-  const submit = () => {
-    const res = opts.onOk?.(collect(), modal);
+  // onOk 允许是异步的（例如「迁移并更改下载位置」要等后端搬完文件再关弹窗）。
+  // 返回 false 表示拒绝关闭，返回字符串表示在弹窗里显示错误。
+  const submit = async () => {
+    const res = await opts.onOk?.(collect(), modal);
     if (res === false) return;
     if (typeof res === "string") {
       errEl.textContent = res;
@@ -173,7 +183,7 @@ export function openModal(opts) {
   };
 
   const onKey = (e) => {
-    if (e.key === "Escape") close();
+    if (e.key === "Escape") cancel();
     if (e.key === "Enter" && !e.shiftKey && e.target.tagName !== "TEXTAREA") {
       e.preventDefault();
       submit();
@@ -181,9 +191,9 @@ export function openModal(opts) {
   };
 
   bd.onclick = (e) => {
-    if (e.target === bd) close();
+    if (e.target === bd) cancel();
     const act = e.target.closest("[data-act]")?.dataset.act;
-    if (act === "cancel") close();
+    if (act === "cancel") cancel();
     if (act === "ok") submit();
   };
   document.addEventListener("keydown", onKey);
@@ -233,4 +243,25 @@ export function on(root, event, selector, handler) {
     const target = e.target.closest(selector);
     if (target && root.contains(target)) handler(e, target);
   });
+}
+
+/**
+ * 给 img 挂上「加载失败 → 换成默认封面」的兜底。
+ *
+ * 后端没解析到内嵌封面、或封面地址失效时，<img> 会渲染浏览器的破碎图标。
+ * 这里捕获 error（图片的 error 事件不冒泡，必须用捕获阶段）并替换 src，
+ * 用 dataset 标记防止默认封面本身再失败时无限递归。
+ */
+export function bindCoverFallback(img) {
+  if (!img || img.dataset.coverFallback === "1") return;
+  img.dataset.coverFallback = "1";
+  img.addEventListener(
+    "error",
+    () => {
+      if (img.dataset.coverFallbackDone === "1") return;
+      img.dataset.coverFallbackDone = "1";
+      img.src = DEFAULT_COVER;
+    },
+    true
+  );
 }

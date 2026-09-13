@@ -17,17 +17,25 @@ import {
   playNext,
   playPrev,
   rescan,
-  seek,
   setVolume,
+  songById,
   state,
   subscribe,
   toggleLike,
   togglePlay,
   startMockTicker,
 } from "./store.js";
-import { bindShell, doRescan, navigate, renderShell } from "./shell.js";
-import { initPlayerBar, paintPlayerBar } from "./playerbar.js";
-import { applyVolume, applyGainForSong, syncAudio, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
+import { bindShell, doRescan, navigate, renderShell, toggleSettings, settingsLayerOpen, closeSettings, openSettings } from "./shell.js";
+import { initPlayerBar, paintPlayerBar, toggleQueuePanel } from "./playerbar.js";
+import { initSettingsPlayer, paintSettingsPlayer } from "./settingsplayer.js";
+import {
+  applyVolume,
+  applyGainForSong,
+  syncAudio,
+  refreshLoudnessGains,
+  refreshLoudnessState,
+  seekTo,
+} from "./audio.js";
 import {
   closePlayer,
   openPlayer,
@@ -37,6 +45,15 @@ import {
   togglePlayer,
 } from "./playerview.js";
 import { applyResolvedTheme, applyCoverSeed, discoverThemes, extractCoverSeed, getTheme } from "./theme.js";
+import { refreshBackdropState } from "./backdrop.js";
+import { initSearchPanel } from "./searchpanel.js";
+// 只为副作用而导入：它把底栏「手动匹配歌词」按钮（#btn-lyrics-match，静态写在
+// index.html 里）接到在线歌词搜索面板上。缺了这行按钮就变成点不动的死按钮，
+// 所以别再删掉 —— 以前它是运行时 inject 的，模块没被导入时按钮会直接消失。
+import "./online.js";
+
+/** 下载中的 toast（bvid → toast 句柄），进度事件复用同一条 */
+const downloadToasts = new Map();
 
 /* --------------------------------------------------------------------------
    增量渲染：根据「渲染键」决定是否重绘主体
@@ -47,10 +64,9 @@ function renderKey() {
   return [
     state.view,
     state.playlistId ?? "",
-    state.query,
     state.sortKey,
     state.sortDir,
-    state.density,
+    state.config.listDensity,
     state.visibleSongs.map((s) => s.id).join(","),
     state.playlists.map((p) => `${p.id}:${p.name}:${p.songIds.length}`).join(","),
     state.songs.length,
@@ -61,17 +77,15 @@ function renderKey() {
   ].join("|");
 }
 
-let settingsDirty = false;
-
 function tick() {
   const key = renderKey();
   if (key !== lastKey) {
     lastKey = key;
     renderShell();
-    // 设置页内部有输入框，避免整页重绘打断输入
-    if (state.view === "settings" && settingsDirty) settingsDirty = false;
   }
   paintPlayerBar();
+  // 设置层自带的紧凑播放控件（层关着时它自己会直接返回）
+  paintSettingsPlayer();
   renderPlayerView();
   syncPlaybackState();
   // 真实播放：切歌 / 播放暂停状态变化时同步到 <audio>，并套用响度补偿
@@ -122,6 +136,8 @@ function bindCoverAccent() {
   if (!img) return;
   img.addEventListener("load", () => {
     if (!state.config.accentFromCover) return;
+    // 默认封面是灰阶占位图，取色没有意义，跳过
+    if (img.dataset.coverFallbackDone === "1") return;
     const seed = extractCoverSeed(img);
     if (seed) applyCoverSeed(seed, seed);
   });
@@ -151,11 +167,11 @@ function bindShortcuts() {
         break;
       case "ArrowRight":
         if (e.ctrlKey || e.metaKey) playNext(false);
-        else seek(state.position + 5000);
+        else seekTo(state.position + 5000);
         break;
       case "ArrowLeft":
         if (e.ctrlKey || e.metaKey) playPrev();
-        else seek(state.position - 5000);
+        else seekTo(state.position - 5000);
         break;
       case "ArrowUp":
         e.preventDefault();
@@ -185,6 +201,10 @@ function bindShortcuts() {
 
 /* --------------------------------------------------------------------------
    窗口控制（Wails 注入的方法优先，浏览器预览降级为无操作）
+
+   全屏：底栏原来有个 ⛶ 按钮，按需求已移除（详情页仍可全屏）。
+   这里刻意保留 `F` 键与窗口控制实现：需求只说了去掉那个按钮，
+   把快捷键一起删掉属于顺手扩大范围。
    -------------------------------------------------------------------------- */
 async function toggleFullscreen() {
   if (isWails()) {
@@ -201,8 +221,17 @@ function bindWindowControls() {
   $("#btn-win-max")?.addEventListener("click", () => isWails() && backend.windowToggleMaximize());
   $("#btn-win-close")?.addEventListener("click", () => (isWails() ? backend.windowClose() : window.close()));
   $("#btn-theme-toggle")?.addEventListener("click", toggleTheme);
+  // 设置入口在标题栏主题切换右侧；设置是弹出层（不是视图切换）
+  $("#btn-settings")?.addEventListener("click", () => toggleSettings());
 
   $("#btn-player-back")?.addEventListener("click", closePlayer);
+  // 播放详情页：返回按钮右侧的「封面」按钮 → 打开封面搜索弹层
+  $("#btn-player-cover")?.addEventListener("click", async () => {
+    const song = state.currentId ? songById(state.currentId) : null;
+    if (!song || song.online) return;
+    const { openCoverPanel } = await import("./coverpanel.js");
+    openCoverPanel(song.id);
+  });
   $("#playerview-mode")?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-pv-mode]");
     if (!btn) return;
@@ -317,6 +346,41 @@ function bindBackendEvents() {
     state.ffmpegState = payload;
     console.info(`[ffmpeg] ${payload.available ? payload.describe : "不可用"}`);
   });
+
+  /* ---- 在线歌曲下载 ---- */
+  on("download:progress", (payload) => {
+    if (!payload?.bvid) return;
+    // 进度只更新已有的那条 toast（没有就创建一条），避免刷屏
+    const label = payload.title || payload.bvid;
+    const total = Number(payload.total) || 0;
+    const done = Number(payload.done) || 0;
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    const text = total > 0 ? `下载中 ${pct}% · ${label}` : `下载中 ${label}`;
+    if (downloadToasts.has(payload.bvid)) {
+      downloadToasts.get(payload.bvid).update(text);
+    } else {
+      downloadToasts.set(payload.bvid, toast(text, { duration: 0 }));
+    }
+  });
+
+  on("download:done", (payload) => {
+    const item = downloadToasts.get(payload?.bvid);
+    downloadToasts.delete(payload?.bvid);
+    const text = `已下载：${payload?.title || payload?.bvid} → ${payload?.path || payload?.dir || ""}`;
+    if (item) item.update(text, "success");
+    else toast(text, { tone: "success", duration: 5000 });
+    // 让这条成功提示自然消失
+    setTimeout(() => item?.close(), 4000);
+  });
+
+  on("download:failed", (payload) => {
+    const item = downloadToasts.get(payload?.bvid);
+    downloadToasts.delete(payload?.bvid);
+    const text = `下载失败：${payload?.message ?? "未知错误"}`;
+    if (item) item.update(text, "error");
+    else toast(text, { tone: "error", duration: 6000 });
+    setTimeout(() => item?.close(), 6000);
+  });
 }
 
 /* --------------------------------------------------------------------------
@@ -335,7 +399,8 @@ function applyPreviewParams() {
   }
   const tab = q.get("tab");
   if (tab === "settings") {
-    state.view = "settings";
+    // 设置是弹出层：记下来，等挂载完成后再打开
+    state.settingsOpen = true;
   } else if (tab === "queue") {
     state.view = "queue";
   } else if (tab === "playlist") {
@@ -370,12 +435,18 @@ async function main() {
   await bootstrap();
   applyPreviewParams();
   await initTheme();
+  // 窗口原生材质（Mica / Acrylic）现在是否生效，决定了页面要不要让出底色
+  await refreshBackdropState();
 
   bindShell();
+  // 搜索必须早于首次渲染：它往标题栏插入搜索按钮，并负责搜索结果弹层的构建
+  initSearchPanel();
   initPlayerBar({
-    onOpenPlayer: openPlayer,
-    onToggleFullscreen: toggleFullscreen,
+    onOpenPlayer: togglePlayer,
+    onToggleQueue: () => toggleQueuePanel(),
   });
+  // 设置层里的紧凑播放控件：动作与底栏共用同一套 store，只是少几个按钮
+  initSettingsPlayer({ onOpenPlayer: togglePlayer });
   bindWindowControls();
   bindShortcuts();
   bindBackendEvents();
@@ -387,6 +458,12 @@ async function main() {
   subscribe(() => tick());
   tick();
   applyVolume();
+
+  // ?tab=settings 的预览：等首帧渲染完再打开设置层，否则层里的滚动定位算不准
+  if (state.settingsOpen) {
+    state.settingsOpen = false;
+    openSettings();
+  }
 
   // 响度能力与补偿表（后端可用时）
   await refreshLoudnessState();

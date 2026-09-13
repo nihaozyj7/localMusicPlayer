@@ -8,6 +8,8 @@
   --lyric-dim: 0.36;
   --lyric-line-gap: 2px;
   --lyric-pad: 34%;
+  /* 单行歌词的宽度上限（详情页铺满整窗后，不加限制在超宽屏上会长得难读） */
+  --lyric-measure: 760px;
   position: relative;
   min-height: 0;
   height: 100%;
@@ -37,14 +39,26 @@
   overscroll-behavior: contain;
   scrollbar-width: none;
   padding: var(--lyric-pad) 0;
-  scroll-behavior: smooth;
+  /* 不用 CSS 的 scroll-behavior：自动滚动由 JS 控制（要有"用户滚轮时让位"
+     的逻辑），写在这里会让滚轮/拖动也变成强制平滑，手感很粘。 */
   text-align: center;
+  /* 滚轮、触摸板与拖动滚动条都要能用（歌词区不能吃掉指针事件） */
+  pointer-events: auto;
+  touch-action: pan-y;
+  /* 详情页铺满整窗后，一行歌词的可用宽度会很大：
+     用一个上限把行宽收住，否则超宽屏上单行文字会长得难读 */
+  max-width: var(--lyric-measure);
+  width: 100%;
+  margin: 0 auto;
 }
 
+/* 歌词区不显示滚动条，保持视觉干净（依然可以滚） */
 .lyrics__scroll::-webkit-scrollbar {
   display: none;
 }
 
+/* 歌词行是 div[role=button] 而不是 <button>：
+   button 在部分情况下按空格会触发滚动，且默认样式需要大量重置。 */
 .lyric {
   display: block;
   width: 100%;
@@ -139,4 +153,26 @@
 .playerview[data-lyrics="compact"] .lyrics {
   --lyric-line-gap: 0px;
   --lyric-pad: 40%;
+}
+
+/* —— 「桌面歌词」开关关闭：歌词区收起，详情页只留封面与曲目信息 —— */
+.playerview[data-lyrics="off"] .lyrics {
+  display: none;
+}
+
+.playerview[data-lyrics="off"][data-mode="classic"] .playerview__stage {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.playerview[data-lyrics="off"][data-mode="immersive"] .immersive__card,
+.playerview[data-lyrics="off"][data-mode="minimal"] .minimal__inner {
+  gap: 0;
+}
+
+/* 歌词行是 role="button" 的 div，键盘聚焦时给一个不刺眼的反馈 */
+.lyric:focus-visible {
+  outline: 1px solid var(--border-2);
+  outline-offset: -2px;
+  border-radius: var(--r-xs);
+  opacity: 0.85;
 }

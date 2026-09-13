@@ -1,0 +1,206 @@
+/* ==========================================================================
+   settingsplayer.css — 设置弹出层里的紧凑播放控件
+   --------------------------------------------------------------------------
+   需求：设置弹出层里也要有播放器控件，并且要「避开标题栏」——
+   所以控件长在设置面板的底部（面板本身就占满标题栏之下、窗口底边之上的
+   区域），不占标题栏、也不和窗口按钮抢位置。
+
+   与底栏的关系：这是**精简版**，只保留真正需要在设置里用手操作的部分
+   （曲目信息 / 上一首 / 播放暂停 / 下一首 / 进度 / 音量 / 播放模式）。
+   收藏、添加到歌单、播放列表、全屏仍然只在底栏，避免两处状态重复。
+   歌词也没有开关 —— 需求是歌词不提供隐藏入口（详情页那块歌词区由设置 → 歌词控制），
+   底栏的「桌面歌词」是另一件事（桌面独立透明窗口，暂未实现）。
+
+   组件层级与底栏一致：直接复用 .slider / .transport__btn / .mode-btn，
+   这里只加自己的盒子与尺寸修饰类。
+   ========================================================================== */
+
+.settings-player {
+  display: grid;
+  /* 4 列：封面 / 曲目信息（吃掉剩余宽度）/ 传输控制 / 音量·模式 */
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  /* 两行都要是 auto：给 1fr 会让进度条那一行被拉高，滑块看着就"变胖"了 */
+  grid-template-rows: auto auto;
+  align-content: center;
+  gap: var(--sp-2) var(--sp-3);
+  flex: none;
+  padding: var(--sp-2) var(--sp-4) var(--sp-3);
+  border-top: var(--hairline);
+  background: var(--surface-1);
+}
+
+/* 进度条要独占第二行 —— 必须显式跨列，否则自动排布会把它塞进第一列
+   （那一列只有封面那么宽，进度条会被压成 0 宽，看起来就是"没有进度条"）。 */
+.settings-player__progress {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+/* —— 分隔线：把曲目信息和右侧控件拉开，窄窗口下整条消失 —— */
+.settings-player__rule {
+  height: 1px;
+  border: 0;
+  background: var(--divider);
+  margin: 0;
+}
+
+/* —— ① 封面（点它进播放详情页，与底栏同一个交互） —— */
+.settings-player__cover {
+  position: relative;
+  flex: none;
+  width: var(--size-cover-sm);
+  height: var(--size-cover-sm);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--surface-2);
+  border: var(--hairline);
+}
+
+.settings-player__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.settings-player__cover-icon {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 15px;
+  height: 15px;
+  color: var(--text-1);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.settings-player__cover:hover .settings-player__cover-icon {
+  opacity: 1;
+}
+
+/* —— ② 曲目信息 —— */
+.settings-player__meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  cursor: pointer;
+}
+
+.settings-player__title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-player__sub {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* —— ③ 传输控制 —— */
+.settings-player__transport {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+}
+
+/* 比底栏小一号：这里是设置，不该比底栏更抢眼 */
+.transport__btn--sm {
+  width: var(--btn-sm);
+  height: var(--btn-sm);
+}
+
+.transport__btn--sm.transport__btn--main {
+  width: var(--btn-md);
+  height: var(--btn-md);
+}
+
+.transport__btn--sm svg {
+  width: 15px;
+  height: 15px;
+}
+
+.transport__btn--sm.transport__btn--main svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* —— ④ 进度条（独占第二行，位置见上面的 grid-column/grid-row） —— */
+.settings-player__progress {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.settings-player__time {
+  flex: none;
+  width: 40px;
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.settings-player__time--total {
+  text-align: right;
+}
+
+/* —— ⑤ 音量 / 播放模式（放在右上角、传输控制的右边，音量在最左） —— */
+.settings-player__tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.settings-player__volume {
+  width: 76px;
+  flex: none;
+}
+
+.settings-player .mode-btn--sm {
+  width: 28px;
+  height: 28px;
+}
+
+.settings-player .mode-btn--sm svg {
+  width: 15px;
+  height: 15px;
+}
+
+.settings-player .slider {
+  --thumb-size: 10px;
+}
+
+/* —— 窄窗口：先收音量条、再收分割线与曲目副标题 —— */
+@media (max-width: 1180px) {
+  .settings-player__rule {
+    display: none;
+  }
+}
+
+@media (max-width: 1120px) {
+  .settings-player__volume {
+    width: 56px;
+  }
+}
+
+@media (max-width: 980px) {
+  .settings-player__volume {
+    display: none;
+  }
+
+  .settings-player__sub {
+    display: none;
+  }
+}

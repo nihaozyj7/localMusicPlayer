@@ -83,14 +83,17 @@ type CustomTheme struct {
 
 // Config 应用配置（落盘为 JSON，可直接手改）
 type Config struct {
-	Theme        string `json:"theme"`
-	ThemeMode    string `json:"themeMode"` // dark | light | system
-	GlassBlur    int    `json:"glassBlur"`
-	GlassAlpha   int    `json:"glassAlpha"`
-	Animations   bool   `json:"animations"`
-	AccentFromCover bool `json:"accentFromCover"`
-	ShowAlbumColumn bool `json:"showAlbumColumn"`
-	ShowLyrics      bool `json:"showLyrics"`
+	Theme      string `json:"theme"`
+	ThemeMode  string `json:"themeMode"` // dark | light | system
+	GlassBlur  int    `json:"glassBlur"`
+	GlassAlpha int    `json:"glassAlpha"`
+	// NativeBackdrop 窗口原生材质：off | auto | mica | acrylic | tabbed。
+	// 只有 Windows 会用得上，且必须在创建窗口时指定，改了要重启应用。
+	NativeBackdrop  string `json:"nativeBackdrop"`
+	Animations      bool   `json:"animations"`
+	AccentFromCover bool   `json:"accentFromCover"`
+	ShowAlbumColumn bool   `json:"showAlbumColumn"`
+	ShowLyrics      bool   `json:"showLyrics"`
 
 	PlayMode       string  `json:"playMode"` // sequence | loop-all | loop-one | shuffle
 	Volume         float64 `json:"volume"`
@@ -105,6 +108,33 @@ type Config struct {
 	LyricsLines    int      `json:"lyricsLines"`
 	LyricsSources  []string `json:"lyricsSources"`
 
+	// —— 响度均衡 ——
+	// 注意：这三个字段以前只存在前端的 localStorage 里，后端不认识，
+	// 于是「设置里改了均衡模式 → 重启后又变回关闭」。它们必须落盘。
+	LoudnessMode   string  `json:"loudnessMode"`   // off | track | album
+	LoudnessTarget float64 `json:"loudnessTarget"` // 目标整合响度 LUFS
+	LoudnessLimit  bool    `json:"loudnessLimit"`  // 真峰值保护
+
+	// —— 在线功能 ——
+	// DownloadDir 在线歌曲下载的保存目录。默认是系统「音乐」目录下的 downloads。
+	DownloadDir string `json:"downloadDir"`
+	// OnlineCover 是否联网为在线歌曲抓取封面（多来源，见 internal/coverfetch）。
+	OnlineCover bool `json:"onlineCover"`
+	// EmbedMeta 是否把抓到的封面/歌词写回歌曲文件自身的标签。
+	// 默认关闭：写标签会改写用户的音乐文件，必须是用户明确开启的行为。
+	// 关闭时封面与歌词仍然可用，只是放在缓存目录里（见 internal/metacache）。
+	EmbedMeta bool `json:"embedMeta"`
+
+	// —— 交互 ——
+	// RowClickAction 单击歌曲行的行为：
+	//   next  —— 加入「下一首播放」（默认，不打断当前播放）
+	//   play  —— 立即播放
+	//   append —— 追加到播放列表末尾
+	RowClickAction string `json:"rowClickAction"`
+	// ListDensity 列表密度：compact | cozy | roomy。
+	// 原来每张表头各有一个密度按钮，现在统一到设置里，对所有列表生效。
+	ListDensity string `json:"listDensity"`
+
 	Folders     []Folder     `json:"folders"`
 	FilterRules []FilterRule `json:"filterRules"`
 	LikedIDs    []string     `json:"likedIds"`
@@ -115,6 +145,34 @@ type Config struct {
 	// 运行时字段，不落盘
 	ConfigPath string `json:"-"`
 	DataDir    string `json:"-"`
+}
+
+/* --------------------------------------------------------------------------
+   窗口原生材质
+   -------------------------------------------------------------------------- */
+
+// BackdropModes 窗口原生材质可选值（与 Wails 的 BackdropType 对应）。
+// 仅 Windows 支持：Mica / Tabbed 需要 Windows 11 Build 22621+，
+// 更低的系统会被 Wails 退化成一层的背景模糊。
+var BackdropModes = []string{"off", "auto", "mica", "acrylic", "tabbed"}
+
+// ValidBackdropMode 判断材质值是否受支持
+func ValidBackdropMode(mode string) bool {
+	for _, m := range BackdropModes {
+		if m == mode {
+			return true
+		}
+	}
+	return false
+}
+
+// NormalizeBackdropMode 规范化材质值：大小写/空格无关，非法值一律落回 off
+func NormalizeBackdropMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if ValidBackdropMode(mode) {
+		return mode
+	}
+	return "off"
 }
 
 /* --------------------------------------------------------------------------
@@ -129,6 +187,7 @@ func DefaultConfig() *Config {
 		ThemeMode:       "dark",
 		GlassBlur:       22,
 		GlassAlpha:      62,
+		NativeBackdrop:  "off",
 		Animations:      true,
 		ShowAlbumColumn: true,
 		ShowLyrics:      true,
@@ -150,6 +209,156 @@ func DefaultConfig() *Config {
 		Playlists: []Playlist{},
 		DataDir:   dataDir,
 		CacheDir:  filepath.Join(dataDir, "cache"),
+
+		LoudnessMode:   "off",
+		LoudnessTarget: -16,
+		LoudnessLimit:  true,
+
+		DownloadDir: DefaultDownloadDir(),
+		OnlineCover: true,
+		EmbedMeta:   false,
+
+		RowClickAction: "next",
+		ListDensity:    "cozy",
+	}
+}
+
+// RowClickActions 单击歌曲行的可选行为
+var RowClickActions = []string{"next", "play", "append"}
+
+// NormalizeRowClickAction 规范化单击行为，非法值落回 next（默认不打断播放）
+func NormalizeRowClickAction(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	for _, ok := range RowClickActions {
+		if ok == v {
+			return v
+		}
+	}
+	return "next"
+}
+
+// ListDensities 列表密度可选值
+var ListDensities = []string{"compact", "cozy", "roomy"}
+
+// NormalizeListDensity 规范化列表密度，非法值落回 cozy
+func NormalizeListDensity(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	for _, ok := range ListDensities {
+		if ok == v {
+			return v
+		}
+	}
+	return "cozy"
+}
+
+// DefaultDownloadDir 在线歌曲的默认下载目录：系统「音乐」目录下的 downloads。
+//
+// 放在音乐目录里是有意的：下载下来的本来就是音乐文件，用户后续想把它加进曲库
+// 只需要在选择文件夹时点一下「音乐」；而独立的 downloads 子目录又保证它
+// 不会和用户自己整理好的曲库混在一起。
+func DefaultDownloadDir() string {
+	music := systemMusicDir()
+	if music == "" {
+		// 拿不到系统音乐目录时退到数据目录，至少保证有地方可写
+		return filepath.Join(defaultDataDir(), "downloads")
+	}
+	return filepath.Join(music, "downloads")
+}
+
+// DownloadFolderID 下载目录作为扫描根时使用的固定 id。
+//
+// 它不出现在 config.Folders 里（用户在设置里看不到、也删不掉），
+// 而是由 EffectiveFolders 每次动态拼进来 —— 这样「下载目录」始终只有一个
+// 真相来源（DownloadDir），不会出现「改了下载路径但旧的还留在扫描列表里」。
+const DownloadFolderID = "auto_downloads"
+
+// EffectiveFolders 返回真正要扫描的文件夹列表 = 用户配置的文件夹 + 下载目录。
+//
+// 需求：「所有歌曲」要包含下载路径和用户要扫描的路径。下载目录由程序管理，
+// 所以不能要求用户手动添加；同时要避免与用户手动添加的目录重复
+// （用户完全可能把 Music 整个目录加进来，而下载目录就在它下面）。
+//
+// 用值接收者：调用点大多是 store.Get() 返回的临时副本（不可寻址）。
+func (c Config) EffectiveFolders() []Folder {
+	out := make([]Folder, 0, len(c.Folders)+1)
+
+	downloadDir := cleanAbsPath(c.DownloadDir)
+	downloadCovered := false
+	for _, f := range c.Folders {
+		path := cleanAbsPath(f.Path)
+		if path == "" {
+			continue
+		}
+		out = append(out, Folder{
+			ID:       f.ID,
+			Path:     f.Path,
+			Status:   f.Status,
+			Watching: f.Watching,
+		})
+		// 用户已经手动加了下载目录，或加了它的上级目录 → 不再重复添加
+		if downloadDir != "" && (sameOrParent(path, downloadDir)) {
+			downloadCovered = true
+		}
+	}
+	if downloadDir == "" || downloadCovered {
+		return out
+	}
+	out = append(out, Folder{
+		ID:       DownloadFolderID,
+		Path:     c.DownloadDir,
+		Status:   "ok",
+		Watching: false,
+	})
+	return out
+}
+
+func cleanAbsPath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = p
+	}
+	return strings.ToLower(filepath.Clean(abs))
+}
+
+// sameOrParent 判断 parent 是否是 child 本身或它的上级目录。
+func sameOrParent(parent, child string) bool {
+	if parent == child {
+		return true
+	}
+	sep := string(filepath.Separator)
+	return strings.HasPrefix(child, strings.TrimRight(parent, sep)+sep)
+}
+
+// systemMusicDir 返回系统「音乐」目录（Windows 走 shell 已知文件夹）。
+func systemMusicDir() string {
+	if dir := os.Getenv("MUSICPLAYER_MUSIC_DIR"); dir != "" {
+		return dir
+	}
+	switch runtime.GOOS {
+	case "windows":
+		// %USERPROFILE%\Music 是 Windows 的默认音乐库路径。
+		// 注册表里可以查到被用户改过的值，但读取注册表需要额外依赖，
+		// 而且绝大多数机器上就是 UserProfile\Music，这里直接拼。
+		if profile := os.Getenv("USERPROFILE"); profile != "" {
+			return filepath.Join(profile, "Music")
+		}
+		return ""
+	case "darwin":
+		home, _ := os.UserHomeDir()
+		if home == "" {
+			return ""
+		}
+		return filepath.Join(home, "Music")
+	default:
+		// Linux: XDG 用户目录规范
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			return filepath.Join(home, "Music")
+		}
+		return ""
 	}
 }
 
@@ -239,6 +448,8 @@ func normalize(cfg *Config) {
 	if cfg.GlassAlpha <= 0 {
 		cfg.GlassAlpha = def.GlassAlpha
 	}
+	// 手改配置写成 "Mica" / "MICA" 也算数；无法识别的值落回默认（off）
+	cfg.NativeBackdrop = NormalizeBackdropMode(cfg.NativeBackdrop)
 	if cfg.ScanConcurrency <= 0 {
 		cfg.ScanConcurrency = def.ScanConcurrency
 	}
@@ -265,6 +476,27 @@ func normalize(cfg *Config) {
 	}
 	if cfg.CacheDir == "" {
 		cfg.CacheDir = filepath.Join(cfg.DataDir, "cache")
+	}
+	if strings.TrimSpace(cfg.DownloadDir) == "" {
+		cfg.DownloadDir = DefaultDownloadDir()
+	}
+	cfg.RowClickAction = NormalizeRowClickAction(cfg.RowClickAction)
+	cfg.ListDensity = NormalizeListDensity(cfg.ListDensity)
+	// 响度均衡：模式与目标值都要收敛到合法范围，避免手改配置写坏后
+	// 前端拿到奇怪的值（例如 target=0 会让补偿算成 +16dB 的巨响）。
+	switch cfg.LoudnessMode {
+	case "off", "track", "album":
+	default:
+		cfg.LoudnessMode = def.LoudnessMode
+	}
+	if cfg.LoudnessTarget == 0 {
+		cfg.LoudnessTarget = def.LoudnessTarget
+	}
+	if cfg.LoudnessTarget > -5 {
+		cfg.LoudnessTarget = -5
+	}
+	if cfg.LoudnessTarget < -40 {
+		cfg.LoudnessTarget = -40
 	}
 	if cfg.Folders == nil {
 		cfg.Folders = []Folder{}

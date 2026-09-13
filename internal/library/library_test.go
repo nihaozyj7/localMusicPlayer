@@ -137,14 +137,29 @@ func TestScanFindsAndFilters(t *testing.T) {
 		}
 	}
 
-	// 文件夹状态与曲目数应回写
-	folders := m.Folders()
+	// 文件夹状态与曲目数应回写。
+	// 注意：Folders() 里还包含「下载目录」这个由程序管理的隐式扫描根
+	// （见 bootstrap.Config.EffectiveFolders），这里只看用户配置的那一个。
+	folders := userFolders(m.Folders())
 	if len(folders) != 1 || folders[0].Status != "ok" {
 		t.Errorf("文件夹状态异常: %+v", folders)
 	}
 	if folders[0].TrackCount != 2 {
 		t.Errorf("文件夹曲目数应为 2，实际 %d", folders[0].TrackCount)
 	}
+}
+
+// userFolders 过滤掉程序自动管理的扫描根（下载目录），
+// 只留下用户在设置里配置的文件夹。
+func userFolders(all []bootstrap.Folder) []bootstrap.Folder {
+	out := make([]bootstrap.Folder, 0, len(all))
+	for _, f := range all {
+		if f.ID == bootstrap.DownloadFolderID {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 func TestScanMissingFolderStatus(t *testing.T) {

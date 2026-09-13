@@ -28,6 +28,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"musicplayer/internal/executil"
 )
 
 // BinaryName 平台相关的可执行文件名
@@ -340,7 +342,8 @@ func Probe(ctx context.Context, ffmpegPath, path string) (ProbeInfo, error) {
 	if ffmpegPath == "" {
 		return ProbeInfo{}, fmt.Errorf("ffmpeg 不可用")
 	}
-	cmd := exec.CommandContext(ctx, ffmpegPath,
+	// 用 executil：Windows 下 ffmpeg 是控制台程序，直接 exec 会闪出命令行窗口
+	cmd := executil.CommandContext(ctx, ffmpegPath,
 		"-hide_banner", "-nostdin",
 		"-i", path,
 		"-vn", "-map", "0:a",
@@ -378,7 +381,7 @@ func SoundDurationMS(ctx context.Context, ffmpegPath, path string) (float64, err
 	if ffmpegPath == "" {
 		return 0, fmt.Errorf("ffmpeg 不可用")
 	}
-	cmd := exec.CommandContext(ctx, ffmpegPath,
+	cmd := executil.CommandContext(ctx, ffmpegPath,
 		"-hide_banner", "-nostdin", "-nostats",
 		"-i", path,
 		"-vn", "-map", "0:a",
@@ -431,7 +434,7 @@ func TranscodeToWAV(ctx context.Context, ffmpegPath, src, out string) error {
 	tmpPCM := out + ".pcm"
 	_ = os.Remove(tmpPCM)
 
-	cmd := exec.CommandContext(ctx, ffmpegPath,
+	cmd := executil.CommandContext(ctx, ffmpegPath,
 		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
 		"-i", src,
 		"-vn", "-map", "0:a",

@@ -125,9 +125,17 @@ func TestServiceAddFolderEndToEnd(t *testing.T) {
 	}
 	_ = dataDir
 
-	// 2) 曲库必须已经看到这个文件夹（服务内部会 ReloadFolders）
-	if got := len(svc.Folders()); got != 1 {
-		t.Fatalf("曲库应有 1 个文件夹，实际 %d", got)
+	// 2) 曲库必须已经看到这个文件夹（服务内部会 ReloadFolders）。
+	//    这里按「用户配置的文件夹」计数：Folders() 里还会包含下载目录
+	//    这个程序管理的隐式扫描根（见 bootstrap.EffectiveFolders）。
+	userFolders := 0
+	for _, f := range svc.Folders() {
+		if f.ID != bootstrap.DownloadFolderID {
+			userFolders++
+		}
+	}
+	if userFolders != 1 {
+		t.Fatalf("曲库应有 1 个用户文件夹，实际 %d", userFolders)
 	}
 
 	// 3) 扫描能扫到歌（AddFolder 已触发异步扫描，这里同步跑一次以确保断言稳定）
@@ -159,8 +167,14 @@ func TestServiceAddFolderEndToEnd(t *testing.T) {
 	if dup["duplicated"] != true {
 		t.Errorf("重复添加应返回 duplicated=true，实际 %#v", dup)
 	}
-	if len(svc.Folders()) != 1 {
-		t.Errorf("重复添加后仍应只有 1 个文件夹，实际 %d", len(svc.Folders()))
+	after := 0
+	for _, f := range svc.Folders() {
+		if f.ID != bootstrap.DownloadFolderID {
+			after++
+		}
+	}
+	if after != 1 {
+		t.Errorf("重复添加后仍应只有 1 个用户文件夹，实际 %d", after)
 	}
 }
 

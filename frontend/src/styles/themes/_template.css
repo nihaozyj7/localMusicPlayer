@@ -22,6 +22,11 @@
 
   /* —— 1. 表面 —— */
   --bg-app: #08080a;
+  /* 窗口底色 --bg-window 由 tokens.css 从 --bg-app 派生，不要在这里覆盖它。
+     设置里开启「窗口原生材质」（Mica / Acrylic）时，窗口要让出底色，
+     tokens.css 会把 --bg-window 换成 --bg-window-material。
+     若希望材质上再叠一层"面纱"，覆盖下面这个令牌即可（默认全透明）：
+     --bg-window-material: rgba(8, 8, 10, 0.5); */
   --bg-canvas:
     radial-gradient(1100px 720px at 12% -10%, rgba(255, 255, 255, 0.075), transparent 62%),
     radial-gradient(900px 640px at 100% 0%, rgba(255, 255, 255, 0.05), transparent 58%);
@@ -76,7 +81,7 @@
   /* —— 8. 布局（一般不用改，改了会移动「固定布局」）—— */
   --h-titlebar: 36px;
   --w-sidebar: 232px;
-  --h-playerbar: 88px;
+  --h-playerbar: 92px;
   --h-header: 64px;
   --row-h: 56px;
   --row-h-compact: 44px;

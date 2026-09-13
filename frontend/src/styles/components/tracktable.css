@@ -13,12 +13,27 @@
   display: flex;
   flex-direction: column;
   border-radius: var(--r-md);
+  /* 不能用 overflow: hidden —— 它会让 .tracks 成为「最近的可滚动祖先」，
+     而真正滚动的是 .content-body，于是 sticky 表头会跟着内容一起滚走。
+     overflow: clip 同样裁剪内容，但**不产生滚动容器**，sticky 才能正常生效。
+     旧的 WebView 不支持时退回 hidden：表头仍不会被裁掉，只是不吸顶。 */
   overflow: hidden;
+  overflow: clip;
 }
 
-/* —— 表头 —— */
+/* —— 表头 ——
+   吸顶用 top: 0，不要用 var(--h-header)。
+   .content-header 在滚动容器 .content-body **外面**（.main 的独立一行），
+   所以滚动容器自己的顶边已经在内容头下方了；吸顶参照的就是 .content-body
+   的 padding 盒。若写成 top: var(--h-header)(64px)，当表头的自然流位置比
+   64px 更靠上时（列表顶部内边距 + 内容头以下的偏移），sticky 会把它**向下**
+   推到 64px 处，反而压进第一行数据里。 */
 .tracks__head {
   display: grid;
+  /* 行高显式等于内容框高度：否则一旦某个单元格比内容框矮（例如极窄断点下
+     排序按钮的图标被隐藏，文字行只有 16px），这一行会被 align-content
+     居中到内容框中间，再叠加 padding 就整体下移约半个行高。 */
+  grid-template-rows: 100%;
   grid-template-columns:
     var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 2.2fr)
     minmax(0, 1fr) var(--col-time) var(--col-heart) var(--col-more);
@@ -34,6 +49,7 @@
   color: var(--text-3);
   position: sticky;
   top: 0;
+  border-radius: var(--r-md) var(--r-md) 0 0;
   background: var(--glass-bg);
   backdrop-filter: var(--panel-blur);
   -webkit-backdrop-filter: var(--panel-blur);
@@ -53,6 +69,23 @@
 .tracks__head[data-mode="playlist"] {
   grid-template-columns: var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 2.2fr)
     minmax(0, 1fr) var(--col-time) var(--col-heart) var(--col-more);
+}
+
+/* 表头里的爱心图标必须显式给尺寸。
+   icon() 生成的 <svg> 不带宽高属性，浏览器会退到 SVG 默认尺寸 300×150；
+   表头只有 34px 高，这一个图标就会把 grid 的隐式行撑到 150px，
+   再被 align-items: center 居中 → 表头文字整体下移约 1.5 行（曾出现的"错位"）。
+   全页面其它图标都有各自上下文的尺寸规则，只有这里漏了。 */
+.tracks__head .col-heart {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.tracks__head .col-heart svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
 }
 
 .tracks__sort {
@@ -441,13 +474,23 @@
   color: var(--text-1);
 }
 
-/* —— 紧凑密度 —— */
+/* —— 列表密度（设置里统一控制，对所有列表生效）——
+   档位值必须与 Go 侧 bootstrap.ListDensities 一致：
+   compact（紧凑） / cozy（标准） / roomy（宽松） */
 .tracks[data-density="compact"] .track {
   height: var(--row-h-compact);
 }
 
 .tracks[data-density="compact"] .track__cover {
   --size-cover-sm: 30px;
+}
+
+.tracks[data-density="roomy"] .track {
+  height: calc(var(--row-h) + 12px);
+}
+
+.tracks[data-density="roomy"] .track__cover {
+  --size-cover-sm: 42px;
 }
 
 /* ==========================================================================
@@ -461,17 +504,23 @@
     --col-album: 0px;
   }
 
+  /* 同一媒体查询里**不能**对同一个选择器声明两次 grid-template-columns：
+     后一条会覆盖前一条，很容易把某一边写成少一列（这正是本文件曾经的 bug）。
+     每个选择器只声明一次，且表头与对应数据行的列数必须逐字一致。 */
   .tracks__head,
   .track,
-  .tracks__head[data-mode="library"],
-  .tracks[data-mode="library"] .track,
   .tracks__head[data-mode="playlist"] {
     grid-template-columns: var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 1fr)
       var(--col-time) var(--col-heart) var(--col-more);
   }
 
-  .tracks[data-mode="library"] .track,
+  /* 图书馆模式没有拖拽手柄列（列表头与行都要去掉这一列） */
   .tracks__head[data-mode="library"] {
+    grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 1fr) var(--col-time)
+      var(--col-heart) var(--col-more);
+  }
+
+  .tracks[data-mode="library"] .track {
     grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 1fr) var(--col-time)
       var(--col-heart) var(--col-more);
   }
@@ -490,13 +539,19 @@
     --col-cover: 44px;
   }
 
+  /* 表头与数据行的网格模板必须逐字一致，否则每个单元格都会错位一格。
+     两者列数不同（行有封面列、表头的封面列是空占位），所以必须分开写。 */
   .tracks__head,
   .track,
   .tracks__head[data-mode="playlist"] {
     grid-template-columns: var(--col-index) minmax(0, 1fr) var(--col-time) var(--col-heart);
   }
 
-  .tracks__head[data-mode="library"],
+  .tracks__head[data-mode="library"] {
+    grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 1fr) var(--col-time)
+      var(--col-heart);
+  }
+
   .tracks[data-mode="library"] .track {
     grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 1fr) var(--col-time)
       var(--col-heart);

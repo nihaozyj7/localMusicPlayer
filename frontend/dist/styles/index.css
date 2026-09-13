@@ -21,6 +21,7 @@
 
 @import "./components/layout.css";
 @import "./components/titlebar.css";
+@import "./components/searchpanel.css";
 @import "./components/sidebar.css";
 @import "./components/content.css";
 @import "./components/tracktable.css";
@@ -28,6 +29,8 @@
 @import "./components/playerview.css";
 @import "./components/lyrics.css";
 @import "./components/settings.css";
+@import "./components/settingsplayer.css";
 @import "./components/overlay.css";
+@import "./components/layers.css";
 
 @import "./utilities.css";

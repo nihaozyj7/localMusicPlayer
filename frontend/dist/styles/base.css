@@ -27,7 +27,7 @@ body {
   font-size: var(--fs-md);
   line-height: 1.45;
   color: var(--text-1);
-  background-color: var(--bg-app);
+  background-color: var(--bg-window);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   user-select: none;

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -16,6 +16,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"musicplayer/internal/bootstrap"
+	"musicplayer/internal/executil"
 	"musicplayer/internal/library"
 	"musicplayer/internal/loudness"
 	"musicplayer/internal/lyrics"
@@ -693,8 +694,8 @@ type LoudnessService struct {
 	lib *library.Manager
 	app *application.App
 
-	mu       sync.Mutex
-	cancel   context.CancelFunc
+	mu        sync.Mutex
+	cancel    context.CancelFunc
 	measuring bool
 	// lastTarget 记住最近一次用到的目标响度，供 State() 在没有入参时判断
 	// 「已测量」到底是多少首（缓存有效性与目标响度绑定）。
@@ -947,12 +948,17 @@ func (s *LoudnessService) emit(name string, payload any) {
 
 // WindowService 窗口控制
 type WindowService struct {
-	app *application.App
+	app   *application.App
+	store *bootstrap.Store
+
+	// activeBackdrop 创建窗口时实际生效的原生材质（由 main 注入）。
+	// 配置里的值只能等下次创建窗口时才起作用，两者不一致就是「待重启」。
+	activeBackdrop string
 }
 
 // NewWindowService 构造服务（app 由 main 在创建应用后注入）
-func NewWindowService() *WindowService {
-	return &WindowService{}
+func NewWindowService(store *bootstrap.Store) *WindowService {
+	return &WindowService{store: store, activeBackdrop: "off"}
 }
 
 func (s *WindowService) current() *application.WebviewWindow {
@@ -1028,6 +1034,59 @@ func (s *WindowService) IsMaximized() bool {
 	return false
 }
 
+// Backdrop 返回窗口原生材质（Mica / Acrylic…）的状态。
+//
+// 材质只能在创建窗口时指定，所以这里同时给出「配置里的值」和「窗口当前
+// 真正生效的值」，前端据此提示用户是否需要重启。
+func (s *WindowService) Backdrop() map[string]any {
+	configured := "off"
+	if s.store != nil {
+		configured = bootstrap.NormalizeBackdropMode(s.store.Get().NativeBackdrop)
+	}
+	active := s.activeBackdrop
+	if active == "" {
+		active = "off"
+	}
+	supported, osLabel := backdropOSInfo()
+	return map[string]any{
+		"configured":      configured,
+		"active":          active,
+		"supported":       supported,
+		"os":              osLabel,
+		"restartRequired": configured != active,
+		"modes":           bootstrap.BackdropModes,
+	}
+}
+
+// Restart 重启应用：先拉起一个新的自己，再退出当前进程。
+//
+// 原生材质这类「只能在创建窗口时指定」的选项靠它生效。启动失败时不会退出，
+// 把错误交回前端提示，免得用户点了重启反而把应用关掉。
+func (s *WindowService) Restart() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("定位可执行文件失败: %w", err)
+	}
+
+	// 先把元数据缓存落盘，避免旧进程退出时的回写和新实例的启动扫描打架
+	if state != nil && state.lib != nil {
+		if err := state.lib.SaveCache(); err != nil {
+			log.Printf("重启前保存元数据缓存失败: %v", err)
+		}
+	}
+
+	cmd := executil.Command(exe, os.Args[1:]...)
+	cmd.Dir = filepath.Dir(exe)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动新实例失败: %w", err)
+	}
+
+	if s.app != nil {
+		s.app.Quit()
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // 工具函数
 // ---------------------------------------------------------------------------
@@ -1077,13 +1136,14 @@ func sanitizeFileName(name string) string {
 }
 
 func revealPath(path string) error {
+	// 用 executil 创建进程：Windows GUI 程序直接 exec 控制台程序会闪出黑窗
 	switch runtime.GOOS {
 	case "windows":
-		return exec.Command("explorer", path).Start()
+		return executil.Command("explorer", path).Start()
 	case "darwin":
-		return exec.Command("open", path).Start()
+		return executil.Command("open", path).Start()
 	default:
-		return exec.Command("xdg-open", path).Start()
+		return executil.Command("xdg-open", path).Start()
 	}
 }
 
@@ -1099,6 +1159,8 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			c.GlassBlur = asInt(raw, c.GlassBlur)
 		case "glassAlpha":
 			c.GlassAlpha = asInt(raw, c.GlassAlpha)
+		case "nativeBackdrop":
+			c.NativeBackdrop = bootstrap.NormalizeBackdropMode(asString(raw, c.NativeBackdrop))
 		case "animations":
 			c.Animations = asBool(raw, c.Animations)
 		case "accentFromCover":
@@ -1165,6 +1227,34 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			}
 		case "cacheDir":
 			c.CacheDir = asString(raw, c.CacheDir)
+		// —— 响度均衡 ——
+		// 这几个键以前被漏掉了：前端一直在推，后端不认，于是设置里的
+		// 「均衡模式 / 目标响度 / 真峰值保护」重启后一律回到默认值。
+		case "loudnessMode":
+			mode := strings.TrimSpace(asString(raw, c.LoudnessMode))
+			switch mode {
+			case "off", "track", "album":
+				c.LoudnessMode = mode
+			default:
+				// 非法值不静默接受，免得界面显示与实际行为不一致
+				c.LoudnessMode = "off"
+			}
+		case "loudnessTarget":
+			c.LoudnessTarget = asFloat(raw, c.LoudnessTarget)
+		case "loudnessLimit":
+			c.LoudnessLimit = asBool(raw, c.LoudnessLimit)
+		// —— 在线功能 ——
+		case "downloadDir":
+			c.DownloadDir = bootstrap.ExpandPath(asString(raw, c.DownloadDir))
+		case "onlineCover":
+			c.OnlineCover = asBool(raw, c.OnlineCover)
+		case "embedMeta":
+			c.EmbedMeta = asBool(raw, c.EmbedMeta)
+		// —— 交互 ——
+		case "rowClickAction":
+			c.RowClickAction = bootstrap.NormalizeRowClickAction(asString(raw, c.RowClickAction))
+		case "listDensity":
+			c.ListDensity = bootstrap.NormalizeListDensity(asString(raw, c.ListDensity))
 		}
 	}
 }

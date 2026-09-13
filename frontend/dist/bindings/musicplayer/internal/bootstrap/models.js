@@ -9,6 +9,7 @@
  * @property {string} themeMode - dark | light | system
  * @property {number} glassBlur
  * @property {number} glassAlpha
+ * @property {string} nativeBackdrop - NativeBackdrop 窗口原生材质：off | auto | mica | acrylic | tabbed。 只有 Windows 会用得上，且必须在创建窗口时指定，改了要重启应用。
  * @property {boolean} animations
  * @property {boolean} accentFromCover
  * @property {boolean} showAlbumColumn
@@ -23,6 +24,14 @@
  * @property {number} lyricsFontSize
  * @property {number} lyricsLines
  * @property {string[] | null} lyricsSources
+ * @property {string} loudnessMode - —— 响度均衡 —— 注意：这三个字段以前只存在前端的 localStorage 里，后端不认识， 于是「设置里改了均衡模式 → 重启后又变回关闭」。它们必须落盘。 off | track | album
+ * @property {number} loudnessTarget - 目标整合响度 LUFS
+ * @property {boolean} loudnessLimit - 真峰值保护
+ * @property {string} downloadDir - —— 在线功能 —— DownloadDir 在线歌曲下载的保存目录。默认是系统「音乐」目录下的 downloads。
+ * @property {boolean} onlineCover - OnlineCover 是否联网为在线歌曲抓取封面（多来源，见 internal/coverfetch）。
+ * @property {boolean} embedMeta - EmbedMeta 是否把抓到的封面/歌词写回歌曲文件自身的标签。 默认关闭：写标签会改写用户的音乐文件，必须是用户明确开启的行为。 关闭时封面与歌词仍然可用，只是放在缓存目录里（见 internal/metacache）。
+ * @property {string} rowClickAction - —— 交互 —— RowClickAction 单击歌曲行的行为： next  —— 加入「下一首播放」（默认，不打断当前播放） play  —— 立即播放 append —— 追加到播放列表末尾
+ * @property {string} listDensity - ListDensity 列表密度：compact | cozy | roomy。 原来每张表头各有一个密度按钮，现在统一到设置里，对所有列表生效。
  * @property {Folder[] | null} folders
  * @property {FilterRule[] | null} filterRules
  * @property {string[] | null} likedIds

@@ -1,5 +1,9 @@
 /* ==========================================================================
    titlebar.css — 无边框窗口自绘标题栏
+   --------------------------------------------------------------------------
+   标题栏**不设自己的背景色**：主界面渐变由 .app::before 统一提供
+   （高度正好 = --h-titlebar），这样从标题栏到内容区是连续过渡，
+   沉浸模式下也不会把封面虚化图糊掉。
    ========================================================================== */
 
 .titlebar {
@@ -9,10 +13,7 @@
   gap: var(--sp-3);
   height: var(--h-titlebar);
   padding: 0 0 0 var(--sp-4);
-  background: var(--glass-bg-weak);
-  backdrop-filter: var(--panel-blur);
-  -webkit-backdrop-filter: var(--panel-blur);
-  border-bottom: var(--hairline);
+  background: none;
   /* Wails v3 的拖拽开关是 CSS 自定义属性 --wails-draggable。
      运行时会对鼠标事件的目标元素做：
        getComputedStyle(el).getPropertyValue("--wails-draggable").trim() === "drag"

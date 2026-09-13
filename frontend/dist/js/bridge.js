@@ -16,7 +16,8 @@
      Themes    List / Load / Reload / Dir / RevealDir
      Config    Get / Set / Path / Reset
      Media     URL / State
-     Window    Minimize / ToggleMaximize / Close / SetFullscreen / ToggleFullscreen
+     Window    Minimize / ToggleMaximize / Close / SetFullscreen / ToggleFullscreen /
+               Backdrop / Restart
    ========================================================================== */
 
 let bindings = null;
@@ -55,6 +56,9 @@ export async function connect() {
       Media: mod.MediaService,
       Loudness: mod.LoudnessService,
       Window: mod.WindowService,
+      Online: mod.OnlineService,
+      Download: mod.DownloadService,
+      Cover: mod.CoverService,
     };
     active = true;
     try {
@@ -198,6 +202,43 @@ export const backend = {
   windowSetFullscreen: (on) => call(bindings?.Window?.SetFullscreen, on),
   windowToggleFullscreen: () => call(bindings?.Window?.ToggleFullscreen),
   windowIsFullscreen: () => call(bindings?.Window?.IsFullscreen),
+  // 原生材质（Mica / Acrylic）：读取窗口实际生效值 + 重启应用以让改动生效
+  backdrop: () => call(bindings?.Window?.Backdrop),
+  restartApp: () => call(bindings?.Window?.Restart),
+
+  /* ---- 在线歌曲 ---- */
+  onlineSearch: (keyword, page, pageSize) => call(bindings?.Online?.Search, keyword, page, pageSize),
+  // 按标题/歌手/专辑联网找封面，返回同源代理地址
+  coverLookup: (title, artist, album, duration, fallback) =>
+    call(bindings?.Online?.CoverLookup, title, artist, album, duration, fallback),
+  coverProviders: () => call(bindings?.Online?.CoverProviders),
+  coverInvalidate: () => call(bindings?.Online?.InvalidateCovers),
+
+  /* ---- 下载 ---- */
+  downloadStart: (bvid, title, duration) => call(bindings?.Download?.Start, bvid, title, duration),
+  downloadStatus: () => call(bindings?.Download?.Status),
+  // PickDir / SetDir 只返回「换目录提案」（含现有文件数量），不落盘；
+  // 用户确认是否迁移后再调 ApplyDir 真正生效
+  downloadPickDir: () => call(bindings?.Download?.PickDir),
+  downloadSetDir: (dir) => call(bindings?.Download?.SetDir, dir),
+  downloadApplyDir: (dir, migrate) => call(bindings?.Download?.ApplyDir, dir, migrate),
+  downloadOpenDir: (dir) => call(bindings?.Download?.OpenDir, dir),
+
+  /* ---- 封面（本地歌曲） ---- */
+  // override 可临时覆盖标题/歌手/专辑（下载来的文件没有标签时很有用）
+  coverLookupSong: (songId, override = {}) => call(bindings?.Cover?.Lookup, songId, override),
+  coverFetchURL: (url) => call(bindings?.Cover?.Fetch, url),
+  // embed 显式传入「是否写回歌曲文件」：设置是防抖同步的，
+  // 靠后端读配置会有竞态（刚开开关就换封面时后端可能还没收到）
+  coverApply: (songId, imageURL, preview, embed = null) =>
+    call(bindings?.Cover?.ApplyWith, songId, imageURL, preview, embed),
+  coverReset: (songId) => call(bindings?.Cover?.Reset, songId),
+  coverCurrent: (songId) => call(bindings?.Cover?.Current, songId),
+  coverCacheStats: () => call(bindings?.Cover?.CacheStats),
+  coverOpenCacheDir: (kind) => call(bindings?.Cover?.OpenCacheDir, kind),
+  coverClearCache: () => call(bindings?.Cover?.ClearCache),
+  // 一次性把缓存里已有的封面/歌词补写进歌曲文件（用户在设置里确认后才会调）
+  coverWriteCacheToFiles: () => call(bindings?.Cover?.WriteCacheToFiles),
 };
 
 /* --------------------------------------------------------------------------

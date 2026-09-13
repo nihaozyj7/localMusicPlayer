@@ -15,10 +15,34 @@
 
   /* —— 表面与层级 —— */
   --bg-app: #08080a;
+  /* 窗口/页面底色：默认就是主题的 --bg-app。窗口铺底的两处（body 与
+     .playerview）都只认这个令牌，因此主题换底色依旧只改 --bg-app。 */
+  --bg-window: var(--bg-app);
+  /* 启用系统原生材质（Mica / Acrylic，见设置→外观→窗口原生材质）时，
+     窗口要让出底色，材质才透得出来。默认全透明；主题若想在材质上加一层
+     「面纱」（例如 rgba(8, 8, 10, 0.5)），覆盖这个令牌即可 —— 不需要在主题
+     文件里写任何选择器。 */
+  --bg-window-material: transparent;
   --bg-canvas:
     radial-gradient(1100px 720px at 12% -10%, rgba(255, 255, 255, 0.075), transparent 62%),
     radial-gradient(900px 640px at 100% 0%, rgba(255, 255, 255, 0.05), transparent 58%),
     radial-gradient(760px 760px at 50% 118%, rgba(255, 255, 255, 0.035), transparent 64%);
+  /* 顶部/底部共用的一层极淡渐变：标题栏与播放控件不再各自铺底色，
+     而是共用这层「主界面渐变」，过渡更自然（沉浸模式下也不抢封面）。
+     渐变长度 = 该区域高度 + 这段延伸，让它慢慢淡出而不是硬切一条边。 */
+  --chrome-fade: 52px;
+  --bg-chrome-top: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.055) 0,
+    rgba(255, 255, 255, 0.018) 42%,
+    transparent 100%
+  );
+  --bg-chrome-bottom: linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.05) 0,
+    rgba(255, 255, 255, 0.016) 46%,
+    transparent 100%
+  );
   --surface-1: rgba(255, 255, 255, 0.04);
   --surface-2: rgba(255, 255, 255, 0.07);
   --surface-3: rgba(255, 255, 255, 0.11);
@@ -98,18 +122,21 @@
   --sp-6: 32px;
   --sp-7: 48px;
 
-  /* —— 圆角 —— */
-  --r-xs: 6px;
-  --r-sm: 10px;
-  --r-md: 14px;
-  --r-lg: 20px;
-  --r-xl: 28px;
+  /* —— 圆角 ——
+     整体风格：**小圆角**。面板/卡片不再用大圆角，一律收到 8px 上下；
+     只有「胶囊」类元素（徽标、开关、进度条）继续用 --r-full。
+     改这一组就会同时改掉全部组件 —— 组件 CSS 里没有任何硬编码圆角。 */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-xl: 12px;
   --r-full: 999px;
 
   /* —— 固定布局尺寸 —— */
   --h-titlebar: 36px;
   --w-sidebar: 232px;
-  --h-playerbar: 88px;
+  --h-playerbar: 92px;
   --h-header: 64px;
   --row-h: 56px;
   --row-h-compact: 44px;
@@ -124,16 +151,23 @@
   --dur-fast: 120ms;
   --dur: 200ms;
   --dur-slow: 420ms;
+  --pv-slide-dur: 260ms;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-slide: cubic-bezier(0.32, 0.72, 0.24, 1);
 
-  /* —— 层级 —— */
+  /* —— 层级 ——
+     注意 --z-modal-top：弹窗（modal-backdrop）必须比所有「层」（设置层 / 封面层 /
+     搜索层，都是 --z-modal）更高。原因见 overlay.css#.modal-backdrop：那些层是
+     .app（z-index:10，自成层叠上下文）的孩子，而弹窗是 body 的孩子；两者数值相同时
+     设置层会盖在弹窗上面 —— 表现是「设置里点开一个确认框，按钮点不动」。 */
   --z-bg: 0;
   --z-content: 10;
   --z-playerview: 30;
   --z-playerbar: 40;
   --z-dropdown: 55;
   --z-modal: 60;
+  --z-modal-top: 80;
   --z-titlebar: 70;
 
   /* —— 语义映射（组件只认这些，方便主题整体替换风格）—— */
@@ -144,4 +178,11 @@
   --panel-shadow: var(--glass-shadow);
   --hairline: 1px solid var(--border-1);
   --hairline-strong: 1px solid var(--border-2);
+}
+
+/* 窗口真的带系统材质时（data-backdrop 由 js/backdrop.js 依据「窗口实际生效的
+   材质」写入），把窗口底色换成让位用的令牌。放在令牌层而不是组件层，
+   组件（base.css / layout.css）就只认 --bg-window 一个令牌。 */
+:root[data-backdrop] {
+  --bg-window: var(--bg-window-material);
 }

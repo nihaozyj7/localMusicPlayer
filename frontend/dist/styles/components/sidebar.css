@@ -113,10 +113,33 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--fs-md);
+  color: var(--text-2);
+}
+
+.navitem:hover .navitem__text,
+.navitem[aria-selected="true"] .navitem__text {
+  color: var(--text-1);
+}
+
+/* ── 行尾区：数量标记与「更多」按钮叠在同一个位置 ──────────────────────────
+   需求原文：数量标记一直对不齐，因为「我喜欢」没有更多按钮、自定义歌单有，
+   那一列宽度的差异把数量推歪了。
+
+   做法：两者都放进 .navitem__tail（定宽、右对齐），内部再用绝对定位重叠。
+   默认只显示数量，鼠标悬浮 / 键盘聚焦时数量隐去、更多按钮出现 ——
+   同一时刻只显示一个，所以每一行（含「我喜欢」）的宽度完全一致。 */
+.navitem__tail {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  margin-left: auto;
 }
 
 .navitem__badge {
-  flex: none;
+  grid-area: 1 / 1;
   min-width: 22px;
   padding: 0 6px;
   height: 18px;
@@ -128,15 +151,15 @@
   font-family: var(--font-num);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
+  transition: opacity var(--dur-fast) var(--ease);
 }
 
 .navitem__more {
-  flex: none;
+  /* 覆盖在数量标记之上，不参与布局 —— 因此不会改变行宽 */
+  position: absolute;
+  inset: 0;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  margin-right: -4px;
   border-radius: var(--r-xs);
   color: var(--text-3);
   opacity: 0;
@@ -148,6 +171,12 @@
   opacity: 1;
 }
 
+/* 悬浮时把数量藏起来，保证同一时刻只看到一个 */
+.navitem:hover .navitem__badge,
+.navitem:focus-within .navitem__badge {
+  opacity: 0;
+}
+
 .navitem__more:hover {
   color: var(--text-1);
   background: var(--surface-2);
@@ -157,11 +186,7 @@
   width: 14px;
   height: 14px;
 }
-
-/* 「我喜欢」锁定的歌单：不显示更多按钮 */
-.navitem[data-locked="true"] .navitem__more {
-  display: none;
-}
+/* ──────────────────────────────────────────────────────────────────────── */
 
 /* —— 拖拽排序 —— */
 .navitem[draggable="true"] {

@@ -2,7 +2,7 @@
    tracks.js — 曲目表格渲染与交互（所有歌曲 / 播放列表 / 歌单 共用）
    ========================================================================== */
 
-import { icon, openMenu, openModal, toast } from "./dom.js";
+import { bindCoverFallback, icon, openMenu, openModal, toast } from "./dom.js";
 import { addSongsTo } from "./playlists.js";
 import {
   LIKED_ID,
@@ -16,10 +16,11 @@ import {
   removeFromQueue,
   removeSongsFromPlaylist,
   reorderQueue,
+  songById,
   state,
   toggleLike,
 } from "./store.js";
-import { esc, fmtCount, fmtTime } from "./utils.js";
+import { coverOf, esc, fmtCount, fmtTime } from "./utils.js";
 
 export const SORT_LABELS = {
   addedAt: "添加时间",
@@ -57,7 +58,7 @@ function rowHtml(song, index, mode) {
         <button class="track__play" type="button" data-act="play" aria-label="播放 ${esc(song.title)}">${icon("play")}</button>
       </div>
       <div class="track__cover">
-        <img src="${song.cover}" alt="" loading="lazy" draggable="false" />
+        <img src="${esc(coverOf(song))}" alt="" loading="lazy" draggable="false" />
       </div>
       <div class="track__main">
         <div class="track__title">${esc(song.title)}</div>
@@ -81,7 +82,7 @@ export function renderTracks(container) {
   const mode = trackTableMode();
   const songs = state.visibleSongs;
   container.innerHTML = `
-    <div class="tracks" data-mode="${mode}" data-density="${state.density}">
+    <div class="tracks" data-mode="${mode}" data-density="${state.config.listDensity || "cozy"}">
       <div class="tracks__head" data-mode="${mode}">
         <div class="col-handle"></div>
         <div class="col-index">#</div>
@@ -104,6 +105,40 @@ export function renderTracks(container) {
       btn.classList.toggle("is-asc", state.sortDir === "asc");
     }
   });
+
+  // 封面加载失败 → 默认封面（不要留下浏览器破碎图标）
+  container.querySelectorAll(".track__cover img").forEach(bindCoverFallback);
+}
+
+/* --------------------------------------------------------------------------
+   单击行为
+   --------------------------------------------------------------------------
+   需求：点击歌曲默认「添加到下一首播放」，而不是「播放全部」；
+   用户可以在设置里改回「立即播放」或「加到末尾」。
+
+   双击始终是「立即播放并从这一首开始」—— 这是各地播放器的通用约定，
+   不受设置影响（否则把设置改成 next 之后就没有「马上听这首」的入口了）。
+   -------------------------------------------------------------------------- */
+export function activateRow(row, { silent = false } = {}) {
+  const songId = row?.dataset?.id;
+  if (!songId) return;
+  const action = state.config.rowClickAction || "next";
+
+  if (action === "play") {
+    const ids = state.visibleSongs.map((s) => s.id);
+    playContext(ids, Number(row.dataset.index), currentContext());
+    return;
+  }
+
+  if (action === "append") {
+    appendToQueue([songId]);
+    if (!silent) toast("已加入播放列表末尾", { tone: "success", duration: 1500 });
+    return;
+  }
+
+  // next（默认）
+  addNextInQueue(songId);
+  if (!silent) toast("已设为下一首播放", { tone: "success", duration: 1500 });
 }
 
 /* --------------------------------------------------------------------------
@@ -186,8 +221,9 @@ export function bindTrackEvents(container, handlers = {}) {
     if (!actEl) {
       const row = e.target.closest(".track");
       if (row) {
-        const ids = state.visibleSongs.map((s) => s.id);
-        playContext(ids, Number(row.dataset.index), currentContext());
+        // 单击行为的默认值是「加入下一首播放」——之前在设置里可以改。
+        // 双击才是「立即播放并从这一首开始」（见下面的 dblclick）。
+        activateRow(row, { silent: false });
       }
       return;
     }
@@ -245,8 +281,11 @@ export function bindTrackEvents(container, handlers = {}) {
    单曲「更多」菜单
    -------------------------------------------------------------------------- */
 export function openTrackMenu(anchor, songId, pos = null) {
-  const song = state.songs.find((s) => s.id === songId);
+  // 用 songById 而不是只查 state.songs：队列里可能是在线试听曲目，
+  // 只查本地曲库会直接 return —— 表现为「在线歌曲右键没反应」。
+  const song = songById(songId);
   if (!song) return;
+  const online = Boolean(song.online);
   const liked = isLiked(songId);
   const inQueue = state.queue.includes(songId);
 
@@ -259,6 +298,11 @@ export function openTrackMenu(anchor, songId, pos = null) {
     { id: "add-to", label: "加入歌单…", icon: "plus" },
   ];
 
+  // 在线试听曲目：没有本地文件，换封面/嵌入标签/在文件夹中显示都没有意义
+  if (!online) {
+    items.push({ id: "cover", label: "更换封面…", icon: "image" });
+  }
+
   if (state.view === "queue") {
     items.push({ id: "sep2", kind: "sep" });
     items.push({ id: "remove-here", label: "从播放列表移除", icon: "trash", danger: true });
@@ -270,16 +314,25 @@ export function openTrackMenu(anchor, songId, pos = null) {
     }
   }
 
-  items.push({ id: "sep3", kind: "sep" });
-  items.push({ id: "reveal", label: "在文件夹中显示", icon: "folder" });
+  // 在线曲目没有本地文件路径，最后这一组（在文件夹中显示）没有意义
+  if (!online) {
+    items.push({ id: "sep3", kind: "sep" });
+    items.push({ id: "reveal", label: "在文件夹中显示", icon: "folder" });
+  }
 
   const onPick = (id) => {
     switch (id) {
       case "play": {
         const ids = state.visibleSongs.map((s) => s.id);
-        playContext(ids, ids.indexOf(songId), currentContext());
+        const at = ids.indexOf(songId);
+        // 在线曲目不在 visibleSongs 里：直接单独播它
+        if (at < 0) playContext([songId], 0, { type: "online", id: null });
+        else playContext(ids, at, currentContext());
         break;
       }
+      case "cover":
+        import("./coverpanel.js").then((m) => m.openCoverPanel(songId));
+        break;
       case "play-next":
         addNextInQueue(songId);
         toast("已设为下一首播放", { tone: "success", duration: 1500 });

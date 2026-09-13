@@ -7,6 +7,11 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; img-src 'self' data: blob: file:; media-src 'self' blob: file:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws:"
     />
+    <!--
+      注意：img-src 只有 'self' —— 在线封面**不能**直接写第三方地址，
+      必须走后端代理（/online/cover?...，见 services_online.go）。
+      代理出来的地址与页面同源，既满足 CSP，也顺手解决了图床校验 Referer 的问题。
+    -->
     <title>音乐播放器</title>
     <link rel="stylesheet" href="./styles/index.css" />
     <!--
@@ -40,6 +45,11 @@
 
         <symbol id="i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 20s-7.5-4.6-7.5-9.6A4.4 4.4 0 0 1 12 7.3a4.4 4.4 0 0 1 7.5 3.1C19.5 15.4 12 20 12 20Z" />
+        </symbol>
+
+        <symbol id="i-playlist-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h11M3 12h7M3 18h7" />
+          <path d="M17 13v8M13 17h8" />
         </symbol>
 
         <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -230,6 +240,13 @@
           <path d="M5 6h9M5 10h14M5 14h11M5 18h6" />
         </symbol>
 
+        <!-- 桌面歌词：在一块悬浮面板上显示歌词（与「详情页显示歌词」是两件事） -->
+        <symbol id="i-desktop-lyrics" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2.5" y="3.5" width="19" height="14" rx="2.5" />
+          <path d="M6.5 8.5h11M6.5 12.5h6" />
+          <path d="M9 21h6" />
+        </symbol>
+
         <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="4" />
           <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4" />
@@ -272,25 +289,57 @@
           <circle cx="15" cy="15.5" r="1.6" />
           <path d="M18.5 5v7M15.5 6.5l6 3.5M21.5 6.5l-6 3.5" />
         </symbol>
+
+        <!-- 图片 / 封面：用来表示「换封面」这个动作 -->
+        <symbol id="i-image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="16" rx="2.5" />
+          <circle cx="8.5" cy="9.5" r="1.6" />
+          <path d="M4 17.5 9 12l3.5 3.5L15 13l5 4.5" />
+        </symbol>
+
+        <!-- 密度：列表行高 -->
+        <symbol id="i-density" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+        </symbol>
+
+        <!-- 嵌入元数据：写进文件 -->
+        <symbol id="i-tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11.5 3H20v8.5L11 20.5a2 2 0 0 1-2.8 0l-5.7-5.7a2 2 0 0 1 0-2.8Z" />
+          <circle cx="16" cy="7.5" r="1.5" />
+        </symbol>
       </defs>
     </svg>
 
     <!-- ==================================================================
          应用骨架（固定：标题栏 / 侧边栏 + 主内容 / 底部播放控件）
          ================================================================== -->
-    <div class="app" id="app" data-view="library" data-resolved-theme="dark-minimal">
-      <!-- ① 标题栏 -->
+    <div class="app" id="app" data-view="library" data-mode="classic" data-resolved-theme="dark-minimal">
+      <!-- 沉浸模式背景：固定在窗口最底层，铺满整窗（含标题栏与播放控件区域）。
+           放在 .playerview 之外是因为后者有 transform 动效，会让内部 fixed 元素
+           的包含块变成它自己，从而被裁在详情页范围内铺不满。 -->
+      <div class="immersive-bg" id="immersive-bg" hidden aria-hidden="true">
+        <img id="immersive-bg-img" alt="" />
+        <div class="immersive-bg__veil"></div>
+        <div class="immersive-bg__grain"></div>
+      </div>
+
+      <!-- ① 标题栏
+           需求：移除「所有歌曲」这类当前页面标题文字。
+           当前页面已经由侧边栏选中态 + 内容区大标题表达，标题栏再重复一遍
+           只会占地方，而且长歌单名会把窗口按钮挤歪。 -->
       <header class="titlebar" id="titlebar">
         <div class="titlebar__brand">
           <svg class="titlebar__logo"><use href="#i-music" /></svg>
           <span>音乐播放器</span>
         </div>
         <span class="titlebar__sep"></span>
-        <span class="titlebar__caption" id="titlebar-caption">所有歌曲</span>
         <div class="titlebar__drag"></div>
         <div class="titlebar__actions">
           <button class="titlebar__btn" id="btn-theme-toggle" type="button" data-tip="切换深浅色" aria-label="切换深浅色">
             <svg><use href="#i-moon" /></svg>
+          </button>
+          <button class="titlebar__btn" id="btn-settings" type="button" data-tip="设置" aria-label="设置">
+            <svg><use href="#i-settings" /></svg>
           </button>
           <button class="titlebar__btn" id="btn-win-min" type="button" aria-label="最小化">
             <svg><use href="#i-minimize" /></svg>
@@ -311,13 +360,13 @@
             <div class="sidebar__label">曲库</div>
             <button class="navitem" type="button" data-nav="library" aria-selected="true">
               <svg class="navitem__icon"><use href="#i-music" /></svg>
-              <span class="navitem__text">所有歌曲</span>
-              <span class="navitem__badge" id="badge-library">0</span>
+              <span class="navitem__text">本地歌曲</span>
+              <span class="navitem__tail"><span class="navitem__badge" id="badge-library">0</span></span>
             </button>
             <button class="navitem" type="button" data-nav="queue" aria-selected="false">
               <svg class="navitem__icon"><use href="#i-queue" /></svg>
               <span class="navitem__text">播放列表</span>
-              <span class="navitem__badge" id="badge-queue">0</span>
+              <span class="navitem__tail"><span class="navitem__badge" id="badge-queue">0</span></span>
             </button>
           </nav>
 
@@ -330,17 +379,6 @@
             </div>
             <div id="playlist-nav"></div>
           </nav>
-        </div>
-
-        <div class="sidebar__foot">
-          <button class="navitem" id="btn-new-playlist" type="button">
-            <svg class="navitem__icon"><use href="#i-plus" /></svg>
-            <span class="navitem__text">新建歌单</span>
-          </button>
-          <button class="navitem" type="button" data-nav="settings" aria-selected="false">
-            <svg class="navitem__icon"><use href="#i-settings" /></svg>
-            <span class="navitem__text">设置</span>
-          </button>
         </div>
       </aside>
 
@@ -363,7 +401,13 @@
             <svg><use href="#i-arrow-left" /></svg>
             <span>返回</span>
           </button>
-          <span class="playerview__crumb" id="playerview-crumb">正在播放</span>
+          <!-- 需求：返回按钮右侧放「封面」按钮（打开封面搜索弹层）；
+               原来这里的「歌名 · 歌手」已经去掉 —— 播放控件与歌词上方
+               都显示过同一份信息，没必要第三处再显示。 -->
+          <button class="playerview__action" id="btn-player-cover" type="button" data-tip="更换封面" aria-label="更换封面">
+            <svg><use href="#i-image" /></svg>
+            <span>封面</span>
+          </button>
           <span class="u-spacer"></span>
           <div class="viewmode" id="playerview-mode" role="group" aria-label="播放界面样式">
             <button class="viewmode__btn" type="button" data-pv-mode="classic" aria-pressed="true" data-tip="经典">
@@ -380,78 +424,192 @@
         <div class="playerview__stage" id="playerview-stage"></div>
       </section>
 
-      <!-- ④ 底部常驻播放控件 -->
+      <!-- ④ 底部常驻播放控件
+           结构：上面一整行进度条，下面一行「封面 / 曲目信息 / 收藏·歌单 / 传输 / 音量 / 模式·歌词·列表」 -->
       <footer class="playerbar" id="playerbar">
-        <div class="playerbar__now">
-          <button class="playerbar__cover" id="bar-cover" type="button" data-tip="打开播放界面" aria-label="打开播放界面">
-            <img id="bar-cover-img" alt="" />
-            <svg class="playerbar__cover-icon"><use href="#i-expand" /></svg>
-          </button>
-          <div class="playerbar__meta" id="bar-meta">
-            <span class="playerbar__title" id="bar-title">未在播放</span>
-            <span class="playerbar__sub" id="bar-sub">选择一首歌曲开始</span>
+        <div class="playerbar__progress">
+          <span class="progress__time" id="time-current">00:00</span>
+          <div class="slider" id="progress" role="slider" tabindex="0" aria-label="播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-disabled="false">
+            <div class="slider__rail">
+              <div class="slider__buffer" id="progress-buffer"></div>
+              <div class="slider__fill" id="progress-fill"></div>
+            </div>
+            <div class="slider__thumb"></div>
+            <div class="slider__bubble" id="progress-bubble">00:00</div>
           </div>
-          <button class="playerbar__heart" id="bar-heart" type="button" aria-pressed="false" data-tip="加入我喜欢" aria-label="加入我喜欢">
-            <svg><use href="#i-heart" /></svg>
-          </button>
+          <span class="progress__time progress__time--total" id="time-total">00:00</span>
         </div>
 
-        <div class="playerbar__center">
-          <div class="transport">
-            <button class="transport__btn" id="btn-prev" type="button" data-tip="上一曲" aria-label="上一曲">
-              <svg><use href="#i-prev" /></svg>
+        <div class="playerbar__row">
+          <div class="playerbar__now">
+            <button class="playerbar__cover" id="bar-cover" type="button" data-tip="播放详情页" aria-label="播放详情页">
+              <img id="bar-cover-img" alt="" />
+              <svg class="playerbar__cover-icon"><use href="#i-expand" /></svg>
             </button>
-            <button class="transport__btn transport__btn--main" id="btn-play" type="button" data-tip="播放/暂停" aria-label="播放">
-              <svg id="icon-play"><use href="#i-play" /></svg>
-            </button>
-            <button class="transport__btn" id="btn-next" type="button" data-tip="下一曲" aria-label="下一曲">
-              <svg><use href="#i-next" /></svg>
-            </button>
-          </div>
-          <div class="progress">
-            <span class="progress__time" id="time-current">00:00</span>
-            <div class="slider" id="progress" role="slider" tabindex="0" aria-label="播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-disabled="false">
-              <div class="slider__rail">
-                <div class="slider__buffer" id="progress-buffer"></div>
-                <div class="slider__fill" id="progress-fill"></div>
-              </div>
-              <div class="slider__thumb"></div>
-              <div class="slider__bubble" id="progress-bubble">00:00</div>
+            <div class="playerbar__meta" id="bar-meta" data-tip="播放详情页">
+              <span class="playerbar__title" id="bar-title">未在播放</span>
+              <span class="playerbar__sub" id="bar-sub">选择一首歌曲开始</span>
             </div>
-            <span class="progress__time progress__time--total" id="time-total">00:00</span>
+            <button class="playerbar__heart" id="bar-heart" type="button" aria-pressed="false" data-tip="加入我喜欢" aria-label="加入我喜欢">
+              <svg><use href="#i-heart" /></svg>
+            </button>
+            <button class="playerbar__heart playerbar__add" id="bar-add" type="button" data-tip="添加到歌单" aria-label="添加到歌单">
+              <svg><use href="#i-playlist-plus" /></svg>
+            </button>
           </div>
-        </div>
 
-        <div class="playerbar__tools">
-          <div class="volume">
-            <button class="volume__btn" id="btn-mute" type="button" data-tip="静音" aria-label="静音">
-              <svg id="icon-volume"><use href="#i-volume-high" /></svg>
-            </button>
-            <div class="slider volume__slider" id="volume" role="slider" tabindex="0" aria-label="音量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="80">
-              <div class="slider__rail">
-                <div class="slider__fill" id="volume-fill"></div>
-              </div>
-              <div class="slider__thumb"></div>
-              <div class="slider__bubble" id="volume-bubble">80</div>
+          <div class="playerbar__center">
+            <div class="transport">
+              <button class="transport__btn" id="btn-prev" type="button" data-tip="上一曲" aria-label="上一曲">
+                <svg><use href="#i-prev" /></svg>
+              </button>
+              <button class="transport__btn transport__btn--main" id="btn-play" type="button" data-tip="播放/暂停" aria-label="播放">
+                <svg id="icon-play"><use href="#i-play" /></svg>
+              </button>
+              <button class="transport__btn" id="btn-next" type="button" data-tip="下一曲" aria-label="下一曲">
+                <svg><use href="#i-next" /></svg>
+              </button>
             </div>
           </div>
-          <button class="mode-btn" id="btn-mode" type="button" data-mode="sequence" data-tip="顺序播放" aria-label="播放模式">
-            <svg id="icon-mode"><use href="#i-list-order" /></svg>
-            <span class="mode-btn__badge">1</span>
-          </button>
-          <button class="mode-btn" id="btn-lyrics-toggle" type="button" data-tip="显示歌词" aria-label="显示歌词">
-            <svg><use href="#i-lyrics" /></svg>
-          </button>
-          <button class="mode-btn" id="btn-fullscreen" type="button" data-tip="全屏" aria-label="全屏">
-            <svg><use href="#i-expand" /></svg>
-          </button>
+
+          <div class="playerbar__tools">
+            <div class="volume">
+              <button class="volume__btn" id="btn-mute" type="button" data-tip="静音" aria-label="静音">
+                <svg id="icon-volume"><use href="#i-volume-high" /></svg>
+              </button>
+              <div class="slider volume__slider" id="volume" role="slider" tabindex="0" aria-label="音量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="80">
+                <div class="slider__rail">
+                  <div class="slider__fill" id="volume-fill"></div>
+                </div>
+                <div class="slider__thumb"></div>
+                <div class="slider__bubble" id="volume-bubble">80</div>
+              </div>
+            </div>
+            <button class="mode-btn" id="btn-mode" type="button" data-mode="sequence" data-tip="顺序播放" aria-label="播放模式">
+              <svg id="icon-mode"><use href="#i-list-order" /></svg>
+              <span class="mode-btn__badge">1</span>
+            </button>
+            <!-- 手动匹配歌词（在线搜索候选 → 应用到当前歌曲，见 online.js）。
+                 需求：歌词不提供「隐藏」入口，所以这里没有歌词显隐按钮 ——
+                 详情页那块歌词区由设置 → 歌词 控制。 -->
+            <button class="mode-btn" id="btn-lyrics-match" type="button" data-tip="手动匹配歌词" aria-label="手动匹配歌词">
+              <svg><use href="#i-search" /></svg>
+            </button>
+            <button class="mode-btn" id="btn-desktop-lyrics" type="button" aria-pressed="false" data-tip="桌面歌词（暂未实现）" aria-label="桌面歌词">
+              <svg><use href="#i-desktop-lyrics" /></svg>
+            </button>
+            <button class="mode-btn" id="btn-playlist" type="button" aria-pressed="false" data-tip="播放列表" aria-label="播放列表">
+              <svg><use href="#i-playlist" /></svg>
+              <span class="mode-btn__badge" id="queue-count">0</span>
+            </button>
+          </div>
         </div>
       </footer>
     </div>
 
     <!-- 浮层容器 -->
     <div class="menu" id="menu" hidden role="menu"></div>
+    <section class="queue-panel" id="queue-panel" hidden data-state="closed" aria-label="播放列表">
+      <div class="queue-panel__head">
+        <span class="queue-panel__title">播放列表</span>
+        <span class="u-spacer"></span>
+        <span class="queue-panel__count" id="queue-panel-count">0 首</span>
+        <button class="queue-panel__btn" id="queue-reverse" type="button" data-tip="反转顺序" aria-label="反转顺序">
+          <svg><use href="#i-refresh" /></svg>
+        </button>
+        <button class="queue-panel__btn" id="queue-clear" type="button" data-tip="清空列表" aria-label="清空列表">
+          <svg><use href="#i-trash" /></svg>
+        </button>
+        <button class="queue-panel__btn" id="queue-close" type="button" data-tip="关闭" aria-label="关闭播放列表">
+          <svg><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div class="queue-panel__body" id="queue-panel-body"></div>
+    </section>
     <div class="modal-backdrop" id="modal-backdrop" hidden></div>
+
+    <!-- 设置层：覆盖在主界面之上（需求：设置界面改为弹出层）。
+         事件委托挂在 .settings-layer 自己身上，见 shell.js#bindShell。
+         注意层只从标题栏下沿开始，标题栏（窗口按钮 / 拖动区）始终保持可用 ——
+         需求：设置弹出层要避开标题栏。
+         层里自带的紧凑播放控件（.settings-player）就在原来底栏的位置上，
+         用的是与底栏同一套 store 动作，见 settingsplayer.js。 -->
+    <section class="settings-layer" id="settings-layer" data-state="closed" hidden aria-label="设置">
+      <div class="settings-layer__panel" role="dialog" aria-modal="true" aria-label="设置">
+        <div class="settings-layer__head">
+          <svg class="settings-layer__icon" aria-hidden="true"><use href="#i-settings" /></svg>
+          <span class="settings-layer__title">设置</span>
+          <span class="u-spacer"></span>
+          <button class="settings-layer__close" type="button" data-settings-close aria-label="关闭设置">
+            <svg><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <div class="settings-layer__body"></div>
+        <footer class="settings-player" id="settings-player" aria-label="播放控件">
+          <button class="settings-player__cover" id="sp-cover" type="button" data-tip="播放详情页" aria-label="播放详情页">
+            <img id="sp-cover-img" alt="" />
+            <svg class="settings-player__cover-icon" aria-hidden="true"><use href="#i-expand" /></svg>
+          </button>
+          <div class="settings-player__meta" id="sp-meta" data-tip="播放详情页">
+            <span class="settings-player__title" id="sp-title">未在播放</span>
+            <span class="settings-player__sub" id="sp-sub">选择一首歌曲开始</span>
+          </div>
+          <hr class="settings-player__rule" />
+          <div class="settings-player__transport">
+            <button class="transport__btn transport__btn--sm" id="sp-prev" type="button" data-tip="上一曲" aria-label="上一曲">
+              <svg><use href="#i-prev" /></svg>
+            </button>
+            <button class="transport__btn transport__btn--sm transport__btn--main" id="sp-play" type="button" data-tip="播放/暂停" aria-label="播放">
+              <svg id="sp-icon-play"><use href="#i-play" /></svg>
+            </button>
+            <button class="transport__btn transport__btn--sm" id="sp-next" type="button" data-tip="下一曲" aria-label="下一曲">
+              <svg><use href="#i-next" /></svg>
+            </button>
+          </div>
+          <div class="settings-player__progress">
+            <span class="settings-player__time" id="sp-time-current">00:00</span>
+            <div class="slider" id="sp-progress" role="slider" tabindex="0" aria-label="播放进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-disabled="false">
+              <div class="slider__rail">
+                <div class="slider__fill" id="sp-progress-fill"></div>
+              </div>
+              <div class="slider__thumb"></div>
+              <div class="slider__bubble" id="sp-progress-bubble">00:00</div>
+            </div>
+            <span class="settings-player__time settings-player__time--total" id="sp-time-total">00:00</span>
+          </div>
+          <div class="settings-player__tools">
+            <button class="mode-btn mode-btn--sm" id="sp-mute" type="button" data-tip="静音" aria-label="静音">
+              <svg id="sp-icon-volume"><use href="#i-volume-high" /></svg>
+            </button>
+            <div class="slider settings-player__volume" id="sp-volume" role="slider" tabindex="0" aria-label="音量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="80">
+              <div class="slider__rail">
+                <div class="slider__fill" id="sp-volume-fill"></div>
+              </div>
+              <div class="slider__thumb"></div>
+              <div class="slider__bubble" id="sp-volume-bubble">80</div>
+            </div>
+            <button class="mode-btn mode-btn--sm" id="sp-mode" type="button" data-mode="sequence" data-tip="顺序播放" aria-label="播放模式">
+              <svg id="sp-icon-mode"><use href="#i-list-order" /></svg>
+            </button>
+          </div>
+        </footer>
+      </div>
+    </section>
+
+    <div class="cover-layer" id="cover-layer" data-state="closed" hidden aria-label="封面搜索">
+      <div class="cover-layer__panel" role="dialog" aria-modal="true" aria-label="封面搜索">
+        <div class="cover-layer__head">
+          <svg class="cover-layer__icon" aria-hidden="true"><use href="#i-image" /></svg>
+          <span class="cover-layer__title">封面搜索</span>
+          <span class="u-spacer"></span>
+          <button class="cover-layer__close" type="button" data-cover-close aria-label="关闭封面搜索">
+            <svg><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <div class="cover-layer__body" id="cover-layer-body"></div>
+      </div>
+    </div>
+
     <div class="toasts" id="toasts" aria-live="polite"></div>
     <div class="scanning" id="scanning" hidden>
       <div class="scanning__box">

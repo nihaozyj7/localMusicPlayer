@@ -16,13 +16,44 @@
    ========================================================================== */
 
 import { backend, isWails } from "./bridge.js";
-import { commit, currentSong, notify, playNext, state } from "./store.js";
+import { commit, currentSong, notify, playNext, seek, state } from "./store.js";
 import { toast } from "./dom.js";
 
 let el = null;
 let loadedFor = null; // 已经设置过 src 的歌曲 id
 let requestSeq = 0;
 let pendingSeek = null; // 切歌后待执行的跳转位置（毫秒）
+let lastAppliedGain = null; // 上一次写进链路的增益，避免每帧重复写入
+let srcChangedAt = 0; // 最近一次换 src 的时刻（performance.now），用于识别被 abort 的旧请求
+
+/** 换 src 之后多久内出现的媒体错误认定为"旧请求被取代"，不提示用户 */
+const LOAD_SETTLE_MS = 1500;
+
+/* --------------------------------------------------------------------------
+   换源状态机 —— 「元素事件」与「播放意图」谁说了算
+   --------------------------------------------------------------------------
+   切歌要做 node.src = url + node.load()，而 load() 会把元素置为暂停并派发一个
+   pause 事件；旧播放在换源途中被 abort 时元素也会补发 play/pause。这些事件都
+   不是用户意图，但早期实现把它们当成了用户操作：pause 事件把 state.playing
+   写成 false，而"继续播放"只在 state.playing 为 true 时才会发生 —— 结果是一首
+   歌自然播完后，下一首明明已经加载好却永远停在暂停状态（表现为"播完就停掉"）。
+
+   现在的规则：
+     · 换源期间 switchPhase = "loading"，元素的 play/pause 一律不采信，
+       state.playing 是唯一真源；
+     · 新源 loadedmetadata 之后（endSwitch）再按 state.playing 把元素对齐一次。
+   -------------------------------------------------------------------------- */
+const SWITCH_IDLE = "idle";
+const SWITCH_LOADING = "loading";
+let switchPhase = SWITCH_IDLE;
+let switchTimer = null;
+/** 我们主动调用 pause() 引起的事件，不是用户暂停 */
+let selfPause = false;
+/** 最近一次自然播完的时刻：紧跟其后的 pause 属于切歌过程，同样不是用户暂停 */
+let endedAt = 0;
+
+/** 换源兜底时长：loadedmetadata 迟迟不来（损坏文件 / 卡住的转码）也不能永久锁死 */
+const SWITCH_TIMEOUT_MS = 12_000;
 
 /* --------------------------------------------------------------------------
    Web Audio 图
@@ -50,6 +81,8 @@ function ensureGraph(node) {
     // 链路：source → 增益 → 输出。增益里同时含用户音量与响度补偿
     sourceNode.connect(gainNode);
     gainNode.connect(ctx.destination);
+    // 新建的链路增益是 1，缓存要作废，让下一次 applyGainForSong 真正写进去
+    lastAppliedGain = null;
     return true;
   } catch (err) {
     console.warn("[audio] Web Audio 链路建立失败，退回元素音量", err);
@@ -85,14 +118,82 @@ export function applyVolume() {
     }
     // 元素音量固定为 1，全部交给 GainNode
     if (node) node.volume = 1;
+    lastAppliedGain = value;
     return;
   }
   if (node) node.volume = Math.max(0, Math.min(1, value));
+  lastAppliedGain = value;
 }
 
-/** 歌曲切换后重新套用补偿增益 */
+/**
+ * 歌曲切换后重新套用补偿增益。
+ *
+ * main 的 tick 每帧都会调用它，所以这里必须做去重：否则每帧都往
+ * AudioParam 上排一次斜坡，白白占 CPU，也让音量变化的手感变钝。
+ */
 export function applyGainForSong() {
+  const value = targetGain();
+  if (value === lastAppliedGain) return;
   applyVolume();
+}
+
+/* --------------------------------------------------------------------------
+   播放对齐：state.playing 是唯一真源，元素跟着它走
+   -------------------------------------------------------------------------- */
+
+/** 启动播放（含 AudioContext 唤醒与良性错误过滤） */
+function startPlayback(node) {
+  if (!node) return Promise.resolve();
+  if (ctx?.state === "suspended") ctx.resume().catch(() => {});
+  return node.play().catch((err) => {
+    // play() 的 promise 会因为「被新的 load() 打断」而 reject（AbortError），
+    // 这在自动切歌时每次都会发生，并不是播放失败 —— 只有真正的失败才提示。
+    if (isBenignPlayError(err)) return;
+    toast(`播放失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
+  });
+}
+
+/** 把元素对齐到 state.playing（不采信元素自己的事件） */
+function reconcilePlayback(node) {
+  if (!node) return;
+  if (state.playing && node.paused) {
+    startPlayback(node);
+    return;
+  }
+  if (!state.playing && !node.paused) {
+    selfPause = true; // 这是我们按下的暂停，别把它当成用户操作回写状态
+    node.pause();
+  }
+}
+
+/** 元素是否已经播到尽头（有的浏览器在 ended 之前就派发 pause，且此时 ended 还是 false） */
+function atEndOfMedia(node) {
+  const durMs = Number.isFinite(node.duration) && node.duration > 0 ? node.duration * 1000 : state.duration || 0;
+  if (!durMs) return false;
+  const posMs = Number.isFinite(node.currentTime) ? node.currentTime * 1000 : state.position;
+  return posMs >= durMs - 300;
+}
+
+/** 开始换源：此后元素自发的事件都不代表用户意图 */
+function beginSwitch() {
+  switchPhase = SWITCH_LOADING;
+  selfPause = false;
+  if (switchTimer) clearTimeout(switchTimer);
+  switchTimer = setTimeout(() => {
+    switchTimer = null;
+    if (switchPhase === SWITCH_LOADING) endSwitch(el);
+  }, SWITCH_TIMEOUT_MS);
+}
+
+/** 换源收尾：新源元数据已就绪，从这一刻起元素的事件才代表真实播放状态 */
+function endSwitch(node) {
+  if (switchTimer) {
+    clearTimeout(switchTimer);
+    switchTimer = null;
+  }
+  if (switchPhase !== SWITCH_LOADING) return;
+  switchPhase = SWITCH_IDLE;
+  reconcilePlayback(node || el);
 }
 
 /* --------------------------------------------------------------------------
@@ -134,6 +235,8 @@ function bindEvents(node) {
         /* 转码流不支持精确定位时忽略 */
       }
     }
+    // 新源就绪：换源结束，按 state.playing 把元素对齐（该播就补一次 play）
+    endSwitch(node);
   });
 
   node.addEventListener("timeupdate", () => {
@@ -144,18 +247,33 @@ function bindEvents(node) {
   });
 
   node.addEventListener("play", () => {
+    // 换源期间元素的状态由我们驱动，不采信：否则"刚点下暂停又被打回播放"
+    if (switchPhase === SWITCH_LOADING) return;
+    selfPause = false;
     state.playing = true;
     if (ctx?.state === "suspended") ctx.resume().catch(() => {});
     notify();
   });
 
   node.addEventListener("pause", () => {
+    if (selfPause) {
+      selfPause = false;
+      return;
+    }
+    // load() 造成的暂停：换源期间不采信
+    if (switchPhase === SWITCH_LOADING) return;
     if (node.ended) return;
+    // 自然播完：有的浏览器先派发 pause（此时 ended 还没置位），交给 ended 处理
+    if (atEndOfMedia(node)) return;
+    // 播完之后的这一小段时间里，元素的暂停都是切歌引起的（旧实现就是被这条
+    // 事件把 state.playing 打成 false，导致下一首加载完也不会开始播）
+    if (endedAt && performance.now() - endedAt < LOAD_SETTLE_MS) return;
     state.playing = false;
     notify();
   });
 
   node.addEventListener("ended", () => {
+    endedAt = performance.now();
     if (state.playMode === "loop-one") {
       node.currentTime = 0;
       node.play().catch(() => {});
@@ -165,8 +283,14 @@ function bindEvents(node) {
   });
 
   node.addEventListener("error", () => {
+    // 换源失败：不要卡在 loading，否则之后再也无法把元素对齐回 state
+    switchPhase = SWITCH_IDLE;
+    selfPause = false;
     const song = currentSong();
     if (!song) return;
+    // 切歌时上一次的请求必然被 abort，浏览器同样会在元素上派发 error。
+    // 被后来的加载取代的报错不是播放失败，不能弹给用户看。
+    if (wasSuperseded(node.error)) return;
     const code = node.error?.code;
     const reason =
       code === 4
@@ -178,6 +302,16 @@ function bindEvents(node) {
             : "音频加载失败";
     toast(`${reason}：${song.title}`, { tone: "error", duration: 4000 });
   });
+}
+
+/**
+ * 这次媒体错误是不是"被新的加载取代"导致的？
+ * 典型场景：一首歌播完 → 自动切下一首 → 旧请求被 abort。
+ * 判定：src 刚被换掉（1.5 秒内），或浏览器没给出错误码（abort 就是这个样子）。
+ */
+function wasSuperseded(mediaError) {
+  if (srcChangedAt && performance.now() - srcChangedAt < LOAD_SETTLE_MS) return true;
+  return !mediaError || !mediaError.code;
 }
 
 /* --------------------------------------------------------------------------
@@ -196,28 +330,35 @@ export async function syncAudio() {
       node.removeAttribute("src");
       node.load();
       loadedFor = null;
+      switchPhase = SWITCH_IDLE;
+      selfPause = false;
     }
     return;
   }
 
   if (loadedFor !== song.id) {
     loadedFor = song.id;
+    // 从这一刻起（含 await 取地址的这段时间）元素的事件都是我们造成的，一概不采信
+    beginSwitch();
     const seq = ++requestSeq;
     let url = null;
     try {
-      url = await backend.mediaUrl(song.id);
+      url = song.streamUrl || (await backend.mediaUrl(song.id));
     } catch (err) {
+      switchPhase = SWITCH_IDLE;
       toast(`无法播放：${err?.message ?? "取播放地址失败"}`, { tone: "error", duration: 5000 });
       return;
     }
-    if (seq !== requestSeq) return; // 期间又切歌了
+    if (seq !== requestSeq) return; // 期间又切歌了（新的 syncAudio 会接管换源状态）
     if (!url) {
+      switchPhase = SWITCH_IDLE;
       toast("无法播放：后端没有返回地址", { tone: "error", duration: 5000 });
       return;
     }
 
     pendingSeek = 0;
     node.src = url;
+    srcChangedAt = performance.now();
     node.load();
 
     // 建立音频图（失败也不影响出声，只是没有响度均衡）
@@ -225,22 +366,32 @@ export async function syncAudio() {
     applyVolume();
 
     // 顺带把这首歌的响度补偿准备好（后续切回来就零延迟）
-    requestLoudness(song.id);
+    if (!song.online) requestLoudness(song.id);
+
+    // 立刻尝试起播（元素会自己等缓冲）：load() 引发的 pause 已被 switchPhase 挡住，
+    // 之后 loadedmetadata 会再对齐一次
+    reconcilePlayback(node);
+    // 关键：本次不要再走下面的对齐逻辑 —— 旧实现就是在取地址期间用旧源调了
+    // play()，把上一首歌重新播了出来，并引发一串 play/pause 事件风暴
+    return;
   }
 
-  if (state.playing && node.paused) {
-    if (ctx?.state === "suspended") {
-      ctx.resume().catch(() => {});
-    }
-    try {
-      await node.play();
-    } catch (err) {
-      // 这是「点了播放没反应」最常见的原因，必须让用户看见
-      toast(`播放失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
-    }
-  } else if (!state.playing && !node.paused) {
-    node.pause();
-  }
+  // 换源还没结束：不要拿元素做播放/暂停对齐
+  if (switchPhase === SWITCH_LOADING) return;
+
+  reconcilePlayback(node);
+}
+
+/**
+ * play() 的哪些 rejection 不该报给用户：
+ *   · AbortError —— 新的 load()/src 取代了这次播放（自动切歌必现）
+ *   · NotAllowedError —— 自动播放策略拦下的第一次播放，用户点一下就好
+ */
+function isBenignPlayError(err) {
+  const name = err?.name || "";
+  if (name === "AbortError" || name === "NotAllowedError") return true;
+  const msg = String(err?.message || "");
+  return /abort|interrupted by a new load|play\(\) request was interrupted/i.test(msg);
 }
 
 /** 正在进行的按需测量：同一首歌被反复触发时合并成一次 */
@@ -385,7 +536,20 @@ export async function refreshLoudnessState() {
   }
 }
 
-/** 拖动进度条结束时调用 */
+/**
+ * 跳转到指定位置（毫秒）—— 界面上的所有跳转都必须走这里。
+ *
+ * 只调 store 的 seek() 会只改状态，进度条会"闪一下又弹回原位"：
+ * 元素没有真的 seek，下一次 timeupdate 立刻用真实播放位置把状态覆盖回去。
+ * 进度条拖动 / 点击歌词 / 方向键都是同一个需求，所以统一收在这里：
+ * 先写状态（UI 立即响应），再让 <audio> 跟上来。
+ */
+export function seekTo(ms) {
+  seek(ms);
+  seekAudio(ms);
+}
+
+/** 把位置作用到真实的 <audio> 元素上 */
 export function seekAudio(ms) {
   if (!isWails()) return;
   const node = audioEl();
@@ -407,6 +571,8 @@ export function stopAudio() {
   el.removeAttribute("src");
   el.load();
   loadedFor = null;
+  switchPhase = SWITCH_IDLE;
+  selfPause = false;
 }
 
 /** 供设置界面显示「当前是否在用 Web Audio 增益」 */

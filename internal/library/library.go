@@ -89,7 +89,7 @@ func NewManager(store *bootstrap.Store) *Manager {
 		pathIndex: map[string]string{},
 		store:     store,
 	}
-	m.folders = store.Get().Folders
+	m.folders = store.Get().EffectiveFolders()
 	m.loadCache()
 	return m
 }
@@ -269,8 +269,11 @@ func (m *Manager) Folders() []bootstrap.Folder {
 // ReloadFolders 重新从配置读取文件夹列表。
 // 新增/移除文件夹后必须调用，否则 Manager 里缓存的副本不会更新，
 // 扫描就仍然只扫旧目录（表现为「加了文件夹却扫不到歌」）。
+//
+// 这里用的是 Config.EffectiveFolders（用户文件夹 + 下载目录），
+// 所以「改了下载路径」之后调用它，新目录就会被纳入扫描范围。
 func (m *Manager) ReloadFolders() {
-	next := m.store.Get().Folders
+	next := m.store.Get().EffectiveFolders()
 	m.mu.Lock()
 	m.folders = append([]bootstrap.Folder(nil), next...)
 	m.mu.Unlock()
@@ -316,9 +319,9 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 	folders := append([]bootstrap.Folder(nil), m.folders...)
 	m.mu.RUnlock()
 
-	// 自愈：配置里的文件夹列表才是真源。若外部改过配置却忘了通知曲库，
-	// 这里补一次同步，避免「加了文件夹却扫不到歌」。
-	if cfgFolders := m.store.Get().Folders; !sameFolders(folders, cfgFolders) {
+	// 自愈：配置里的文件夹列表（含下载目录）才是真源。若外部改过配置却忘了通知曲库，
+	// 这里补一次同步，避免「加了文件夹却扫不到歌」「改了下载路径却扫不到下载的歌」。
+	if cfgFolders := m.store.Get().EffectiveFolders(); !sameFolders(folders, cfgFolders) {
 		m.ReloadFolders()
 		m.mu.RLock()
 		folders = append([]bootstrap.Folder(nil), m.folders...)

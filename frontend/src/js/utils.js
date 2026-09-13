@@ -234,3 +234,99 @@ export function cssVar(name, fallback = "") {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name);
   return (v || "").trim() || fallback;
 }
+
+/* --------------------------------------------------------------------------
+   默认封面
+   --------------------------------------------------------------------------
+   后端没有解析到内嵌封面时，song.cover 可能是空串，也可能是后端返回的
+   一个取不到图的地址。两种情况都不能把 <img> 留在「无 src / 加载失败」的
+   状态 —— 浏览器会画出那个破碎的小图标，非常难看。
+   这里统一给一张内联 SVG 默认封面（深色唱片 + 音符），它是图片本身，
+   所以既能让 <img> 正常渲染，也不依赖任何颜色令牌。
+   -------------------------------------------------------------------------- */
+const DEFAULT_COVER_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#26262c"/>
+<stop offset="1" stop-color="#101014"/>
+</linearGradient>
+<radialGradient id="glow" cx="32%" cy="24%" r="78%">
+<stop offset="0" stop-color="#ffffff" stop-opacity=".12"/>
+<stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+</radialGradient>
+</defs>
+<rect width="300" height="300" fill="url(#bg)"/>
+<rect width="300" height="300" fill="url(#glow)"/>
+<circle cx="150" cy="150" r="104" fill="none" stroke="#ffffff" stroke-opacity=".07" stroke-width="1.2"/>
+<circle cx="150" cy="150" r="86" fill="none" stroke="#ffffff" stroke-opacity=".1" stroke-width="1.2"/>
+<circle cx="150" cy="150" r="68" fill="none" stroke="#ffffff" stroke-opacity=".07" stroke-width="1.2"/>
+<circle cx="150" cy="150" r="50" fill="#ffffff" fill-opacity=".05"/>
+<g transform="translate(150 150) scale(1.32) translate(-12 -12)" fill="none" stroke="#ffffff" stroke-opacity=".42" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+<path d="M9 18V5.5a1 1 0 0 1 .8-1l9-1.8a1 1 0 0 1 1.2 1V16"/>
+<circle cx="6.5" cy="18" r="2.5"/>
+<circle cx="17.5" cy="16" r="2.5"/>
+</g>
+</svg>`;
+
+/** 默认封面（data URL，可在任意 <img src> 里直接用） */
+export const DEFAULT_COVER = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(DEFAULT_COVER_SVG)}`;
+
+/**
+ * 歌曲封面地址。
+ *
+ * 优先级：
+ *   1. coverUrl —— 在线歌曲的同源封面代理地址（后端联网抓到的专辑封面）；
+ *   2. cover —— 本地文件的内嵌封面（data URL）；
+ *   3. 默认占位封面。
+ *
+ * 绝不在线歌曲退回默认封面之前先试 cover（在线搜索结果里的视频封面是外链，
+ * 会被页面 CSP 的 img-src 'self' 直接拒绝，等于白加载一次）。
+ */
+export function coverOf(song) {
+  if (!song) return DEFAULT_COVER;
+  const override = coverOverrideFor(song.id);
+  if (override) return override;
+  return coverOfRaw(song) || DEFAULT_COVER;
+}
+
+/**
+ * 歌曲「原始」封面（不含用户在封面搜索里选的覆盖图）。
+ *
+ * 封面面板要用它来显示「当前文件自带的封面」，否则一旦选了新封面，
+ * 面板里的对比图就也跟着变了，用户无法比较。
+ */
+export function coverOfRaw(song) {
+  if (!song) return "";
+  const proxied = typeof song.coverUrl === "string" ? song.coverUrl.trim() : "";
+  if (proxied) return proxied;
+  const c = typeof song.cover === "string" ? song.cover.trim() : "";
+  return c;
+}
+
+/* --------------------------------------------------------------------------
+   封面覆盖表
+   --------------------------------------------------------------------------
+   coverOf 是在同步的模板拼接里被大量调用的，不能是 async，
+   也不适合为了读一个 Map 去 import store（会形成 utils ⇄ store 循环依赖）。
+   所以这里留一个可注入的读取钩子，由 store.js 在初始化时接上。
+   -------------------------------------------------------------------------- */
+let coverOverrideGetter = null;
+
+export function setCoverOverrideGetter(fn) {
+  coverOverrideGetter = fn;
+}
+
+function coverOverrideFor(id) {
+  if (!id || typeof coverOverrideGetter !== "function") return "";
+  return coverOverrideGetter(id) || "";
+}
+
+/**
+ * 在线歌曲在「拿不到封面」时应该显示什么。
+ *
+ * 需求：在线封面获取不到时**不显示封面**，而不是留一个破图或占位图。
+ * 这里返回 true 表示调用方应当渲染一个空槽位（或直接省略 <img>）。
+ */
+export function isPlaceholderCover(song) {
+  return coverOf(song) === DEFAULT_COVER;
+}

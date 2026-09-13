@@ -7,6 +7,7 @@ import { applyRules, compileRegex, state } from "./store.js";
 import { backend, isWails } from "./bridge.js";
 import { esc, fmtCount, fmtSize, uid } from "./utils.js";
 import { applyResolvedTheme, discoverThemes, listThemes, resolvedGlassBlur } from "./theme.js";
+import { BACKDROP_MODES, backdropLabel } from "./backdrop.js";
 import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
 import { setRuntimeToken, replaceStyleRules } from "./runtime-tokens.js";
 
@@ -33,7 +34,7 @@ function segmented(id, options, current) {
     ${options
       .map(
         (o) =>
-          `<button class="segmented__btn" type="button" data-value="${o.value}" aria-pressed="${o.value === current}">${esc(o.label)}</button>`
+          `<button class="segmented__btn" type="button" data-value="${esc(o.value)}" aria-pressed="${o.value === current}">${esc(o.label)}</button>`
       )
       .join("")}
   </div>`;
@@ -258,6 +259,20 @@ function themeCard() {
           </div>`,
         })}
         ${settingRow({
+          label: "窗口原生材质",
+          hint: "用系统原生的半透明材质当窗口底色（桌面壁纸会透出来）。仅 Windows 11 Build 22621+ 有完整效果，改动需重启应用",
+          control: `<div class="select">
+            <select class="select__field" data-act="backdrop-mode" aria-label="窗口原生材质">
+              ${BACKDROP_MODES.map(
+                (m) =>
+                  `<option value="${m}" ${(state.config.nativeBackdrop || "off") === m ? "selected" : ""}>${esc(backdropLabel(m))}</option>`
+              ).join("")}
+            </select>
+            <svg class="select__icon"><use href="#i-chevron-down" /></svg>
+          </div>`,
+        })}
+        ${backdropNoteHtml()}
+        ${settingRow({
           label: "界面动画",
           hint: "关闭后取消过渡与旋转动画，低性能设备更流畅",
           control: switchHtml("animations", state.config.animations, "界面动画"),
@@ -274,6 +289,47 @@ function themeCard() {
         })}
       </div>
     </section>`;
+}
+
+/**
+ * 原生材质的状态说明。
+ *
+ * 材质是「创建窗口时」定下的（Wails v3 没有运行期接口），所以这里必须把
+ * 「窗口当前生效什么」「改了要不要重启」「系统支不支持」讲清楚，
+ * 否则用户会觉得设置项点了没反应。
+ *
+ * 样式完全复用现有的 setting--stack / setting__hint / card__actions，
+ * 不新增任何颜色规则。
+ */
+function backdropNoteHtml() {
+  const info = state.backdropState || {};
+  const active = info.active || "off";
+  const configured = state.config.nativeBackdrop || "off";
+  const pending = configured !== active;
+  const notes = [];
+
+  if (info.preview) {
+    notes.push("浏览器预览里没有原生窗口，材质只在打包后的应用里能看到。");
+  } else {
+    notes.push(`窗口当前生效：<b>${esc(backdropLabel(active))}</b>${info.os ? ` · ${esc(info.os)}` : ""}`);
+    if (!info.supported && configured !== "off") {
+      notes.push("当前系统不支持 Mica / Acrylic（需要 Windows 11 Build 22621 或更高），会退化成普通的背景模糊。");
+    }
+    if (pending) {
+      notes.push(`已保存为 <b>${esc(backdropLabel(configured))}</b>，重启应用后生效。`);
+    }
+  }
+
+  return `<div class="setting setting--stack">
+    <div class="setting__hint">${notes.join("<br />")}</div>
+    ${
+      pending && !info.preview
+        ? `<div class="card__actions">
+            <button class="btn btn--sm" type="button" data-act="backdrop-restart">${icon("refresh")}<span>立即重启应用</span></button>
+          </div>`
+        : ""
+    }
+  </div>`;
 }
 
 function playbackCard() {
@@ -319,9 +375,33 @@ function playbackCard() {
           hint: `当前音量 ${Math.round(state.volume * 100)}%`,
           control: switchHtml("rememberVolume", true, "记忆音量"),
         })}
+        ${settingRow({
+          label: "单击歌曲时的行为",
+          hint: "双击始终是「立即播放这一首」；这个设置只影响单击",
+          control: segmented("rowClickAction", ROW_CLICK_ACTIONS, state.config.rowClickAction || "next"),
+        })}
+        ${settingRow({
+          label: "列表密度",
+          hint: "对「本地歌曲」「播放列表」「歌单」三个列表同时生效",
+          control: segmented("listDensity", LIST_DENSITIES, state.config.listDensity || "cozy"),
+        })}
       </div>
     </section>`;
 }
+
+/** 单击歌曲行的可选行为（与 Go 侧 bootstrap.RowClickActions 一致） */
+const ROW_CLICK_ACTIONS = [
+  { value: "next", label: "加入下一首播放" },
+  { value: "play", label: "立即播放" },
+  { value: "append", label: "加入列表末尾" },
+];
+
+/** 列表密度（与 Go 侧 bootstrap.ListDensities 一致） */
+const LIST_DENSITIES = [
+  { value: "compact", label: "紧凑" },
+  { value: "cozy", label: "标准" },
+  { value: "roomy", label: "宽松" },
+];
 
 function lyricsCard() {
   return `
@@ -400,6 +480,127 @@ function aboutCard() {
 }
 
 /* --------------------------------------------------------------------------
+   在线歌曲：下载位置 + 封面来源
+   -------------------------------------------------------------------------- */
+function onlineCard() {
+  const dir = state.config.downloadDir || "（默认：系统音乐目录 / downloads）";
+  const providers = state.coverProviders || [];
+  const breaker = state.coverBreaker || {};
+  const providerText = providers.length
+    ? providers.map((p) => (breaker[p] ? `${p}（暂时不可用）` : p)).join(" · ")
+    : "尚未连接后端";
+
+  return `
+    <section class="card" id="sec-online" data-section="online">
+      <div class="card__head">
+        <div class="card__icon">${icon("music")}</div>
+        <div class="card__titles">
+          <div class="card__title">在线歌曲</div>
+          <div class="card__desc">下载位置、封面来源与缓存。试听只加入播放列表，不会混进本地曲库</div>
+        </div>
+      </div>
+      <div class="card__body">
+        <div class="setting setting--stack">
+          <div class="setting__main">
+            <div class="setting__label">下载保存位置</div>
+            <div class="setting__hint">
+              这个目录会作为曲库的扫描根自动生效，下载完的歌直接出现在「本地歌曲」里，
+              不需要手动添加文件夹
+            </div>
+          </div>
+          <div class="pathrow">
+            <svg class="pathrow__icon" aria-hidden="true"><use href="#i-folder"/></svg>
+            <div class="pathrow__main">
+              <div class="pathrow__path u-selectable" title="${esc(dir)}">${esc(dir)}</div>
+            </div>
+            <button class="btn btn--sm" type="button" data-act="download-dir-pick">${icon("folder")}<span>更改</span></button>
+            <button class="btn btn--ghost btn--sm" type="button" data-act="download-dir-open">${icon("expand")}<span>打开</span></button>
+            <button class="btn btn--ghost btn--sm" type="button" data-act="download-dir-reset" data-tip="恢复默认（系统音乐目录 / downloads）">${icon("refresh")}</button>
+          </div>
+        </div>
+
+        ${settingRow({
+          label: "联网获取封面",
+          hint: `在线搜索到的歌曲会自动去公开曲库匹配封面：${esc(providerText)}`,
+          control: switchHtml("onlineCover", state.config.onlineCover !== false, "联网获取封面"),
+        })}
+
+        ${settingRow({
+          label: "把封面/歌词写进歌曲文件",
+          hint: embedHintText(),
+          control: switchHtml("embedMeta", state.config.embedMeta === true, "写进歌曲文件"),
+        })}
+
+        <div class="setting setting--stack">
+          <div class="setting__main">
+            <div class="setting__label">把已有缓存补写进文件</div>
+            <div class="setting__hint">${embedWriteHint()}</div>
+          </div>
+          <div class="card__actions">
+            <button class="btn btn--sm" type="button" data-act="embed-cache-write">${icon("tag")}<span>写入缓存到文件</span></button>
+          </div>
+        </div>
+
+        <div class="setting setting--stack">
+          <div class="setting__main">
+            <div class="setting__label">缓存目录</div>
+            <div class="setting__hint">
+              封面与歌词的缓存位置；${esc(cacheSummary())}
+            </div>
+          </div>
+          <div class="pathrow">
+            <svg class="pathrow__icon" aria-hidden="true"><use href="#i-folder"/></svg>
+            <div class="pathrow__main">
+              <div class="pathrow__path u-selectable" data-role="cache-dir" title="${esc(state.coverCache?.dir || "")}">${esc(
+                state.coverCache?.dir || "（连接后显示）"
+              )}</div>
+            </div>
+            <button class="btn btn--sm" type="button" data-act="cache-open-covers">${icon("image")}<span>封面</span></button>
+            <button class="btn btn--ghost btn--sm" type="button" data-act="cache-open-lyrics">${icon("lyrics")}<span>歌词</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="card__foot">
+        <span>封面来自第三方公开接口（iTunes / 网易云 / Deezer / MusicBrainz），匹配不保证 100% 准确</span>
+        <button class="btn btn--sm" type="button" data-act="cover-refresh">${icon("refresh")}<span>清空封面缓存</span></button>
+      </div>
+    </section>`;
+}
+
+/** 缓存目录概况（数量 + 占用），数据由 CoverService.CacheStats 异步补齐 */
+function cacheSummary() {
+  const c = state.coverCache;
+  if (!c) return "正在读取…";
+  const mb = ((c.bytes || 0) / 1024 / 1024).toFixed(1);
+  return `已缓存 ${fmtCount(c.covers || 0)} 张封面、${fmtCount(c.lyrics || 0)} 份歌词，共 ${mb} MB`;
+}
+
+/** 缓存里有多少份可写的内容（0 表示还没抓过任何封面/歌词） */
+function cachedMetaCount() {
+  const c = state.coverCache || {};
+  return (Number(c.covers) || 0) + (Number(c.lyrics) || 0);
+}
+
+/** 「把封面/歌词写进歌曲文件」这一行的说明文字 */
+function embedHintText() {
+  const base =
+    "默认关闭：封面与歌词都只放在缓存目录里。开启后下载 / 更换封面时会把它们写进文件标签，" +
+    "这样把文件拷到别的播放器上也能看到封面与歌词（m4a / flac 支持，mp3 等格式会明确跳过）";
+  const c = state.coverCache;
+  if (!c) return base;
+  if (cachedMetaCount() === 0) return `${base}。当前缓存里还没有封面或歌词可写`;
+  return `${base}。缓存里已经有 ${cacheSummary()}`;
+}
+
+/** 「把已有缓存补写进文件」按钮的说明文字 */
+function embedWriteHint() {
+  return (
+    "上面那个开关只对「之后」下载 / 更换的封面生效。缓存里已经存着的封面与歌词" +
+    `（${cacheSummary()}）可以用这个按钮一次性写进歌曲文件；mp3 / wav 等暂不支持写标签的格式会被跳过，不会动你的文件。`
+  );
+}
+
+/* --------------------------------------------------------------------------
    主题色卡
    -------------------------------------------------------------------------- */
 /**
@@ -422,36 +623,110 @@ function ensureSwatchStyles() {
 /* --------------------------------------------------------------------------
    主渲染
    -------------------------------------------------------------------------- */
+const SECTIONS = [
+  { id: "folders", label: "音乐文件夹" },
+  { id: "filters", label: "过滤规则" },
+  { id: "appearance", label: "外观" },
+  { id: "playback", label: "播放" },
+  { id: "loudness", label: "响度均衡" },
+  { id: "online", label: "在线歌曲" },
+  { id: "lyrics", label: "歌词" },
+  { id: "about", label: "关于" },
+];
+
+/**
+ * 当前高亮的分区。
+ *
+ * 为什么必须记在模块里：导航条的选中态是**渲染出来**的（第一项默认 selected），
+ * 而设置里任何一个开关/分段按钮点完都会 refreshSettingsLayer() 整块重绘 ——
+ * 重绘后选中态就回到「音乐文件夹」了，表现是「点设置里的任何按钮，导航栏的
+ * 选择项都会跳回第一个」。把当前分区存在渲染之外，重绘时再写回去即可。
+ */
+let activeSection = SECTIONS[0].id;
+
+/** 当前分区（设置层重绘后由 shell.js 用来恢复滚动位置） */
+export function currentSettingsSection() {
+  return activeSection;
+}
+
+/** 用户点了导航条：既改高亮，也记成当前分区 */
+export function setSettingsSection(id) {
+  if (!SECTIONS.some((s) => s.id === id)) return;
+  activeSection = id;
+  paintNavSelection();
+}
+
+/** 只同步导航条的高亮，不重绘内容（滚动跟随用） */
+function paintNavSelection() {
+  document.querySelectorAll(".settings__nav-item").forEach((b) => {
+    b.setAttribute("aria-selected", String(b.dataset.goto === activeSection));
+  });
+}
+
 export function renderSettings(container) {
   ensureSwatchStyles();
-  const sections = [
-    { id: "folders", label: "音乐文件夹" },
-    { id: "filters", label: "过滤规则" },
-    { id: "appearance", label: "外观" },
-    { id: "playback", label: "播放" },
-    { id: "loudness", label: "响度均衡" },
-    { id: "lyrics", label: "歌词" },
-    { id: "about", label: "关于" },
-  ];
 
   container.innerHTML = `
     <div class="settings">
       <div class="settings__nav" role="tablist">
-        ${sections
-          .map(
-            (s, i) =>
-              `<button class="settings__nav-item" type="button" role="tab" data-goto="${s.id}" aria-selected="${i === 0}">${esc(s.label)}</button>`
-          )
-          .join("")}
+        ${SECTIONS.map(
+          (s) =>
+            `<button class="settings__nav-item" type="button" role="tab" data-goto="${s.id}" aria-selected="${
+              s.id === activeSection
+            }">${esc(s.label)}</button>`
+        ).join("")}
       </div>
       ${foldersCard()}
       ${rulesCard()}
       ${themeCard()}
       ${playbackCard()}
       ${loudnessCard()}
+      ${onlineCard()}
       ${lyricsCard()}
       ${aboutCard()}
     </div>`;
+
+  // 在线卡片的来源列表来自后端，异步补齐（不阻塞首次渲染）
+  ensureCoverProviders();
+  bindNavScrollSpy(container);
+}
+
+/* --------------------------------------------------------------------------
+   导航条跟随滚动
+   --------------------------------------------------------------------------
+   滚动内容时高亮跟着走，点导航条时高亮立刻过去 —— 两者不能互相打架：
+   程序化滚动（点导航条）期间先暂停跟随，等滚动停下来再交还给跟随逻辑。
+   -------------------------------------------------------------------------- */
+let navSpyBound = false;
+let navSpyPausedUntil = 0;
+
+function bindNavScrollSpy(container) {
+  if (navSpyBound) return;
+  navSpyBound = true;
+
+  const scroll = document.querySelector(".settings-layer__body") || container;
+  scroll.addEventListener(
+    "scroll",
+    () => {
+      if (Date.now() < navSpyPausedUntil) return;
+      const top = scroll.getBoundingClientRect().top + 80;
+      let current = SECTIONS[0].id;
+      for (const s of SECTIONS) {
+        const node = document.querySelector(`[data-section="${s.id}"]`);
+        if (node && node.getBoundingClientRect().top <= top) current = s.id;
+      }
+      if (current !== activeSection) {
+        activeSection = current;
+        paintNavSelection();
+      }
+    },
+    { passive: true }
+  );
+}
+
+/** 点导航条跳转：这段时间内不要让滚动跟随覆盖掉用户的选择 */
+export function pauseNavSpy(ms = 600) {
+  navSpyPausedUntil = Date.now() + ms;
 }
 
 /* --------------------------------------------------------------------------
@@ -498,12 +773,7 @@ function loudnessCard() {
           <small class="u-fs-xs u-dim">逐曲：每首歌都拉到目标响度；同专辑：整张专辑用同一个增益，保留专辑内部的强弱对比</small>
         </div>
         <div class="setting__control">
-          <div class="segmented" data-segment="loudness-mode">
-            ${LOUDNESS_MODES.map(
-              (m) =>
-                `<button class="segmented__btn" type="button" data-segment-value="${m.value}" aria-pressed="${cfg.loudnessMode === m.value}">${esc(m.label)}</button>`
-            ).join("")}
-          </div>
+          ${segmented("loudnessMode", LOUDNESS_MODES, cfg.loudnessMode || "off")}
         </div>
       </div>
 
@@ -513,12 +783,15 @@ function loudnessCard() {
           <small class="u-fs-xs u-dim">数字越小整体越轻。推荐 -16 LUFS。改动后已缓存的补偿会失效并重算</small>
         </div>
         <div class="setting__control">
-          <select class="select" data-act="loudness-target">
-            ${LOUDNESS_TARGETS.map(
-              (t) =>
-                `<option value="${t.value}" ${Number(cfg.loudnessTarget) === t.value ? "selected" : ""}>${esc(t.label)}</option>`
-            ).join("")}
-          </select>
+          <div class="select">
+            <select class="select__field" data-act="loudness-target" aria-label="目标响度">
+              ${LOUDNESS_TARGETS.map(
+                (t) =>
+                  `<option value="${t.value}" ${Number(cfg.loudnessTarget) === t.value ? "selected" : ""}>${esc(t.label)}</option>`
+              ).join("")}
+            </select>
+            ${icon("chevron-down", "select__icon")}
+          </div>
         </div>
       </div>
 
@@ -757,6 +1030,35 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       toast("缓存清理需在后端实现（当前仅保存元数据缓存文件）", { tone: "warning" });
       break;
 
+    /* 窗口原生材质（Mica / Acrylic） */
+    case "backdrop-mode": {
+      const mode = BACKDROP_MODES.includes(actEl.value) ? actEl.value : "off";
+      if (mode === (state.config.nativeBackdrop || "off")) break;
+      state.config.nativeBackdrop = mode;
+      ctx.commit?.();
+      ctx.render?.();
+      toast(
+        mode === "off"
+          ? "已关闭窗口原生材质，重启应用后生效"
+          : `已选择「${backdropLabel(mode)}」，重启应用后生效`,
+        { tone: "success", duration: 3200 }
+      );
+      break;
+    }
+    case "backdrop-restart": {
+      if (!isWails()) {
+        toast("浏览器预览无法重启应用", { tone: "warning" });
+        break;
+      }
+      toast("正在重启应用…", { duration: 2000 });
+      try {
+        await backend.restartApp();
+      } catch (err) {
+        toast(`重启失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
+      }
+      break;
+    }
+
     /* 响度均衡 */
     case "loudness-measure-all": {
       if (!isWails()) {
@@ -807,7 +1109,7 @@ export async function handleSettingsAction(actEl, ctx = {}) {
           state.loudnessGains = {};
           await refreshLoudnessState();
           ctx.commit?.();
-          renderContent();
+          ctx.render?.();
           toast("已清除响度测量数据", { tone: "success" });
           return true;
         },
@@ -824,14 +1126,374 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       // 补偿标准变了 → 之前算好的补偿全部作废，按新标准重算
       await invalidateLoudnessForTarget();
       await refreshLoudnessState();
-      renderContent();
+      ctx.render?.();
       toast(`目标响度已设为 ${v} LUFS，旧补偿已失效，将按新标准重算`, { tone: "success", duration: 3200 });
       break;
     }
 
+    /* 在线歌曲：下载位置与封面 */
+    case "download-dir-pick": {
+      if (!isWails()) {
+        toast("浏览器预览无法调用系统目录选择器", { tone: "warning" });
+        break;
+      }
+      try {
+        const res = await backend.downloadPickDir();
+        if (res?.cancelled) break;
+        await confirmDownloadDir(res, ctx);
+      } catch (err) {
+        toast(`无法更改下载位置：${err?.message ?? err}`, { tone: "error", duration: 6000 });
+      }
+      break;
+    }
+    case "download-dir-open": {
+      if (!isWails()) break;
+      try {
+        await backend.downloadOpenDir(state.config.downloadDir || "");
+      } catch (err) {
+        toast(`打开失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
+      }
+      break;
+    }
+    case "download-dir-reset": {
+      if (!isWails()) break;
+      try {
+        const res = await backend.downloadSetDir("");
+        if (res?.cancelled) break;
+        // SetDir 现在只返回「提案」，真正生效要等用户确认是否迁移
+        const proposal = res?.next ? res : await backend.downloadSetDir("");
+        await confirmDownloadDir(proposal, ctx);
+      } catch (err) {
+        toast(`恢复默认失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
+      }
+      break;
+    }
+    case "cache-open-covers":
+    case "cache-open-lyrics": {
+      if (!isWails()) break;
+      try {
+        await backend.coverOpenCacheDir(act === "cache-open-covers" ? "covers" : "lyrics");
+      } catch (err) {
+        toast(`打开缓存目录失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
+      }
+      break;
+    }
+    case "cover-refresh": {
+      if (!isWails()) break;
+      try {
+        const stats = await backend.coverClearCache();
+        state.coverCache = await backend.coverCacheStats();
+        await refreshCoverProviders();
+        ctx.commit?.();
+        ctx.render?.();
+        toast(`已清空缓存（封面 ${stats?.covers ?? 0} 张、歌词 ${stats?.lyrics ?? 0} 份）`, { tone: "success" });
+      } catch (err) {
+        toast(`清空失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
+      }
+      break;
+    }
+
+    /* 把缓存里已有的封面/歌词补写进歌曲文件 */
+    case "embed-cache-write":
+      await promptEmbedExistingCache({ ctx, force: true });
+      break;
+
     default:
       break;
   }
+}
+
+/* --------------------------------------------------------------------------
+   把缓存里的封面/歌词补写进歌曲文件
+   --------------------------------------------------------------------------
+   需求：设置里的「把封面/歌词写进歌曲文件」在打开时要提示「是否把已有的缓存
+   写入到文件中」。
+   实现上分成两个入口，指向同一个动作：
+     · 打开那个开关时弹一次提示（只在缓存里真的有东西可写时才弹，避免空打扰）；
+     · 开关旁边常驻一个按钮，用户以后想补写随时可以点。
+   真正写文件之前**一定**要用户确认 —— 这会改写他自己的音乐文件。
+   -------------------------------------------------------------------------- */
+
+/**
+ * 「要不要把已有缓存写进文件」这一个提示，两个入口共用：
+ *   · 打开「把封面/歌词写进歌曲文件」开关时（force=false，缓存为空就安静跳过）；
+ *   · 点「写入缓存到文件」按钮时（force=true，缓存为空也要说清楚为什么没得写）。
+ *
+ * 缓存统计是异步回来的，所以这里先等一小会儿：拿到准确数量比弹两次框更不打扰。
+ */
+async function promptEmbedExistingCache({ ctx = {}, force = false } = {}) {
+  if (!isWails()) {
+    // 浏览器预览没有后端，也就没有可写的文件，别弹一个点了没反应的框
+    if (force) toast("写入歌曲文件需要后端支持，浏览器预览不可用", { tone: "warning" });
+    return;
+  }
+
+  // 缓存统计是异步回来的，先等一下；点按钮进来的话再主动补拉一次，
+  // 免得因为「刚打开设置就点」而误报「没有可写的内容」。
+  for (let i = 0; i < 20 && !state.coverCache; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  if (!state.coverCache && force) {
+    try {
+      state.coverCache = await backend.coverCacheStats();
+    } catch {
+      /* 拿不到就按「没有」处理，下面的提示会说明 */
+    }
+  }
+
+  if (cachedMetaCount() === 0) {
+    if (force) {
+      toast(
+        state.coverCache ? "缓存里还没有封面或歌词，暂时没有可写入的内容" : "暂时读不到缓存统计，请稍后再试",
+        { duration: 3400 }
+      );
+    } else {
+      // 打开开关时：缓存里没东西可写就别弹框，用一句提示说明「以后会自动写」
+      if (state.coverCache) {
+        toast("已开启：以后下载 / 更换封面时会把封面与歌词写进歌曲文件", { duration: 3600 });
+      }
+    }
+    return;
+  }
+
+  const covers = Number(state.coverCache?.covers) || 0;
+  const lyrics = Number(state.coverCache?.lyrics) || 0;
+  openModal({
+    title: "要把已有的缓存写进歌曲文件吗？",
+    body: `
+      <div class="setting__hint">
+        缓存目录里已经有 <b>${fmtCount(covers)}</b> 张封面、<b>${fmtCount(lyrics)}</b> 份歌词。
+        它们现在只放在缓存目录里；写进歌曲文件之后，把文件拷到别的播放器上也能看到。
+      </div>
+      <div class="setting__hint">
+        写入只会在原文件的标签里做最小插入 / 替换（m4a 的 covr 与 ©lyr、FLAC 的 PICTURE 与 LYRICS），
+        不动音频数据；mp3、wav、ogg 等格式会被跳过。这一步无法撤销，但不会影响播放。
+      </div>`,
+    okText: "写入文件",
+    cancelText: "暂不写入",
+    onOk: async () => {
+      await runEmbedCache(ctx);
+      return true;
+    },
+  });
+}
+
+async function runEmbedCache(ctx = {}) {
+  const progress = toast("正在把缓存写入歌曲文件…", { duration: 0 });
+  try {
+    const res = await backend.coverWriteCacheToFiles();
+    const written = Number(res?.written) || 0;
+    const skipped = Number(res?.skipped) || 0;
+    const failed = Number(res?.failed) || 0;
+    const total = Number(res?.total) || 0;
+
+    progress.close();
+    if (!total) {
+      toast("缓存里还没有封面或歌词，暂时没有可写入的内容", { duration: 3200 });
+      return;
+    }
+
+    let text = `已写入 ${fmtCount(written)} 首`;
+    if (res?.covers) text += `（封面 ${fmtCount(res.covers)}）`;
+    if (res?.lyrics) text += `（歌词 ${fmtCount(res.lyrics)}）`;
+    if (skipped) text += `，跳过 ${fmtCount(skipped)} 首`;
+    if (failed) text += `，失败 ${fmtCount(failed)} 首`;
+    toast(text, {
+      tone: failed ? "warning" : skipped ? "info" : "success",
+      duration: 5200,
+    });
+
+    // 跳过的原因值得让用户看到（多数是「这个格式不支持写标签」）
+    const reasons = Array.isArray(res?.reasons) ? res.reasons : [];
+    if (reasons.length) {
+      openModal({
+        title: failed ? "部分歌曲没能写入" : "部分歌曲已跳过",
+        body: `<div class="setting__hint setting__hint--steps">${reasons
+          .map((r) => esc(r))
+          .join("<br />")}</div>`,
+        okText: "知道了",
+        cancelText: "关闭",
+        onOk: () => true,
+      });
+    }
+
+    state.coverCache = await backend.coverCacheStats();
+    ctx.commit?.();
+    ctx.render?.();
+  } catch (err) {
+    progress.close();
+    toast(`写入失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
+  }
+}
+
+/* --------------------------------------------------------------------------
+   更改下载目录：先问用户要不要迁移已有文件
+   --------------------------------------------------------------------------
+   需求：更改默认歌曲下载路径时弹提示，问用户是否把下载的歌曲迁移到新目录。
+   后端 PickDir / SetDir 只返回「提案」（含旧目录里有多少个音频文件），
+   用户确认后才调 ApplyDir 真正生效 —— 这样「取消」不会留下改了一半的状态。
+   -------------------------------------------------------------------------- */
+async function confirmDownloadDir(proposal, ctx) {
+  if (!proposal || proposal.cancelled) return;
+  const next = proposal.next;
+  if (!next) return;
+
+  if (proposal.same) {
+    toast("这个位置就是当前的下载目录", { duration: 2200 });
+    return;
+  }
+
+  const count = Number(proposal.count) || 0;
+  const sizeMB = ((Number(proposal.bytes) || 0) / 1024 / 1024).toFixed(1);
+  const nextCount = Number(proposal.nextCount) || 0;
+
+  // 旧目录没有歌曲 → 没什么可迁移的，直接改（少一次打扰）
+  if (count === 0) {
+    await applyDownloadDir(next, false, ctx);
+    return;
+  }
+
+  const body = `
+    <div class="setting__hint">
+      当前下载目录里有 <b>${fmtCount(count)}</b> 首歌曲（约 ${sizeMB} MB）。
+      要一并搬到新目录吗？
+    </div>
+    <div class="dir-compare">
+      <div class="dir-compare__row">
+        <span class="dir-compare__tag">从</span>
+        <span class="dir-compare__path u-selectable">${esc(proposal.current || "")}</span>
+      </div>
+      <div class="dir-compare__row">
+        <span class="dir-compare__tag">到</span>
+        <span class="dir-compare__path u-selectable">${esc(next)}</span>
+      </div>
+    </div>
+    ${
+      nextCount
+        ? `<div class="setting__hint">新目录里已经有 ${fmtCount(nextCount)} 首歌曲，同名的不会被覆盖。</div>`
+        : ""
+    }
+    <div class="setting__hint">不迁移的话，旧目录里的歌曲会留在原地；新目录会成为新的默认保存位置。</div>`;
+
+  openModal({
+    title: "更改下载位置",
+    body,
+    okText: "迁移并更改",
+    cancelText: "不迁移，只更改位置",
+    onOk: async () => {
+      await applyDownloadDir(next, true, ctx);
+      return true;
+    },
+    onCancel: async () => {
+      await applyDownloadDir(next, false, ctx);
+    },
+  });
+}
+
+async function applyDownloadDir(dir, migrate, ctx) {
+  try {
+    const res = await backend.downloadApplyDir(dir, migrate);
+    if (res?.dir) state.config.downloadDir = res.dir;
+    ctx.commit?.();
+    ctx.render?.();
+
+    if (!migrate) {
+      toast(`下载位置已改为：${res?.dir || dir}`, { tone: "success", duration: 3200 });
+      return;
+    }
+    const moved = Number(res?.migrated) || 0;
+    const skipped = Number(res?.skipped) || 0;
+    const failed = Array.isArray(res?.failed) ? res.failed : [];
+    let text = `已迁移 ${fmtCount(moved)} 首`;
+    if (skipped) text += `，跳过 ${fmtCount(skipped)} 首（新目录已有同名文件）`;
+    if (failed.length) text += `，${fmtCount(failed.length)} 首失败`;
+    toast(`${text}；新位置：${res?.dir || dir}`, {
+      tone: failed.length ? "warning" : "success",
+      duration: 4200,
+    });
+  } catch (err) {
+    toast(`更改下载位置失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
+  }
+}
+
+/* --------------------------------------------------------------------------
+   在线封面来源信息
+   -------------------------------------------------------------------------- */
+
+/**
+ * 拉取后端注册的封面来源与熔断状态。
+ *
+ * 单独放在 settings.js 里（而不是塞进主 tick）：它只在打开设置页时才需要，
+ * 而来源可用性来自第三方接口，不需要实时刷新。
+ */
+export async function refreshCoverProviders() {
+  if (!isWails()) {
+    state.coverProviders = [];
+    state.coverBreaker = {};
+    return null;
+  }
+  try {
+    const res = await backend.coverProviders();
+    state.coverProviders = Array.isArray(res?.providers) ? res.providers : [];
+    state.coverBreaker = res?.breaker && typeof res.breaker === "object" ? res.breaker : {};
+    return res;
+  } catch {
+    state.coverProviders = [];
+    state.coverBreaker = {};
+    return null;
+  }
+}
+
+/** 只拉一次（打开设置页时触发），避免每次重绘都打后端 */
+let coverProvidersRequested = false;
+
+function ensureCoverProviders() {
+  if (coverProvidersRequested) return;
+  coverProvidersRequested = true;
+  // 缓存统计也一起拉：设置里的「缓存目录」「写入缓存到文件」都要用到它，
+  // 拿不到就只能显示「正在读取…」，用户会觉得界面坏了。
+  const stats = isWails()
+    ? backend
+        .coverCacheStats()
+        .then((s) => {
+          state.coverCache = s;
+          return s;
+        })
+        .catch(() => null)
+    : Promise.resolve(null);
+
+  Promise.all([refreshCoverProviders(), stats]).then(([res]) => {
+    // 拿到结果后把在线卡片刷新一次（不再走整页重绘，避免打断输入）
+    if (res && state.view === "settings") refreshOnlineCard();
+    // 缓存概况变了要重画那两个提示（同一套就地刷新思路）
+    if (state.coverCache) refreshCacheHints();
+  });
+}
+
+/** 就地刷新「缓存目录」与「写进歌曲文件」两处文案 */
+function refreshCacheHints() {
+  document.querySelectorAll(".settings-layer .pathrow__path[data-role='cache-dir']").forEach((n) => {
+    n.textContent = state.coverCache?.dir || "（连接后显示）";
+    n.setAttribute("title", state.coverCache?.dir || "");
+  });
+  const embedSwitch = document.querySelector('#sec-online [data-toggle="embedMeta"]');
+  const embedHint = embedSwitch?.closest(".setting")?.querySelector(".setting__hint");
+  if (embedHint) embedHint.textContent = embedHintText();
+  const writeHint = document.querySelector('#sec-online [data-act="embed-cache-write"]')?.closest(".setting")?.querySelector(".setting__hint");
+  if (writeHint) writeHint.textContent = embedWriteHint();
+}
+
+/** 就地刷新「在线歌曲」卡片里的来源文案 */
+function refreshOnlineCard() {
+  const hint = document.querySelector('#sec-online [data-toggle="onlineCover"]');
+  const row = hint?.closest(".setting");
+  const text = row?.querySelector(".setting__hint");
+  if (!text) return;
+  const breaker = state.coverBreaker || {};
+  const list = state.coverProviders.length
+    ? state.coverProviders.map((p) => (breaker[p] ? `${p}（暂时不可用）` : p)).join(" · ")
+    : "尚未连接后端";
+  text.textContent = `在线搜索到的歌曲会自动去公开曲库匹配封面：${list}`;
 }
 
 function promptPath({ manual = false } = {}) {
@@ -871,6 +1533,11 @@ export function handleSettingControl(actEl, ctx = {}) {
       }
     }
     ctx.commit?.();
+    // 打开「把封面/歌词写进歌曲文件」时，缓存里往往已经有一批封面与歌词了。
+    // 这里问一次要不要顺手补写进文件（需求原文），不写也不会做任何事。
+    if (toggleKey === "embedMeta" && next) {
+      promptEmbedExistingCache();
+    }
     return true;
   }
 
@@ -942,5 +1609,7 @@ export function bindSettingsSliders(container, ctx = {}) {
 export function scrollToSection(id) {
   const node = document.querySelector(`[data-section="${id}"]`);
   if (!node) return;
+  setSettingsSection(id);
+  pauseNavSpy();
   node.scrollIntoView({ behavior: "smooth", block: "start" });
 }

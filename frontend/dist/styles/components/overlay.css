@@ -1,6 +1,196 @@
 /* ==========================================================================
-   overlay.css — 右键/更多菜单、弹窗、Toast、Tooltip
+   overlay.css — 右键/更多菜单、弹窗、播放列表面板、Toast、Tooltip
    ========================================================================== */
+
+/* —— 播放列表面板（底栏「播放列表」按钮打开）—— */
+.queue-panel {
+  position: fixed;
+  right: var(--sp-4);
+  bottom: calc(var(--h-playerbar) + var(--sp-2));
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - var(--sp-6)));
+  max-height: min(58vh, 460px);
+  border-radius: var(--r-lg);
+  background: var(--glass-bg-strong);
+  border: var(--panel-border);
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  box-shadow: var(--panel-shadow);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(10px) scale(0.98);
+  transform-origin: 100% 100%;
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-slide);
+}
+
+.queue-panel[hidden] {
+  display: none;
+}
+
+.queue-panel[data-state="opened"] {
+  opacity: 1;
+  transform: none;
+}
+
+.queue-panel__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-2) var(--sp-2) var(--sp-4);
+  border-bottom: var(--hairline);
+}
+
+.queue-panel__title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.queue-panel__count {
+  /* 数量靠右显示（标题在左，数量贴在操作按钮左侧），
+     数字用等宽字形，位数变化时不会左右跳动 */
+  flex: none;
+  margin-left: auto;
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.queue-panel__btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-xs);
+  color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+
+.queue-panel__btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.queue-panel__btn:hover {
+  color: var(--text-1);
+  background: var(--surface-hover);
+}
+
+.queue-panel__body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-1);
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-2);
+  border-radius: var(--r-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.queue-item:hover {
+  background: var(--surface-hover);
+}
+
+.queue-item[aria-current="true"] {
+  background: var(--surface-2);
+}
+
+.queue-item[aria-current="true"] .queue-item__title {
+  color: var(--accent);
+}
+
+.queue-item__index {
+  flex: none;
+  width: 20px;
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  text-align: right;
+}
+
+.queue-item__cover {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-xs);
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.queue-item__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.queue-item__main {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.queue-item__title {
+  font-size: var(--fs-md);
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-item__sub {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-item__del {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-xs);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.queue-item__del svg {
+  width: 14px;
+  height: 14px;
+}
+
+.queue-item:hover .queue-item__del,
+.queue-item__del:focus-visible {
+  opacity: 1;
+}
+
+.queue-item__del:hover {
+  color: var(--danger);
+}
+
+.queue-panel__empty {
+  padding: var(--sp-5) var(--sp-4);
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
 
 /* —— 下拉菜单 —— */
 .menu {
@@ -102,11 +292,15 @@
   top: 0;
 }
 
-/* —— 弹窗 —— */
+/* —— 弹窗 ——
+   层级必须用 --z-modal-top（高于设置层 / 封面层 / 搜索层那些 --z-modal）。
+   原因：那些层虽然也是 fixed，但它们是 .app（z-index:10，自成层叠上下文）的
+   孩子，而弹窗是 body 的孩子。两者 z-index 相同时，设置层会盖在弹窗上面 ——
+   表现是「设置里点开一个确认框，弹窗看得见但按钮点不动」。 */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: var(--z-modal);
+  z-index: var(--z-modal-top);
   display: grid;
   place-items: center;
   background: var(--immersive-veil);
@@ -238,6 +432,12 @@
 
 .toast[data-tone="error"] .toast__dot {
   background: var(--danger);
+}
+
+/* 「有件事需要你知道，但不是出错」——例如「桌面歌词暂未实现」、
+   「有 3 首跳过了（格式不支持写标签）」 */
+.toast[data-tone="warning"] .toast__dot {
+  background: var(--warning);
 }
 
 .toast[data-tone="loading"] .toast__dot {

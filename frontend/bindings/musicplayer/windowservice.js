@@ -12,6 +12,17 @@
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails/runtime.js";
 
 /**
+ * Backdrop 返回窗口原生材质（Mica / Acrylic…）的状态。
+ * 
+ * 材质只能在创建窗口时指定，所以这里同时给出「配置里的值」和「窗口当前
+ * 真正生效的值」，前端据此提示用户是否需要重启。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function Backdrop() {
+    return $Call.ByID(2753426771);
+}
+
+/**
  * Close 关闭窗口
  * @returns {$CancellablePromise<void>}
  */
@@ -41,6 +52,17 @@ export function IsMaximized() {
  */
 export function Minimize() {
     return $Call.ByID(3971742233);
+}
+
+/**
+ * Restart 重启应用：先拉起一个新的自己，再退出当前进程。
+ * 
+ * 原生材质这类「只能在创建窗口时指定」的选项靠它生效。启动失败时不会退出，
+ * 把错误交回前端提示，免得用户点了重启反而把应用关掉。
+ * @returns {$CancellablePromise<void>}
+ */
+export function Restart() {
+    return $Call.ByID(542969608);
 }
 
 /**

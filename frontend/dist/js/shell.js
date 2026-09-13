@@ -3,9 +3,19 @@
    ========================================================================== */
 
 import { $, $$, icon, openMenu, toast } from "./dom.js";
-import { renderSettings, handleSettingsAction, handleSettingControl, bindSettingsSliders, scrollToSection } from "./settings.js";
+import {
+  renderSettings,
+  handleSettingsAction,
+  handleSettingControl,
+  bindSettingsSliders,
+  scrollToSection,
+  currentSettingsSection,
+  setSettingsSection,
+} from "./settings.js";
 import { addSongsTo } from "./playlists.js";
 import { confirmDeletePlaylist, promptNewPlaylist, promptRenamePlaylist } from "./playlists.js";
+import { clearSearch } from "./searchpanel.js";
+import { refreshSettingsPlayer } from "./settingsplayer.js";
 import {
   LIKED_ID,
   clearQueue,
@@ -23,10 +33,9 @@ import { bindTrackEvents, playAllVisible, renderEmpty, renderTracks } from "./tr
 import { esc, fmtCount, fmtDurationCn, fmtTime, naturalCompare } from "./utils.js";
 
 const VIEW_TITLES = {
-  library: "所有歌曲",
+  library: "本地歌曲",
   queue: "播放列表",
   playlist: "歌单",
-  settings: "设置",
 };
 
 /* --------------------------------------------------------------------------
@@ -36,6 +45,9 @@ export function renderSidebar() {
   const custom = state.playlists.filter((p) => p.id !== LIKED_ID);
   const liked = playlistById(LIKED_ID);
 
+  // 所有歌单（含内置的「我喜欢」）用同一套结构：数量标记 + 悬浮才出现的
+  // 「更多」按钮。两者绝对定位叠在同一个位置、同一时刻只显示一个，
+  // 因此每一行的宽度完全一致 —— 这正是之前「我喜欢」看起来没对齐的原因。
   const item = (pl) => {
     const selected = state.view === "playlist" && state.playlistId === pl.id;
     return `
@@ -44,8 +56,11 @@ export function renderSidebar() {
         aria-selected="${selected}">
         <svg class="navitem__icon" aria-hidden="true"><use href="#i-${pl.id === LIKED_ID ? "heart" : "playlist"}"/></svg>
         <span class="navitem__text">${esc(pl.name)}</span>
-        <span class="navitem__badge">${fmtCount(pl.songIds.length)}</span>
-        ${pl.locked ? "" : `<span class="navitem__more" data-act="pl-more" data-id="${pl.id}" role="button" aria-label="歌单操作">${icon("more")}</span>`}
+        <span class="navitem__tail">
+          <span class="navitem__badge">${fmtCount(pl.songIds.length)}</span>
+          <span class="navitem__more" data-act="pl-more" data-id="${pl.id}" role="button"
+            aria-label="${esc(pl.name)}操作">${icon("more")}</span>
+        </span>
       </button>`;
   };
 
@@ -66,23 +81,22 @@ export function renderSidebar() {
 /* --------------------------------------------------------------------------
    内容头部
    -------------------------------------------------------------------------- */
+
+/**
+ * 工具条内容。
+ *
+ * 搜索框不在这里 —— 它已经移到标题栏中间（见 searchpanel.js）。
+ * 以前它长在这个工具条里，而工具条的 innerHTML 会随着 state.query 变化整体重建，
+ * 于是「每输入一个字符就重绘一次输入框」，焦点与输入法状态全被打断。
+ * 现在工具条内容与 query 无关，从根上避免了这个问题。
+ */
 function toolbarHtml() {
   const v = state.view;
-  const searchBox = `
-    <div class="search">
-      ${icon("search", "search__icon")}
-      <input class="search__input" id="input-search" type="search" placeholder="搜索歌曲、歌手、专辑" value="${esc(state.query)}" />
-    </div>`;
 
-  if (v === "settings") {
-    return `
-      <button class="btn" type="button" data-tool="add-folder">${icon("folder-plus")}<span>添加音乐文件夹</span></button>
-      <button class="btn btn--primary" type="button" data-tool="rescan">${icon("refresh")}<span>重新扫描</span></button>`;
-  }
-
+  // 「播放全部」保留；随机播放按钮已移除（需求：那个随机播放按钮移除掉）。
+  // 随机播放仍然可用：底栏的循环模式里有「随机」。
   const playAll = `
-    <button class="btn btn--primary" type="button" data-tool="play-all">${icon("play")}<span>播放全部</span></button>
-    <button class="btn btn--icon" type="button" data-tool="shuffle" data-tip="随机播放">${icon("shuffle")}</button>`;
+    <button class="btn btn--primary" type="button" data-tool="play-all">${icon("play")}<span>播放全部</span></button>`;
 
   const sortSel = `
     <div class="select">
@@ -102,46 +116,45 @@ function toolbarHtml() {
       ${icon("chevron-down", "select__icon")}
     </div>`;
 
-  const densityBtn = `
-    <button class="btn btn--icon" type="button" data-tool="density" data-tip="${state.density === "compact" ? "舒适密度" : "紧凑密度"}">
-      ${icon("list-order")}
-    </button>`;
-
+  // 列表密度按钮已移到设置界面（对所有列表生效），工具条上不再有它
   if (v === "queue") {
-    return `${searchBox}
+    return `
       <button class="btn btn--icon" type="button" data-tool="queue-reverse" data-tip="反转顺序">${icon("shuffle")}</button>
       <button class="btn" type="button" data-tool="queue-clear">${icon("trash")}<span>清空列表</span></button>
       ${playAll}`;
   }
 
   if (v === "playlist") {
-    return `${searchBox}${sortSel}${densityBtn}${playAll}
+    return `${sortSel}${playAll}
       <button class="btn btn--icon" type="button" data-tool="pl-more" data-tip="歌单操作">${icon("more")}</button>`;
   }
 
-  return `${searchBox}
+  return `
     <button class="btn" type="button" data-tool="rescan">${icon("refresh")}<span>重新扫描</span></button>
-    ${sortSel}${densityBtn}${playAll}`;
+    ${sortSel}${playAll}`;
 }
+
+/**
+ * 上一次真正写进 DOM 的工具条内容。
+ * 只有内容变了才重绘：避免每次 commit 都重建按钮（那样会打断悬停、
+ * 让正在交互的按钮丢失焦点）。
+ */
+let lastTools = "";
 
 export function renderHeader() {
   const v = state.view;
   const pl = v === "playlist" ? playlistById(state.playlistId) : null;
 
-  const title =
-    v === "playlist" && pl ? pl.name : VIEW_TITLES[v] || "所有歌曲";
-  $("#content-title").textContent = title;
+  const title = v === "playlist" && pl ? pl.name : VIEW_TITLES[v] || "本地歌曲";  $("#content-title").textContent = title;
 
   const songs = state.visibleSongs;
   const total = songs.reduce((sum, s) => sum + s.duration, 0);
   let subtitle = "";
-  if (v === "settings") {
-    subtitle = "音乐文件夹、过滤规则、主题与播放选项";
-  } else if (v === "library") {
+  if (v === "library") {
     const s = state.lastScan;
-    subtitle = `${fmtCount(songs.length)} 首 · 共 ${fmtDurationCn(total)} · ${fmtCount(state.folders.length)} 个文件夹${
-      s && s.excluded ? ` · 已过滤 ${fmtCount(s.excluded)} 个文件` : ""
-    }`;
+    subtitle = `${fmtCount(songs.length)} 首 · 共 ${fmtDurationCn(total)} · ${fmtCount(
+      state.folders.filter((f) => f.id !== "auto_downloads").length
+    )} 个文件夹${s && s.excluded ? ` · 已过滤 ${fmtCount(s.excluded)} 个文件` : ""}`;
   } else if (v === "queue") {
     const cur = state.currentId ? songs.findIndex((s) => s.id === state.currentId) : -1;
     subtitle = `${fmtCount(songs.length)} 首 · 共 ${fmtDurationCn(total)}${
@@ -156,8 +169,16 @@ export function renderHeader() {
   }
 
   $("#content-subtitle").textContent = subtitle;
-  $("#content-tools").innerHTML = toolbarHtml();
-  $("#titlebar-caption").textContent = `${title}${state.scanning ? " · 扫描中…" : ""}`;
+  // 扫描中的提示原本挂在标题栏文字后面，现在标题栏不再显示页面名，
+  // 改为挂在内容区副标题上（信息不丢，只是换了位置）。
+  $("#content-subtitle").dataset.scanning = String(state.scanning);
+  $("#scanning")?.setAttribute("data-title", title);
+
+  const tools = toolbarHtml();
+  if (tools !== lastTools) {
+    lastTools = tools;
+    $("#content-tools").innerHTML = tools;
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -166,12 +187,6 @@ export function renderHeader() {
 export function renderContent() {
   const body = $("#content-body");
   const v = state.view;
-
-  if (v === "settings") {
-    renderSettings(body);
-    bindSettingsSliders(body, { commit });
-    return;
-  }
 
   if (!state.visibleSongs.length) {
     if (state.query.trim()) {
@@ -191,20 +206,110 @@ export function renderContent() {
   bindTrackEvents(body, {
     onAddFolder: () => handleSettingsAction({ dataset: { act: "add-folder" } }, { commit, rescan: doRescan }),
     onGotoLibrary: () => navigate("library"),
-    onClearSearch: () => {
-      state.query = "";
-      commit();
-    },
+    // 「没有匹配的歌曲」空态里的「清空搜索」：连搜索弹层里的关键词一起清掉，
+    // 否则用户会看到「筛掉了但输入框里还有字」的矛盾状态
+    onClearSearch: () => clearSearch(),
   });
+}
+
+/* --------------------------------------------------------------------------
+   设置：弹出层
+   --------------------------------------------------------------------------
+   需求：设置界面改为弹出层。
+   实现上不再切换 state.view（内容区始终是曲库/队列/歌单），
+   而是渲染到一个覆盖在内容区之上的层里 —— 好处是关闭设置后
+   列表的滚动位置、选中行、正在播放的进度都不会因为换视图而丢。
+   -------------------------------------------------------------------------- */
+export function openSettings(section = null) {
+  const layer = document.getElementById("settings-layer");
+  if (!layer) return;
+  layer.hidden = false;
+  // 先解除 hidden 再改 data-state，保证过渡动画真的发生
+  requestAnimationFrame(() => layer.setAttribute("data-state", "opened"));
+  const body = layer.querySelector(".settings-layer__body");
+  if (body) {
+    renderSettings(body);
+    bindSettingsSliders(body, { commit });
+    if (section) scrollToSection(section);
+  }
+  // 设置层底部的紧凑播放控件：立刻画一次，别等到下一个 tick 才出现内容
+  refreshSettingsPlayer();
+  layer.querySelector(".settings-layer__close")?.focus({ preventScroll: true });
+}
+export function closeSettings() {
+  const layer = document.getElementById("settings-layer");
+  if (!layer) return;
+  layer.setAttribute("data-state", "closed");
+  setTimeout(() => {
+    if (layer.getAttribute("data-state") === "closed") layer.hidden = true;
+  }, 220);
+}
+
+export function toggleSettings(section = null) {
+  const layer = document.getElementById("settings-layer");
+  if (!layer) return;
+  if (layer.hidden) openSettings(section);
+  else closeSettings();
+}
+
+export function settingsLayerOpen() {
+  const layer = document.getElementById("settings-layer");
+  return Boolean(layer && !layer.hidden);
+}
+
+/**
+ * 重绘设置层内容，并保持「用户正在看的位置」。
+ *
+ * 只恢复 scrollTop 是不够的：重绘会把导航条的选中态打回第一个，所以
+ * 这里同时把当前分区写回高亮。两件事都做，才是「点开关不跳页」。
+ */
+export function refreshSettingsLayer() {
+  const layer = document.getElementById("settings-layer");
+  if (!layer || layer.hidden) return;
+  const body = layer.querySelector(".settings-layer__body");
+  if (!body) return;
+  const scroll = body.scrollTop;
+  const section = currentSettingsSection();
+  const active = document.activeElement;
+  const focusAct = active?.dataset?.act ? { act: active.dataset.act, id: active.dataset.id || "" } : null;
+
+  renderSettings(body);
+  bindSettingsSliders(body, { commit });
+  body.scrollTop = scroll;
+  setSettingsSection(section);
+
+  if (focusAct) {
+    const sel = focusAct.id
+      ? `[data-act="${focusAct.act}"][data-id="${focusAct.id}"]`
+      : `[data-act="${focusAct.act}"]`;
+    body.querySelector(sel)?.focus({ preventScroll: true });
+  }
 }
 
 /* --------------------------------------------------------------------------
    导航
    -------------------------------------------------------------------------- */
 export function navigate(view, playlistId = null) {
+  // 设置是弹出层，不是视图：任何导航都先把设置收起来
+  if (settingsLayerOpen()) closeSettings();
+  if (view === "settings") {
+    openSettings();
+    return;
+  }
   state.view = view;
   state.playlistId = view === "playlist" ? playlistId : null;
   state.playerOpen = false;
+  // 换视图时把播放列表面板收起来，避免它孤零零浮在主界面上。
+  // 这里直接收 DOM（不入 playerbar 的依赖，避免 shell ← playerbar 的循环 import）；
+  // 动画结束后由 paintPlayerBar 的渲染循环收尾。
+  state.queueOpen = false;
+  const panel = document.getElementById("queue-panel");
+  if (panel) {
+    panel.setAttribute("data-state", "closed");
+    setTimeout(() => {
+      if (!state.queueOpen) panel.hidden = true;
+    }, 220);
+  }
   commit();
 }
 
@@ -293,49 +398,84 @@ export function bindShell() {
     }
   });
 
-  $("#content-header").addEventListener("input", (e) => {
-    if (e.target.id === "input-search") {
-      state.query = e.target.value;
-      commit();
-      // 输入焦点保持
-      const input = $("#input-search");
-      if (input) {
-        input.focus();
-        input.setSelectionRange(input.value.length, input.value.length);
-      }
-    }
-  });
-
   $("#content-body").addEventListener("click", async (e) => {
-    const goto = e.target.closest("[data-goto]")?.dataset.goto;
-    if (goto) {
-      $$(".settings__nav-item").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.goto === goto)));
-      scrollToSection(goto);
-      return;
-    }
-
     const control = e.target.closest("[data-toggle],[data-segment] .segmented__btn");
     if (control && handleSettingControl(control, { commit })) {
       // 设置项改动后把配置刷回后端（含过滤规则、监听开关等）
       flushConfigSync();
       return;
     }
+  });
 
-    const actEl = e.target.closest("[data-act]");
-    if (actEl && actEl.closest(".settings")) {
-      const act = actEl.dataset.act;
-      await handleSettingsAction(actEl, { commit, rescan: () => doRescan({ manual: true }) });
-      flushConfigSync();
-      if (["add-folder", "remove-folder", "scan-now", "rescan-folder"].includes(act)) return;
-      if (act?.startsWith("rule") || act?.startsWith("preset")) {
-        renderContent();
-        renderHeader();
-      }
-      if (act === "reload-themes") {
-        renderContent();
+  /* 设置层：事件委托挂在层自己身上。
+     以前设置是「视图」，所以委托挂在 #content-body 上；现在它是覆盖层，
+     不在 content-body 里，挂在那里就一个事件都收不到。 */
+  const settingsLayer = document.getElementById("settings-layer");
+  settingsLayer?.addEventListener("click", async (e) => {
+    // 点「关闭」按钮或遮罩空白处：收起设置层
+    if (e.target.closest("[data-settings-close]") || e.target === settingsLayer) {
+      closeSettings();
+      return;
+    }
+
+    const goto = e.target.closest("[data-goto]")?.dataset.goto;
+    if (goto) {
+      // 高亮与滚动都在 scrollToSection 里处理（并会把「当前分区」记下来，
+      // 这样紧接着的整块重绘不会把选中态打回第一个）
+      scrollToSection(goto);
+      return;
+    }
+
+    // 开关（switch）与分段控件统一走控制分支
+    const control = e.target.closest("[data-toggle],[data-segment] .segmented__btn");
+    if (control) {
+      if (handleSettingControl(control, { commit })) {
+        flushConfigSync();
+        refreshSettingsLayer();
       }
       return;
     }
+
+    const actEl = e.target.closest("[data-act]");
+    if (actEl) {
+      const act = actEl.dataset.act;
+      await handleSettingsAction(actEl, {
+        commit,
+        render: () => refreshSettingsLayer(),
+        rescan: () => doRescan({ manual: true }),
+      });
+      flushConfigSync();
+      if (act?.startsWith("rule") || act?.startsWith("preset") || act === "reload-themes") {
+        refreshSettingsLayer();
+        renderContent();
+        renderHeader();
+      }
+    }
+  });
+
+  settingsLayer?.addEventListener("change", async (e) => {
+    const act = e.target.dataset.act;
+    if (!act) return;
+    try {
+      await handleSettingsAction(e.target, {
+        commit,
+        render: () => refreshSettingsLayer(),
+        rescan: () => doRescan({ manual: true }),
+      });
+      flushConfigSync();
+    } catch (err) {
+      console.error("[settings] 处理下拉框失败", err);
+      toast(`设置未生效：${err?.message ?? err}`, { tone: "error", duration: 5000 });
+    }
+  });
+
+  settingsLayer?.addEventListener("input", (e) => {
+    if (e.target.dataset.act !== "rule-value") return;
+    const rule = state.filterRules.find((r) => r.id === e.target.dataset.id);
+    if (!rule) return;
+    rule.value = e.target.value;
+    commit();
+    refreshRulePreview();
   });
 
   $("#content-body").addEventListener("input", (e) => {
@@ -349,26 +489,41 @@ export function bindShell() {
     refreshRulePreview();
   });
 
-  $("#content-body").addEventListener("change", (e) => {
+  $("#content-body").addEventListener("change", async (e) => {
     const act = e.target.dataset.act;
-    if (act !== "rule-type" && act !== "rule-op") return;
-    const rule = state.filterRules.find((r) => r.id === e.target.dataset.id);
-    if (!rule) return;
-    if (act === "rule-type") {
-      rule.type = e.target.value;
-      rule.op = e.target.value === "size" ? "lt" : "match";
-      rule.value = e.target.value === "size" ? "10240" : "\\.mp4$";
-      commit();
-      renderContent();
-    } else {
-      rule.op = e.target.value;
-      commit();
+
+    if (act === "rule-type" || act === "rule-op") {
+      const rule = state.filterRules.find((r) => r.id === e.target.dataset.id);
+      if (!rule) return;
+      if (act === "rule-type") {
+        rule.type = e.target.value;
+        rule.op = e.target.value === "size" ? "lt" : "match";
+        rule.value = e.target.value === "size" ? "10240" : "\\.mp4$";
+        commit();
+        renderContent();
+      } else {
+        rule.op = e.target.value;
+        commit();
+      }
+      return;
+    }
+
+    // 设置页里的下拉框（窗口原生材质、响度目标…）统一走 handleSettingsAction。
+    // 以前只有 click 分支，下拉框改了值不会有人处理，表现为「选了没反应」。
+    if (act && e.target.closest(".settings")) {
+      try {
+        await handleSettingsAction(e.target, { commit, render: renderContent, rescan: () => doRescan({ manual: true }) });
+        flushConfigSync();
+      } catch (err) {
+        console.error("[settings] 处理下拉框失败", err);
+        toast(`设置未生效：${err?.message ?? err}`, { tone: "error", duration: 5000 });
+      }
     }
   });
 }
 
 function refreshRulePreview() {
-  const node = $("#content-body .rule__preview");
+  const node = document.querySelector(".settings-layer .rule__preview, #content-body .rule__preview");
   if (!node) return;
   import("./store.js").then(({ applyRules }) => {
     const { kept, excluded, total } = applyRules(state.allSongsRaw, state.filterRules);
@@ -391,13 +546,6 @@ async function handleTool(tool) {
       break;
     case "play-all":
       playAllVisible(false);
-      break;
-    case "shuffle":
-      playAllVisible(true);
-      break;
-    case "density":
-      state.density = state.density === "compact" ? "comfortable" : "compact";
-      commit();
       break;
     case "queue-clear":
       clearQueue();
@@ -427,6 +575,7 @@ function openPlaylistMenu(id, anchor) {
     { id: "queue", label: "加入播放列表", icon: "queue" },
     { id: "sep1", kind: "sep" },
   ];
+  // 「我喜欢」也是歌单，只是内置的：它照样有菜单，只是没有重命名/删除。
   if (!pl.locked) {
     items.push({ id: "rename", label: "重命名", icon: "edit" });
     items.push({ id: "delete", label: "删除歌单", icon: "trash", danger: true });

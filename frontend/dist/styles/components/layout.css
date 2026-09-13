@@ -19,16 +19,41 @@
   z-index: var(--z-content);
 }
 
-/* 播放界面打开时：主内容区被 PlayerView 覆盖，侧边栏隐藏但骨架不变 */
-.app[data-view="player"] {
-  grid-template-columns: 0 minmax(0, 1fr);
+/* —— 共用背景：顶部与底部各一层从边缘向中间消散的极淡渐变 ——
+   标题栏与播放控件不再各自铺底色（那样会在沉浸模式下把封面挡住、
+   也会在标题栏下沿切出一条生硬的边）。渐变长度 = 区域高度 + --chrome-fade，
+   于是「第一段正好盖住标题栏，再往上慢慢淡掉」，过渡自然。 */
+.app::before,
+.app::after {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  z-index: var(--z-bg);
+  transition: opacity var(--dur-slow) var(--ease);
 }
 
-.app[data-view="player"] .sidebar {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateX(-12px);
+.app::before {
+  top: 0;
+  height: calc(var(--h-titlebar) + var(--chrome-fade));
+  background: var(--bg-chrome-top);
 }
+
+.app::after {
+  bottom: 0;
+  height: calc(var(--h-playerbar) + var(--chrome-fade));
+  background: var(--bg-chrome-bottom);
+}
+
+/* 沉浸模式：整窗都是封面虚化图，chrome 渐变反而会糊一层，去掉 */
+.app[data-mode="immersive"][data-view="player"]::before,
+.app[data-mode="immersive"][data-view="player"]::after {
+  opacity: 0;
+}
+
+/* 播放界面打开时：主内容区被 PlayerView 覆盖，骨架与侧边栏都不变
+   （侧边栏保持常显，播放界面停在它右侧） */
 
 /* —— ① 标题栏 —— */
 .titlebar {
@@ -36,12 +61,14 @@
   z-index: var(--z-titlebar);
 }
 
-/* —— ② 侧边栏 —— */
+/* —— ② 侧边栏 ——
+   注意：打开播放界面时侧边栏只是淡出，**宽度与位置完全不变**；
+   详情页是铺满整个窗口的绝对定位层，直接盖在侧边栏与主内容之上。 */
 .sidebar {
   grid-area: sidebar;
   z-index: var(--z-content);
   min-width: 0;
-  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+  transition: opacity var(--pv-slide-dur) var(--ease-out);
 }
 
 /* —— ③ 主内容区 —— */
@@ -72,31 +99,61 @@
   z-index: var(--z-playerbar);
 }
 
-/* —— 播放界面：覆盖主内容区（不含标题栏与底栏，因此底栏天然常驻）—— */
+/* 播放界面打开时：侧边栏整块淡出 —— 它是被详情页整个盖住的，
+   如果不淡出，侧边栏刚好贴在详情页左边缘，看起来像漏了一条没盖住。
+   这里只改透明度、不改宽度，所以不会触发任何重排；淡出时长与详情页
+   滑入完全一致，两者同步进行，不存在"闪一下"的问题。 */
+.app[data-view="player"] .sidebar {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 关闭动画期间（详情页正在滑出）侧边栏要立刻回来，
+   否则用户会看到"侧边栏等了一会儿才出现"。 */
+.app[data-view="library"] .sidebar {
+  opacity: 1;
+  transition-delay: 0ms;
+}
+
+/* —— 播放界面：绝对定位铺满整个窗口（标题栏之下、底栏之上的全部区域，
+      含侧边栏与主内容区）——
+   进出动效为「从下方滑入 / 向下方滑出」。注意：
+   · 用 transform 位移而不是改 top/left，避免每帧触发布局；
+   · 因为是 fixed 铺满，不再需要给侧边栏留出左偏移。 */
 .playerview {
   position: fixed;
-  top: var(--h-titlebar);
-  right: 0;
-  bottom: var(--h-playerbar);
-  left: var(--w-sidebar);
+  inset: var(--h-titlebar) 0 var(--h-playerbar) 0;
   z-index: var(--z-playerview);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  transition: left var(--dur) var(--ease);
+  /* 与 body 同一个窗口底色令牌：启用系统材质时一起让位（见 tokens.css） */
+  background: var(--bg-window);
+  opacity: 0;
+  transform: translateY(38px);
+  transition: opacity var(--pv-slide-dur) var(--ease-out),
+    transform var(--pv-slide-dur) var(--ease-slide);
+  will-change: transform, opacity;
 }
 
-.app[data-view="player"] .playerview {
-  left: 0;
+.playerview[data-state="opened"] {
+  opacity: 1;
+  transform: none;
 }
 
 .playerview[hidden] {
   display: none;
 }
 
+/* 沉浸模式：整窗由 #immersive-bg 的封面虚化图负责，详情页自身不能有底色 */
+.playerview[data-mode="immersive"] {
+  background: none;
+}
+
 /* —— 窄窗口：收窄侧边栏，不改变结构 —— */
 @media (max-width: 1120px) {
   :root {
     --w-sidebar: 196px;
+    --h-playerbar: 88px;
   }
 }
 
@@ -104,7 +161,7 @@
 @media (max-width: 1040px) {
   :root {
     --w-sidebar: 72px;
-    --h-playerbar: 80px;
+    --h-playerbar: 86px;
   }
 }
 
@@ -112,6 +169,6 @@
 @media (max-width: 900px) {
   :root {
     --sp-5: 16px;
-    --h-playerbar: 80px;
+    --h-playerbar: 86px;
   }
 }

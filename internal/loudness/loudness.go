@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -27,6 +26,7 @@ import (
 	"time"
 
 	"musicplayer/internal/bootstrap"
+	"musicplayer/internal/executil"
 	"musicplayer/internal/ffmpeg"
 )
 
@@ -541,7 +541,7 @@ func analyse(ctx context.Context, ffmpegPath, path string) (Measurement, error) 
 		"-c:a", "pcm_s16le",
 		"-f", "null", "-",
 	}
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	cmd := executil.CommandContext(ctx, ffmpegPath, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.Stdout = nil

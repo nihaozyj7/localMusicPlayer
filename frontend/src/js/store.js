@@ -8,7 +8,7 @@
    ========================================================================== */
 
 import { MOCK_FOLDERS, MOCK_FILTER_RULES, MOCK_PLAYLISTS, MOCK_SONGS } from "./mock.js";
-import { moveItem, uid, uniq } from "./utils.js";
+import { moveItem, setCoverOverrideGetter, uid, uniq } from "./utils.js";
 import { backend, connect, emit, isWails, on } from "./bridge.js";
 
 const LS_KEY = "music-player.state.v1";
@@ -22,6 +22,7 @@ const DEFAULT_CONFIG = {
   glassBlur: 22,
   glassBlurCustom: false, // 用户是否手动调整过毛玻璃强度（true 才覆盖主题令牌）
   glassAlpha: 62,
+  nativeBackdrop: "off", // 窗口原生材质：off | auto | mica | acrylic | tabbed（改了要重启）
   animations: true,
   sidebarWidth: 232,
   accentFromCover: false,
@@ -43,6 +44,22 @@ const DEFAULT_CONFIG = {
   loudnessMode: "off", // off | track（逐曲） | album（同专辑统一）
   loudnessTarget: -16, // 目标整合响度 LUFS（-16 接近流媒体常用值）
   loudnessLimit: true, // 真峰值保护，避免抬升后削波
+
+  /* 在线功能 */
+  // 下载保存目录。后端默认给的是「系统音乐目录 / downloads」，
+  // 启动后会用后端返回的真实值覆盖这个占位。
+  downloadDir: "",
+  // 是否为在线歌曲联网抓取封面（多来源，见 internal/coverfetch）
+  onlineCover: true,
+  // 是否把抓到的封面/歌词写回歌曲文件自身的标签。
+  // 默认关闭：这会在用户的音乐文件上做修改，必须由用户明确开启。
+  embedMeta: false,
+
+  /* 交互 */
+  // 单击歌曲行的行为：next（加入下一首播放） | play（立即播放） | append（加入末尾）
+  rowClickAction: "next",
+  // 列表密度：compact（紧凑） | cozy（默认） | roomy（宽松）
+  listDensity: "cozy",
 };
 
 function initialState() {
@@ -56,15 +73,34 @@ function initialState() {
     lastScan: null,
     scanning: false,
 
+    /* 在线曲目登记表：songId → 曲目对象
+       ------------------------------------------------------------------
+       在线歌曲（试听）**不放进 songs**：songs 是「本地曲库」，
+       「所有歌曲」视图只应该显示本地文件。试听时把曲目登记到这里，
+       再把 id 压进播放队列，队列 / 底栏 / 播放详情页照样能查到它。
+       在线登记表不落盘（链接有时效，跨启动没有意义）。 */
+    onlineSongs: new Map(),
+
     /* 界面 */
     view: "library", // library | queue | playlist | settings
     playlistId: null,
     playerOpen: false,
+    queueOpen: false,
     pvMode: "classic",
     query: "",
+    // 搜索浮层：{ open: boolean, tab: 'local'|'online' }。
+    // 放在 state 里是为了让「清空前不销毁、可复用」这个行为有唯一真源。
+    searchOpen: false,
+    searchTab: "online",
     sortKey: "addedAt",
     sortDir: "desc",
-    density: "comfortable",
+
+    /* 封面覆盖表：songId → dataURL
+       ------------------------------------------------------------------
+       用户在「封面搜索」里选定的封面。缓存目录里的文件是真相来源，
+       这里只是内存里的即时预览（换封面后立刻重绘，不必等重新读文件）。 */
+    coverOverrides: new Map(),
+    settingsOpen: false,
 
     /* 播放 */
     queue: [],
@@ -81,6 +117,13 @@ function initialState() {
     /* 响度均衡：songId → 补偿增益(dB)，由后端测量结果算出 */
     loudnessGains: {},
     loudnessState: null, // 后端响度能力/进度快照
+
+    /* 在线封面：后端注册的来源与熔断状态（设置界面展示用） */
+    coverProviders: [],
+    coverBreaker: {},
+
+    /* 窗口原生材质：后端给出的「当前生效值 / 是否支持 / 是否待重启」 */
+    backdropState: null,
 
     /* 配置 */
     config: { ...DEFAULT_CONFIG },
@@ -304,7 +347,9 @@ export function toggleLike(songId) {
       ? uniq([...liked.songIds, songId])
       : liked.songIds.filter((id) => id !== songId);
   }
-  commit();
+  // immediate：爱心按钮的按下态要跟着这次点击立刻变化。
+  // 默认的 rAF 合并会让底栏比点击慢一帧，用户看到的就是"点了没反应"。
+  commit(undefined, { immediate: true });
   if (isWails()) backend.toggleLike(songId);
 }
 
@@ -430,14 +475,79 @@ export function clearQueue() {
   state.currentId = null;
   state.playing = false;
   state.position = 0;
+  state.onlineSongs.clear();
   commit();
 }
 
 /* --------------------------------------------------------------------------
    播放控制（真实解码由 Go/Wails 侧完成，这里只维护状态）
    -------------------------------------------------------------------------- */
+
+/**
+ * 按 id 找曲目。
+ *
+ * 先查本地曲库，再查在线登记表 —— 在线试听曲目不在 songs 里（见 initialState），
+ * 但队列 / 底栏 / 播放页 / 歌词都需要通过这个函数拿到它。
+ */
 export function songById(id) {
-  return state.songs.find((s) => s.id === id) || null;
+  if (!id) return null;
+  return state.songs.find((s) => s.id === id) || state.onlineSongs.get(id) || null;
+}
+
+/* --------------------------------------------------------------------------
+   封面覆盖表
+   --------------------------------------------------------------------------
+   用户在「封面搜索」里选定的封面（data URL）。缓存目录里的图片文件才是
+   持久真相，这里只是内存里的即时预览：换完封面立刻重绘，不必等曲库重扫。
+   删除（传空值）就回落到文件自带封面。
+   -------------------------------------------------------------------------- */
+export function setCoverOverride(id, dataURL) {
+  if (!id) return;
+  if (dataURL) state.coverOverrides.set(id, dataURL);
+  else state.coverOverrides.delete(id);
+  commit();
+}
+
+export function coverOverrideOf(id) {
+  return state.coverOverrides.get(id) || "";
+}
+
+// 让 utils.js#coverOf 能读到覆盖表（避免 utils ⇄ store 循环 import）
+setCoverOverrideGetter(coverOverrideOf);
+
+/* --------------------------------------------------------------------------
+   列表密度
+   --------------------------------------------------------------------------
+   密度是全列表共用的显示设置，存在后端配置里（listDensity），
+   这样所有列表（本地歌曲 / 播放列表 / 歌单）一起生效。
+   -------------------------------------------------------------------------- */
+export function setListDensity(value) {
+  const ok = ["compact", "cozy", "roomy"];
+  state.config.listDensity = ok.includes(value) ? value : "cozy";
+  commit();
+}
+
+/**
+ * 登记一首在线曲目（返回登记后的对象）。
+ *
+ * 同名同源的曲目会被合并，所以反复试听同一首歌不会让登记表无限增长。
+ */
+export function registerOnlineSong(song) {
+  if (!song?.id) return null;
+  const prev = state.onlineSongs.get(song.id);
+  const merged = { ...(prev || {}), ...song, online: true };
+  state.onlineSongs.set(song.id, merged);
+  // 队列里已经引用了它就够；不 commit（调用方紧接着会 playContext）
+  return merged;
+}
+
+/** 清掉不再被引用的在线曲目（切歌、清空队列后顺手回收）。 */
+export function pruneOnlineSongs() {
+  const keep = new Set(state.queue);
+  if (state.currentId) keep.add(state.currentId);
+  for (const id of [...state.onlineSongs.keys()]) {
+    if (!keep.has(id) && id !== state.currentId) state.onlineSongs.delete(id);
+  }
 }
 
 export function currentSong() {
@@ -622,7 +732,6 @@ export function persist() {
       pvMode: state.pvMode,
       sortKey: state.sortKey,
       sortDir: state.sortDir,
-      density: state.density,
       playMode: state.playMode,
       volume: state.volume,
       muted: state.muted,
@@ -651,6 +760,7 @@ const SYNCED_KEYS = [
   "themeMode",
   "glassBlur",
   "glassAlpha",
+  "nativeBackdrop",
   "animations",
   "accentFromCover",
   "showAlbumColumn",
@@ -669,6 +779,11 @@ const SYNCED_KEYS = [
   "loudnessMode",
   "loudnessTarget",
   "loudnessLimit",
+  "downloadDir",
+  "onlineCover",
+  "embedMeta",
+  "rowClickAction",
+  "listDensity",
 ];
 
 let syncTimer = null;
@@ -708,7 +823,6 @@ function applyPersisted(saved) {
   state.pvMode = saved.pvMode || state.pvMode;
   state.sortKey = saved.sortKey || state.sortKey;
   state.sortDir = saved.sortDir || state.sortDir;
-  state.density = saved.density || state.density;
   state.playMode = saved.playMode || state.playMode;
   state.volume = typeof saved.volume === "number" ? saved.volume : state.volume;
   state.muted = Boolean(saved.muted);
