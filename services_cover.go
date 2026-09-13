@@ -1104,14 +1104,12 @@ func (s *CoverService) ClearCache() (map[string]any, error) {
 			covers++
 		}
 	}
-	// 歌词索引没有单独暴露删除接口，这里直接删文件 + 重建存储
-	lyricsDir := filepath.Join(s.cache.Dir(), string(metacache.KindLyrics))
-	entries, _ := os.ReadDir(lyricsDir)
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".lrc") {
-			if err := os.Remove(filepath.Join(lyricsDir, e.Name())); err == nil {
-				lyrics++
-			}
+	// 歌词走 DeleteLyrics：文件与索引条目（内存 + 磁盘）一起清。
+	// 以前只 os.Remove 文件，索引条目留在磁盘上，于是设置界面的「已缓存歌词」
+	// 不归零、重启后幽灵条目依旧在，还会被「写入缓存到文件」重新计入。
+	for _, id := range s.cache.LyricsIDs() {
+		if ok, err := s.cache.DeleteLyrics(id); err == nil && ok {
+			lyrics++
 		}
 	}
 	s.emit("cover:changed", map[string]any{"id": "", "source": ""})

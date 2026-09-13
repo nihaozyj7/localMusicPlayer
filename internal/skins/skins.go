@@ -35,6 +35,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // templateFS 示例样式（随二进制分发，首次启动写进用户皮肤目录）。
@@ -66,6 +67,7 @@ type SkinInfo struct {
 // （先构造好新 map 再一次性换指针），因此并发读 List/Get 不会读到半成品。
 // 皮肤列表的读取频率很低（打开设置页才读一次），这里刻意不引入 mutex。
 type Manager struct {
+	mu    sync.RWMutex
 	dir   string
 	byID  map[string]SkinInfo
 	order []string
@@ -272,6 +274,8 @@ func (m *Manager) Delete(id string) error {
 
 // List 返回全部皮肤（按目录名排序）。
 func (m *Manager) List() []SkinInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	out := make([]SkinInfo, 0, len(m.order))
 	for _, id := range m.order {
 		out = append(out, m.byID[id])
@@ -281,6 +285,8 @@ func (m *Manager) List() []SkinInfo {
 
 // Get 按 id 取一个皮肤。
 func (m *Manager) Get(id string) (SkinInfo, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	info, ok := m.byID[strings.TrimSpace(id)]
 	return info, ok
 }
@@ -325,8 +331,14 @@ func (m *Manager) Reload() error {
 
 	sort.Strings(order)
 
+	// 整表替换必须在锁里：List/Get 会被设置页与前端轮询并发调用，
+	// 无锁读一个正在被替换的 map 会直接 fatal（concurrent map read and map write）。
+	// 之前这里的注释声称「一次换指针，所以并发读不会读到半成品」，
+	// 那只对「读到旧表」成立，对「读到一半被换」并不成立。
+	m.mu.Lock()
 	m.byID = byID
 	m.order = order
+	m.mu.Unlock()
 	return nil
 }
 

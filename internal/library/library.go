@@ -55,13 +55,15 @@ type cacheEntry struct {
 
 // Manager 曲库管理器，方法均可并发调用
 type Manager struct {
-	mu       sync.RWMutex
-	songs    map[string]bootstrap.Song // id -> song
-	raw      []bootstrap.Song          // 过滤前的全部文件
-	folders  []bootstrap.Folder
-	cache    map[string]cacheEntry
-	cacheMu  sync.RWMutex
-	scanning bool
+	mu      sync.RWMutex
+	songs   map[string]bootstrap.Song // id -> song
+	raw     []bootstrap.Song          // 过滤前的全部文件
+	folders []bootstrap.Folder
+	cache   map[string]cacheEntry
+	cacheMu sync.RWMutex
+	// cacheOnce 保证磁盘上的缓存只读一次（懒加载，见 ensureCacheLoaded）
+	cacheOnce sync.Once
+	scanning  bool
 
 	// 扫描串行化：idle 在「没有任何扫描进行中」时是关闭状态
 	scanMu sync.Mutex
@@ -90,7 +92,9 @@ func NewManager(store *bootstrap.Store) *Manager {
 		store:     store,
 	}
 	m.folders = store.Get().EffectiveFolders()
-	m.loadCache()
+	// 元数据缓存**不在这里读**：它是 5.9MB 的 JSON（99% 是内嵌封面的 base64），
+	// 同步 json.Unmarshal 会发生在 main() 建窗口之前，是首屏里最贵的一段。
+	// 改成第一次真正用到缓存时再读（扫描 / 保存），见 ensureCacheLoaded。
 	return m
 }
 
@@ -201,6 +205,19 @@ func (m *Manager) cachePath() string {
 	return filepath.Join(m.store.DataDir(), "metadata-cache.json")
 }
 
+// ensureCacheLoaded 保证磁盘上的元数据缓存已经读过一次（懒加载）。
+func (m *Manager) ensureCacheLoaded() {
+	m.cacheOnce.Do(m.loadCache)
+}
+
+// scanCancelledErr 把「上下文已取消」统一成一个非 nil 的错误。
+func scanCancelledErr(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return context.Canceled
+}
+
 func (m *Manager) loadCache() {
 	raw, err := os.ReadFile(m.cachePath())
 	if err != nil {
@@ -220,6 +237,9 @@ func (m *Manager) loadCache() {
 
 // SaveCache 把元数据缓存落盘（扫描结束后调用）
 func (m *Manager) SaveCache() error {
+	// 保存前必须已经读过磁盘上的旧缓存：缓存现在是懒加载的，
+	// 少了这一步就会把上一次的全部条目直接覆盖成「只有本次扫描碰过的那些」。
+	m.ensureCacheLoaded()
 	m.cacheMu.RLock()
 	cf := cacheFile{Version: cacheVersion, Entries: m.cache}
 	m.cacheMu.RUnlock()
@@ -297,11 +317,11 @@ func sameFolders(a, b []bootstrap.Folder) bool {
    -------------------------------------------------------------------------- */
 
 type candidate struct {
-	path  string
-	size  int64
-	ext   string
+	path   string
+	size   int64
+	ext    string
 	folder string
-	mod   int64
+	mod    int64
 }
 
 // Scan 全量扫描所有配置的文件夹。
@@ -314,6 +334,7 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 		return ScanResult{}, err
 	}
 	defer m.endScan()
+	m.ensureCacheLoaded()
 
 	m.mu.RLock()
 	folders := append([]bootstrap.Folder(nil), m.folders...)
@@ -346,7 +367,13 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 
 	// 2) 并发读取元数据
 	m.report("meta", 0, len(candidates))
-	results := m.readAll(ctx, candidates, concurrency, force)
+	results, cancelled := m.readAll(ctx, candidates, concurrency, force)
+	if cancelled {
+		// 被取消时 readAll 只能给出残缺的结果。**绝不能**拿它去覆盖 m.songs ——
+		// 那会把整个曲库清空，同时还发一条 scan:done（Kept=0）告诉前端「扫完了」。
+		// 保留旧曲库并如实返回错误，让上层决定要不要提示。
+		return ScanResult{}, scanCancelledErr(ctx)
+	}
 
 	// 3) 应用过滤规则并统计
 	cfg := m.store.Get()
@@ -355,6 +382,10 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 	// 3.5) 对 meta 没有解析器的容器（wma/ape/dsf…）用 ffmpeg 补时长。
 	//      时长缺失会让转码流拿不到 Content-Length，前端进度条就没法用。
 	m.enrichDurations(ctx, res.Kept, force)
+	if ctx.Err() != nil {
+		// 补时长阶段被取消：同样不提交，宁可这次什么都没更新
+		return ScanResult{}, scanCancelledErr(ctx)
+	}
 
 	// 4) 与旧数据对比，得出新增/移除
 	m.mu.Lock()
@@ -425,6 +456,7 @@ func (m *Manager) RescanPaths(ctx context.Context, paths []string) (ScanResult, 
 		return ScanResult{}, err
 	}
 	defer m.endScan()
+	m.ensureCacheLoaded()
 
 	cfg := m.store.Get()
 
@@ -453,7 +485,12 @@ func (m *Manager) RescanPaths(ctx context.Context, paths []string) (ScanResult, 
 		}
 	}
 
-	results := m.readAll(ctx, candidates, cfg.ScanConcurrency, false)
+	results, cancelled := m.readAll(ctx, candidates, cfg.ScanConcurrency, false)
+	if cancelled {
+		// 同上：增量重扫会「先删受影响目录的旧条目再写入新结果」，
+		// 拿残缺结果往下走会直接把那个目录的歌全部删掉。
+		return ScanResult{}, scanCancelledErr(ctx)
+	}
 	res := filter.Apply(results, cfg.FilterRules)
 
 	m.mu.Lock()
@@ -507,8 +544,13 @@ func (m *Manager) RescanPaths(ctx context.Context, paths []string) (ScanResult, 
 	return out, nil
 }
 
-// readAll 并发读取元数据
-func (m *Manager) readAll(ctx context.Context, items []candidate, concurrency int, force bool) []bootstrap.Song {
+// readAll 并发读取元数据。
+//
+// 第二个返回值 cancelled=true 表示「被 ctx 取消了，结果不完整」——调用方必须
+// 据此放弃本次结果，绝不能当成「这些就是全部歌曲」。之前只返回切片，取消时返回
+// out[:0]（非 nil 的空切片），调用方无法区分「取消」与「真的没有歌」，
+// 于是把整个曲库覆盖成了空。
+func (m *Manager) readAll(ctx context.Context, items []candidate, concurrency int, force bool) ([]bootstrap.Song, bool) {
 	if concurrency <= 0 {
 		concurrency = 4
 	}
@@ -520,6 +562,7 @@ func (m *Manager) readAll(ctx context.Context, items []candidate, concurrency in
 	out := make([]bootstrap.Song, len(items))
 	var wg sync.WaitGroup
 	var done int64
+	var cancelled atomic.Bool
 	var mu sync.Mutex
 
 	for i := 0; i < concurrency; i++ {
@@ -528,6 +571,10 @@ func (m *Manager) readAll(ctx context.Context, items []candidate, concurrency in
 			defer wg.Done()
 			for j := range jobs {
 				if ctx.Err() != nil {
+					// 注意：worker 提前退出会留下零值空槽，所以这里必须
+					// 显式记下「取消」，不能只靠 ctx.Err() 事后判断
+					//（发送循环可能刚好在所有 job 发完之后 ctx 才被取消）。
+					cancelled.Store(true)
 					return
 				}
 				out[j.idx] = m.songFromCandidate(j.c, force)
@@ -546,23 +593,27 @@ func (m *Manager) readAll(ctx context.Context, items []candidate, concurrency in
 		select {
 		case jobs <- job{idx: i, c: c}:
 		case <-ctx.Done():
+			cancelled.Store(true)
 			close(jobs)
 			wg.Wait()
-			return out[:0]
+			return nil, true
 		}
 	}
 	close(jobs)
 	wg.Wait()
+	if cancelled.Load() || ctx.Err() != nil {
+		return nil, true
+	}
 	m.report("meta", len(items), len(items))
 
-	// 丢掉空槽（并发取消时可能出现零值）
+	// 丢掉空槽（防御性：正常情况下不应该有）
 	final := make([]bootstrap.Song, 0, len(out))
 	for _, s := range out {
 		if s.ID != "" {
 			final = append(final, s)
 		}
 	}
-	return final
+	return final, false
 }
 
 func (m *Manager) songFromCandidate(c candidate, force bool) bootstrap.Song {
@@ -703,6 +754,7 @@ func (m *Manager) enrichDurations(ctx context.Context, songs []bootstrap.Song, f
 
 			mu.Lock()
 			done++
+			n := done
 			if err == nil && info.DurationSec > 0 {
 				songs[t.idx].Duration = int64(info.DurationSec * 1000)
 				if songs[t.idx].SampleRate == 0 {
@@ -732,8 +784,8 @@ func (m *Manager) enrichDurations(ctx context.Context, songs []bootstrap.Song, f
 			m.cache[t.s.Path] = entry
 			m.cacheMu.Unlock()
 
-			if done%4 == 0 {
-				m.report("probe", done, len(tasks))
+			if n%4 == 0 {
+				m.report("probe", n, len(tasks))
 			}
 		}(t)
 	}

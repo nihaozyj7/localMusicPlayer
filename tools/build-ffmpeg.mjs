@@ -34,9 +34,18 @@
    ========================================================================== */
 
 import { execFileSync } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { createGzip } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -248,6 +257,9 @@ async function main() {
     const mb = statSync(TARGET).size / 1048576;
     console.log(`[ffmpeg] 已存在，跳过编译：${TARGET}（${mb.toFixed(2)} MB）`);
     console.log("         要重新编译请加 --force");
+    // 压缩包可能还没生成（老工作区 / 手动清过），这里补一次而不是直接返回，
+    // 否则 production 构建会因为 go:embed 找不到 ffmpeg.exe.gz 而失败。
+    await compress();
     return;
   }
 
@@ -260,7 +272,31 @@ async function main() {
   extract();
   build();
   verify();
+  await compress();
   console.log("[ffmpeg] 完成。production 构建会把该二进制编译进 exe。");
+}
+
+/* --------------------------------------------------------------------------
+   压缩：把 ffmpeg.exe 打包成 ffmpeg.exe.gz 供 go:embed
+   --------------------------------------------------------------------------
+   为什么要压：production 构建会把内置二进制整个塞进 exe，6.28MB 会 1:1 变成
+   产物体积。实测 gzip 后只有 2.28MB（36.3%），直接省掉约 4MB，而解压成本只在
+   「缓存目录里还没有这一份」时付一次（见 internal/ffmpeg 的 bundledIdentity）。
+   level 9 只影响构建时间（几秒），对运行时没有影响。
+   -------------------------------------------------------------------------- */
+async function compress() {
+  const gz = TARGET + ".gz";
+  if (existsSync(gz) && statSync(gz).mtimeMs >= statSync(TARGET).mtimeMs) {
+    const mb = statSync(gz).size / 1048576;
+    console.log(`[ffmpeg] 压缩包已是最新：${gz}（${mb.toFixed(2)} MB）`);
+    return;
+  }
+  await pipeline(createReadStream(TARGET), createGzip({ level: 9 }), createWriteStream(gz));
+  const src = statSync(TARGET).size;
+  const dst = statSync(gz).size;
+  console.log(
+    `[ffmpeg] 已压缩：${(src / 1048576).toFixed(2)} MB → ${(dst / 1048576).toFixed(2)} MB（${((dst / src) * 100).toFixed(1)}%）`
+  );
 }
 
 main().catch((err) => {

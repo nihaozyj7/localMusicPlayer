@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
 //go:embed builtin/*.css
@@ -35,10 +36,16 @@ type Info struct {
 }
 
 // Manager 主题目录管理
+//
+// byID / order 会被 Reload 整表替换，而 List / CSS / BuiltinIDs 可能在同一时刻
+// 被另一个 goroutine 读到（最典型的是 /early-theme.js 的 handler 与设置页的
+// 「重新扫描」并发）。无锁读写 Go 的 map 不是数据错乱，是**直接崩溃**，
+// 所以这里必须加 RWMutex —— 读多写少，RWMutex 的开销可以忽略。
 type Manager struct {
-	dir    string
-	byID   map[string]Info
-	order  []string
+	mu    sync.RWMutex
+	dir   string
+	byID  map[string]Info
+	order []string
 }
 
 var (
@@ -132,13 +139,20 @@ func (m *Manager) Reload() error {
 		return a.ID < b.ID
 	})
 
+	// 整表替换必须在锁里：/early-theme.js 的 handler 会在任意时刻调 List()，
+	// 而设置页的「重新扫描」会调 Reload()。无锁时并发读 map 会直接
+	// fatal error: concurrent map read and map write（不是数据错乱，是崩溃）。
+	m.mu.Lock()
 	m.byID = byID
 	m.order = order
+	m.mu.Unlock()
 	return nil
 }
 
 // List 返回全部主题（按顺序）
 func (m *Manager) List() []Info {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	out := make([]Info, 0, len(m.order))
 	for _, id := range m.order {
 		out = append(out, m.byID[id])
@@ -148,7 +162,9 @@ func (m *Manager) List() []Info {
 
 // CSS 读取主题 CSS 原文
 func (m *Manager) CSS(id string) (string, error) {
+	m.mu.RLock()
 	info, ok := m.byID[id]
+	m.mu.RUnlock()
 	if !ok {
 		return "", fmt.Errorf("主题不存在: %s", id)
 	}
@@ -257,7 +273,9 @@ func (m *Manager) ImportDir(src string) (ImportResult, error) {
 // 「文件删了、界面还在」——这正是本方法要修掉的问题。
 func (m *Manager) Delete(id string) error {
 	key := strings.TrimSpace(id)
+	m.mu.RLock()
 	info, ok := m.byID[key]
+	m.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("主题不存在: %s", id)
 	}
@@ -290,6 +308,8 @@ func withinDir(dir, target string) bool {
 
 // BuiltinIDs 内置主题 id 列表
 func (m *Manager) BuiltinIDs() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	out := []string{}
 	for _, id := range m.order {
 		if m.byID[id].Builtin {

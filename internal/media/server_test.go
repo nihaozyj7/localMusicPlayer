@@ -15,6 +15,18 @@ import (
 	"musicplayer/internal/ffmpeg"
 )
 
+// setFFmpegForTest 直接指定 srv 使用的 ffmpeg 路径，并把「已解析」置位。
+//
+// 为什么要一起置位：Server 现在是**惰性解析**的（构造时不碰 ffmpeg，避免把内置
+// 二进制的解包压到建窗口之前），因此「ffmpeg 字段为空」有两种含义 ——「还没解析」
+// 与「解析过、确实没有」。测试要模拟后者就得把两个字段一起设好。
+func (s *Server) setFFmpegForTest(path string) {
+	s.mu.Lock()
+	s.ffmpeg = path
+	s.ffmpegResolved = true
+	s.mu.Unlock()
+}
+
 func newTestServer(t *testing.T, ext string, size int) (*Server, bootstrap.Song) {
 	t.Helper()
 	dir := t.TempDir()
@@ -169,7 +181,9 @@ func TestNativeRangeRequest(t *testing.T) {
 
 func TestTranscodeWithoutFFmpeg(t *testing.T) {
 	srv, song := newTestServer(t, "ape", 2048)
-	srv.ffmpeg = ""
+	// 显式模拟「已经解析过、结论是没有 ffmpeg」：构造时不再同步解析，
+	// 只把 ffmpeg 置空会被当成「还没解析」而触发一次真实解析。
+	srv.setFFmpegForTest("")
 
 	rec := do(srv, "/audio/"+song.ID+"?t="+srv.Token(), "", "")
 	if rec.Code != http.StatusNotImplemented {
@@ -259,7 +273,7 @@ func TestTranscodeCachedAndServedAsFile(t *testing.T) {
 
 	const pcmSize = 844
 	wantSize := pcmSize + ffmpeg.WAVHeaderSize
-	srv.ffmpeg = fakeFFmpeg(t, pcmSize, "")
+	srv.setFFmpegForTest(fakeFFmpeg(t, pcmSize, ""))
 
 	url := "/audio/" + song.ID + "?t=" + srv.Token()
 
@@ -304,7 +318,7 @@ func TestTranscodeCachedAndServedAsFile(t *testing.T) {
 	}
 
 	// 第二次完整请求应命中缓存：把 ffmpeg 换成一个不存在路径，仍然要能返回
-	srv.ffmpeg = filepath.Join(t.TempDir(), "definitely-missing.exe")
+	srv.setFFmpegForTest(filepath.Join(t.TempDir(), "definitely-missing.exe"))
 	again := do(srv, url, "", "")
 	if again.Code != http.StatusOK {
 		t.Fatalf("第二次请求应命中缓存并返回 200，实际 %d（%s）", again.Code, again.Body.String())
@@ -320,7 +334,7 @@ func TestTranscodeConcurrentSingleFlight(t *testing.T) {
 	srv.SetCacheDir(filepath.Join(t.TempDir(), "tc"))
 
 	callsFile := filepath.Join(t.TempDir(), "calls.txt")
-	srv.ffmpeg = fakeFFmpeg(t, 444, callsFile)
+	srv.setFFmpegForTest(fakeFFmpeg(t, 444, callsFile))
 
 	var wg sync.WaitGroup
 	codes := make([]int, 6)
@@ -352,7 +366,7 @@ func TestTranscodeConcurrentSingleFlight(t *testing.T) {
 func TestClearCache(t *testing.T) {
 	srv, song := newTestServer(t, "ape", 2048)
 	srv.SetCacheDir(filepath.Join(t.TempDir(), "tc"))
-	srv.ffmpeg = fakeFFmpeg(t, 200, "")
+	srv.setFFmpegForTest(fakeFFmpeg(t, 200, ""))
 
 	if rec := do(srv, "/audio/"+song.ID+"?t="+srv.Token(), "", ""); rec.Code != http.StatusOK {
 		t.Fatalf("转码请求失败: %d（%s）", rec.Code, rec.Body.String())
@@ -407,7 +421,7 @@ func TestAudioPrefixIsStable(t *testing.T) {
 // TestHandlerServesSameOriginPath 中间件挂载用的 Handler 必须能直接处理相对路径
 func TestHandlerServesSameOriginPath(t *testing.T) {
 	srv, song := newTestServer(t, "mp3", 4096)
-	srv.ffmpeg = ""
+	srv.setFFmpegForTest("")
 
 	req := httptest.NewRequest(http.MethodGet, srv.SameOriginURL(song.ID), nil)
 	req.Header.Set("Range", "bytes=0-127")
@@ -462,7 +476,7 @@ func TestExactSizeCacheKeyIncludesModTime(t *testing.T) {
 func TestEnsureTranscodedWithoutFFmpeg(t *testing.T) {
 	srv, song := newTestServer(t, "ape", 100)
 	srv.SetCacheDir(filepath.Join(t.TempDir(), "tc"))
-	srv.ffmpeg = ""
+	srv.setFFmpegForTest("")
 
 	if _, err := srv.ensureTranscoded(context.Background(), song); err == nil {
 		t.Error("ffmpeg 不可用时应报错")

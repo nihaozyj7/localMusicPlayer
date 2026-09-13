@@ -104,6 +104,11 @@ func main() {
 			log.Printf("[ffmpeg] prewarm failed: %v", err)
 		}
 		tools := ffmpeg.Resolve()
+		bin := tools.FFmpeg
+		if bin == "" {
+			bin = "未找到"
+		}
+		log.Printf("[ffmpeg] 就绪：%s（%s）", bin, tools.Describe())
 		mediaSrv.RefreshFFmpeg()
 		loudMgr.RefreshTools()
 		emit("ffmpeg:ready", map[string]any{
@@ -217,6 +222,15 @@ func main() {
 	// 并把进度/结果通过事件推给前端
 	state.downloadSvc.app = app
 	state.downloadSvc.setEmitter(emit)
+	// 下载完成后把新文件立刻纳入曲库：下载目录是隐式扫描根，而「实时监听」
+	// 未必开着（也可能因为启动时没有音乐文件夹而根本没启动），只靠监听会漏。
+	state.downloadSvc.setOnFileAdded(func(path string) {
+		go func() {
+			if _, err := state.lib.RescanPaths(context.Background(), []string{path}); err != nil {
+				log.Printf("[download] 新文件入库失败: %v", err)
+			}
+		}()
+	})
 	// 封面服务需要应用句柄来弹「选择本地图片」的文件对话框
 	state.coverSvc.app = app
 	state.coverSvc.setEmitter(emit)
@@ -310,8 +324,10 @@ func startWatchers() {
 	if !cfg.WatchFolders {
 		return
 	}
-	roots := make([]string, 0, len(cfg.Folders))
-	for _, f := range cfg.Folders {
+	// 用 EffectiveFolders（含隐式下载根），与 Scan 的口径保持一致
+	folders := cfg.EffectiveFolders()
+	roots := make([]string, 0, len(folders))
+	for _, f := range folders {
 		roots = append(roots, f.Path)
 	}
 	if len(roots) == 0 {

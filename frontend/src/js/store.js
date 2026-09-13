@@ -256,27 +256,46 @@ export function compileRegex(pattern, flags = "i") {
  *   exclude 优先于 include。
  * 返回值：{ excluded: boolean, reason: string|null }
  */
-export function matchRules(song, rules) {
-  const active = (rules || []).filter((r) => r.enabled);
-  if (!active.length) return { excluded: false, reason: null };
+/**
+ * 把规则预编译一次。
+ *
+ * 为什么必须预编译：matchRules 是按「一首歌」调用的，如果在里面 compileRegex，
+ * 1000 首歌 × N 条正则就是 1000N 次 new RegExp（设置页改一个字就要全库重算一遍）。
+ * 把编译挪到 applyRules 这一层，成本从 O(songs×rules) 降到 O(rules)。
+ */
+function compileRules(rules) {
+  return (rules || [])
+    .filter((r) => r.enabled)
+    .map((rule) => ({
+      rule,
+      re: rule.type === "regex" ? compileRegex(rule.value) : null,
+      bytes: rule.type === "size" ? normalizeSize(rule.value, rule.unit) : NaN,
+    }));
+}
+
+/** 判断单首歌是否被已编译的规则过滤掉 */
+function matchCompiled(song, compiled) {
+  if (!compiled.length) return { excluded: false, reason: null };
 
   // 只要存在启用中的 include 规则，就必须参与「至少命中一条」的判定，
   // 因此 hasInclude 在看规则时无条件置位（与 Go 侧 filter.Match 保持一致）
-  const hasInclude = active.some((r) => r.scope === "include");
+  const hasInclude = compiled.some((c) => c.rule.scope === "include");
   let hitInclude = false;
 
-  for (const rule of active) {
+  for (const c of compiled) {
+    const rule = c.rule;
     let hit = false;
 
     if (rule.type === "size") {
-      const bytes = normalizeSize(rule.value, rule.unit);
-      if (!Number.isFinite(bytes)) continue;
+      if (!Number.isFinite(c.bytes)) continue;
       const fn = SIZE_OPS[rule.op] || SIZE_OPS.lt;
-      hit = fn(song.size, bytes);
+      hit = fn(song.size, c.bytes);
     } else if (rule.type === "regex") {
-      const re = compileRegex(rule.value);
-      if (!re) continue;
-      hit = re.test(song.path) || re.test(`${song.title}.${song.ext}`);
+      if (!c.re) continue;
+      // 与 Go 侧 filter.Match 保持一致：匹配「完整路径」与「文件名」。
+      // 以前这里用 `${title}.${ext}`（标签标题），于是「匹配标签但匹配不到文件名」
+      // 的歌会被前端第二次过滤掉（后端其实保留了它），显示与统计都对不上。
+      hit = c.re.test(song.path) || c.re.test(baseName(song.path));
     }
 
     if (!hit) continue;
@@ -295,13 +314,28 @@ export function matchRules(song, rules) {
   return { excluded: false, reason: null };
 }
 
+/**
+ * 判断单个文件是否被规则过滤掉（单首歌的便捷入口）。
+ *
+ * 语义：
+ *   scope = "exclude" → 命中该规则的**排除**（不需要）
+ *   scope = "include" → 只有命中至少一条 include 规则的才保留（include 为空时全部通过）
+ *   exclude 优先于 include。
+ * 返回值：{ excluded: boolean, reason: string|null }
+ *
+ * 注意：批量判断请用 applyRules —— 这里每次都会重新编译正则。
+ */
+export function matchRules(song, rules) {
+  return matchCompiled(song, compileRules(rules));
+}
+
 /** 应用全部规则，返回可用歌曲与统计（供设置页「预览」使用） */
 export function applyRules(songs, rules) {
+  const compiled = compileRules(rules);
   const kept = [];
   let excluded = 0;
   for (const s of songs) {
-    const r = matchRules(s, rules);
-    if (r.excluded) excluded += 1;
+    if (matchCompiled(s, compiled).excluded) excluded += 1;
     else kept.push(s);
   }
   return { kept, excluded, total: songs.length };
@@ -325,11 +359,14 @@ function currentSongList() {
   const { view, playlistId, playlists, queue, songs } = state;
   const byId = new Map(songs.map((s) => [s.id, s]));
   if (view === "queue") {
-    return queue.map((id) => byId.get(id)).filter(Boolean);
+    // 在线试听曲目不在 songs 里（见 initialState 的说明），但队列里有它的 id。
+    // 只在 songs 里查会让整行消失，且 DOM 下标与 state.queue 下标错位 ——
+    // 表现就是「拖拽移动的不是用户拖的那首」。
+    return queue.map((id) => byId.get(id) || state.onlineSongs.get(id)).filter(Boolean);
   }
   if (view === "playlist" && playlistId) {
     const pl = playlists.find((p) => p.id === playlistId);
-    return (pl?.songIds || []).map((id) => byId.get(id)).filter(Boolean);
+    return (pl?.songIds || []).map((id) => byId.get(id) || state.onlineSongs.get(id)).filter(Boolean);
   }
   return songs;
 }
@@ -359,6 +396,23 @@ function recalcVisible() {
   }
 
   state.visibleSongs = out;
+  // 可见列表的版本号：main.js 的渲染键要用它判断「列表变了没」。
+  // 以前渲染键是 state.visibleSongs.map(id).join(",")，每一帧都要把整个列表
+  // 遍历拼一遍字符串（1000 首就是每帧 1000 次拼接 + 一次大 join）。
+  state.visibleVersion = (state.visibleVersion || 0) + 1;
+  // 顺带重建 id → song 索引：songById 在每帧的同步里被调用好几次，
+  // 每次都 state.songs.find(...) 是 O(n)，1000 首时每帧要扫几千次。
+  songIndex = new Map(state.songs.map((s) => [s.id, s]));
+}
+
+/** 曲库 id → song 的索引，随 state.songs 变化在 recalcVisible 里重建 */
+let songIndex = new Map();
+
+/** 从完整路径里取文件名（与 Go 侧 filepath.Base 对齐， 与 / 都认） */
+function baseName(path) {
+  const s = String(path || "");
+  const i = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
+  return i >= 0 ? s.slice(i + 1) : s;
 }
 
 /** 当前视图的播放上下文（用于「播放全部」与队列来源） */
@@ -538,9 +592,13 @@ export function addNextInQueue(songId) {
 }
 
 export function removeFromQueue(songId) {
+  // 下标必须在**过滤之前**取：原来的写法先 filter 再 indexOf(songId)，
+  // 而此时 songId 已经被删掉了，indexOf 必然返回 -1，于是 currentId 被置成
+  // queue[-1] → null，播放直接停掉（而不是顺延到下一首）。
+  const i = state.queue.indexOf(songId);
   state.queue = state.queue.filter((id) => id !== songId);
   if (state.currentId === songId) {
-    const i = state.queue.indexOf(songId);
+    // i 是移除前的下标，指向的正好是「原来那首的下一首」；越界时钳到末尾
     state.currentId = state.queue[Math.min(i, state.queue.length - 1)] ?? null;
   }
   commit();
@@ -552,9 +610,26 @@ export function reorderQueue(from, to) {
   // 拖拽表达的是「就按我排的这个顺序播」，单曲循环 / 随机都与它矛盾。
   setPlayMode("sequence");
   commit();
-  if (isWails() && state.queueOrigin?.id) {
-    backend.reorderPlaylist(state.queueOrigin.id, from, to);
+  // 只有「队列与来源歌单逐项一致」时，队列下标才等于歌单下标。
+  // 往队列里插过歌之后两者就不再等价（addNextInQueue / appendToQueue 都不会
+  // 清掉 queueOrigin），此时把队列下标写回歌单会**改错那一首歌的位置**，
+  // 而且会落盘污染歌单。所以这里先比对内容，不一致就不写。
+  const origin = state.queueOrigin?.id ? playlistById(state.queueOrigin.id) : null;
+  if (isWails() && origin && sameIdOrder(origin.songIds, state.queue)) {
+    backend.reorderPlaylist(origin.id, from, to);
+  } else if (origin) {
+    // 队列已经不等于歌单了：来源标记降级，避免后续拖拽继续误写歌单
+    state.queueOrigin = null;
   }
+}
+
+/** 两个 id 序列是否逐项相同 */
+function sameIdOrder(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 export function clearQueue() {
@@ -578,7 +653,7 @@ export function clearQueue() {
  */
 export function songById(id) {
   if (!id) return null;
-  return state.songs.find((s) => s.id === id) || state.onlineSongs.get(id) || null;
+  return songIndex.get(id) || state.onlineSongs.get(id) || null;
 }
 
 /* --------------------------------------------------------------------------
@@ -958,7 +1033,35 @@ function loadPersisted() {
   }
 }
 
+/**
+ * 把状态快照写进 localStorage。
+ *
+ * commit() 会被音量滑条这类高频动作按 pointermove 反复调用（一次拖动几十上百次），
+ * 每次都 JSON.stringify 整个快照 + 同步写 localStorage 会明显发卡。所以快照写盘
+ * 走 180ms 去抖：拖动过程中最多每 180ms 写一次，最后一次一定写得进去
+ *（flushConfigSync / beforeunload 会先 flush）。
+ *
+ * 注意：状态本身仍然是**同步**更新的，去抖的只有落盘。
+ */
+let persistTimer = null;
+
 export function persist() {
+  // 配置同步自己带 400ms 去抖，这里直接排期；只有快照写盘需要额外合并
+  scheduleConfigSync();
+  if (persistTimer) return;
+  persistTimer = setTimeout(persistNow, 180);
+}
+
+/** 立刻把待写的快照落盘（页面关闭、显式保存时用） */
+export function persistNow() {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  writeSnapshot();
+}
+
+function writeSnapshot() {
   try {
     const snap = {
       config: state.config,
@@ -981,7 +1084,6 @@ export function persist() {
   } catch {
     /* 忽略配额错误 */
   }
-  scheduleConfigSync();
 }
 
 /* --------------------------------------------------------------------------
@@ -1046,6 +1148,9 @@ function scheduleConfigSync() {
 
 /** 立即把需要落盘的配置推给后端 */
 export async function flushConfigSync() {
+  // 先把去抖中的快照写掉：这个函数是「立即落盘」的入口，
+  // 页面关闭 / 显式保存都指望它，不能因为去抖丢掉最后一次改动。
+  persistNow();
   if (!isWails()) return;
   if (syncTimer) {
     clearTimeout(syncTimer);

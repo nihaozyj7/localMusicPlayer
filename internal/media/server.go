@@ -47,13 +47,17 @@ const transcodeBudgetBytes = 600 << 20 // 600MB
 
 // Server 本地音频服务
 type Server struct {
-	token   string
-	listen  string
-	srv     *http.Server
-	songs   func(id string) (bootstrap.Song, bool)
-	ffmpeg  string
-	mu      sync.Mutex
-	running bool
+	token  string
+	listen string
+	srv    *http.Server
+	songs  func(id string) (bootstrap.Song, bool)
+	ffmpeg string
+	// ffmpegResolved 表示「ffmpeg 已经解析过一次，结论是权威的」。
+	// 构造时不再同步解析（会把内置二进制解包压到建窗口之前），所以必须先分清
+	// 「还没解析」和「解析过、确实没有」—— 前者要补一次解析，后者直接报不可用。
+	ffmpegResolved bool
+	mu             sync.Mutex
+	running        bool
 
 	// 转码缓存：把不能原生播放的格式一次性转成 WAV 落到临时目录，
 	// 之后按普通文件提供，从而拥有准确的 Content-Length 与字节级 seek。
@@ -73,12 +77,14 @@ type cacheItem struct {
 
 // New 创建服务；songs 用于按 id 反查歌曲（避免暴露任意路径）
 func New(songs func(id string) (bootstrap.Song, bool)) *Server {
-	tools := ffmpeg.Resolve()
 	return &Server{
-		token:  bootstrap.RandomID("tk"),
-		songs:  songs,
-		ffmpeg: tools.FFmpeg,
-		cache:  map[string]*cacheItem{},
+		token: bootstrap.RandomID("tk"),
+		songs: songs,
+		// 刻意不在这里同步 Resolve()：内置 ffmpeg 的解包会发生在 main() 建窗口
+		// 之前，把首帧拖慢好几秒。启动流程里有后台 goroutine 调 RefreshFFmpeg()
+		// （见 main.go 的 ffmpeg prewarm）；在那之前需要 ffmpeg 的路径也会先
+		// 看到空值并如实报「不可用」，不会给出错误结果。
+		cache: map[string]*cacheItem{},
 	}
 }
 
@@ -100,6 +106,7 @@ func (s *Server) RefreshFFmpeg() {
 	ffmpeg.Reset()
 	s.mu.Lock()
 	s.ffmpeg = ffmpeg.Resolve().FFmpeg
+	s.ffmpegResolved = true
 	s.mu.Unlock()
 }
 
@@ -125,7 +132,6 @@ func (s *Server) Start() (string, error) {
 	}
 	s.running = true
 	base := s.listen
-	ff := s.ffmpeg
 	s.mu.Unlock()
 
 	go func() {
@@ -133,7 +139,9 @@ func (s *Server) Start() (string, error) {
 			log.Printf("[media] 服务退出: %v", err)
 		}
 	}()
-	log.Printf("[media] 独立端口已启动：%s（ffmpeg: %s）", base, orNone(ff))
+	// 不在这里打印 ffmpeg 路径：它现在由后台 prewarm 解析，此处还没就绪，
+	// 打印出来只会是「未找到」。真正就绪时 main.go 的 prewarm goroutine 会打一条。
+	log.Printf("[media] 独立端口已启动：%s", base)
 	return base, nil
 }
 
@@ -203,11 +211,30 @@ func (s *Server) SameOriginURL(songID string) string {
 	return fmt.Sprintf("%s%s?t=%s", AudioPrefix, songID, s.token)
 }
 
+// ffmpegPath 返回当前可用的 ffmpeg 路径。
+//
+// 构造 Server 时不再同步解析 ffmpeg（那会把内置二进制的解包压到建窗口之前），
+// 所以这里在「后台 prewarm 还没填上」时自己补一次解析，保证调用方拿到的结果
+// 与旧实现一致 —— 否则启动最初那一小段时间里转码会误报「ffmpeg 不可用」。
+func (s *Server) ffmpegPath() string {
+	s.mu.Lock()
+	if s.ffmpegResolved {
+		ff := s.ffmpeg
+		s.mu.Unlock()
+		return ff
+	}
+	s.mu.Unlock()
+	ff := ffmpeg.Resolve().FFmpeg
+	s.mu.Lock()
+	s.ffmpeg = ff
+	s.ffmpegResolved = true
+	s.mu.Unlock()
+	return ff
+}
+
 // CanTranscode 是否具备转码能力
 func (s *Server) CanTranscode() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.ffmpeg != ""
+	return s.ffmpegPath() != ""
 }
 
 /* --------------------------------------------------------------------------
@@ -406,9 +433,7 @@ func (s *Server) ensureTranscoded(ctx context.Context, song bootstrap.Song) (str
 // transcode 把不能原生播放的格式转成 16bit/44.1kHz/立体声 WAV。
 // 实现放在 internal/ffmpeg，供本服务与诊断工具共用一套参数。
 func (s *Server) transcode(ctx context.Context, song bootstrap.Song, out string) error {
-	s.mu.Lock()
-	ff := s.ffmpeg
-	s.mu.Unlock()
+	ff := s.ffmpegPath()
 	if ff == "" {
 		return fmt.Errorf("ffmpeg 不可用")
 	}

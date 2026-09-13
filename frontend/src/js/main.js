@@ -91,6 +91,8 @@ const downloadToasts = new Map();
    增量渲染：根据「渲染键」决定是否重绘主体
    -------------------------------------------------------------------------- */
 let lastKey = "";
+/** 上一次「选中行」同步过的状态（见 paintTrackSelection） */
+let lastSelection = { id: "\u0000", playing: null };
 
 function renderKey() {
   return [
@@ -102,7 +104,9 @@ function renderKey() {
     // 专辑列显隐是「表格结构」级别的变化，必须在键里：
     // 否则表头右键切完之后状态变了、DOM 却没重绘（实测就是这个原因）
     state.config.showAlbumColumn === false ? "no-album" : "album",
-    state.visibleSongs.map((s) => s.id).join(","),
+    // 可见列表版本号（recalcVisible 里自增）：等价于「把全部 id 拼起来」，
+    // 但每帧是 O(1)。以前这里每帧 map+join 整个列表，长列表下是纯粹的浪费。
+    state.visibleVersion ?? 0,
     state.playlists.map((p) => `${p.id}:${p.name}:${p.songIds.length}`).join(","),
     state.songs.length,
     state.lastScan?.at ?? "",
@@ -126,10 +130,14 @@ function renderKey() {
  * 这里在**不重建整张表**的前提下把 aria-current / data-playing 对齐到 currentId，
  * 这样切歌（包括自动下一首、随机播放）都能立刻同步，长列表也不会全量重绘。
  */
-function paintTrackSelection() {
+function paintTrackSelection(rebuilt = false) {
+  const current = state.currentId ?? "";
+  // 每帧遍历整张表是没有意义的：只有「当前曲目 / 播放状态」变了才需要改，
+  // 表格刚重建时行是新的，必须无条件重画一次。
+  if (!rebuilt && lastSelection.id === current && lastSelection.playing === state.playing) return;
+  lastSelection = { id: current, playing: state.playing };
   const rows = document.querySelectorAll(".track");
   if (!rows.length) return;
-  const current = state.currentId ?? "";
   rows.forEach((row) => {
     const isCurrent = row.dataset.id === current;
     const marked = row.getAttribute("aria-current") === "true";
@@ -142,12 +150,14 @@ function paintTrackSelection() {
 function tick() {
   applyDensity();
   const key = renderKey();
+  let rebuilt = false;
   if (key !== lastKey) {
     lastKey = key;
     renderShell();
+    rebuilt = true;
   }
   // 选中行同步必须在 renderShell 之后：重建表格时行是新的，要重新对齐一次
-  paintTrackSelection();
+  paintTrackSelection(rebuilt);
   paintPlayerBar();
   syncCoverAccent();
   renderPlayerView();
@@ -280,10 +290,9 @@ async function hydrateCachedCovers() {
    以前的写法是给底栏封面 <img> 挂一个 load 监听，在回调里取色。它有两个坑，
    症状都是「颜色卡在第一首」：
 
-     1. 兜底封面是一次性的：bindCoverFallback 在图片加载失败时会置
-        dataset.coverFallbackDone="1"（防止默认封面再失败时无限递归），
-        而那个标记**再也没人清掉**。于是只要中途出现过一次「没有封面的歌」，
-        后面每首歌取色都被当成「又在默认封面上」直接 return。
+     1. 兜底封面会把 src 换成默认封面：一旦换过，靠 <img> 的 load 事件根本
+        分不出「这首歌真的没有封面」和「这首歌有封面」，取色结果只能被默认
+        封面的中性灰污染（漏掉真正的封面主色）。
      2. 时机不保证：底栏封面可能在监听挂上之前就已经 load 完成
         （complete=true 的图不会再触发 load），那一次取色就永久丢失。
 

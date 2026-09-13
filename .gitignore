@@ -36,11 +36,13 @@ bin/
 # （保留入库：go:embed 在干净克隆上也需要这些文件存在）
 
 # ---- 内置 ffmpeg ----
-# 自己编译的精简 ffmpeg.exe（约 5.6MB）不入库；用
-# `node tools/build-ffmpeg.mjs` 或 `wails3 task ffmpeg:build` 从源码编译。
+# 自己编译的精简 ffmpeg.exe（约 6MB）与其 gzip 包都不入库；用
+# `node tools/build-ffmpeg.mjs` 或 `wails3 task ffmpeg:build` 从源码编译
+#（脚本会在编译完 exe 后顺手生成 ffmpeg.exe.gz）。
 # 编译需要 MinGW-w64（gcc/nasm/mingw32-make）+ 一个 bash（Git for Windows 自带）。
-# production 构建会把它 go:embed 进 exe。
+# production 构建 go:embed 的是 **.gz**（2.2MB），运行时解包到缓存目录再用。
 internal/ffmpeg/bin/*.exe
+internal/ffmpeg/bin/*.gz
 
 # ---- ffmpeg 源码与编译中间产物（build/ffmpeg/ 下只保留构建脚本）----
 build/ffmpeg/ffmpeg-*/

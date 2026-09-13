@@ -4,7 +4,7 @@
 
 import { icon, openModal, toast } from "./dom.js"
 import { applyRules, compileRegex, state } from "./store.js"
-import { backend, isWails } from "./bridge.js"
+import { backend, isWails, on } from "./bridge.js"
 import { esc, fmtCount, fmtSize, uid } from "./utils.js"
 import {
   applyGlassAlpha,
@@ -2175,6 +2175,14 @@ async function promptEmbedExistingCache({ ctx = {}, force = false } = {}) {
 
 async function runEmbedCache(ctx = {}) {
   const progress = toast("正在把缓存写入歌曲文件…", { duration: 0 })
+  // 批量写入可能要跑几十秒到几分钟。后端一直在发 meta:embed-progress，
+  // 以前前端没人订阅，界面只有一句「正在进行」——用户分不清是在推进还是卡死。
+  const offProgress = on("meta:embed-progress", (payload) => {
+    const done = Number(payload?.done) || 0
+    const total = Number(payload?.total) || 0
+    const title = payload?.title ? " · " + payload.title : ""
+    progress.update(total ? "正在写入歌曲文件 " + done + "/" + total + title : "正在把缓存写入歌曲文件…")
+  })
   try {
     const res = await backend.coverWriteCacheToFiles()
     const written = Number(res?.written) || 0
@@ -2218,6 +2226,8 @@ async function runEmbedCache(ctx = {}) {
   } catch (err) {
     progress.close()
     toast(`写入失败：${err?.message ?? err}`, { tone: "error", duration: 6000 })
+  } finally {
+    offProgress()
   }
 }
 
@@ -2451,6 +2461,14 @@ export function handleSettingControl(actEl, ctx = {}) {
       }
       if (toggleKey === "watchFolders") {
         state.folders.forEach((f) => (f.watching = next))
+        // 必须通知后端：以前只改前端配置与徽标，fsnotify 的监听根在本次运行里
+        // 完全不变 —— 表现是「开关拨了、界面变了、实际开关无效」。
+        // 后端 SetWatchers 会写配置并刷新监听（含「启动时没有文件夹」的补启动）。
+        if (isWails()) {
+          backend.setWatchers(next).catch((err) => {
+            console.warn("[settings] 切换实时监听失败", err)
+          })
+        }
       }
     }
     ctx.commit?.()

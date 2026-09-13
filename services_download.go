@@ -44,6 +44,8 @@ type DownloadService struct {
 	tasks []*DownloadTask
 	// seq 给任务生成稳定且唯一的 id（同一首歌先后下载两次是两条任务）。
 	seq int
+	// onFileAdded 下载成功后的回调（把新文件纳入曲库）。由主程序注入。
+	onFileAdded func(path string)
 }
 
 // 下载任务状态。
@@ -98,6 +100,13 @@ func NewDownloadService(store *bootstrap.Store, client *bilibili.Client) *Downlo
 //
 // 故意不导出：Wails 会把服务的所有导出方法生成到前端绑定里，
 // 而这个方法的入参是函数，走 JSON 序列化一定会失败（生成绑定时会告警）。
+// setOnFileAdded 注册「下载成功」回调（主程序用它把新文件纳入曲库）
+func (s *DownloadService) setOnFileAdded(fn func(path string)) {
+	s.mu.Lock()
+	s.onFileAdded = fn
+	s.mu.Unlock()
+}
+
 func (s *DownloadService) setEmitter(fn func(string, any)) {
 	s.emitFn = fn
 }
@@ -451,6 +460,15 @@ func (s *DownloadService) run(taskID, bvid, title string, durationMS int64, dir 
 		"bytes":    size,
 		"duration": durationMS,
 	})
+
+	// 让刚下载的文件立刻进曲库。
+	//
+	// 为什么不能只靠「实时监听」：下载目录是**隐式扫描根**（用户不必把它加成
+	// 音乐文件夹），而文件监听的根由 refreshWatcher 决定，两者未必都覆盖到它
+	// （历史实现只监听 cfg.Folders）。这里显式做一次增量入库，最稳。
+	if s.onFileAdded != nil {
+		s.onFileAdded(target)
+	}
 }
 
 // failTask 把一条任务标记为失败并广播。
@@ -731,8 +749,25 @@ func safeFilename(s string) string {
 	if len(runes) > 90 {
 		s = string(runes[:90])
 	}
-	return strings.TrimSpace(s)
+	s = strings.TrimSpace(s)
+	// Windows 保留设备名：CON / NUL / COM1 … 不能作为文件名主体（带扩展名也不行）。
+	// 不处理的话 os.Create 会直接失败，用户只看到「下载失败」而不知道原因。
+	// 加下划线前缀保留原意，而不是把名字整个换掉。
+	if windowsReservedNames[strings.ToUpper(s)] {
+		s = "_" + s
+	}
+	return s
 }
+
+// windowsReservedNames Windows 保留设备名（大小写不敏感）
+var windowsReservedNames = func() map[string]bool {
+	m := map[string]bool{"CON": true, "PRN": true, "AUX": true, "NUL": true}
+	for i := 1; i <= 9; i++ {
+		m[fmt.Sprintf("COM%d", i)] = true
+		m[fmt.Sprintf("LPT%d", i)] = true
+	}
+	return m
+}()
 
 // uniquePath 避免覆盖同名文件：a.m4a → a (2).m4a → a (3).m4a …
 func uniquePath(dir, base, ext string) (string, error) {

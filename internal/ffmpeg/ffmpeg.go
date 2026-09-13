@@ -64,20 +64,41 @@ func (t Tools) Describe() string {
 }
 
 var (
-	once     sync.Once
-	resolved Tools
+	ffMu    sync.RWMutex
+	ffTools Tools
+	ffReady bool
 )
 
-// Resolve 解析可用工具（结果缓存，进程内只算一次）
+// Resolve 解析可用工具（结果缓存，进程内只解析一次）。
+//
+// 这里刻意**不用 sync.Once**：Reset 需要能被安全地重新触发（内置二进制解包
+// 完成后、用户在设置里切换 ffmpeg 路径后都会调用），而给 sync.Once 赋值重置
+// 本身就与并发调用构成数据竞争（go test -race 看不出来，因为没跑到）。
+// 「双检 + 读写锁」能给出同样的一次性语义，同时让 Reset 也是并发安全的。
 func Resolve() Tools {
-	once.Do(func() { resolved = resolve() })
-	return resolved
+	ffMu.RLock()
+	if ffReady {
+		t := ffTools
+		ffMu.RUnlock()
+		return t
+	}
+	ffMu.RUnlock()
+
+	ffMu.Lock()
+	defer ffMu.Unlock()
+	if !ffReady {
+		ffTools = resolve()
+		ffReady = true
+	}
+	return ffTools
 }
 
-// Reset 清空缓存（测试用）
+// Reset 清空缓存，让下一次 Resolve 重新解析（解包完成 / 用户改配置后调用）
 func Reset() {
-	once = sync.Once{}
-	resolved = Tools{}
+	ffMu.Lock()
+	ffTools = Tools{}
+	ffReady = false
+	ffMu.Unlock()
 }
 
 // Prewarm 提前把内置二进制解包到磁盘。
@@ -125,18 +146,46 @@ var extraction struct {
 
 // extractBundled 把内置 ffmpeg 写到缓存目录并返回路径。
 // 返回空字符串表示这个构建没有内置二进制（开发构建）。
+//
+// 内置的是 **gzip 压缩**后的二进制（exe 里少放约 3.8MB）。缓存文件名来自
+// 压缩数据的摘要，而「缓存能不能直接复用」用 gzip 尾部的 ISIZE（解压后长度）
+// 判断 —— 两者都不需要真的解压，所以热启动一次解压都不会发生。
 func extractBundled() (string, error) {
 	extraction.once.Do(func() {
+		key, wantSize, ok := bundledIdentity()
+		if !ok {
+			// 开发构建：没有内置，交给系统查找
+			return
+		}
+
+		dir, err := cacheDir()
+		if err != nil {
+			extraction.err = err
+			return
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			extraction.err = fmt.Errorf("创建缓存目录失败: %w", err)
+			return
+		}
+		sum := sha256.Sum256(key)
+		target := filepath.Join(dir, fmt.Sprintf("%s-%s", hex.EncodeToString(sum[:8]), BinaryName()))
+
+		// 已经落盘且长度对得上 → 直接复用（连解压都不做）
+		if st, err := os.Stat(target); err == nil && st.Size() == wantSize {
+			extraction.path = target
+			return
+		}
+
+		// 只有这时才真的解压
 		data, err := embeddedFFmpeg()
 		if err != nil {
 			extraction.err = err
 			return
 		}
 		if len(data) == 0 {
-			// 开发构建：没有内置，交给系统查找
 			return
 		}
-		path, err := writeCached(data)
+		path, err := writeCached(target, data)
 		if err != nil {
 			extraction.err = err
 			return
@@ -146,31 +195,13 @@ func extractBundled() (string, error) {
 	return extraction.path, extraction.err
 }
 
-// writeCached 按内容哈希落盘：内容没变就直接复用，避免每次启动重写 155MB
-func writeCached(data []byte) (string, error) {
-	dir, err := cacheDir()
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("创建缓存目录失败: %w", err)
-	}
-
-	sum := sha256.Sum256(data)
-	short := hex.EncodeToString(sum[:8])
-	name := fmt.Sprintf("%s-%s", short, BinaryName())
-	target := filepath.Join(dir, name)
-
-	// 已存在且大小一致 → 直接复用
-	if st, err := os.Stat(target); err == nil && st.Size() == int64(len(data)) {
-		return target, nil
-	}
-
+// writeCached 把解压后的二进制原子地写到 target。
+func writeCached(target string, data []byte) (string, error) {
 	// 先写临时文件再改名，避免解包中断留下半个可执行文件
 	tmp := target + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o755); err != nil {
 		// 磁盘满/被杀软拦截时给出可执行的降级信息
-		return "", fmt.Errorf("写入内置 ffmpeg 失败（%s）: %w", dir, err)
+		return "", fmt.Errorf("写入内置 ffmpeg 失败（%s）: %w", filepath.Dir(target), err)
 	}
 	if err := os.Rename(tmp, target); err != nil {
 		_ = os.Remove(tmp)
@@ -406,9 +437,9 @@ func SoundDurationMS(ctx context.Context, ffmpegPath, path string) (float64, err
 
 // 转码输出参数：16bit / 44.1kHz / 立体声 PCM
 const (
-	WAVSampleRate = 44100
-	WAVChannels   = 2
-	WAVFrameSize  = WAVChannels * 16 / 8 // 一帧 = 声道数 × 位深/8
+	WAVSampleRate  = 44100
+	WAVChannels    = 2
+	WAVFrameSize   = WAVChannels * 16 / 8 // 一帧 = 声道数 × 位深/8
 	WAVBytesPerSec = WAVSampleRate * WAVFrameSize
 )
 
@@ -416,8 +447,8 @@ const (
 //
 // 做法分两步，不要合并成 ffmpeg 直接输出 .wav：
 //
-//	1) ffmpeg 只输出**裸 PCM**（-f s16le）到 .pcm
-//	2) Go 侧补一个 44 字节标准 WAV 头，再改名到 out
+//  1. ffmpeg 只输出**裸 PCM**（-f s16le）到 .pcm
+//  2. Go 侧补一个 44 字节标准 WAV 头，再改名到 out
 //
 // 为什么不用 ffmpeg 的 wav 复用器：它会插入 LIST/INFO 元数据块，
 // 于是 data 块不在偏移 40，而是往后挪（实测在 70）。这样文件头长度
@@ -514,13 +545,13 @@ func wavHeader(dataBytes int64) []byte {
 	h = append(h, []byte("RIFF")...)
 	put32(uint32(36 + dataBytes))
 	h = append(h, []byte("WAVEfmt ")...)
-	put32(16)                          // fmt 块长度
-	put16(1)                           // PCM
-	put16(uint16(WAVChannels))         // 声道数
-	put32(uint32(WAVSampleRate))       // 采样率
-	put32(uint32(WAVBytesPerSec))      // 字节率
-	put16(uint16(WAVFrameSize))        // 块对齐
-	put16(16)                          // 位深
+	put32(16)                     // fmt 块长度
+	put16(1)                      // PCM
+	put16(uint16(WAVChannels))    // 声道数
+	put32(uint32(WAVSampleRate))  // 采样率
+	put32(uint32(WAVBytesPerSec)) // 字节率
+	put16(uint16(WAVFrameSize))   // 块对齐
+	put16(16)                     // 位深
 	h = append(h, []byte("data")...)
 	put32(uint32(dataBytes))
 	return h

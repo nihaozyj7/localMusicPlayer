@@ -32,6 +32,7 @@ import {
   removeFromQueue,
   reorderQueue,
   setVolume,
+  songById,
   state,
   toggleLike,
   togglePlay,
@@ -261,7 +262,9 @@ function renderQueuePanel() {
   if (key === panelKey) return;
   panelKey = key;
 
-  const songs = state.queue.map((id) => state.songs.find((s) => s.id === id)).filter(Boolean);
+  // 用 songById：在线试听曲目不在 state.songs 里，只在 songs 里查会让这一行
+  // 消失、计数少 1，并让 DOM 下标与 state.queue 下标错位（拖拽会移错那首）。
+  const songs = state.queue.map((id) => songById(id)).filter(Boolean);
   const count = $("#queue-panel-count");
   if (count) count.textContent = `${songs.length} 首`;
 
@@ -875,18 +878,16 @@ export function paintPlayerBar() {
     if (!$("#sleep-panel")?.hidden) syncSleepPanel();
   }
 
-  /* 正在播放行的音柱动画由 tracks.js 的重绘负责，这里只做轻量同步 */
-  const bodyRows = document.querySelectorAll(".track[aria-current='true']");
-  bodyRows.forEach((row) => {
-    if (state.playing) row.removeAttribute("data-playing");
-    else row.setAttribute("data-playing", "false");
-  });
+  /* 正在播放行的音柱动画（data-playing）由 main.js#paintTrackSelection 统一维护。
+     这里以前每帧做一次全文属性查询 document.querySelectorAll(".track[aria-current='true']")，
+     而它要改的东西 paintTrackSelection 已经改过了（两者语义等价：只有
+     data-playing="false" 会暂停动画），所以整段删掉。 */
 }
 
 /** 供播放界面显示「下一曲」提示 */
 export function nextSongPreview() {
   const i = nextIndex(1);
-  return i >= 0 ? state.songs.find((s) => s.id === state.queue[i]) || null : null;
+  return i >= 0 ? songById(state.queue[i]) : null;
 }
 
 export function modeLabel(mode = state.playMode) {

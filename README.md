@@ -152,6 +152,12 @@ $env:MUSICPLAYER_FFMPEG_DIR = "D:\mp-bin"              # 改内置版本的解�
 （编译时没有 `--enable-gpl`/`--enable-nonfree`，而 FFmpeg 的 AAC 解码器与
 `loudnorm` 滤镜本身都是 LGPL）。
 
+在此基础上又做了一步纯体积优化：**嵌进 exe 的是 gzip 压缩后的 ffmpeg**
+（`internal/ffmpeg/bin/ffmpeg.exe.gz`，由 `tools/build-ffmpeg.mjs` 编译完顺手生成）。
+6.0MB → 2.2MB，产物再少约 3.8MB（实测 **16.2MB**）；而运行时的解压只在
+「缓存目录里还没有这一份」时发生一次 —— 热启动连解压都不做，缓存文件名来自
+压缩数据的摘要，「能否复用」用 gzip 尾部的解压后长度判断（见 `internal/ffmpeg`）。
+
 能力清单是唯一事实来源，写在 `build/ffmpeg/features.env`：
 `build-minimal.sh` 照它生成 configure 参数，`--info` 照它核对实际产物，
 两边不会漂移。清单是这样的：

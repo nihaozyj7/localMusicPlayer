@@ -133,7 +133,9 @@ async function main() {
   })()`);
   check(
     "样式按钮组按皮肤注册表渲染",
-    Array.isArray(skins) && skins.join(",") === "classic,immersive,minimal",
+    // 内置八种（用户数据目录里的第三方样式会接在后面）
+    Array.isArray(skins) &&
+      skins.slice(0, 8).join(",") === "classic,immersive,minimal,anime,cosmos,wasteland,arcade,magia",
     JSON.stringify(skins)
   );
 
@@ -427,8 +429,8 @@ async function main() {
     "主题 / 样式卡片：选中按钮在卡片内、没有 button 嵌套",
     cards?.themes > 0 &&
       cards?.themesWithPick === cards?.themes &&
-      cards?.skins === 3 &&
-      cards?.skinsWithPick === 3 &&
+      cards?.skins >= 8 &&
+      cards?.skinsWithPick === cards?.skins &&
       cards?.nestedButtons === 0 &&
       cards?.activeSkins === 1,
     JSON.stringify(cards)

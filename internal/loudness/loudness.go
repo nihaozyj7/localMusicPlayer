@@ -56,7 +56,7 @@ type Measurement struct {
 	// 但它由 Target 决定，所以 Target 变了整条记录就不再有效。
 	Gain float64 `json:"gain,omitempty"`
 
-	Measured bool  `json:"measured,omitempty"` // false 表示「测过但拿不到数据」
+	Measured   bool  `json:"measured,omitempty"` // false 表示「测过但拿不到数据」
 	MeasuredAt int64 `json:"measuredAt"`
 }
 
@@ -80,6 +80,9 @@ const (
 // Manager 响度管理器
 type Manager struct {
 	dataDir string
+	// tools 由后台 prewarm 写入、被测量路径读取，因此单独用一把锁保护
+	// （不要和 mu 混用：mu 保护的是缓存表，持锁时间尺度完全不同）
+	toolsMu sync.RWMutex
 	tools   ffmpeg.Tools
 	conc    int
 
@@ -111,26 +114,51 @@ func NewManager(dataDir string, concurrency int) *Manager {
 	}
 	m := &Manager{
 		dataDir: dataDir,
-		tools:   ffmpeg.Resolve(),
-		conc:    concurrency,
-		items:   map[string]Measurement{},
-		albums:  map[string]Album{},
-		byPath:  map[string]string{},
+		// 刻意**不在这里同步 Resolve()**：内置 ffmpeg 的解包（读 6MB + 哈希 +
+		// 落盘，首次还可能有杀软扫描）会发生在 main() 建窗口之前，把首帧拖慢
+		// 好几秒。启动流程里已有后台 goroutine 调 RefreshTools()（见 main.go
+		// 的 ffmpeg prewarm），而真正需要工具的测量动作都要等用户触发，到那时
+		// 一定已经就绪；万一更早被问到，toolSet() 会自己补一次解析。
+		conc:   concurrency,
+		items:  map[string]Measurement{},
+		albums: map[string]Album{},
+		byPath: map[string]string{},
 	}
 	m.load()
 	return m
 }
 
+// toolSet 返回当前 ffmpeg 工具集；还没解析过就补一次。
+//
+// 构造时不再同步解析（见 NewManager），所以这里要能补上 —— 否则
+// 「后台 prewarm 还没跑完就被问到」会得到「没有 ffmpeg」的假答案。
+func (m *Manager) toolSet() ffmpeg.Tools {
+	m.toolsMu.RLock()
+	t := m.tools
+	m.toolsMu.RUnlock()
+	if t.FFmpeg != "" || t.Source != "" {
+		return t
+	}
+	t = ffmpeg.Resolve()
+	m.toolsMu.Lock()
+	m.tools = t
+	m.toolsMu.Unlock()
+	return t
+}
+
 // Available 是否具备测量能力
-func (m *Manager) Available() bool { return m.tools.Available() }
+func (m *Manager) Available() bool { return m.toolSet().Available() }
 
 // Tools 返回 ffmpeg 工具信息
-func (m *Manager) Tools() ffmpeg.Tools { return m.tools }
+func (m *Manager) Tools() ffmpeg.Tools { return m.toolSet() }
 
-// RefreshTools 重新解析 ffmpeg（设置里切换后调用）
+// RefreshTools 重新解析 ffmpeg（后台 prewarm 完成 / 设置里切换后调用）
 func (m *Manager) RefreshTools() {
 	ffmpeg.Reset()
-	m.tools = ffmpeg.Resolve()
+	t := ffmpeg.Resolve()
+	m.toolsMu.Lock()
+	m.tools = t
+	m.toolsMu.Unlock()
 }
 
 /* --------------------------------------------------------------------------
@@ -325,7 +353,8 @@ func (m *Manager) Clear() error {
 // GainDB 计算把这首歌拉到目标响度所需的增益（dB）。
 //
 // 这里是「响度均衡」的核心：
-//   gain = 目标响度 − 测得的整合响度
+//
+//	gain = 目标响度 − 测得的整合响度
 //
 // 然后再按真峰值收一下，保证不会因为抬升而削波。
 func GainDB(item Measurement, targetLUFS float64) float64 {
@@ -380,10 +409,11 @@ func (m *Manager) ForceMeasure(ctx context.Context, song bootstrap.Song, targetL
 }
 
 func (m *Manager) measureUncached(ctx context.Context, song bootstrap.Song, targetLUFS float64) (Measurement, error) {
-	if !m.tools.Available() {
+	tools := m.toolSet()
+	if !tools.Available() {
 		return Measurement{}, fmt.Errorf("ffmpeg 不可用，无法测量响度")
 	}
-	res, err := analyse(ctx, m.tools.FFmpeg, song.Path)
+	res, err := analyse(ctx, tools.FFmpeg, song.Path)
 	if err != nil {
 		return Measurement{}, err
 	}
@@ -527,11 +557,12 @@ type loudnormJSON struct {
 // analyse 跑一次 loudnorm 分析
 //
 // 参数说明（都踩过坑）：
-//   -vn -map 0:a：m4a/mp4 里常内嵌封面（视频流）。不禁掉的话 ffmpeg 会为它选
-//     视频编码器，而精简构建里所有视频编码器都被关掉了，于是报
-//     "Error selecting an encoder"。
-//   -c:a pcm_s16le：null 复用器仍需要一个音频编码器，必须显式指定
-//     （精简构建只保留 pcm_s16le / flac）。
+//
+//	-vn -map 0:a：m4a/mp4 里常内嵌封面（视频流）。不禁掉的话 ffmpeg 会为它选
+//	  视频编码器，而精简构建里所有视频编码器都被关掉了，于是报
+//	  "Error selecting an encoder"。
+//	-c:a pcm_s16le：null 复用器仍需要一个音频编码器，必须显式指定
+//	  （精简构建只保留 pcm_s16le / flac）。
 func analyse(ctx context.Context, ffmpegPath, path string) (Measurement, error) {
 	args := []string{
 		"-hide_banner", "-nostdin", "-nostats",

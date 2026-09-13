@@ -27,6 +27,10 @@ type Watcher struct {
 	watched map[string]bool // 已 Add 的目录
 	pending map[string]bool // 待处理的变更路径
 	timer   *time.Timer
+	// started 表示事件循环已经跑起来。SetRoots 只能改监听根，**不会**启动循环；
+	// 所以「后补监听」必须走 EnsureStarted，否则会出现「设置里显示在监听，
+	// 实际一个事件都收不到」。
+	started bool
 	ctx     context.Context
 	cancel  context.CancelFunc
 }
@@ -48,11 +52,34 @@ func NewWatcher(lib *Manager) (*Watcher, error) {
 	}, nil
 }
 
-// Start 开始监听指定目录
+// Start 开始监听指定目录（重复调用不会起第二个循环）
 func (w *Watcher) Start(roots []string) error {
 	w.SetRoots(roots)
-	go w.loop()
+	w.mu.Lock()
+	already := w.started
+	w.started = true
+	w.mu.Unlock()
+	if !already {
+		go w.loop()
+	}
 	return nil
+}
+
+// EnsureStarted 幂等地保证「循环已启动 + 监听根已更新」。
+//
+// 场景：应用启动那一刻没有音乐文件夹（或「实时监听」是关的），startWatchers
+// 直接 return，Start 从未被调用；之后用户在设置里添加文件夹 / 打开监听时
+// 只会走到 SetRoots —— 那样只会 fsw.Add，事件循环根本不存在，监听看起来是开的
+// 却完全不工作。refreshWatcher 因此改走这个入口。
+func (w *Watcher) EnsureStarted(roots []string) {
+	w.SetRoots(roots)
+	w.mu.Lock()
+	already := w.started
+	w.started = true
+	w.mu.Unlock()
+	if !already {
+		go w.loop()
+	}
 }
 
 // SetRoots 全量替换监听的根目录集合

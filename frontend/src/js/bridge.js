@@ -126,10 +126,16 @@ async function ensureEvents() {
 export function on(eventName, handler) {
   if (active) {
     let off = null;
+    let cancelled = false;
     ensureEvents().then((mod) => {
+      if (cancelled) return; // 订阅还没就绪就退订了：别再挂上去
       if (mod?.Events?.On) off = mod.Events.On(eventName, (payload) => handler(payload?.data ?? payload));
     });
-    return () => off?.();
+    return () => {
+      cancelled = true;
+      off?.();
+      off = null;
+    };
   }
   const listener = (e) => handler(e.detail);
   window.addEventListener(`dsh:${eventName}`, listener);

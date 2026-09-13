@@ -188,8 +188,10 @@ func (s *LibraryService) RemoveFolder(id string) error {
 	s.refreshWatcher()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
+	// cancel 必须在 goroutine 里 defer：放在外面的话函数一 return 就把刚交给
+	// 后台的 ctx 取消了，扫描必然以「context canceled」失败并弹一条红色 toast。
 	go func() {
+		defer cancel()
 		if _, err := s.lib.Scan(ctx, false); err != nil {
 			s.emit("scan:failed", map[string]any{"message": err.Error()})
 		}
@@ -256,13 +258,18 @@ func (s *LibraryService) refreshWatcher() {
 		return
 	}
 	cfg := s.store.Get()
-	roots := make([]string, 0, len(cfg.Folders))
+	roots := make([]string, 0, len(cfg.Folders)+1)
 	if cfg.WatchFolders {
-		for _, f := range cfg.Folders {
+		// 用 EffectiveFolders 而不是 cfg.Folders：下载目录是一个**隐式扫描根**
+		// （见 bootstrap.EffectiveFolders），而 Scan 就是这么取的。两边口径不一致
+		// 会导致「下载目录里的新歌不会自动出现」。
+		for _, f := range cfg.EffectiveFolders() {
 			roots = append(roots, f.Path)
 		}
 	}
-	s.watch.SetRoots(roots)
+	// EnsureStarted 而不是 SetRoots：启动时若没有文件夹 / 监听是关的，
+	// 事件循环从未启动，只 SetRoots 会得到「界面说在监听、实际收不到事件」。
+	s.watch.EnsureStarted(roots)
 }
 
 func (s *LibraryService) pickDirectory() (string, error) {
@@ -1591,6 +1598,11 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			c.ListDensity = bootstrap.NormalizeListDensity(asString(raw, c.ListDensity))
 		case "showDesktopLyrics":
 			c.ShowDesktopLyrics = asBool(raw, c.ShowDesktopLyrics)
+		case "showDesktopWallpaper":
+			// 前端（desktop-wallpaper.js）一直在推这个键，但这里以前没有对应分支，
+			// 于是「桌面背景歌词」从未落盘：功能当场可用，重启就没了。
+			// 与 showDesktopLyrics 对称；两者的互斥规范化在 config 层统一处理。
+			c.ShowDesktopWallpaper = asBool(raw, c.ShowDesktopWallpaper)
 		case "sleepAfterSong":
 			c.SleepAfterSong = asBool(raw, c.SleepAfterSong)
 		case "aiVendor":

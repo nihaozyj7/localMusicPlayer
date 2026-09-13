@@ -309,14 +309,25 @@ export function on(root, event, selector, handler) {
  * 这里捕获 error（图片的 error 事件不冒泡，必须用捕获阶段）并替换 src，
  * 用 dataset 标记防止默认封面本身再失败时无限递归。
  */
+/** 这个 <img> 当前的地址是不是已经是默认封面（data URL） */
+function isDefaultCoverSrc(img) {
+  return (
+    img.currentSrc === DEFAULT_COVER ||
+    img.src === DEFAULT_COVER ||
+    img.getAttribute("src") === DEFAULT_COVER
+  );
+}
+
 export function bindCoverFallback(img) {
   if (!img || img.dataset.coverFallback === "1") return;
   img.dataset.coverFallback = "1";
   img.addEventListener(
     "error",
     () => {
-      if (img.dataset.coverFallbackDone === "1") return;
-      img.dataset.coverFallbackDone = "1";
+      // 判据是「当前 src 是不是已经是默认封面」而不是一次性标记：
+      // 底栏那个 <img> 是常驻复用的，用一次性标记的话，第一次失败之后就再也
+      // 不兜底了 —— 第二首坏封面会一直显示浏览器的碎图。
+      if (isDefaultCoverSrc(img)) return;
       img.src = DEFAULT_COVER;
     },
     true

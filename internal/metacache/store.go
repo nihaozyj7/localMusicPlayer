@@ -575,6 +575,10 @@ func (s *Store) RemoveCover(songID string, idx int) error {
 // DeleteCover 清空某首歌的全部封面缓存（用户点「恢复原始封面」时用）。
 func (s *Store) DeleteCover(songID string) error {
 	s.mu.Lock()
+	// 索引是懒加载的：少了这一步，当 DeleteCover 恰好是首个访问者时，
+	// s.covers 还是空 map，于是「没找到 → 什么都不删 → 返回成功」，
+	// 之后任意一次读封面又把磁盘索引读回来，用户刚删掉的封面原地复活。
+	s.ensureLoadedLocked()
 	entry, ok := s.covers[songID]
 	delete(s.covers, songID)
 	var saveErr error
@@ -672,6 +676,32 @@ func (s *Store) Lyrics(songID string) (string, bool) {
 		return "", false
 	}
 	return string(data), true
+}
+
+// DeleteLyrics 删掉某首歌的歌词缓存（文件 + 索引条目）。
+//
+// 为什么要有它：SetRoots/清空缓存之类的调用方过去只能自己去歌词目录里
+// os.Remove *.lrc —— 文件没了、索引条目还在内存与磁盘上，于是设置界面
+// 显示的数量不归零，重启后「幽灵条目」依旧在。
+func (s *Store) DeleteLyrics(songID string) (bool, error) {
+	s.mu.Lock()
+	s.ensureLoadedLocked()
+	entry, ok := s.lyrics[songID]
+	if ok {
+		delete(s.lyrics, songID)
+	}
+	var saveErr error
+	if ok {
+		saveErr = s.saveIndexLocked(KindLyrics)
+	}
+	s.mu.Unlock()
+	if !ok {
+		return false, saveErr
+	}
+	if entry.File != "" {
+		_ = os.Remove(filepath.Join(s.dir, string(KindLyrics), entry.File))
+	}
+	return true, saveErr
 }
 
 // LyricsIDs 返回所有已缓存歌词的歌曲 id（「把缓存写进文件」要遍历它）。
@@ -808,7 +838,20 @@ func (s *Store) saveIndexLocked(kind Kind) error {
 	if err := os.MkdirAll(filepath.Join(s.dir, string(kind)), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(s.indexPath(kind), raw, 0o644)
+	// 先写临时文件再改名：索引是所有封面/歌词的**唯一目录表**，直接覆盖时
+	// 崩溃/断电会留下被截断的 JSON，下次启动解析失败就把索引当成空的 ——
+	// 磁盘上的图片还在，但没人引用，用户看到的是「缓存全没了」。
+	// 同包的图片与歌词文件本来就是这么写的，这里补上一致性。
+	target := s.indexPath(kind)
+	tmp := target + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 /* --------------------------------------------------------------------------
