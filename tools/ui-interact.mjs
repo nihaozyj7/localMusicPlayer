@@ -196,7 +196,7 @@ try {
       hasAdd: Boolean(document.getElementById("bar-add")),
       hasQueue: Boolean(document.getElementById("btn-playlist")),
       hasMode: Boolean(document.getElementById("btn-mode")),
-      hasLyricsMatch: Boolean(document.getElementById("btn-lyrics-match")),
+      hasLyricsMatch: Boolean(document.getElementById("btn-lyrics")),
       hasDesktopLyrics: Boolean(document.getElementById("btn-desktop-lyrics")),
       hasVolume: Boolean(document.getElementById("volume")),
       coverSrc: document.getElementById("bar-cover-img").getAttribute("src") || "",

@@ -152,6 +152,17 @@ type Config struct {
 
 	// ShowDesktopLyrics 是否显示桌面歌词（独立透明置顶窗口）。
 	ShowDesktopLyrics bool `json:"showDesktopLyrics"`
+	// DesktopLyricsX / DesktopLyricsY 桌面歌词窗口**上次被拖到哪儿**
+	// （DIP 逻辑像素，与窗口 Position() 同一坐标系）。
+	//
+	// 为什么必须记：这个窗口的拖拽是系统级的（CSS --wails-draggable），
+	// JS 收不到任何拖拽事件，窗口一销毁位置就彻底丢了 ——
+	// 表现就是「每次启动都跑回屏幕底部中间，每次都要重拖」。
+	//
+	// 用 -1 表示「没存过」：0 是合法坐标（副屏在主屏左侧时 X 就是负的，
+	// 而 0 是常见位置），不能拿 0 当哨兵值。
+	DesktopLyricsX int `json:"desktopLyricsX"`
+	DesktopLyricsY int `json:"desktopLyricsY"`
 	// ShowDesktopWallpaper 是否显示桌面背景歌词（铺满桌面、压在桌面图标之下的
 	// 壁纸层窗口，见 desktop_wallpaper.go）。
 	//
@@ -286,6 +297,8 @@ func DefaultConfig() *Config {
 		ListDensity:    "cozy",
 
 		ShowDesktopLyrics:    false,
+		DesktopLyricsX:       DesktopLyricsNoPos,
+		DesktopLyricsY:       DesktopLyricsNoPos,
 		ShowDesktopWallpaper: false,
 		SleepAfterSong:       false,
 		ShuffleMode:          "reshuffle",
@@ -662,6 +675,34 @@ func normalize(cfg *Config) {
 	if cfg.ShowDesktopWallpaper && cfg.ShowDesktopLyrics {
 		cfg.ShowDesktopLyrics = false
 	}
+}
+
+// DesktopLyricsNoPos 表示「桌面歌词还没有位置存档」。
+//
+// 用 -1 而不是 0：0 是完全合法的窗口坐标（副屏在主屏左侧时 X 为负，
+// 主屏左上角就是 0），拿 0 当哨兵会把「拖到左上角」误判成「没存过」。
+const DesktopLyricsNoPos = -1
+
+// DesktopLyricsPos 返回桌面歌词窗口的位置存档；ok=false 表示还没有存过。
+//
+// 把「有没有存过」和「坐标是多少」一起返回，调用方就不必各自记住
+// -1 这个哨兵值的语义（少一处就少一处写错的机会）。
+func (s *Store) DesktopLyricsPos() (int, int, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	x, y := s.cfg.DesktopLyricsX, s.cfg.DesktopLyricsY
+	if x == DesktopLyricsNoPos && y == DesktopLyricsNoPos {
+		return 0, 0, false
+	}
+	return x, y, true
+}
+
+// SetDesktopLyricsPos 记住桌面歌词窗口的位置。
+func (s *Store) SetDesktopLyricsPos(x, y int) error {
+	return s.Update(func(c *Config) {
+		c.DesktopLyricsX = x
+		c.DesktopLyricsY = y
+	})
 }
 
 // Get 返回配置快照（浅拷贝外壳 + 深拷贝切片，避免调用方改到内部状态）

@@ -585,11 +585,12 @@
               <svg id="icon-mode"><use href="#i-repeat" /></svg>
               <span class="mode-btn__badge">1</span>
             </button>
-            <!-- 手动匹配歌词（在线搜索候选 → 应用到当前歌曲，见 online.js）。
-                 图标用「词」这个字本身：放大镜/歌词线条都表达不出「匹配歌词」，
+            <!-- 歌词工作台（在线匹配 / 微调 / 手动编辑，见 lyrics-panel.js）。
+                 图标用「词」这个字本身：放大镜/歌词线条都表达不出「歌词」，
                  字标最直白。需求：歌词不提供「隐藏」入口，所以这里没有歌词显隐按钮 ——
                  详情页那块歌词区由设置 → 歌词 控制。 -->
-            <button class="mode-btn" id="btn-lyrics-match" type="button" data-tip="手动匹配歌词" aria-label="手动匹配歌词">
+            <button class="mode-btn" id="btn-lyrics" type="button" data-tip="歌词"
+              aria-label="歌词" aria-expanded="false" aria-haspopup="dialog">
               <svg><use href="#i-lyric-match" /></svg>
             </button>
             <!-- 桌面歌词 / 桌面背景歌词：选了一个就不能选另一个（互斥逻辑见

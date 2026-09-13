@@ -477,8 +477,10 @@ function lyricsCard() {
   })}
         ${settingRow({
     label: "桌面歌词",
-    hint: "在桌面上显示一行置顶歌词（独立透明窗口，可拖动；底栏「桌面歌词」按钮同效）",
-    control: switchHtml("showDesktopLyrics", state.config.showDesktopLyrics, "桌面歌词"),
+    hint: "在桌面上显示一行置顶歌词（独立透明窗口，可拖动；底栏「桌面歌词」按钮同效）。位置会被记住，换显示器后跑丢了可以在这里重置",
+    control: `${switchHtml("showDesktopLyrics", state.config.showDesktopLyrics, "桌面歌词")}
+              <button class="btn btn--ghost btn--sm" type="button" data-act="reset-desktop-lyrics-pos"
+                data-tip="把桌面歌词窗口移回默认位置并清掉记忆">重置位置</button>`,
   })}
         ${settingRow({
     label: "桌面背景歌词",
@@ -1654,6 +1656,26 @@ export async function handleSettingsAction(actEl, ctx = {}) {
   const id = actEl.dataset.id
 
   switch (act) {
+    /* 桌面歌词位置记忆的出口：换显示器/改分辨率后存档可能落在别扭的地方，
+       给用户一个「回到默认」的按钮，而不是让他去删配置文件。 */
+    case "reset-desktop-lyrics-pos": {
+      if (!isWails()) {
+        toast("浏览器预览模式下没有独立歌词窗口", { duration: 2200 })
+        return
+      }
+      try {
+        const res = await backend.resetDesktopLyricsPosition()
+        if (res && res.applied === false) {
+          toast("已清掉位置记忆；下次打开桌面歌词会用默认位置", { tone: "success", duration: 2600 })
+        } else {
+          toast("桌面歌词已移回默认位置", { tone: "success", duration: 2000 })
+        }
+      } catch (err) {
+        toast(`重置失败：${err?.message ?? err}`, { tone: "error", duration: 5000 })
+      }
+      return
+    }
+
     /* AI 配置文本框（change 事件触发，即失焦时写入） */
     case "ai-field": {
       const key = actEl.dataset.key

@@ -3,8 +3,9 @@
    --------------------------------------------------------------------------
    盯的是「按钮被谁悄悄地删掉 / 加回来」这类回归：
 
-     · 手动匹配歌词的入口（#btn-lyrics-match）必须在，而且点了真能打开面板 ——
-       它以前是运行时 inject 的，online.js 一旦没被任何模块 import，
+     · 歌词入口（#btn-lyrics）必须在，而且点了真能打开歌词工作台，
+       工作台里三个 tab（在线匹配 / 微调 / 手动编辑）都要在 ——
+       它以前是运行时 inject 的，模块一旦没被任何地方 import，
        按钮会**静默消失**（HTML 里也看不出来少了什么，就是踩过的那个坑）；
      · 不能有歌词显隐按钮（#btn-lyrics-visible / #sp-lyrics-toggle）——
        需求：歌词不提供隐藏入口，详情页那块歌词区只由设置 → 歌词控制；
@@ -120,7 +121,7 @@ await sleep(600);
 const tools = await evalJs(`(() => {
   const bar = [...document.querySelectorAll(".playerbar__tools .mode-btn")].map((b) => b.id);
   const sp = [...document.querySelectorAll(".settings-player__tools .mode-btn")].map((b) => b.id);
-  const match = document.getElementById("btn-lyrics-match");
+  const match = document.getElementById("btn-lyrics");
   return {
     bar,
     sp,
@@ -141,25 +142,23 @@ check(
 );
 check("底栏没有全屏按钮", tools.hasFullscreen === false, JSON.stringify(tools.bar));
 check("底栏保留「桌面歌词」按钮", tools.hasDesktop === true, JSON.stringify(tools.bar));
+check("歌词入口在（不再依赖运行时 inject）", tools.bar.includes("btn-lyrics"), JSON.stringify(tools.bar));
+// 需求：图标是「词」字（放大镜/歌词线条都表达不出「歌词」）
 check(
-  "手动匹配歌词入口在（不再依赖运行时 inject）",
-  tools.bar.includes("btn-lyrics-match"),
-  JSON.stringify(tools.bar)
-);
-// 需求：手动匹配歌词的图标换成「词」字（放大镜表达不出「匹配歌词」）
-check(
-  "手动匹配歌词图标/提示正确",
-  tools.matchIcon === "#i-lyric-match" && tools.matchTip === "手动匹配歌词",
+  "歌词按钮图标/提示正确",
+  tools.matchIcon === "#i-lyric-match" && tools.matchTip === "歌词",
   `${tools.matchIcon} / ${tools.matchTip}`
 );
-// 控件顺序：播放模式 / 歌词匹配 / 桌面歌词 / 定时停止 / 选项 / 播放列表
+// 控件顺序：播放模式 / 歌词 / 桌面歌词 / 桌面背景歌词 / 定时停止 / 选项 / 播放列表
+// （桌面歌词与桌面背景歌词是互斥的一组，但外观上各自独立，见 index.html 的说明）
 check(
   "底栏控件顺序符合需求",
   JSON.stringify(tools.bar) ===
     JSON.stringify([
       "btn-mode",
-      "btn-lyrics-match",
+      "btn-lyrics",
       "btn-desktop-lyrics",
+      "btn-desktop-wallpaper",
       "btn-sleep",
       "btn-options",
       "btn-playlist",
@@ -171,20 +170,54 @@ check("设置层紧凑控件里没有歌词显隐按钮", tools.hasSpLyrics === 
 check("设置层里没有重复的播放控件", tools.settingsLayerTools === 0, `找到 ${tools.settingsLayerTools} 个`);
 
 const opened = await evalJs(`(() => {
-  document.getElementById("btn-lyrics-match").click();
-  const panel = [...document.querySelectorAll("section")].find((s) => /手动匹配歌词/.test(s.textContent || ""));
-  return panel ? { found: true, display: getComputedStyle(panel).display } : { found: false };
+  document.getElementById("btn-lyrics").click();
+  const panel = document.getElementById("lyrics-panel");
+  if (!panel) return { found: false };
+  const tabs = [...panel.querySelectorAll("[data-tab]")].map((b) => b.dataset.tab);
+  const panes = [...panel.querySelectorAll("[data-pane]")].filter((p) => !p.hidden).map((p) => p.dataset.pane);
+  return {
+    found: true,
+    display: getComputedStyle(panel).display,
+    expanded: document.getElementById("btn-lyrics").getAttribute("aria-expanded"),
+    tabs,
+    visiblePanes: panes,
+  };
 })()`);
-check("点「手动匹配歌词」真的打开了面板", opened.found === true && opened.display !== "none", JSON.stringify(opened));
+check(
+  "点「歌词」真的打开了歌词工作台",
+  opened.found === true && opened.display !== "none" && opened.expanded === "true",
+  JSON.stringify(opened)
+);
+check(
+  "工作台有「在线匹配 / 微调 / 手动编辑」三个 tab，且只显示当前那个",
+  JSON.stringify(opened.tabs) === JSON.stringify(["online", "nudge", "edit"]) &&
+    JSON.stringify(opened.visiblePanes) === JSON.stringify(["online"]),
+  JSON.stringify({ tabs: opened.tabs, visiblePanes: opened.visiblePanes })
+);
+
+const switched = await evalJs(`(() => {
+  const panel = document.getElementById("lyrics-panel");
+  panel.querySelector('[data-tab="edit"]').click();
+  const panes = [...panel.querySelectorAll("[data-pane]")].filter((p) => !p.hidden).map((p) => p.dataset.pane);
+  return { panes, hasTap: !!panel.querySelector('[data-act="editor-tap"]') };
+})()`);
+check(
+  "切到「手动编辑」能显示编辑器与打轴按钮",
+  JSON.stringify(switched.panes) === JSON.stringify(["edit"]) && switched.hasTap === true,
+  JSON.stringify(switched)
+);
 
 const panelClosed = await evalJs(`(() => {
-  const panel = [...document.querySelectorAll("section")].find((s) => /手动匹配歌词/.test(s.textContent || ""));
-  const close = panel && [...panel.querySelectorAll("button")].find((b) => /关闭/.test(b.textContent || ""));
-  if (close) close.click();
-  else if (panel) panel.style.display = "none";
-  return panel ? getComputedStyle(panel).display : "none";
+  const panel = document.getElementById("lyrics-panel");
+  const close = panel.querySelector('[data-act="close"]');
+  close.click();
+  return { display: getComputedStyle(panel).display, expanded: document.getElementById("btn-lyrics").getAttribute("aria-expanded") };
 })()`);
-check("手动匹配歌词面板可以关掉", panelClosed === "none", String(panelClosed));
+check(
+  "歌词工作台可以关掉",
+  panelClosed.display === "none" && panelClosed.expanded === "false",
+  JSON.stringify(panelClosed)
+);
 
 ws.close();
 child.kill();

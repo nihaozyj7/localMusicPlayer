@@ -166,11 +166,109 @@ export function invalidateLyrics(songId) {
   if (songId) {
     lyricsCache.delete(songId);
     autoMatched.delete(songId);
+    // 偏移也要一起清：它只是「对旧文本的临时修正」，文本换了再叠加就错了
+    lyricsOffsets.delete(songId);
   } else {
     lyricsCache = new Map();
     autoMatched.clear();
+    lyricsOffsets.clear();
   }
   lastPushed.lyricsText = null;
+}
+
+/* --------------------------------------------------------------------------
+   歌词时间微调（整体提前 / 延后）
+   --------------------------------------------------------------------------
+   这里只存「**待应用**的偏移」：它作用于歌词**定位**，不改歌词文本。
+
+   为什么这么设计（而不是直接改文本）：
+     · 用户是「一边听一边拧」的，每次都重写文本会让高亮抖、也看不到本来时间；
+     · 偏移只在定位那一处 + 一次加法，微调面板上的预览、详情页、桌面歌词、
+       桌面背景歌词、第三方皮肤全都自动一致（它们都走 findLyricIndex）。
+   点「应用到歌词」时才把偏移烙进时间戳并写盘（见 lyrics-panel.js），
+   所以这里不需要任何持久化，进程重启后归零是正确行为。
+   -------------------------------------------------------------------------- */
+const lyricsOffsets = new Map(); // songId -> 毫秒（正数 = 整体延后）
+
+/** 取某首歌当前生效的待应用偏移（毫秒） */
+export function lyricsOffsetOf(songId) {
+  return lyricsOffsets.get(songId) || 0;
+}
+
+/** 设置待应用偏移，并立即重推一次（皮肤 / 桌面歌词同步跟着动） */
+export function setLyricsOffset(songId, ms) {
+  if (!songId) return 0;
+  const value = Math.round(Number(ms) || 0);
+  if (!value) lyricsOffsets.delete(songId);
+  else lyricsOffsets.set(songId, value);
+  lastPushed.lyricsText = null;
+  if (host.ctx && currentSong()?.id === songId) push({ type: "lyrics", ...mediaSnapshot() });
+  return value;
+}
+
+/**
+ * 取某首歌**应用了待应用偏移之后**的歌词行。
+ *
+ * 为什么偏移加在「行」上而不是加在「定位时间」上：
+ * 消费歌词的一共有两拨人 —— 宿主自己算的 `lyrics.index`，以及**皮肤自己**
+ * 拿 `ctx.playback().position` 再算一遍行号的（classic / fx-lyrics 都是这样）。
+ * 把偏移加在时间上只有前者能照顾到，详情页的高亮会跟微调面板对不上；
+ * 加在行上则两边天然一致，而且不需要改皮肤契约（对皮肤来说那就是「歌词的时间」）。
+ *
+ * 没有偏移时直接返回原数组：mediaSnapshot 是每帧都会调的，不能每帧都重建
+ * N 个对象（100 行歌词 = 每秒 6000 次分配）。
+ */
+let shiftedCache = { songId: "", offset: 0, lines: [] };
+
+function linesForSong(song) {
+  const cached = song ? lyricsCache.get(song.id) : null;
+  const raw = cached?.lines || [];
+  const offset = lyricsOffsetOf(song?.id);
+  if (!offset || !raw.length) return raw;
+  if (shiftedCache.songId === song.id && shiftedCache.offset === offset) return shiftedCache.lines;
+  const out = raw.map((l) => ({ time: l.time + offset, text: l.text }));
+  shiftedCache = { songId: song.id, offset, lines: out };
+  return out;
+}
+
+/**
+ * 当前曲目的歌词原文、来源与行（歌词工作台用）。
+ *
+ * 返回**原文**而不是解析结果：微调要在原文上整体平移（保留作词/作曲这类
+ * 没有时间标签的信息行），手动编辑也要把原文放进文本框。
+ */
+export function currentLyricsInfo(songId) {
+  // songId 可选：手动编辑的草稿属于「某一首」而不是「当前正在播的那首」，
+  // 用户在编辑途中切歌时，保存目标必须仍然是草稿原本那首（见 lyrics-panel.js）。
+  const song = songId ? songById(songId) : currentSong();
+  const cached = song ? lyricsCache.get(song.id) : null;
+  return {
+    song: song || null,
+    songId: song?.id || "",
+    text: cached?.text || "",
+    source: cached?.source || "none",
+    lines: cached?.lines || [],
+  };
+}
+
+/** 歌词来源的中文名（面板与设置界面共用同一套说法） */
+export function lyricsSourceLabel(source) {
+  switch (source) {
+    case "embedded":
+      return "音频内嵌";
+    case "lrc-file":
+      return "同名 .lrc 文件";
+    case "cache":
+      return "程序缓存";
+    case "online":
+      return "在线匹配";
+    case "manual":
+      return "手动编辑";
+    case "preview":
+      return "预览数据";
+    default:
+      return "暂无";
+  }
 }
 
 /** 确保当前歌曲的歌词已装入缓存（桌面歌词在详情页未打开时也要能显示）。 */
@@ -189,10 +287,10 @@ export async function ensureLyricsLoaded() {
 export function currentLyricLine() {
   const song = currentSong();
   if (!song) return "";
-  const cached = lyricsCache.get(song.id);
-  if (!cached?.lines?.length) return "";
-  const idx = findLyricIndex(cached.lines, state.position);
-  return idx >= 0 ? cached.lines[idx].text : "";
+  const lines = linesForSong(song);
+  if (!lines.length) return "";
+  const idx = findLyricIndex(lines, state.position);
+  return idx >= 0 ? lines[idx].text : "";
 }
 
 /**
@@ -206,14 +304,14 @@ export function currentLyricWindow() {
   const empty = { prev: "", text: "", next: "" };
   const song = currentSong();
   if (!song) return empty;
-  const cached = lyricsCache.get(song.id);
-  if (!cached?.lines?.length) return empty;
-  const idx = findLyricIndex(cached.lines, state.position);
+  const lines = linesForSong(song);
+  if (!lines.length) return empty;
+  const idx = findLyricIndex(lines, state.position);
   if (idx < 0) return empty;
   return {
-    prev: cached.lines[idx - 1]?.text || "",
-    text: cached.lines[idx].text || "",
-    next: cached.lines[idx + 1]?.text || "",
+    prev: lines[idx - 1]?.text || "",
+    text: lines[idx].text || "",
+    next: lines[idx + 1]?.text || "",
   };
 }
 
@@ -230,10 +328,15 @@ export async function applyOnlineLyrics(songId, text, source = "online", options
   autoMatched.add(songId);
   lastPushed.lyricsText = null;
 
+  // 后端保存结果（含 note：说明「已缓存」/「已写入歌曲文件」/「该格式不支持」）。
+  // 调用方（歌词工作台）需要它来告诉用户这次保存到底有没有真正生效 ——
+  // 只回一个 true 的话，遇到「格式不支持写标签」就变成了静默失败。
+  let saveResult = null;
   if (!options.transient && isWails()) {
     const embed = options.embed ?? state.config.embedMeta === true;
     try {
       const res = await backend.lyricsSave(songId, text, source, embed);
+      saveResult = res || null;
       // 后端在「应用」这一步会把字级歌词（逐字 / QRC / KRC）归一化成行级，
       // 并用归一化后的文本写缓存与内嵌文件。用返回值刷新前端缓存，
       // 否则界面与桌面歌词会一直显示 <00:12.00> 这类逐字标记。
@@ -249,7 +352,7 @@ export async function applyOnlineLyrics(songId, text, source = "online", options
 
   // 正在看这首 → 立刻重新推给皮肤
   if (host.ctx && currentSong()?.id === songId) push({ type: "lyrics", ...mediaSnapshot() });
-  return true;
+  return saveResult || { ok: true };
 }
 
 /* ==========================================================================
@@ -443,7 +546,9 @@ function coverListOf(song) {
 
 function lyricsSnapshot(song) {
   const cached = song ? lyricsCache.get(song.id) : null;
-  const lines = cached?.lines || [];
+  // lines 是**应用了待应用偏移**的行（见 linesForSong）：皮肤拿它配
+  // ctx.playback().position 自己算行号，也是对的
+  const lines = linesForSong(song);
   return {
     lines,
     text: cached?.text || "",

@@ -79,10 +79,11 @@ import {
 import { syncDesktopModeButtons } from "./desktop-mode.js";
 import { initSearchPanel } from "./searchpanel.js";
 import { initDownloads } from "./downloads.js";
-// 只为副作用而导入：它把底栏「手动匹配歌词」按钮（#btn-lyrics-match，静态写在
-// index.html 里）接到在线歌词搜索面板上。缺了这行按钮就变成点不动的死按钮，
-// 所以别再删掉 —— 以前它是运行时 inject 的，模块没被导入时按钮会直接消失。
-import "./online.js";
+// 只为副作用而导入：它把底栏「歌词」按钮（#btn-lyrics，静态写在 index.html
+// 里）接到歌词工作台（在线匹配 / 微调 / 手动编辑）上，并订阅主循环来同步
+// 打轴时的时钟。缺了这行按钮就变成点不动的死按钮，所以别再删掉 ——
+// 以前它是运行时 inject 的，模块没被导入时按钮会直接消失。
+import "./lyrics-panel.js";
 
 /** 下载中的 toast（bvid → toast 句柄），进度事件复用同一条 */
 const downloadToasts = new Map();

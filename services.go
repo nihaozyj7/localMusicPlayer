@@ -1253,6 +1253,10 @@ type WindowService struct {
 	desktopText     string
 	desktopPlaying  bool
 	desktopFontSize int
+	// posSaveTimer / posSaveSeq 是「记住桌面歌词窗口位置」的去抖状态
+	// （见 desktop_lyrics.go#scheduleDesktopLyricsPosSave）。
+	posSaveTimer *time.Timer
+	posSaveSeq   uint64
 	// desktopTouched 记录「用户/前端是否已经自己操作过桌面歌词开关」。
 	//
 	// 启动恢复（early_theme.go#restoreDesktopLyricsOnStartup）在超时兜底那条

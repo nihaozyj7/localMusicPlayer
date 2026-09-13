@@ -370,7 +370,7 @@ const lyrics = await evalJs(`(() => {
     hasSpLyrics: !!document.getElementById("sp-lyrics-toggle"),
     hasFullscreen: !!document.getElementById("btn-fullscreen"),
     hasDesktop: !!desktop,
-    hasMatch: !!document.getElementById("btn-lyrics-match"),
+    hasMatch: !!document.getElementById("btn-lyrics"),
   };
 })()`);
 check("点「桌面歌词」不影响详情页歌词（两件事分开）", lyrics.afterDesktop === lyrics.before, JSON.stringify(lyrics));

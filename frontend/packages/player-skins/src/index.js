@@ -38,7 +38,16 @@ export const DEFAULT_SKIN_ID = "classic";
 
 export { defineSkin, inspectSkinModule, SKIN_API_VERSION };
 export { PATCH_TYPES } from "./contract.js";
-export { parseLrc, findLyricIndex } from "./lrc.js";
+export {
+  parseLrc,
+  parseLyricDraft,
+  serializeLrc,
+  shiftLrc,
+  lrcTimeRange,
+  mergeDraftTimes,
+  formatLrcTime,
+  findLyricIndex,
+} from "./lrc.js";
 export { createLyricsView } from "./lyrics-view.js";
 export { createBackgroundLayer } from "./background-layer.js";
 export { escapeHtml, setCoverImage, subtitleOf } from "./html.js";

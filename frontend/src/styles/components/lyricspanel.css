@@ -1,0 +1,589 @@
+/* ==========================================================================
+   lyricspanel.css — 歌词工作台（在线匹配 / 微调 / 手动编辑）
+   --------------------------------------------------------------------------
+   面板从右上角挂下来、底部给播放控件栏让出位置：打轴时必须能看见并操作
+   底栏的播放按钮与进度条，做成全屏层会把「一边听一边打轴」这件事直接堵死。
+
+   只引用令牌，不写颜色字面量（规则见 tokens.css）。
+   ========================================================================== */
+
+.lyricspanel {
+  position: fixed;
+  top: calc(var(--h-titlebar) + var(--sp-4));
+  right: var(--sp-4);
+  bottom: calc(var(--h-playerbar) - 2px);
+  width: min(720px, calc(100vw - var(--sp-5)));
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--panel-radius);
+  border: var(--panel-border);
+  background: var(--panel-bg);
+  backdrop-filter: var(--panel-blur);
+  box-shadow: var(--panel-shadow);
+  color: var(--text-1);
+  animation: lyricspanel-in var(--dur-fast) var(--ease-out);
+}
+
+.lyricspanel[hidden] {
+  display: none;
+}
+
+@keyframes lyricspanel-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--rise) * -1));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* —— 头部：当前曲目 + 歌词来源 —— */
+.lyricspanel__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: var(--hairline);
+}
+
+.lyricspanel__cover {
+  width: var(--size-cover-sm);
+  height: var(--size-cover-sm);
+  border-radius: var(--r-xs);
+  object-fit: cover;
+  background: var(--surface-2);
+  flex: none;
+}
+
+.lyricspanel__meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lyricspanel__title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lyricspanel__sub {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: 2px;
+  min-width: 0;
+}
+
+.lyricspanel__artist {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lyricspanel__badge {
+  flex: none;
+  padding: 1px var(--sp-2);
+  border-radius: var(--r-full);
+  border: var(--hairline);
+  background: var(--surface-1);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* 没有歌词时把来源徽标压暗：它此刻的信息量是「0 份歌词」 */
+.lyricspanel__badge.is-empty {
+  color: var(--text-3);
+  border-style: dashed;
+}
+
+.lyricspanel__close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--btn-sm);
+  height: var(--btn-sm);
+  border: 0;
+  border-radius: var(--btn-radius);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.lyricspanel__close:hover {
+  background: var(--surface-hover);
+  color: var(--text-1);
+}
+
+.lyricspanel__close svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* —— tab —— */
+.lyricspanel__tabs {
+  display: flex;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-4) 0;
+}
+
+.lyricspanel__tab {
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.lyricspanel__tab:hover {
+  color: var(--text-1);
+}
+
+.lyricspanel__tab.is-active {
+  color: var(--text-1);
+  border-bottom-color: var(--accent);
+}
+
+/* —— 来源优先级提示 —— */
+.lyricspanel__notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: var(--sp-3) var(--sp-4) 0;
+  padding: var(--sp-3);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--warning);
+  background: var(--surface-1);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.lyricspanel__notice[hidden] {
+  display: none;
+}
+
+.lyricspanel__notice-opt {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.lyricspanel__notice-opt[hidden] {
+  display: none;
+}
+
+/* —— 主体 —— */
+.lyricspanel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.lyricspanel__pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+}
+
+.lyricspanel__pane[hidden] {
+  display: none;
+}
+
+.lyricspanel__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.lyricspanel__row--between {
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.lyricspanel__row-actions {
+  display: flex;
+  gap: var(--sp-1);
+  flex: none;
+}
+
+.lyricspanel__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--btn-md);
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline-strong);
+  background: var(--surface-1);
+  color: var(--text-1);
+  outline: none;
+}
+
+.lyricspanel__input:focus {
+  box-shadow: var(--focus-ring);
+}
+
+.lyricspanel__hint {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.lyricspanel__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--surface-1);
+}
+
+/* —— 在线匹配候选 —— */
+.candidate {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--sp-2);
+  align-items: center;
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: var(--hairline);
+}
+
+.candidate:last-child {
+  border-bottom: 0;
+}
+
+.candidate:hover {
+  background: var(--surface-hover);
+}
+
+.candidate__main {
+  min-width: 0;
+}
+
+.candidate__title {
+  font-size: var(--fs-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidate__sub {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* —— 微调 —— */
+.nudge__readout {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+
+.nudge__value {
+  font-family: var(--font-num);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+}
+
+.nudge__dirty {
+  font-size: var(--fs-sm);
+  color: var(--warning);
+}
+
+.nudge__dirty[hidden] {
+  display: none;
+}
+
+.nudge__block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.nudge__block--grow {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.nudge__feel {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.nudge__feel .btn {
+  justify-content: flex-start;
+  text-align: left;
+  height: auto;
+  padding: var(--sp-2) var(--sp-3);
+  white-space: normal;
+}
+
+.nudge__steps {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: var(--sp-1);
+}
+
+.nudge__range {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.nudge__line {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: var(--sp-3);
+  padding: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.nudge__line:hover {
+  background: var(--surface-hover);
+}
+
+.nudge__line.is-active {
+  background: var(--surface-active);
+  color: var(--text-1);
+}
+
+.nudge__time {
+  font-family: var(--font-num);
+  color: var(--text-3);
+}
+
+.nudge__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* —— 手动编辑 —— */
+.editor__source {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.editor__text {
+  flex: none;
+  height: 132px;
+  resize: vertical;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline-strong);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font-family: var(--font-num);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  outline: none;
+}
+
+.editor__text:focus {
+  box-shadow: var(--focus-ring);
+}
+
+.editor__transport {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.editor__clock {
+  font-family: var(--font-num);
+  font-size: var(--fs-lg);
+  min-width: 78px;
+}
+
+.editor__spacer {
+  flex: 1 1 auto;
+}
+
+/* 打轴按钮：整块面板里唯一的「大目标」，打轴时手指/鼠标不需要瞄准 */
+.editor__tap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--sp-3);
+  border: var(--hairline-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text-1);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+.editor__tap:hover {
+  background: var(--surface-3);
+}
+
+.editor__tap:active {
+  transform: scale(0.995);
+}
+
+.editor__tap-main {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.editor__tap-hint {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.editor__tap kbd {
+  padding: 0 4px;
+  border-radius: var(--r-xs);
+  border: var(--hairline);
+  background: var(--surface-1);
+  font-family: var(--font-num);
+}
+
+.editor__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.editor__list {
+  flex: 1 1 auto;
+  min-height: 96px;
+  overflow: auto;
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--surface-1);
+}
+
+.editor__empty {
+  padding: var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.drow {
+  display: grid;
+  grid-template-columns: 34px 72px 1fr 24px;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 2px var(--sp-3);
+  border-left: 2px solid transparent;
+  font-size: var(--fs-sm);
+}
+
+.drow:hover {
+  background: var(--surface-hover);
+}
+
+/* 选中行 = 下一次打轴的目标；用左侧竖条 + 底色，不改变行高（避免列表跳动） */
+.drow.is-cursor {
+  background: var(--surface-active);
+  border-left-color: var(--accent);
+}
+
+/* 正在播放到的那一行：只做一个淡淡的标记，与「选中行」区分开 */
+.drow.is-now .drow__text {
+  color: var(--text-1);
+}
+
+.drow.is-now .drow__no {
+  color: var(--text-2);
+}
+
+.drow__no {
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  text-align: right;
+}
+
+.drow__time {
+  padding: 1px var(--sp-1);
+  border: var(--hairline);
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.drow__time:hover {
+  background: var(--surface-hover);
+  color: var(--text-1);
+}
+
+.drow.is-untimed .drow__time {
+  border-style: dashed;
+  color: var(--text-3);
+}
+
+.drow__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.drow.is-cursor .drow__text {
+  color: var(--text-1);
+}
+
+.drow__clear {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.drow:hover .drow__clear {
+  opacity: 1;
+}
+
+.drow__clear:hover {
+  background: var(--surface-hover);
+  color: var(--danger);
+}
+
+.drow__clear[hidden] {
+  display: none;
+}
+
+.drow__clear svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* —— 底部动作条 —— */
+.lyricspanel__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-top: var(--sp-2);
+  border-top: var(--hairline);
+}
+
+.lyricspanel__foot > .lyricspanel__hint {
+  flex: 1 1 auto;
+}

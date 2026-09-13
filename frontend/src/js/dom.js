@@ -156,7 +156,8 @@ let modalSeq = 0;
 /**
  * 打开弹窗
  * @param {{title:string, desc?:string, body?:string, okText?:string, cancelText?:string,
- *          danger?:boolean, onOk?:(values:object, root:HTMLElement)=>boolean|void}} opts
+ *          danger?:boolean, onOk?:(values:object, root:HTMLElement)=>boolean|void,
+ *          onCancel?:(root:HTMLElement)=>boolean|void}} opts
  */
 export function openModal(opts) {
   const bd = backdrop();

@@ -1,7 +1,13 @@
 package main
 
 import (
+	"log"
+	"time"
+
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
+
+	"musicplayer/internal/bootstrap"
 )
 
 /* ==========================================================================
@@ -35,6 +41,12 @@ const (
 	desktopLyricsBottomGap = 108
 	// desktopLyricsMinWidth 最小宽度，避免窄屏时算出负数
 	desktopLyricsMinWidth = 360
+	// desktopLyricsPosSettle 位置落盘的去抖时长。
+	//
+	// Wails 自己已经对 WindowDidMove 做了 50ms 去抖，但拖动过程中事件依然很密，
+	// 而每次落盘都是「序列化整份配置 + 原子写文件」。再等 400ms，
+	// 用户手停下来之后才写一次。
+	desktopLyricsPosSettle = 400 * time.Millisecond
 )
 
 // desktopLyricsSnapshot 桌面歌词窗口要显示的内容。
@@ -86,9 +98,16 @@ func (s *WindowService) closeDesktopLyricsWindow() {
 	s.desktopOn = false
 	// 记下「已经有人操作过」：启动恢复的兜底路径据此退让（见 WindowService）
 	s.desktopTouched = true
+	// 取消还没到点的位置保存（马上要自己写一次，避免重复）
+	if s.posSaveTimer != nil {
+		s.posSaveTimer.Stop()
+		s.posSaveTimer = nil
+	}
 	s.desktopMu.Unlock()
 
 	if w := s.desktopLyricsWindow(); w != nil {
+		// 关闭前补写一次：拖动后的去抖保存可能还没到点，窗口一销毁位置就再也读不到了
+		s.saveDesktopLyricsPos(w)
 		w.Close()
 	}
 }
@@ -124,8 +143,90 @@ func (s *WindowService) ensureDesktopLyrics() *application.WebviewWindow {
 		return nil
 	}
 	w := s.app.Window.NewWithOptions(s.desktopLyricsOptions())
+	s.watchDesktopLyricsMove(w)
 	w.Show()
 	return w
+}
+
+// watchDesktopLyricsMove 记住用户把桌面歌词窗口拖到了哪儿。
+//
+// 为什么必须靠窗口事件：拖拽是系统级的（页面里只是一句
+// `--wails-draggable: drag`，指针按下之后窗口由操作系统移动），
+// JS 侧完全收不到拖拽事件，只能从 Go 这边问窗口要坐标。
+//
+// 落盘本身再去抖 400ms（见 desktopLyricsPosSettle）；关窗口时还会补写一次，
+// 所以「拖完立刻关掉」也不会丢。
+func (s *WindowService) watchDesktopLyricsMove(w *application.WebviewWindow) {
+	if w == nil {
+		return
+	}
+	w.OnWindowEvent(events.Common.WindowDidMove, func(*application.WindowEvent) {
+		s.scheduleDesktopLyricsPosSave(w)
+	})
+}
+
+// scheduleDesktopLyricsPosSave 去抖地把当前位置写进配置。
+func (s *WindowService) scheduleDesktopLyricsPosSave(w *application.WebviewWindow) {
+	id := s.nextPosSaveSeq()
+	s.desktopMu.Lock()
+	if s.posSaveTimer != nil {
+		s.posSaveTimer.Stop()
+	}
+	s.posSaveTimer = time.AfterFunc(desktopLyricsPosSettle, func() {
+		if id != s.posSaveSeq {
+			// 期间又有新的移动：这一次作废，由最后一次负责写
+			return
+		}
+		s.saveDesktopLyricsPos(w)
+	})
+	s.desktopMu.Unlock()
+}
+
+func (s *WindowService) nextPosSaveSeq() uint64 {
+	s.posSaveSeq++
+	return s.posSaveSeq
+}
+
+// saveDesktopLyricsPos 把窗口当前位置写进配置（位置没变就不写盘）。
+func (s *WindowService) saveDesktopLyricsPos(w *application.WebviewWindow) {
+	if w == nil || s.store == nil {
+		return
+	}
+	x, y := w.Position()
+	if oldX, oldY, ok := s.store.DesktopLyricsPos(); ok && oldX == x && oldY == y {
+		return
+	}
+	if err := s.store.SetDesktopLyricsPos(x, y); err != nil {
+		// 记不住位置不是致命错误：下次启动回到默认位置而已，不该打断用户
+		log.Printf("[desktop-lyrics] 保存窗口位置失败: %v", err)
+	}
+}
+
+// resetDesktopLyricsPos 清掉位置存档并立刻把窗口移回默认位置。
+func (s *WindowService) resetDesktopLyricsPos() map[string]any {
+	if s.store != nil {
+		if err := s.store.SetDesktopLyricsPos(bootstrap.DesktopLyricsNoPos, bootstrap.DesktopLyricsNoPos); err != nil {
+			return map[string]any{"ok": false, "reason": err.Error()}
+		}
+	}
+	w := s.desktopLyricsWindow()
+	if w == nil {
+		return map[string]any{"ok": true, "applied": false}
+	}
+	// 注意：这里必须用默认位置算法，不能用 desktopLyricsOptions() ——
+	// 后者会读刚被清掉的存档（清掉之前是存档值），结果「重置」把窗口
+	// 又摆回用户拖过去的地方。这个坑在实现时踩过一次。
+	defX, defY, _ := s.desktopLyricsDefaultPos()
+	w.SetPosition(defX, defY)
+	return map[string]any{"ok": true, "applied": true, "x": defX, "y": defY}
+}
+
+// ResetDesktopLyricsPosition 把桌面歌词窗口移回默认位置并清掉记忆。
+//
+// 给设置界面一个出口：换显示器/改分辨率之后如果存档落在别扭的地方，
+// 用户可以一键回到默认（而不是去删配置文件）。
+func (s *WindowService) ResetDesktopLyricsPosition() map[string]any {
+	return s.resetDesktopLyricsPos()
 }
 
 // desktopLyricsOptions 组装桌面歌词窗口参数。
@@ -157,24 +258,89 @@ func (s *WindowService) desktopLyricsOptions() application.WebviewWindowOptions 
 		},
 	}
 
-	// 位置：主屏工作区（已扣除任务栏）水平居中、底部靠上。
+	// 位置：优先用上次拖到的位置，否则用「主屏工作区水平居中、底部靠上」。
 	// 坐标是 DIP 逻辑像素，Wails 内部按所在屏 ScaleFactor 换算，不用自己乘 DPI。
-	if s.app != nil {
-		if screen := s.app.Screen.GetPrimary(); screen != nil {
-			wa := screen.WorkArea
-			width := desktopLyricsWidth
-			if max := wa.Width - 160; max < width {
-				width = max
-			}
-			if width < desktopLyricsMinWidth {
-				width = desktopLyricsMinWidth
-			}
-			opts.Width = width
-			opts.X = wa.X + (wa.Width-width)/2
-			opts.Y = wa.Y + wa.Height - desktopLyricsHeight - desktopLyricsBottomGap
-		}
+	defX, defY, width := s.desktopLyricsDefaultPos()
+	opts.Width = width
+	opts.X, opts.Y = defX, defY
+	if x, y, ok := s.desktopLyricsSavedPos(); ok {
+		opts.X, opts.Y = x, y
 	}
 	return opts
+}
+
+// desktopLyricsDefaultPos 默认位置与宽度（主屏工作区内，水平居中、底部靠上）。
+func (s *WindowService) desktopLyricsDefaultPos() (int, int, int) {
+	width := desktopLyricsWidth
+	x, y := 0, 0
+	if s.app == nil {
+		return x, y, width
+	}
+	screen := s.app.Screen.GetPrimary()
+	if screen == nil {
+		return x, y, width
+	}
+	wa := screen.WorkArea
+	if max := wa.Width - 160; max < width {
+		width = max
+	}
+	if width < desktopLyricsMinWidth {
+		width = desktopLyricsMinWidth
+	}
+	x = wa.X + (wa.Width-width)/2
+	y = wa.Y + wa.Height - desktopLyricsHeight - desktopLyricsBottomGap
+	return x, y, width
+}
+
+// desktopLyricsSavedPos 读取位置存档，并校验它现在还合不合理。
+//
+// 校验是必须的：用户可能拔掉副屏、改了分辨率或缩放，上一次的坐标就会落在
+// 屏幕之外 —— 那种情况下窗口会「启动后看不见」，用户只会以为功能坏了。
+// 规则故意宽松但明确：**窗口至少要有三分之一落在某块屏幕内**。
+// 不满足就当没存过，回到默认位置（默认位置永远可见）。
+func (s *WindowService) desktopLyricsSavedPos() (int, int, bool) {
+	if s.store == nil {
+		return 0, 0, false
+	}
+	x, y, ok := s.store.DesktopLyricsPos()
+	if !ok {
+		return 0, 0, false
+	}
+	if s.app == nil {
+		// 拿不到屏幕信息时不冒险：回默认位置（总比放到看不见的地方强）
+		return 0, 0, false
+	}
+	if !rectVisibleEnough(x, y, desktopLyricsWidth, desktopLyricsHeight, s.app.Screen.GetAll()) {
+		return 0, 0, false
+	}
+	return x, y, true
+}
+
+// rectVisibleEnough 判断矩形是否至少三分之一面积落在给定的某块屏幕里。
+func rectVisibleEnough(x, y, w, h int, screens []*application.Screen) bool {
+	if len(screens) == 0 {
+		return false
+	}
+	need := w * h / 3
+	if need <= 0 {
+		need = 1
+	}
+	for _, sc := range screens {
+		if sc == nil {
+			continue
+		}
+		// 用 Bounds 而不是 WorkArea：拖到任务栏上方一点点也算「用户想要的」
+		b := sc.Bounds
+		ox := min(x+w, b.X+b.Width) - max(x, b.X)
+		oy := min(y+h, b.Y+b.Height) - max(y, b.Y)
+		if ox <= 0 || oy <= 0 {
+			continue
+		}
+		if ox*oy >= need {
+			return true
+		}
+	}
+	return false
 }
 
 // UpdateDesktopLyrics 主窗口在「歌词行变化 / 播放状态变化」时调用。
