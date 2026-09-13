@@ -6,7 +6,9 @@
  * Result 歌词加载结果
  * @typedef {Object} Result
  * @property {string} lrc
- * @property {string} source - lrc-file | embedded | none
+ * @property {string} source - embedded | lrc-file | cache | online | none
+ * @property {string} [title] - Title/Artist 命中的在线候选（source=online 时才有值，供界面显示「匹配到的是哪首」）
+ * @property {string} [artist]
  */
 
 // In interface mode, this file is likely to contain just comments.

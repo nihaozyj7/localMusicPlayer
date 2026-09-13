@@ -126,7 +126,11 @@ try {
     const layer = document.getElementById("search-overlay");
     return { hasBtn: Boolean(document.getElementById("btn-search")), hidden: layer ? layer.hidden : null, exists: Boolean(layer) };
   `);
-  check("默认不显示搜索弹层，标题栏有搜索按钮", closed.hasBtn && (closed.hidden === true || closed.exists === false), JSON.stringify(closed));
+  check(
+    "默认不显示搜索弹层，标题栏有搜索按钮",
+    closed.hasBtn && (closed.hidden === true || closed.exists === false),
+    JSON.stringify(closed)
+  );
 
   await evalJs(`document.getElementById("btn-search").click(); return true;`);
   await sleep(450);
@@ -159,7 +163,11 @@ try {
     const input = document.getElementById("search-input");
     return { value: input.value, focused: document.activeElement === input };
   `);
-  check("连续输入不丢焦点、字符不丢", afterType.value === "陈默的歌" && afterType.focused === true, JSON.stringify(afterType));
+  check(
+    "连续输入不丢焦点、字符不丢",
+    afterType.value === "陈默的歌" && afterType.focused === true,
+    JSON.stringify(afterType)
+  );
 
   /* 3. 回车出结果（浏览器预览没有在线后端，所以切到本地标签验证结果渲染） */
   await evalJs(`
@@ -195,7 +203,11 @@ try {
     const body = document.getElementById("search-body");
     return { hidden: layer.hidden, kept: body?.dataset.probeId === "keep-me", rows: body?.querySelectorAll(".search-row").length || 0 };
   `);
-  check("关闭只是隐藏，结果 DOM 保留", hiddenState.hidden === true && hiddenState.kept === true, JSON.stringify(hiddenState));
+  check(
+    "关闭只是隐藏，结果 DOM 保留",
+    hiddenState.hidden === true && hiddenState.kept === true,
+    JSON.stringify(hiddenState)
+  );
 
   await evalJs(`document.getElementById("btn-search").click(); return true;`);
   await sleep(400);
@@ -209,7 +221,11 @@ try {
       value: document.getElementById("search-input").value,
     };
   `);
-  check("再次打开复用同一个结果面板", reopened.hidden === false && reopened.sameNode === true && reopened.rows > 0, JSON.stringify(reopened));
+  check(
+    "再次打开复用同一个结果面板",
+    reopened.hidden === false && reopened.sameNode === true && reopened.rows > 0,
+    JSON.stringify(reopened)
+  );
 
   /* 5. 清空按钮：输入与结果一起清掉 */
   const clearVisible = await evalJs(`
@@ -257,7 +273,9 @@ try {
   `);
   check(
     "试听在线歌曲：进队列但不进本地曲库",
-    preview.inQueue === true && preview.inSongs === false && preview.resolved === true &&
+    preview.inQueue === true &&
+      preview.inSongs === false &&
+      preview.resolved === true &&
       preview.after.songs === preview.before.songs,
     JSON.stringify(preview)
   );

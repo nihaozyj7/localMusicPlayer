@@ -19,6 +19,7 @@ import (
 	"musicplayer/internal/loudness"
 	"musicplayer/internal/media"
 	"musicplayer/internal/metacache"
+	"musicplayer/internal/skins"
 	"musicplayer/internal/theme"
 )
 
@@ -30,6 +31,7 @@ type appState struct {
 	lib    *library.Manager
 	watch  *library.Watcher
 	themes *theme.Manager
+	skins  *skins.Manager
 	media  *media.Server
 	loud   *loudness.Manager
 	window *application.WebviewWindow
@@ -42,6 +44,7 @@ type appState struct {
 	loudnessSvc *LoudnessService
 	downloadSvc *DownloadService
 	coverSvc    *CoverService
+	lyricsSvc   *LyricsService
 	metaCache   *metacache.Store
 }
 
@@ -63,6 +66,16 @@ func main() {
 		state.themes = themeMgr
 	}
 
+	// 播放界面皮肤：只看用户数据目录里的样式包，内置皮肤由前端打包提供。
+	// 目录建不出来也不致命 —— 前端拿到的空列表就等于「没有自定义皮肤」，
+	// 但同源托管的 handler 需要它非 nil 才有意义（见下面的 Middleware）。
+	skinMgr, err := skins.NewManager(store.DataDir())
+	if err != nil {
+		log.Printf("skin dir failed: %v", err)
+	} else {
+		state.skins = skinMgr
+	}
+
 	lib := library.NewManager(store)
 	state.lib = lib
 	loudMgr := loudness.NewManager(store.DataDir(), store.Get().ScanConcurrency)
@@ -81,6 +94,9 @@ func main() {
 	// 在线能力共用一个 bilibili 客户端：WBI 签名密钥与设备标识只需要取一次
 	onlineClient := bilibili.NewClient()
 	onlineSvc := newOnlineService(store, onlineClient)
+	// 歌词 / 封面自动匹配时用 AI 清洗元数据
+	aiSvc := NewAiService(store)
+	onlineSvc.setAI(aiSvc)
 
 	go func() {
 		if err := ffmpeg.Prewarm(); err != nil {
@@ -110,6 +126,16 @@ func main() {
 	// 封面/歌词缓存放在配置的缓存目录下（默认 %APPDATA%\MusicPlayer\cache）
 	state.metaCache = metacache.NewStore(filepath.Join(store.Get().CacheDir, "meta"))
 	state.coverSvc = NewCoverService(store, state.metaCache, coverfetch.New(), songs)
+	// AI 元数据清洗：自动匹配封面时先用它把脏文件名解析成正确的元数据。
+	state.coverSvc.setAI(aiSvc)
+
+	// 歌词服务：读缓存 + 在线自动匹配。
+	// 缓存与在线匹配都是可选依赖（注入失败时功能降级，不影响本地歌词读取）。
+	lyricsSvc := NewLyricsService(store, songs)
+	lyricsSvc.setCache(state.metaCache)
+	lyricsSvc.setOnline(newLyricsMatcher(onlineSvc))
+	lyricsSvc.setAI(aiSvc)
+	state.lyricsSvc = lyricsSvc
 
 	var browserArgs []string
 	if port := strings.TrimSpace(os.Getenv("MUSICPLAYER_DEBUG_PORT")); port != "" {
@@ -122,8 +148,9 @@ func main() {
 		Services: []application.Service{
 			application.NewService(state.librarySvc),
 			application.NewService(NewPlaylistService(store)),
-			application.NewService(NewLyricsService(store, songs)),
+			application.NewService(state.lyricsSvc),
 			application.NewService(NewThemeService(themeMgr)),
+			application.NewService(NewSkinService(skinMgr)),
 			application.NewService(NewConfigService(store)),
 			application.NewService(NewMediaService(mediaSrv, songs)),
 			application.NewService(state.loudnessSvc),
@@ -137,6 +164,12 @@ func main() {
 			Middleware: func(next http.Handler) http.Handler {
 				audio := mediaSrv.Handler()
 				online := onlineSvc.Handler()
+				// 自定义皮肤是用户数据目录里的文件，必须由我们自己按只读规则
+				// 托管（asset server 只认打包进二进制的 frontend/dist）。
+				var skinsHandler http.Handler
+				if state.skins != nil {
+					skinsHandler = state.skins.Handler()
+				}
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if strings.HasPrefix(r.URL.Path, onlinePrefix) {
 						online.ServeHTTP(w, r)
@@ -144,6 +177,14 @@ func main() {
 					}
 					if strings.HasPrefix(r.URL.Path, media.AudioPrefix) {
 						audio.ServeHTTP(w, r)
+						return
+					}
+					if strings.HasPrefix(r.URL.Path, skins.Prefix) {
+						if skinsHandler == nil {
+							http.NotFound(w, r)
+							return
+						}
+						skinsHandler.ServeHTTP(w, r)
 						return
 					}
 					next.ServeHTTP(w, r)

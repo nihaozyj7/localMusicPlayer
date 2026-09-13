@@ -1,0 +1,6 @@
+{
+  "name": "示例样式（说明见皮肤说明.md）",
+  "version": "1.0.0",
+  "module": "skin.js",
+  "styles": ["skin.css"]
+}

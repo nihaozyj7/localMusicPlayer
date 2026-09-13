@@ -23,7 +23,7 @@ type EmbedResult struct {
 // ErrUnsupported 表示该格式暂不支持写入标签。
 var ErrUnsupported = errors.New("该格式暂不支持写入元数据")
 
-// EmbedCover 把封面写入音频文件自身的标签。
+// EmbedCover 把封面写入音频文件自身的标签（等价于 EmbedCovers 传一张）。
 //
 // 当前实现支持：
 //   - m4a / mp4（iTunes `covr` atom）：本包用纯 Go 追加一个新的 moov，
@@ -42,6 +42,15 @@ func EmbedLyrics(path, lyrics string) (EmbedResult, error) {
 	return EmbedMeta(path, "", nil, lyrics)
 }
 
+// CoverImage 一张要写进文件的封面。
+//
+// 为什么需要这个类型：同一首歌可以有多张封面（正面 / 背面 / 盘面），
+// 它们要按顺序一起写进文件，第一张就是「封面正面」。
+type CoverImage struct {
+	MIME string
+	Data []byte
+}
+
 // EmbedMeta 把封面与歌词一起写进音频文件（两者都可以为空 = 不写那一样）。
 //
 // 为什么不是「先写封面再写歌词」（两次 EmbedCover / EmbedLyrics）：
@@ -52,12 +61,38 @@ func EmbedLyrics(path, lyrics string) (EmbedResult, error) {
 // 歌词的落地位置：
 //   - m4a / mp4：ilst 里的 `©lyr`（iTunes 的歌词字段，UTF-8 文本）；
 //   - flac：VORBIS_COMMENT 里的 `LYRICS` 字段（保留原有的 TITLE / ARTIST 等注释）。
+//
+// 这个函数保留原签名（有测试与旧调用方），只是转发到 EmbedCovers。
 func EmbedMeta(path, mime string, cover []byte, lyrics string) (EmbedResult, error) {
+	var covers []CoverImage
+	if len(cover) > 0 {
+		covers = []CoverImage{{MIME: mime, Data: cover}}
+	}
+	return EmbedCovers(path, covers, lyrics)
+}
+
+// EmbedCovers 把多张封面 + 歌词一次写进音频文件。
+//
+// 顺序就是写进文件的顺序：第一张 = 封面正面（FLAC 的 PICTURE 类型 3、
+// MP4 的第一个 covr）。重复写入是**替换**语义而不是堆叠：
+// 写之前先把文件里旧的 covr / PICTURE 全部丢掉，再按这里的顺序写回去，
+// 否则用户换几次封面，文件里就会攒下一串再也删不掉的旧图。
+func EmbedCovers(path string, covers []CoverImage, lyrics string) (EmbedResult, error) {
 	if strings.TrimSpace(path) == "" {
 		return EmbedResult{}, errors.New("文件路径为空")
 	}
 	lyrics = strings.TrimSpace(lyrics)
-	if len(cover) == 0 && lyrics == "" {
+
+	// 过滤空项：空数据 / 空 MIME 都写不出一张合法的图，留着只会写坏文件
+	images := make([]CoverImage, 0, len(covers))
+	for _, c := range covers {
+		if len(c.Data) == 0 {
+			continue
+		}
+		images = append(images, c)
+	}
+
+	if len(images) == 0 && lyrics == "" {
 		return EmbedResult{}, errors.New("没有要写入的内容")
 	}
 	// 注意用 TrimPrefix（去掉开头的点）而不是 TrimSuffix：
@@ -66,12 +101,12 @@ func EmbedMeta(path, mime string, cover []byte, lyrics string) (EmbedResult, err
 	ext = strings.TrimSpace(ext)
 
 	if ext == "m4a" || ext == "mp4" || ext == "m4b" || ext == "alac" || ext == "aac" {
-		res, err := embedMetaMP4(path, mime, cover, lyrics)
+		res, err := embedMetaMP4(path, images, lyrics)
 		res.Format = "m4a"
 		return res, err
 	}
 	if ext == "flac" {
-		res, err := embedMetaFLAC(path, mime, cover, lyrics)
+		res, err := embedMetaFLAC(path, images, lyrics)
 		res.Format = "flac"
 		return res, err
 	}
@@ -114,7 +149,7 @@ type mp4Node struct {
 	start   int
 }
 
-func embedMetaMP4(path, mime string, cover []byte, lyrics string) (EmbedResult, error) {
+func embedMetaMP4(path string, covers []CoverImage, lyrics string) (EmbedResult, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return EmbedResult{}, fmt.Errorf("读取文件失败: %w", err)
@@ -124,15 +159,19 @@ func embedMetaMP4(path, mime string, cover []byte, lyrics string) (EmbedResult, 
 		return EmbedResult{}, errors.New("不是有效的 MP4/M4A：找不到 moov")
 	}
 
-	// covr 与 ©lyr 是同级的 ilst 条目，拼在一起（顺序无所谓）
+	// covr 与 ©lyr 是同级的 ilst 条目，拼在一起（顺序无所谓）。
+	// 多张封面 = 多个 covr box，每个里面各有一个 data box。
 	var atoms []byte
-	if len(cover) > 0 {
-		atoms = append(atoms, buildCovrPayload(mime, cover)...)
+	for _, c := range covers {
+		if len(c.Data) == 0 {
+			continue
+		}
+		atoms = append(atoms, buildCovrPayload(c.MIME, c.Data)...)
 	}
 	if lyrics != "" {
 		atoms = append(atoms, box("\xa9lyr", buildTextDataBox([]byte(lyrics)))...)
 	}
-	note := metaNote(len(cover), lyrics)
+	note := metaNote(covers, lyrics)
 
 	// moov 的载荷：从 moovStart+8 到 moovEnd
 	moovPayload := raw[moovStart+8 : moovEnd]
@@ -179,8 +218,11 @@ func embedMetaMP4(path, mime string, cover []byte, lyrics string) (EmbedResult, 
 	// ilst 已存在：只为「这次真的要写」的条目做替换，剩下的原样保留。
 	// 关键细节：lyrics 为空时**不能**把已有的 ©lyr 摘掉 —— 空字符串的含义是
 	// 「这次没有歌词要写」，而不是「把文件里的歌词删掉」。
+	//
+	// covr 这里只 drop 一次：drop 是「整个 ilst 里所有 covr 条目都丢掉」，
+	// 而新的多张 covr 是在过滤完成后一次性 append 上去的，所以不会被误删。
 	drop := map[string]bool{}
-	if len(cover) > 0 {
+	if len(covers) > 0 {
 		drop["covr"] = true
 	}
 	if lyrics != "" {
@@ -254,14 +296,36 @@ func buildTextDataBox(text []byte) []byte {
 }
 
 // metaNote 拼一条人话的结果说明（设置界面会直接显示这句）。
-func metaNote(coverBytes int, lyrics string) string {
+//
+// 覆盖多张时会带上张数：只报总字节数的话，用户看到「已写入封面（1234567 字节）」
+// 完全不知道到底写进去几张。
+func metaNote(covers []CoverImage, lyrics string) string {
+	count, total := 0, 0
+	for _, c := range covers {
+		if len(c.Data) == 0 {
+			continue
+		}
+		count++
+		total += len(c.Data)
+	}
+	coverPart := ""
 	switch {
-	case coverBytes > 0 && lyrics != "":
-		return fmt.Sprintf("已写入封面（%d 字节）与歌词（%d 字）", coverBytes, len([]rune(lyrics)))
-	case coverBytes > 0:
-		return fmt.Sprintf("已写入封面（%d 字节）", coverBytes)
-	case lyrics != "":
-		return fmt.Sprintf("已写入歌词（%d 字）", len([]rune(lyrics)))
+	case count > 1:
+		coverPart = fmt.Sprintf("已写入 %d 张封面（共 %d 字节）", count, total)
+	case count == 1:
+		coverPart = fmt.Sprintf("已写入封面（%d 字节）", total)
+	}
+	lyricsPart := ""
+	if lyrics != "" {
+		lyricsPart = fmt.Sprintf("歌词（%d 字）", len([]rune(lyrics)))
+	}
+	switch {
+	case coverPart != "" && lyricsPart != "":
+		return coverPart + "与" + lyricsPart
+	case coverPart != "":
+		return coverPart
+	case lyricsPart != "":
+		return "已写入" + lyricsPart
 	default:
 		return "没有要写入的内容"
 	}
@@ -273,11 +337,19 @@ func buildCovrPayload(mime string, cover []byte) []byte {
 	if strings.Contains(strings.ToLower(mime), "png") {
 		dataType = 14
 	}
-	// data box：8 字节头 + 4 字节版本 + 4 字节类型 + 4 字节 locale + 载荷。
+	// data box：8 字节头 + 4 字节版本 + 4 字节类型 + 4 字节 locale + 载荷，
+	// 所以声明长度必须是 len(cover)+16。
+	//
+	// 这里原来写的是 +20（多算了 4 字节），于是每个 data box 的长度字段都比
+	// 自己的真实字节数大 4。dhowden/tag 不校验嵌套 box 的长度，所以一直没暴露；
+	// 但**按长度遍历 box 的解析器会读到错位的字节**（internal/meta 的 ReadPictures
+	// 就是这么发现它的）。多出来的 4 字节会让后一个 covr 的起点偏移，
+	// 于是「同一个 ilst 里的第二个封面之后」全部对不齐。
+	//
 	// 类型字节必须落在 box 内偏移 3（1 字节版本 + 3 字节类型），
 	// 见 layout_probe_test.go：放错位置解析器会读成 class=0（implicit）并报错。
-	dataBox := make([]byte, 0, len(cover)+20)
-	dataBox = append(dataBox, boxHeader("data", len(cover)+20)...)
+	dataBox := make([]byte, 0, len(cover)+16)
+	dataBox = append(dataBox, boxHeader("data", len(cover)+16)...)
 	dataBox = append(dataBox, 0, 0, 0, dataType)
 	dataBox = append(dataBox, 0, 0, 0, 0) // locale
 	dataBox = append(dataBox, cover...)
@@ -392,7 +464,7 @@ const (
 	flacBlockPicture       = 6
 )
 
-func embedMetaFLAC(path, mime string, cover []byte, lyrics string) (EmbedResult, error) {
+func embedMetaFLAC(path string, covers []CoverImage, lyrics string) (EmbedResult, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return EmbedResult{}, fmt.Errorf("读取文件失败: %w", err)
@@ -448,8 +520,14 @@ func embedMetaFLAC(path, mime string, cover []byte, lyrics string) (EmbedResult,
 			blocks = append(blocks, block{kind: flacBlockVorbisComment, body: buildVorbisComment(merged)})
 		}
 	}
-	if len(cover) > 0 {
-		blocks = append(blocks, block{kind: flacBlockPicture, body: flacPictureBlock(mime, cover)})
+	// 每张封面一个独立的 PICTURE block（一张一个 block 才是规范做法；
+	// 把多张塞进同一个 block 是无效的，播放器只会读出第一张或直接报错）。
+	// 因为上面已经把旧的 PICTURE 全丢了，这里追加的不会和旧图堆叠。
+	for _, c := range covers {
+		if len(c.Data) == 0 {
+			continue
+		}
+		blocks = append(blocks, block{kind: flacBlockPicture, body: flacPictureBlock(c.MIME, c.Data)})
 	}
 
 	// 重新拼装：注意最后一个 block 要置「最后一块」标志
@@ -469,7 +547,7 @@ func embedMetaFLAC(path, mime string, cover []byte, lyrics string) (EmbedResult,
 	if err := writeFileAtomic(path, out); err != nil {
 		return EmbedResult{}, err
 	}
-	return EmbedResult{OK: true, Message: metaNote(len(cover), lyrics), Bytes: len(out)}, nil
+	return EmbedResult{OK: true, Message: metaNote(covers, lyrics), Bytes: len(out)}, nil
 }
 
 /* --------------------------------------------------------------------------
@@ -558,11 +636,11 @@ func flacPictureBlock(mime string, cover []byte) []byte {
 	be32(3) // 图片类型 3 = 封面正面
 	be32(uint32(len(mime)))
 	out = append(out, mime...)
-	be32(0)                // 描述长度 0
-	be32(0)                // 宽（未知）
-	be32(0)                // 高（未知）
-	be32(0)                // 色深（未知）
-	be32(0)                // 索引色数量（未知）
+	be32(0)                  // 描述长度 0
+	be32(0)                  // 宽（未知）
+	be32(0)                  // 高（未知）
+	be32(0)                  // 色深（未知）
+	be32(0)                  // 索引色数量（未知）
 	be32(uint32(len(cover))) // 图片数据长度
 	out = append(out, cover...)
 	return out

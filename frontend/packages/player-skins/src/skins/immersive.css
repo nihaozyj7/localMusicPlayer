@@ -1,0 +1,104 @@
+/* ==========================================================================
+   immersive.css — 内置样式「沉浸」：封面虚化铺满整窗 + 居中歌词
+   --------------------------------------------------------------------------
+   这个样式是唯一需要「整窗背景层」的：background-layer.js 负责往宿主的
+   .skin-bg 容器里填图，这里负责歌词区的排版与 chrome（标题栏/侧边栏/底栏）
+   透明化 —— 任何一块实色面板压在封面虚化图上都会立刻破掉沉浸感。
+   ========================================================================== */
+
+.playerview[data-skin="immersive"] .playerview__stage {
+  display: grid;
+  place-items: center;
+  padding: var(--sp-5) var(--sp-6) var(--sp-6);
+}
+
+/* 歌词容器：没有任何卡片背景 / 边框 / 阴影，纯文字浮在封面虚化图上 */
+.immersive__card {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+  width: min(760px, 100%);
+  /* 必须给出确定的高度，否则内部歌词滚动区没有可比较的 100%，
+     会一路撑高而不产生滚动（表现为歌词不会自动滚动、也滚不动）。 */
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  overflow: visible;
+}
+
+.immersive__info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+  z-index: 1;
+  text-shadow: 0 1px 18px rgba(0, 0, 0, 0.5);
+}
+
+.immersive__title {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+  color: var(--text-1);
+}
+
+.immersive__artist {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.playerview[data-skin="immersive"] .lyrics {
+  --lyric-size: 16px;
+  --lyric-size-active: 22px;
+  --lyric-dim: 0.4;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ==========================================================================
+   chrome 透明化
+   --------------------------------------------------------------------------
+   宿主在沉浸样式生效时给 .app 打上 data-mode="immersive" + data-view="player"，
+   这里负责把三块 chrome 的底色/毛玻璃清掉。
+   （把「哪个样式要让 chrome 透明」写在皮肤自己的 CSS 里，
+     新增皮肤时不需要回来改宿主的样式表。）
+   ========================================================================== */
+
+.app[data-mode="immersive"][data-view="player"] .titlebar,
+.app[data-mode="immersive"][data-view="player"] .playerbar {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.app[data-mode="immersive"][data-view="player"] .titlebar::after,
+.app[data-mode="immersive"][data-view="player"] .playerbar::before {
+  background: var(--glass-highlight);
+  opacity: 0.25;
+}
+
+/* 侧边栏在沉浸模式下也退成半透明，避免一整块灰玻璃压住封面 */
+.app[data-mode="immersive"][data-view="player"] .sidebar {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-right-color: transparent;
+}
+
+.app[data-mode="immersive"][data-view="player"] .sidebar .navitem[aria-selected="true"] {
+  background: var(--surface-hover);
+}

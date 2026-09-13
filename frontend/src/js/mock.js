@@ -176,7 +176,7 @@ export const MOCK_FILTER_RULES = [
     id: "rule_tmp",
     type: "regex",
     op: "match",
-    value: "(^|[\\\\/])_tmp|^\\.|~\$",
+    value: "(^|[\\\\/])_tmp|^\\.|~$",
     scope: "exclude",
     enabled: false,
   },

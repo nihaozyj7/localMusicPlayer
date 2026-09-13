@@ -12,6 +12,8 @@ import { $, bindCoverFallback, icon, openMenu, toast } from "./dom.js";
 import { createSlider } from "./slider.js";
 import { applyVolume, seekTo } from "./audio.js";
 import { addSongsTo } from "./playlists.js";
+import { setRuntimeToken } from "./runtime-tokens.js";
+import { applyGlassAlpha, resolvedGlassAlpha, resolvedGlassBlur } from "./theme.js";
 import {
   LIKED_ID,
   clearQueue,
@@ -25,6 +27,7 @@ import {
   playSong,
   playlistById,
   removeFromQueue,
+  reorderQueue,
   setVolume,
   state,
   toggleLike,
@@ -34,15 +37,16 @@ import {
 import { coverOf, esc, fmtTime } from "./utils.js";
 
 const MODE_META = {
-  sequence: { icon: "list-order", label: "顺序播放" },
-  "loop-all": { icon: "repeat", label: "列表循环" },
+  // 顺序播放 = 列表循环（按列表顺序播完回到开头）
+  sequence: { icon: "repeat", label: "列表循环" },
+  "loop-all": { icon: "repeat", label: "列表循环" }, // 旧配置兼容
   "loop-one": { icon: "repeat-one", label: "单曲循环" },
   shuffle: { icon: "shuffle", label: "随机播放" },
 };
 
 let progressSlider = null;
 let volumeSlider = null;
-let lastPainted = {
+const lastPainted = {
   id: null,
   pos: -1,
   dur: -1,
@@ -77,6 +81,8 @@ export function initPlayerBar({ onOpenPlayer, onToggleQueue }) {
     volume: $("#volume"),
     desktopLyrics: $("#btn-desktop-lyrics"),
     playlist: $("#btn-playlist"),
+    sleep: $("#btn-sleep"),
+    options: $("#btn-options"),
   };
 
   // 封面兜底：后端没给封面 / 地址失效时换默认封面，不显示破碎图标
@@ -142,18 +148,17 @@ export function initPlayerBar({ onOpenPlayer, onToggleQueue }) {
     if (onToggleQueue) onToggleQueue();
     else toggleQueuePanel();
   });
-  /* 「桌面歌词」= 在桌面上单独开一个透明窗口显示歌词（尚未实现）。
-     注意这里**没有**歌词显隐按钮：需求是歌词不提供隐藏入口，
-     详情页那块歌词区由设置 → 歌词控制。 */
-  els.desktopLyrics?.addEventListener("click", () => {
-    toast("桌面歌词暂未实现：它会在桌面上单独开一个透明窗口显示歌词，不影响详情页里的歌词", {
-      tone: "warning",
-      duration: 4200,
-    });
+  // 桌面歌词：切换悬浮歌词窗口（真正的「窗口歌词」不再是占位）。
+  els.desktopLyrics?.addEventListener("click", () => toggleDesktopLyrics());
+  els.sleep?.addEventListener("click", () => toggleSleepPanel());
+  els.options?.addEventListener("click", () => {
+    if (state.queueOpen) toggleQueuePanel(false);
+    toggleOptionsPanel();
   });
 
   bindQueuePanel();
   renderQueuePanel();
+  initOptionsPanel();
 }
 
 /**
@@ -209,6 +214,7 @@ const PANEL_MS = 200;
 let panelCloseTimer = null;
 let panelBound = false;
 let panelKey = "";
+let queueDragFrom = -1;
 
 export function toggleQueuePanel(force) {
   const next = typeof force === "boolean" ? force : !state.queueOpen;
@@ -258,7 +264,7 @@ function renderQueuePanel() {
     .map((song, i) => {
       const current = song.id === state.currentId;
       return `
-      <div class="queue-item" data-queue-id="${esc(song.id)}" aria-current="${current}" role="button" tabindex="0">
+      <div class="queue-item" data-queue-id="${esc(song.id)}" aria-current="${current}" role="button" tabindex="0" draggable="true">
         <span class="queue-item__index">${current && state.playing ? icon("play") : i + 1}</span>
         <span class="queue-item__cover"><img src="${esc(coverOf(song))}" alt="" loading="lazy" /></span>
         <span class="queue-item__main">
@@ -286,11 +292,6 @@ function bindQueuePanel() {
     clearQueue();
     toast("播放列表已清空");
   });
-  $("#queue-reverse")?.addEventListener("click", () => {
-    state.queue = state.queue.slice().reverse();
-    commit();
-    toast("已反转播放顺序");
-  });
 
   panel.addEventListener("click", (e) => {
     const del = e.target.closest("[data-queue-del]");
@@ -309,6 +310,392 @@ function bindQueuePanel() {
     if (!item) return;
     e.preventDefault();
     playSong(item.dataset.queueId);
+  });
+
+  // 播放列表（队列）拖拽排序：整行可拖，拖到目标行上半/下半决定插入位置。
+  panel.addEventListener("dragstart", (e) => {
+    const item = e.target.closest?.("[data-queue-id]");
+    if (!item) return;
+    queueDragFrom = [...item.parentElement.children].indexOf(item);
+    item.classList.add("is-dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", item.dataset.queueId || "");
+  });
+
+  panel.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    const item = e.target.closest?.("[data-queue-id]");
+    panel.querySelectorAll(".queue-item.is-drop-before,.queue-item.is-drop-after").forEach((n) =>
+      n.classList.remove("is-drop-before", "is-drop-after")
+    );
+    if (!item) return;
+    const rect = item.getBoundingClientRect();
+    const after = e.clientY > rect.top + rect.height / 2;
+    item.classList.add(after ? "is-drop-after" : "is-drop-before");
+  });
+
+  panel.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const item = e.target.closest?.("[data-queue-id]");
+    const from = queueDragFrom;
+    queueDragFrom = -1;
+    const clearDropClasses = () =>
+      panel.querySelectorAll(".queue-item.is-dragging,.queue-item.is-drop-before,.queue-item.is-drop-after").forEach((n) =>
+        n.classList.remove("is-dragging", "is-drop-before", "is-drop-after")
+      );
+    if (!item || from < 0) {
+      clearDropClasses();
+      return;
+    }
+    const rect = item.getBoundingClientRect();
+    const after = e.clientY > rect.top + rect.height / 2;
+    clearDropClasses();
+    const targetIndex = [...item.parentElement.children].indexOf(item);
+    // insertAt 是「删掉源元素之后」的插入下标，向下拖时减 1 抵消位移。
+    let insertAt = after ? targetIndex + 1 : targetIndex;
+    if (from < insertAt) insertAt -= 1;
+    if (insertAt !== from) reorderQueue(from, insertAt);
+  });
+
+  panel.addEventListener("dragend", () => {
+    queueDragFrom = -1;
+    panel.querySelectorAll(".queue-item.is-dragging,.queue-item.is-drop-before,.queue-item.is-drop-after").forEach((n) =>
+      n.classList.remove("is-dragging", "is-drop-before", "is-drop-after")
+    );
+  });
+}
+
+/* --------------------------------------------------------------------------
+   桌面歌词 / 定时停止 / 播放选项
+   -------------------------------------------------------------------------- */
+export function toggleDesktopLyrics() {
+  state.config.showDesktopLyrics = !state.config.showDesktopLyrics;
+  commit();
+  $("#btn-desktop-lyrics")?.setAttribute("aria-pressed", String(state.config.showDesktopLyrics));
+  const sw = $("#opt-desktop-lyrics");
+  if (sw) sw.setAttribute("aria-checked", String(state.config.showDesktopLyrics));
+  toast(state.config.showDesktopLyrics ? "已开启桌面歌词" : "已关闭桌面歌词", { duration: 1400 });
+}
+
+/** 剩余时长文案：1 小时 05 分 / 05:20 */
+function fmtRemain(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h} 小时 ${String(m).padStart(2, "0")} 分`;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+const SLEEP_PRESETS = [15, 30, 60, 90];
+
+/** 定时停止面板的滑条实例（拖动同步倒计时要用它） */
+let sleepSlider = null;
+
+/**
+ * 定时停止面板（需求：把原来的菜单改成一个面板，上方是一条可拖拽的
+ * 0~300 分钟滑条）。
+ *
+ * 为什么不再用菜单：菜单只能选几档预设，用户想要「47 分钟后停」就不行了；
+ * 而滑条天然表达「0~300 连续可调」，0 = 关闭也和「拖到最左就是关」一致。
+ * 拖动过程中只改文案不落地：否则每像素都会重起一次倒计时。
+ */
+function openSleepPanel() {
+  const panel = $("#sleep-panel");
+  const body = $("#sleep-panel-body");
+  if (!panel || !body) return;
+  initSleepPanel(body);
+  panel.hidden = false;
+  requestAnimationFrame(() => panel.setAttribute("data-state", "opened"));
+  $("#btn-sleep")?.setAttribute("aria-pressed", "true");
+  syncSleepPanel();
+}
+
+function closeSleepPanel() {
+  const panel = $("#sleep-panel");
+  if (!panel) return;
+  panel.setAttribute("data-state", "closed");
+  setTimeout(() => {
+    if (panel.getAttribute("data-state") === "closed") panel.hidden = true;
+  }, 180);
+  $("#btn-sleep")?.setAttribute("aria-pressed", String(Boolean(state.sleepTimer)));
+}
+
+function toggleSleepPanel() {
+  const panel = $("#sleep-panel");
+  if (!panel) return;
+  if (panel.hidden) openSleepPanel();
+  else closeSleepPanel();
+}
+
+let sleepPanelBound = false;
+
+function initSleepPanel(body) {
+  if (sleepPanelBound) return;
+  sleepPanelBound = true;
+
+  body.innerHTML = `
+    <div class="sleep-panel__bar">
+      <div class="sleep-panel__readout">
+        <span class="sleep-panel__value" id="sleep-value">未开启</span>
+        <span class="sleep-panel__sub" id="sleep-sub">拖动下面的条设置分钟数</span>
+      </div>
+      <div class="slider sleep-panel__slider" id="sleep-slider" role="slider" tabindex="0"
+        aria-label="定时停止分钟数" aria-valuemin="0" aria-valuemax="300" aria-valuenow="0">
+        <div class="slider__rail"><div class="slider__fill"></div></div>
+        <div class="slider__thumb"></div>
+        <div class="slider__bubble">0</div>
+      </div>
+      <div class="sleep-panel__scale"><span>0</span><span>150</span><span>300 分钟</span></div>
+    </div>
+    <div class="sleep-panel__row">
+      <button class="btn btn--sm" type="button" data-sleep-act="after-song">
+        <svg><use href="#i-clock" /></svg><span>播完当前歌曲停止</span>
+      </button>
+      <button class="btn btn--sm" type="button" data-sleep-act="presets">
+        <svg><use href="#i-list-order" /></svg><span>常用档位</span>
+      </button>
+      <button class="btn btn--sm" type="button" data-sleep-act="off">
+        <svg><use href="#i-close" /></svg><span>取消定时</span>
+      </button>
+    </div>
+    <div class="sleep-panel__hint">拖到 0 分钟就是取消定时；设置从松手那一刻开始倒计时。</div>`;
+
+  sleepSlider = createSlider($("#sleep-slider"), {
+    min: 0,
+    max: 300,
+    step: 1,
+    value: 0,
+    format: (v) => `${Math.round(v)} 分钟`,
+    onChange: (v) => {
+      // 拖动中只更新读数（不 commit）：否则每动一像素都会重起倒计时
+      const valueEl = $("#sleep-value");
+      if (valueEl) valueEl.textContent = Math.round(v) <= 0 ? "未开启" : `${Math.round(v)} 分钟`;
+      const subEl = $("#sleep-sub");
+      if (subEl) subEl.textContent = Math.round(v) <= 0 ? "松手即关闭定时" : "松手开始倒计时";
+    },
+    onCommit: (v) => applySleepMinutes(v),
+  });
+
+  body.addEventListener("click", (e) => {
+    const act = e.target.closest("[data-sleep-act]")?.dataset.sleepAct;
+    if (!act) return;
+    if (act === "off") {
+      clearSleepTimer("已取消定时停止");
+    } else if (act === "after-song") {
+      state.sleepTimer = { type: "after-song" };
+      commit();
+      syncSleepPanel();
+      toast("将在当前歌曲播放完后停止", { duration: 1800 });
+    } else if (act === "presets") {
+      openSleepPresets(e.target.closest("[data-sleep-act]"));
+    }
+  });
+
+  $("#sleep-close")?.addEventListener("click", () => closeSleepPanel());
+
+  // 点面板外 / Esc 关闭（与选项面板一致）
+  document.addEventListener("pointerdown", (e) => {
+    const panel = $("#sleep-panel");
+    if (!panel || panel.hidden) return;
+    if (panel.contains(e.target) || e.target.closest?.("#btn-sleep")) return;
+    closeSleepPanel();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const panel = $("#sleep-panel");
+    if (panel && !panel.hidden) closeSleepPanel();
+  });
+}
+
+/** 常用档位：滑条已经能表达任意分钟数，这里只是省一次拖动 */
+function openSleepPresets(anchor) {
+  openMenu({
+    anchor,
+    items: SLEEP_PRESETS.map((n) => ({ id: `min-${n}`, label: `${n} 分钟后停止`, icon: "clock" })),
+    onPick: (id) => {
+      const minutes = Number(String(id).slice(4)) || 0;
+      applySleepMinutes(minutes);
+    },
+  });
+}
+
+/** 把滑条读数落地成真正的定时器 */
+function applySleepMinutes(minutes) {
+  const n = Math.round(Number(minutes) || 0);
+  if (n <= 0) {
+    clearSleepTimer("已取消定时停止");
+    return;
+  }
+  state.sleepTimer = { type: "duration", until: Date.now() + n * 60000, minutes: n };
+  commit();
+  syncSleepPanel();
+  toast(`${n} 分钟后停止播放`, { duration: 1800 });
+}
+
+function clearSleepTimer(message) {
+  state.sleepTimer = null;
+  commit();
+  syncSleepPanel();
+  if (message) toast(message, { duration: 1400 });
+}
+
+/** 把面板上的读数与滑条同步到当前定时器（倒计时进行中时也要跟着走） */
+function syncSleepPanel() {
+  const panel = $("#sleep-panel");
+  if (!panel || panel.hidden) return;
+  const timer = state.sleepTimer;
+  const valueEl = $("#sleep-value");
+  const subEl = $("#sleep-sub");
+  if (timer?.type === "after-song") {
+    if (valueEl) valueEl.textContent = "播完当前歌曲";
+    if (subEl) subEl.textContent = "当前这首结束即暂停，不再进下一首";
+    sleepSlider?.set(0, { silent: true });
+    return;
+  }
+  if (timer?.type === "duration") {
+    const remainMs = Math.max(0, timer.until - Date.now());
+    if (valueEl) valueEl.textContent = `剩余 ${fmtRemain(remainMs)}`;
+    if (subEl) subEl.textContent = `共 ${timer.minutes} 分钟`;
+    // 正在拖动时不抢滑块位置（否则手指和倒计时会互相打架）
+    if (sleepSlider && $("#sleep-slider")?.dataset.dragging !== "true") {
+      sleepSlider.set(Math.max(0, Math.round(remainMs / 60000)), { silent: true });
+    }
+    return;
+  }
+  if (valueEl) valueEl.textContent = "未开启";
+  if (subEl) subEl.textContent = "拖动上面的条设置分钟数";
+}
+
+/** 定时停止到点：暂停播放并清掉定时器 */
+function checkSleepTimer() {
+  const timer = state.sleepTimer;
+  if (timer?.type !== "duration" || Date.now() < timer.until) return;
+  state.sleepTimer = null;
+  if (state.playing) togglePlay();
+  else commit();
+  syncSleepPanel();
+  toast("已按定时停止播放", { duration: 1800 });
+}
+
+function toggleOptionsPanel() {
+  const panel = $("#options-panel");
+  if (!panel) return;
+  const open = panel.hidden;
+  if (open) {
+    panel.hidden = false;
+    requestAnimationFrame(() => panel.setAttribute("data-state", "opened"));
+  } else {
+    panel.setAttribute("data-state", "closed");
+    setTimeout(() => {
+      if (panel.getAttribute("data-state") === "closed") panel.hidden = true;
+    }, 180);
+  }
+  $("#btn-options")?.setAttribute("aria-pressed", String(open));
+}
+
+let optionsPanelBound = false;
+function initOptionsPanel() {
+  const body = $("#options-panel-body");
+  if (!body || optionsPanelBound) return;
+  optionsPanelBound = true;
+  body.dataset.bound = "1";
+
+  const sliderHtml = (id) => `
+    <div class="slider" id="${id}" role="slider" tabindex="0" aria-label="调节">
+      <div class="slider__rail"><div class="slider__fill"></div></div>
+      <div class="slider__thumb"></div>
+      <div class="slider__bubble"></div>
+    </div>`;
+
+  body.innerHTML = `
+    <div class="option-row">
+      <span class="option-row__label">歌词字号</span>
+      <div class="rangeslider">
+        ${sliderHtml("opt-lyric-size")}
+        <span class="rangeslider__value" id="opt-lyric-size-val">${Math.round(state.config.lyricsFontSize)}px</span>
+      </div>
+    </div>
+    <div class="option-row">
+      <span class="option-row__label">桌面歌词</span>
+      <button class="switch" id="opt-desktop-lyrics" type="button" role="switch" aria-checked="${state.config.showDesktopLyrics}"></button>
+    </div>
+    <div class="option-row">
+      <span class="option-row__label">背景不透明度</span>
+      <div class="rangeslider">
+        ${sliderHtml("opt-alpha")}
+        <span class="rangeslider__value" id="opt-alpha-val">${Math.round(state.config.glassAlpha)}%</span>
+      </div>
+    </div>
+    <div class="option-row">
+      <span class="option-row__label">模糊程度</span>
+      <div class="rangeslider">
+        ${sliderHtml("opt-blur")}
+        <span class="rangeslider__value" id="opt-blur-val">${state.config.glassBlurCustom ? Math.round(state.config.glassBlur) : Math.round(resolvedGlassBlur())}px</span>
+      </div>
+    </div>`;
+
+  $("#options-close")?.addEventListener("click", () => toggleOptionsPanel());
+  $("#opt-desktop-lyrics")?.addEventListener("click", () => toggleDesktopLyrics());
+
+  // 点击面板外 / 按 Esc 关闭选项面板
+  document.addEventListener("pointerdown", (e) => {
+    const panel = $("#options-panel");
+    if (!panel || panel.hidden) return;
+    if (panel.contains(e.target) || e.target.closest?.("#btn-options")) return;
+    toggleOptionsPanel();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const panel = $("#options-panel");
+    if (panel && !panel.hidden) toggleOptionsPanel();
+  });
+
+  createSlider($("#opt-lyric-size"), {
+    min: 12,
+    max: 26,
+    step: 1,
+    value: state.config.lyricsFontSize,
+    format: (v) => `${Math.round(v)}px`,
+    onChange: (v) => {
+      state.config.lyricsFontSize = v;
+      const label = $("#opt-lyric-size-val");
+      if (label) label.textContent = `${Math.round(v)}px`;
+      setRuntimeToken("--lyric-size", `${v}px`);
+    },
+    onCommit: () => commit(),
+  });
+
+  createSlider($("#opt-alpha"), {
+    min: 20,
+    max: 95,
+    step: 1,
+    value: state.config.glassAlphaCustom ? state.config.glassAlpha : resolvedGlassAlpha(),
+    format: (v) => `${Math.round(v)}%`,
+    onChange: (v) => {
+      state.config.glassAlpha = v;
+      state.config.glassAlphaCustom = true;
+      const label = $("#opt-alpha-val");
+      if (label) label.textContent = `${Math.round(v)}%`;
+      applyGlassAlpha(v);
+    },
+    onCommit: () => commit(),
+  });
+
+  createSlider($("#opt-blur"), {
+    min: 0,
+    max: 48,
+    step: 1,
+    value: state.config.glassBlurCustom ? state.config.glassBlur : resolvedGlassBlur(),
+    format: (v) => `${Math.round(v)}px`,
+    onChange: (v) => {
+      state.config.glassBlur = v;
+      state.config.glassBlurCustom = true;
+      const label = $("#opt-blur-val");
+      if (label) label.textContent = `${Math.round(v)}px`;
+      setRuntimeToken("--glass-blur", `${v}px`);
+    },
+    onCommit: () => commit(),
   });
 }
 
@@ -417,6 +804,35 @@ export function paintPlayerBar() {
   /* 播放列表按钮的按下态 + 面板内容 */
   els.playlist?.setAttribute("aria-pressed", String(Boolean(state.queueOpen)));
   if (state.queueOpen) renderQueuePanel();
+
+  /* 桌面歌词 / 定时停止 / 选项 的按下态 */
+  els.desktopLyrics?.setAttribute("aria-pressed", String(Boolean(state.config.showDesktopLyrics)));
+  // 到点就停：放在每帧的轻量同步里，倒计时结束后立刻暂停
+  checkSleepTimer();
+  const sleepBtn = $("#btn-sleep");
+  if (sleepBtn) {
+    const timer = state.sleepTimer;
+    sleepBtn.setAttribute("aria-pressed", String(Boolean(timer)));
+    const tip =
+      timer?.type === "duration"
+        ? `定时停止 · 剩余 ${fmtRemain(timer.until - Date.now())}`
+        : timer?.type === "after-song"
+          ? "定时停止 · 播完当前歌曲"
+          : "定时停止";
+    if (sleepBtn.dataset.tip !== tip) sleepBtn.dataset.tip = tip;
+    if (timer?.type === "duration") {
+      const badge = $("#sleep-count");
+      if (badge) {
+        badge.hidden = false;
+        badge.textContent = String(Math.max(1, Math.ceil((timer.until - Date.now()) / 60000)));
+      }
+    } else {
+      const badge = $("#sleep-count");
+      if (badge) badge.hidden = true;
+    }
+    // 面板开着时读数/滑条也要跟着秒级刷新（剩余 12:34 这种）
+    if (!$("#sleep-panel")?.hidden) syncSleepPanel();
+  }
 
   /* 正在播放行的音柱动画由 tracks.js 的重绘负责，这里只做轻量同步 */
   const bodyRows = document.querySelectorAll(".track[aria-current='true']");

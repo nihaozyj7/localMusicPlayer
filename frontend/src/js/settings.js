@@ -2,14 +2,28 @@
    settings.js — 设置界面（音乐文件夹 / 过滤规则 / 外观 / 播放 / 歌词 / 关于）
    ========================================================================== */
 
-import { $, icon, openModal, toast } from "./dom.js";
+import { icon, openModal, toast } from "./dom.js";
 import { applyRules, compileRegex, state } from "./store.js";
 import { backend, isWails } from "./bridge.js";
 import { esc, fmtCount, fmtSize, uid } from "./utils.js";
-import { applyResolvedTheme, discoverThemes, listThemes, resolvedGlassBlur } from "./theme.js";
+import {
+  applyGlassAlpha,
+  applyResolvedTheme,
+  discoverThemes,
+  listThemes,
+  resolvedGlassAlpha,
+  resolvedGlassBlur,
+} from "./theme.js";
 import { BACKDROP_MODES, backdropLabel } from "./backdrop.js";
 import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
 import { setRuntimeToken, replaceStyleRules } from "./runtime-tokens.js";
+import {
+  PLAYER_SKIN_API_VERSION,
+  availableSkins,
+  reloadSkins,
+  setPlayerViewMode,
+  skinLoadFailures,
+} from "./playerhost.js";
 
 /* --------------------------------------------------------------------------
    小组件
@@ -111,8 +125,6 @@ function foldersCard() {
       </div>
     </section>`;
 }
-
-const SIZE_UNITS = ["B", "KB", "MB", "GB"];
 
 function ruleRowHtml(rule) {
   const invalid = rule.type === "regex" && rule.value && !compileRegex(rule.value);
@@ -349,12 +361,23 @@ function playbackCard() {
           control: segmented(
             "playMode",
             [
-              { value: "sequence", label: "顺序" },
-              { value: "loop-all", label: "列表循环" },
+              { value: "sequence", label: "列表循环" },
               { value: "loop-one", label: "单曲循环" },
               { value: "shuffle", label: "随机" },
             ],
-            state.config.playMode
+            state.config.playMode === "loop-all" ? "sequence" : state.config.playMode
+          ),
+        })}
+        ${settingRow({
+          label: "随机播放方式",
+          hint: "随机播放会先打乱当前播放列表，再按打乱后的顺序播放",
+          control: segmented(
+            "shuffleMode",
+            [
+              { value: "reshuffle", label: "播完重新打乱" },
+              { value: "once", label: "只打乱一次" },
+            ],
+            state.config.shuffleMode || "reshuffle"
           ),
         })}
         ${settingRow({
@@ -403,6 +426,20 @@ const LIST_DENSITIES = [
   { value: "roomy", label: "宽松" },
 ];
 
+/** 歌词来源的中文名（与 Go 侧 internal/lyrics 的来源常量一一对应） */
+const LYRICS_SOURCE_LABELS = {
+  embedded: "内嵌歌词",
+  "lrc-file": "同目录 .lrc",
+  cache: "歌词缓存",
+  online: "在线自动匹配",
+};
+
+function lyricsSourceLabels() {
+  const list = Array.isArray(state.config.lyricsSources) ? state.config.lyricsSources : [];
+  const names = list.map((s) => LYRICS_SOURCE_LABELS[s] || s);
+  return names.length ? names.join(" → ") : "（未配置）";
+}
+
 function lyricsCard() {
   return `
     <section class="card" id="sec-lyrics" data-section="lyrics">
@@ -416,13 +453,18 @@ function lyricsCard() {
       <div class="card__body">
         ${settingRow({
           label: "歌词来源优先级",
-          hint: "同名 .lrc 文件 → 音频内嵌歌词 → 在线匹配（可拖动排序，当前按此顺序）",
-          control: `<span class="chip"><i class="chip__dot"></i>${state.config.lyricsSources.join(" → ")}</span>`,
+          hint: "内嵌歌词 → 同目录 .lrc → 歌词缓存 → 在线自动匹配；本地读不到时会自动联网匹配并存入缓存",
+          control: `<span class="chip"><i class="chip__dot"></i>${lyricsSourceLabels()}</span>`,
         })}
         ${settingRow({
           label: "显示歌词",
           hint: "关闭后播放界面只显示封面",
           control: switchHtml("showLyrics", state.config.showLyrics, "显示歌词"),
+        })}
+        ${settingRow({
+          label: "桌面歌词",
+          hint: "在窗口上方悬浮显示当前歌词行（底栏「桌面歌词」按钮同效）",
+          control: switchHtml("showDesktopLyrics", state.config.showDesktopLyrics, "桌面歌词"),
         })}
         ${settingRow({
           label: "歌词字号",
@@ -621,16 +663,145 @@ function ensureSwatchStyles() {
 }
 
 /* --------------------------------------------------------------------------
+   AI 元数据清洗
+   --------------------------------------------------------------------------
+   本地文件名里常常带着歌名/歌手，但混有脏数据，直接联网匹配封面/歌词命中率低。
+   填好 OpenAI 兼容接口后，自动匹配时会先把元数据交给 AI 清洗一遍。
+   -------------------------------------------------------------------------- */
+function aiCard() {
+  const cfg = state.config || {};
+  const configured = Boolean(String(cfg.aiBaseUrl || "").trim() && String(cfg.aiApiKey || "").trim());
+  const field = (label, hint, key, placeholder, type = "text") => `
+    <div class="setting setting--stack">
+      <div class="setting__main">
+        <div class="setting__label">${esc(label)}</div>
+        <div class="setting__hint">${esc(hint)}</div>
+      </div>
+      <input class="input" type="${type}" data-act="ai-field" data-key="${key}"
+        value="${esc(cfg[key] || "")}" placeholder="${esc(placeholder)}"
+        autocomplete="off" spellcheck="false" />
+    </div>`;
+
+  return `
+    <section class="card" id="sec-ai" data-section="ai">
+      <div class="card__head">
+        <div class="card__icon">${icon("settings")}</div>
+        <div class="card__titles">
+          <div class="card__title">AI 元数据</div>
+          <div class="card__desc">自动匹配歌词 / 封面时，用 AI 从脏文件名里提取真实元数据</div>
+        </div>
+      </div>
+      <div class="card__body">
+        ${field("接口地址（Base URL）", "OpenAI 兼容接口，例如 https://api.openai.com/v1", "aiBaseUrl", "https://api.openai.com/v1")}
+        ${field("API Key", "只写入本地配置，不会发往该接口以外的任何地方", "aiApiKey", "sk-...", "password")}
+        ${field("模型 ID", "例如 gpt-4o-mini、deepseek-chat；留空默认 gpt-4o-mini", "aiModelId", "gpt-4o-mini")}
+        ${settingRow({
+          label: "启用思考模式",
+          hint: "让模型在给出结论前更充分地推理，响应会慢一些",
+          control: switchHtml("aiThinking", Boolean(cfg.aiThinking), "启用思考模式"),
+        })}
+        <div class="setting__hint">
+          ${
+            configured
+              ? "已配置：自动匹配封面时，会先把文件名与现有元数据交给 AI 清洗，再去匹配。"
+              : "尚未配置：填入 Base URL 与 API Key 后自动启用。"
+          }
+        </div>
+      </div>
+    </section>`;
+}
+
+/**
+ * 播放界面样式（皮肤）卡片。
+ *
+ * 三种内置样式已经从主程序抽到独立包 @musicplayer/player-skins，
+ * 用户还可以往数据目录 `<数据目录>/player-skins/<id>/` 丢一个第三方样式
+ * （skin.js + 可选 skin.css / skin.json），点「重新扫描样式」即可出现。
+ * 卡片里同时放着轮播的两个设置 —— 它们本来就属于「播放界面怎么显示」。
+ */
+function playerCard() {
+  const skins = availableSkins();
+  const failures = skinLoadFailures();
+  const cards = skins
+    .map(
+      (s) => `
+      <button class="skincard" type="button" data-act="skin-pick" data-id="${esc(s.id)}"
+        aria-pressed="${state.config.playerViewMode === s.id}">
+        <span class="skincard__icon">${icon(s.icon || "disc")}</span>
+        <span class="skincard__name">${esc(s.name)}</span>
+        <span class="skincard__id">${esc(s.id)}</span>
+        ${s.builtin ? "" : `<span class="skincard__badge">第三方</span>`}
+      </button>`
+    )
+    .join("");
+
+  const failHtml = failures.length
+    ? `<div class="card__body">${failures
+        .map(
+          (f) => `
+        <div class="setting">
+          <div class="setting__main">
+            <div class="setting__label">样式「${esc(f.id)}」加载失败</div>
+            <div class="setting__hint">${esc(f.reason)}</div>
+          </div>
+        </div>`
+        )
+        .join("")}</div>`
+    : "";
+
+  return `
+    <section class="card" id="sec-player" data-section="player">
+      <div class="card__head">
+        <div class="card__icon">${icon("disc")}</div>
+        <div class="card__titles">
+          <div class="card__title">播放界面样式</div>
+          <div class="card__desc">内置三种样式来自独立包 player-skins（接口版本 ${PLAYER_SKIN_API_VERSION}）；把第三方样式放进样式目录即可扩展</div>
+        </div>
+        <div class="card__actions">
+          <button class="btn btn--sm" type="button" data-act="reload-skins">${icon("refresh")}<span>重新扫描样式</span></button>
+          <button class="btn btn--sm" type="button" data-act="open-skin-dir">${icon("folder")}<span>打开样式目录</span></button>
+        </div>
+      </div>
+      <div class="themes">${cards}</div>
+      ${failHtml}
+      <div class="card__body">
+        ${settingRow({
+          label: "封面轮播",
+          hint: "一首歌有多张封面时，播放详情页按下面的间隔轮换显示（不影响列表缩略图）",
+          control: switchHtml("coverCarousel", state.config.coverCarousel === true, "封面轮播"),
+        })}
+        ${settingRow({
+          label: "轮播间隔",
+          hint: "对应设置项 coverCarouselInterval（秒）",
+          control: `<div class="rangeslider">
+            <div class="slider" id="set-carousel" role="slider" tabindex="0" aria-label="轮播间隔" data-slider="coverCarouselInterval">
+              <div class="slider__rail"><div class="slider__fill"></div></div>
+              <div class="slider__thumb"></div>
+              <div class="slider__bubble"></div>
+            </div>
+            <span class="rangeslider__value" id="set-carousel-val">${Math.max(
+              2,
+              Number(state.config.coverCarouselInterval) || 10
+            )} 秒</span>
+          </div>`,
+        })}
+      </div>
+    </section>`;
+}
+
+/* --------------------------------------------------------------------------
    主渲染
    -------------------------------------------------------------------------- */
 const SECTIONS = [
   { id: "folders", label: "音乐文件夹" },
   { id: "filters", label: "过滤规则" },
   { id: "appearance", label: "外观" },
+  { id: "player", label: "播放界面" },
   { id: "playback", label: "播放" },
   { id: "loudness", label: "响度均衡" },
   { id: "online", label: "在线歌曲" },
   { id: "lyrics", label: "歌词" },
+  { id: "ai", label: "AI 元数据" },
   { id: "about", label: "关于" },
 ];
 
@@ -679,10 +850,12 @@ export function renderSettings(container) {
       ${foldersCard()}
       ${rulesCard()}
       ${themeCard()}
+      ${playerCard()}
       ${playbackCard()}
       ${loudnessCard()}
       ${onlineCard()}
       ${lyricsCard()}
+      ${aiCard()}
       ${aboutCard()}
     </div>`;
 
@@ -837,6 +1010,15 @@ export async function handleSettingsAction(actEl, ctx = {}) {
   const id = actEl.dataset.id;
 
   switch (act) {
+    /* AI 配置文本框（change 事件触发，即失焦时写入） */
+    case "ai-field": {
+      const key = actEl.dataset.key;
+      if (!key) return;
+      state.config[key] = actEl.value;
+      ctx.commit?.();
+      return;
+    }
+
     /* 文件夹 */
     case "add-folder": {
       // 后端模式：由 Go 弹出系统目录选择器，选完直接写配置并开始扫描
@@ -1028,6 +1210,39 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       break;
     case "clear-cache":
       toast("缓存清理需在后端实现（当前仅保存元数据缓存文件）", { tone: "warning" });
+      break;
+
+    /* 播放界面样式（皮肤包） */
+    case "skin-pick": {
+      const picked = availableSkins().find((x) => x.id === id);
+      if (!picked) return;
+      setPlayerViewMode(picked.id);
+      ctx.commit?.();
+      toast(`播放界面已切换到「${picked.name}」`, { tone: "success", duration: 1600 });
+      break;
+    }
+    case "open-skin-dir": {
+      const dir = isWails() ? await backend.skinDir() : "";
+      if (isWails()) await backend.revealSkinDir();
+      toast(dir ? `已打开样式目录：${dir}` : "样式目录：frontend/packages/player-skins/", {
+        duration: 3200,
+      });
+      break;
+    }
+    case "reload-skins":
+      try {
+        if (isWails()) await backend.reloadSkins();
+        await reloadSkins();
+        ctx.render?.();
+        const n = availableSkins().length;
+        const bad = skinLoadFailures();
+        toast(
+          bad.length ? `已扫描到 ${n} 个样式，${bad.length} 个加载失败` : `已扫描到 ${n} 个样式`,
+          { tone: bad.length ? "warning" : "success" }
+        );
+      } catch (err) {
+        toast(`重新扫描失败：${err?.message ?? err}`, { tone: "error" });
+      }
       break;
 
     /* 窗口原生材质（Mica / Acrylic） */
@@ -1580,24 +1795,35 @@ export function bindSettingsSliders(container, ctx = {}) {
     const key = root.dataset.slider;
     const isBlur = key === "glassBlur";
     const isAlpha = key === "glassAlpha";
-    const min = key === "lyricsFontSize" ? 12 : isBlur ? 0 : isAlpha ? 20 : 0;
-    const max = key === "lyricsFontSize" ? 26 : isBlur ? 48 : isAlpha ? 95 : 100;
+    const isCarousel = key === "coverCarouselInterval";
+    const min = isCarousel ? 2 : key === "lyricsFontSize" ? 12 : isBlur ? 0 : isAlpha ? 20 : 0;
+    const max = isCarousel ? 60 : key === "lyricsFontSize" ? 26 : isBlur ? 48 : isAlpha ? 95 : 100;
+    // 单位跟着键走：轮播是秒，字号/模糊是像素，透明度是百分比
+    const unit = isCarousel ? " 秒" : isBlur ? "px" : isAlpha ? "%" : "px";
     import("./slider.js").then(({ createSlider }) => {
       const label = root.parentElement.querySelector(".rangeslider__value");
       createSlider(root, {
         min,
         max,
         step: 1,
-        value: isBlur && !state.config.glassBlurCustom ? resolvedGlassBlur() : state.config[key] ?? min,
-        format: (v) => `${Math.round(v)}${isBlur ? "px" : isAlpha ? "%" : "px"}`,
+        value:
+          isBlur && !state.config.glassBlurCustom
+            ? resolvedGlassBlur()
+            : isAlpha && !state.config.glassAlphaCustom
+              ? resolvedGlassAlpha()
+              : state.config[key] ?? min,
+        format: (v) => `${Math.round(v)}${unit}`,
         onChange: (v) => {
           state.config[key] = v;
-          if (label) label.textContent = `${Math.round(v)}${isBlur ? "px" : isAlpha ? "%" : "px"}`;
+          if (label) label.textContent = `${Math.round(v)}${unit}`;
           if (isBlur) {
             state.config.glassBlurCustom = true;
             setRuntimeToken("--glass-blur", `${v}px`);
           }
-          if (isAlpha) setRuntimeToken("--glass-alpha", String(v / 100));
+          if (isAlpha) {
+            state.config.glassAlphaCustom = true;
+            applyGlassAlpha(v);
+          }
           if (key === "lyricsFontSize") setRuntimeToken("--lyric-size", `${v}px`);
         },
         onCommit: () => ctx.commit?.(),

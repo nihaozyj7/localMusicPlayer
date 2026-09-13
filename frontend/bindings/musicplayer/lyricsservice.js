@@ -16,10 +16,52 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails
 import * as lyrics$0 from "./internal/lyrics/models.js";
 
 /**
- * Load 按设置里的优先级加载歌词
+ * AutoMatch 本地读不到歌词时，联网自动匹配一次，并把结果写进缓存。
+ * 
+ * 返回的 Result.Source 形如 online:lrclib；没匹配到返回 source=none 而不是错误
+ * （「这首歌没有歌词」是正常结果，不该让前端弹错误）。
+ * @param {string} songID
+ * @returns {$CancellablePromise<lyrics$0.Result>}
+ */
+export function AutoMatch(songID) {
+    return $Call.ByID(1124783075, songID);
+}
+
+/**
+ * Load 按设置里的优先级加载歌词（**只读本地**，不联网）。
+ * 
+ * 之所以不在这里联网：本方法在「每次切歌」时都会被调用，联网等待会把
+ * 播放界面卡住十几秒。在线自动匹配走 AutoMatch，由前端在本地读不到时再触发。
+ * 
+ * 在线试听曲目（不在本地曲库里）也走这里：它们没有本地文件，但可能有缓存
+ * （用户手动匹配过），所以查不到歌曲时不去报错，而是继续读缓存。
  * @param {string} songID
  * @returns {$CancellablePromise<lyrics$0.Result>}
  */
 export function Load(songID) {
     return $Call.ByID(1930549317, songID);
+}
+
+/**
+ * LoadCached 只读缓存（前端在「本地 + 在线」都拿不到时用它确认一次）。
+ * @param {string} songID
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function LoadCached(songID) {
+    return $Call.ByID(2349317043, songID);
+}
+
+/**
+ * Save 保存用户手动匹配到的歌词：写缓存，并按设置决定是否嵌入音频文件。
+ * 
+ * embed 是显式传入的（nil = 按配置走）：前端配置是防抖同步的，
+ * 「刚开开关就应用歌词」时后端读到的可能还是旧值。
+ * @param {string} songID
+ * @param {string} lrc
+ * @param {string} source
+ * @param {boolean | null} embed
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function Save(songID, lrc, source, embed) {
+    return $Call.ByID(1749176124, songID, lrc, source, embed);
 }

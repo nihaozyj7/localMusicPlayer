@@ -6,15 +6,18 @@
    这里只保留「手动匹配歌词」这块与歌曲搜索无关的功能。
    ========================================================================== */
 
-import { state } from "./store.js";
+import { songById, state } from "./store.js";
 import { toast } from "./dom.js";
 
 let bindings = null;
 
+/** 与 bridge.js 同理：绑定是按 URL 在运行时解析的，不能让打包器按文件路径解析 */
+const BINDINGS_ENTRY = "../bindings/musicplayer/index.js";
+
 async function getBindings() {
   if (bindings) return bindings;
   try {
-    const mod = await import("../bindings/musicplayer/index.js");
+    const mod = await import(/* @vite-ignore */ BINDINGS_ENTRY);
     bindings = mod && mod.OnlineService ? mod.OnlineService : null;
   } catch (err) {
     console.info("[online] backend unavailable", err);
@@ -57,11 +60,22 @@ bindLyricsButton();
 function openLyricsPanel() {
   if (!lyricsPanel) makeLyricsPanel();
   lyricsPanel.style.display = "flex";
-  const song = state.songs.find((s) => s.id === state.currentId);
+  const song = currentTarget();
   if (song) {
     lyricsInput.value = [song.title, song.artist].filter(Boolean).join(" ");
   }
   lyricsInput.focus();
+}
+
+/**
+ * 当前要匹配歌词的曲目。
+ *
+ * 用 songById 而不是只查 state.songs：在线试听曲目不在本地曲库里
+ * （它们登记在 state.onlineSongs 里）。早期版本只查 songs，于是「在线试听时
+ * 点手动匹配歌词」会一路走到「请先播放一首歌曲」—— 明明正在播，提示却是错的。
+ */
+function currentTarget() {
+  return songById(state.currentId) || null;
 }
 
 function makeLyricsPanel() {
@@ -113,7 +127,7 @@ function makeLyricsPanel() {
 }
 
 async function searchLyrics() {
-  const song = state.songs.find((s) => s.id === state.currentId);
+  const song = currentTarget();
   const keyword = lyricsInput.value.trim();
   if (!keyword) {
     toast("请输入歌词搜索关键词", { duration: 1500 });
@@ -161,7 +175,7 @@ function renderLyricCandidates(list) {
 }
 
 async function applyLyricCandidate(candidate) {
-  const song = state.songs.find((s) => s.id === state.currentId);
+  const song = currentTarget();
   if (!song) {
     toast("请先播放一首歌曲", { tone: "warning" });
     return;
@@ -177,12 +191,14 @@ async function applyLyricCandidate(candidate) {
       toast("没有取到歌词", { tone: "warning" });
       return;
     }
-    const mod = await import("./playerview.js");
+    // applyOnlineLyrics 内部会把歌词写进后端缓存（并按设置决定是否嵌入文件），
+    // 所以「第二次打开又没有了」不会再发生。
+    const mod = await import("./playerhost.js");
     if (mod && mod.applyOnlineLyrics) {
       mod.applyOnlineLyrics(song.id, res.lrc, res.source || "online");
     }
     lyricsPanel.style.display = "none";
-    toast("歌词已应用", { tone: "success", duration: 1500 });
+    toast("歌词已应用并保存", { tone: "success", duration: 1500 });
   } catch (err) {
     toast("获取歌词失败：" + (err.message || err), { tone: "error" });
   }

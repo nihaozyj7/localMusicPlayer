@@ -13,7 +13,10 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
-const EXE = path.resolve(ROOT, process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/musicplayer.exe");
+const EXE = path.resolve(
+  ROOT,
+  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/musicplayer.exe"
+);
 const PORT = Number(process.env.MP_PORT || 9381);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -38,9 +41,15 @@ for (let i = 0; i < 60 && !target; i += 1) {
   try {
     const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
     target = list.find((x) => x.type === "page" && x.webSocketDebuggerUrl);
-  } catch { /* wait */ }
+  } catch {
+    /* wait */
+  }
 }
-if (!target) { console.error("无法接入"); child.kill(); process.exit(1); }
+if (!target) {
+  console.error("无法接入");
+  child.kill();
+  process.exit(1);
+}
 
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 let id = 0;
@@ -48,13 +57,25 @@ const waiting = new Map();
 const logs = [];
 ws.addEventListener("message", (ev) => {
   const m = JSON.parse(ev.data);
-  if (m.id && waiting.has(m.id)) { waiting.get(m.id)(m.result); waiting.delete(m.id); }
-  if (m.method === "Runtime.consoleAPICalled") logs.push((m.params.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
+  if (m.id && waiting.has(m.id)) {
+    waiting.get(m.id)(m.result);
+    waiting.delete(m.id);
+  }
+  if (m.method === "Runtime.consoleAPICalled")
+    logs.push((m.params.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
 });
-const send = (method, params = {}) => { id += 1; const i = id; return new Promise((r) => { waiting.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); }); };
+const send = (method, params = {}) => {
+  id += 1;
+  const i = id;
+  return new Promise((r) => {
+    waiting.set(i, r);
+    ws.send(JSON.stringify({ id: i, method, params }));
+  });
+};
 async function evaluate(expression) {
   const res = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
-  if (res?.exceptionDetails) return { __error: res.exceptionDetails.text + " " + (res.exceptionDetails.exception?.description || "") };
+  if (res?.exceptionDetails)
+    return { __error: res.exceptionDetails.text + " " + (res.exceptionDetails.exception?.description || "") };
   return res?.result?.value;
 }
 
@@ -140,4 +161,7 @@ console.log(JSON.stringify(flow, null, 2));
 console.log("\n[5] 控制台最后 12 条");
 for (const l of logs.slice(-12)) console.log("  " + l);
 
-ws.close(); child.kill(); await sleep(300); process.exit(0);
+ws.close();
+child.kill();
+await sleep(300);
+process.exit(0);

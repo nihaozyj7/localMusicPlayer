@@ -1,0 +1,190 @@
+/* ==========================================================================
+   lyrics.css — 歌词滚动区（三种内置样式共用）
+   --------------------------------------------------------------------------
+   这些规则原本是宿主的 components/lyrics.css，随「歌词渲染属于皮肤包」一起搬进来。
+   所有选择器都限制在 .playerview 之内，不会影响宿主其它界面。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   歌词挂载点
+   --------------------------------------------------------------------------
+   每个皮肤往自己的 DOM 里放一个 <div class="pv-lyrics-host">，歌词视图在那里面
+   建 `.lyrics`。这一层必须参与父级 flex 布局并向上传递 min-height:0：
+
+   否则 `.lyrics` 的 height:100% 会落在一个 height:auto 的父元素上（解析成 0），
+   歌词区就"撑不开也不滚动"——表现为自动滚动失效、滚轮也没反应。
+   （这是把歌词渲染搬进包之后实测到的第一个坑。）
+   -------------------------------------------------------------------------- */
+.pv-lyrics-host {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.pv-lyrics-host > .lyrics {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* 高度交给 flex 分配，不要再用 100%（父元素高度是自动的） */
+  height: auto;
+}
+
+.lyrics {
+  --lyric-size: 16px;
+  --lyric-size-active: 21px;
+  --lyric-dim: 0.36;
+  --lyric-line-gap: 2px;
+  --lyric-pad: 34%;
+  /* 单行歌词的宽度上限：详情页铺满整窗后，不加限制在超宽屏上会长得难读 */
+  --lyric-measure: 760px;
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  /* 上下渐隐遮罩，让滚出视线的歌词自然消失 */
+  mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 76%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 76%, transparent 100%);
+}
+
+.lyrics__scroll {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  padding: var(--lyric-pad) 0;
+  /* 不写 CSS 的 scroll-behavior：自动滚动由 JS 控制（要让位于用户滚轮），
+     写在这里会把滚轮/拖动也变成强制平滑，手感很粘。 */
+  text-align: center;
+  /* 滚轮、触摸板与拖动滚动条都要能用（歌词区不能吃掉指针事件） */
+  pointer-events: auto;
+  touch-action: pan-y;
+  max-width: var(--lyric-measure);
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* 歌词区不显示滚动条，保持视觉干净（依然可以滚） */
+.lyrics__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* 歌词行是 div[role=button] 而不是 <button>：
+   button 在部分情况下按空格会触发滚动，且默认样式需要大量重置。 */
+.lyric {
+  display: block;
+  width: 100%;
+  padding: 7px var(--sp-4);
+  border: 0;
+  background: none;
+  text-align: inherit;
+  font-family: inherit;
+  font-size: var(--lyric-size);
+  line-height: 1.5;
+  color: var(--text-1);
+  opacity: var(--lyric-dim);
+  transform-origin: center;
+  transition:
+    opacity var(--dur) var(--ease),
+    transform var(--dur) var(--ease),
+    font-size var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    filter var(--dur) var(--ease);
+  cursor: pointer;
+  filter: blur(0.3px);
+  user-select: text;
+}
+
+.lyric:hover {
+  opacity: 0.75;
+  filter: none;
+}
+
+.lyric[aria-current="true"] {
+  font-size: var(--lyric-size-active);
+  font-weight: var(--fw-semibold);
+  color: var(--accent);
+  opacity: 1;
+  filter: none;
+  letter-spacing: -0.01em;
+}
+
+.lyric[data-past="true"] {
+  opacity: calc(var(--lyric-dim) * 0.9);
+}
+
+/* 逐字歌词：当前行内的高亮进度 */
+.lyric__word {
+  color: inherit;
+}
+
+.lyric__word[data-active="true"] {
+  color: var(--accent);
+}
+
+/* 翻译 / 罗马音副行 */
+.lyric__trans {
+  display: block;
+  margin-top: 2px;
+  font-size: calc(var(--lyric-size) * 0.78);
+  font-weight: var(--fw-normal);
+  color: var(--text-3);
+}
+
+/* 纯音乐标记 */
+.lyric__interlude {
+  display: block;
+  padding: 7px var(--sp-4);
+  font-family: var(--font-num);
+  font-size: var(--lyric-size);
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
+/* —— 无歌词空态 —— */
+.lyrics__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  height: 100%;
+  padding: var(--sp-5);
+  text-align: center;
+}
+
+.lyrics__empty-icon {
+  width: 40px;
+  height: 40px;
+  color: var(--text-3);
+  opacity: 0.7;
+}
+
+.lyrics__empty-text {
+  font-size: var(--fs-md);
+  color: var(--text-3);
+}
+
+/* 歌词行是 role="button" 的 div，键盘聚焦时给一个不刺眼的反馈 */
+.lyric:focus-visible {
+  outline: 1px solid var(--border-2);
+  outline-offset: -2px;
+  border-radius: var(--r-xs);
+  opacity: 0.85;
+}
+
+/* —— 「桌面歌词」开关关闭：歌词区收起，详情页只留封面与曲目信息 —— */
+.playerview[data-lyrics="off"] .lyrics {
+  display: none;
+}
+
+.playerview[data-lyrics="off"][data-skin="classic"] .playerview__stage {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.playerview[data-lyrics="off"][data-skin="immersive"] .immersive__card,
+.playerview[data-lyrics="off"][data-skin="minimal"] .minimal__inner {
+  gap: 0;
+}

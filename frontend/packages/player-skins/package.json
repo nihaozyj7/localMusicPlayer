@@ -1,0 +1,21 @@
+{
+  "name": "@musicplayer/player-skins",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "播放详情界面的背景与歌词渲染包（皮肤）：统一的皮肤接口 + 内置经典/沉浸/简约三种样式",
+  "exports": {
+    ".": "./src/index.js",
+    "./contract": "./src/contract.js",
+    "./lyrics-view": "./src/lyrics-view.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "sideEffects": [
+    "*.css",
+    "./src/skins/*.css"
+  ]
+}

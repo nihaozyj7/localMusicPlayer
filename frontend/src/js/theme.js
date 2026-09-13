@@ -35,7 +35,7 @@ const BUILTIN_THEMES = [
   },
 ];
 
-let registry = BUILTIN_THEMES.slice();
+const registry = BUILTIN_THEMES.slice();
 
 export function listThemes() {
   return registry;
@@ -113,6 +113,9 @@ export async function applyResolvedTheme(config) {
   }
 
   html.dataset.theme = themeId;
+  // 解析出来的深浅模式也写进 DOM：播放界面皮肤通过 ctx.mode 读它
+  // （皮肤拿不到 config，也不该为了知道深浅色去 import 主题模块）
+  html.dataset.mode = registry.find((t) => t.id === themeId)?.mode || config.themeMode || "dark";
   config.theme = themeId;
 
   // 动画开关始终生效；毛玻璃强度只有在用户手动调过之后才覆盖主题自带的值，
@@ -123,15 +126,85 @@ export async function applyResolvedTheme(config) {
   });
 
   forceStyleRefresh();
+  // 用户手动调过面板透明度时，换主题后按新主题的底色重新套一遍
+  if (config.glassAlphaCustom) applyGlassAlpha(config.glassAlpha);
   return themeId;
+}
+
+/* --------------------------------------------------------------------------
+   面板透明度（真正的「背景不透明度」）
+   --------------------------------------------------------------------------
+   内置主题把 --glass-bg 写成各自的 rgba/color-mix，直接改 --glass-alpha 没有主题
+   会消费它（那只是预留令牌）。这里用一个小探针元素把当前主题的底色解析成 rgb，
+   再按用户给的百分比重新合成 rgba 写回，于是「背景不透明度」能够真正生效，
+   并且换主题时会基于新主题的底色重新计算。
+   -------------------------------------------------------------------------- */
+let alphaProbe = null;
+
+function resolveThemeColor(expr) {
+  if (!alphaProbe) {
+    alphaProbe = document.createElement("div");
+    alphaProbe.style.cssText =
+      "position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;pointer-events:none;";
+    document.body.appendChild(alphaProbe);
+  }
+  alphaProbe.style.backgroundColor = expr;
+  return getComputedStyle(alphaProbe).backgroundColor;
+}
+
+function rgbaWithAlpha(color, alpha) {
+  const a = Math.max(0, Math.min(1, alpha));
+  const text = String(color);
+  // 普通 rgb()/rgba()
+  const rgb = text.match(/rgba?\(([^)]+)\)/);
+  if (rgb) {
+    const parts = rgb[1].split(/[,/]/).map((s) => parseFloat(s.trim()));
+    const [r, g, b] = parts;
+    if ([r, g, b].every((n) => Number.isFinite(n))) {
+      return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${a})`;
+    }
+  }
+  // color-mix 等会解析成 color(srgb r g b / a)，分量为 0-1
+  const srgb = text.match(/color\(\s*srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/i);
+  if (srgb) {
+    const [r, g, b] = srgb.slice(1, 4).map((n) => Math.round(parseFloat(n) * 255));
+    if ([r, g, b].every((n) => Number.isFinite(n))) {
+      return `rgba(${r}, ${g}, ${b}, ${a})`;
+    }
+  }
+  return null;
+}
+
+/** 读当前主题实际生效的面板透明度百分比（用于滑块初值） */
+export function resolvedGlassAlpha() {
+  const text = String(resolveThemeColor("var(--glass-bg)"));
+  const rgba = text.match(/rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)\s*\)/);
+  const slash = text.match(/\/\s*([\d.]+)\s*\)/);
+  const a = parseFloat((rgba && rgba[1]) || (slash && slash[1]) || "");
+  return Number.isFinite(a) ? Math.round(a * 100) : 62;
+}
+
+/** 按百分比（0-100）设置面板背景的不透明度 */
+export function applyGlassAlpha(percent) {
+  const a = Math.max(0, Math.min(1, (Number(percent) || 0) / 100));
+  // 先清掉上一轮覆盖，才能读到「当前主题真实的」底色
+  setRuntimeTokens({ "--glass-bg": null, "--glass-bg-strong": null, "--glass-bg-weak": null });
+  const bg = resolveThemeColor("var(--glass-bg)");
+  const strong = resolveThemeColor("var(--glass-bg-strong)");
+  const weak = resolveThemeColor("var(--glass-bg-weak)");
+  setRuntimeTokens({
+    "--glass-bg": rgbaWithAlpha(bg, a),
+    "--glass-bg-strong": rgbaWithAlpha(strong, Math.min(1, a + 0.18)),
+    "--glass-bg-weak": rgbaWithAlpha(weak, Math.max(0, a - 0.22)),
+  });
 }
 
 /**
  * 强制重算全页样式。
  *
- * 为什么要这么绕：主题令牌来自 @import 进来的样式表，实测在 WebView2/Chromium 上
- * 只改根节点的 data-theme 时，**已经存在的元素**不会重新解析 var(--…) ——
- * 它们的计算样式停在旧主题上。症状就是切到浅色主题后，侧边栏文字仍然是
+ * 为什么要这么绕：主题令牌来自样式表里的 import 语句（打包器会把它内联成真正的 CSS），
+ * 实测在 WebView2/Chromium 上只改根节点的 data-theme 时，**已经存在的元素**不会重新解析
+ * var(--…) —— 它们的计算样式停在旧主题上。症状就是切到浅色主题后，侧边栏文字仍然是
  * 深色主题的浅灰（还带着旧主题的旧数值），落在浅色背景上几乎看不见。
  * 新建的元素是正常的，所以这个问题只在"切换主题"时暴露。
  *

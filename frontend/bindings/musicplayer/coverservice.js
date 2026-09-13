@@ -24,6 +24,37 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails
 import * as $models from "./models.js";
 
 /**
+ * Add 追加一张封面并把它设为当前生效，返回新的封面集合。
+ * 
+ * 参数与 ApplyWith 一致：imageURL 会先下载，previewDataURL 直接解码
+ * （前端预览里已经有字节了，不用再下一遍）。校验失败的图**不进缓存** ——
+ * 白图一旦落盘，本地缓存目录就成了新的「真相来源」，之后每次打开都还是白的。
+ * @param {string} songID
+ * @param {string} imageURL
+ * @param {string} previewDataURL
+ * @param {boolean | null} embed
+ * @returns {$CancellablePromise<$models.CoverSet>}
+ */
+export function Add(songID, imageURL, previewDataURL, embed) {
+    return $Call.ByID(1151838209, songID, imageURL, previewDataURL, embed);
+}
+
+/**
+ * AddMany 批量追加 data URL 形式的封面，返回最终集合。
+ * 
+ * 语义是「尽量加」：空白/非法/校验不过的项跳过并计数，最后在 Message 里
+ * 说清楚「成功 n 张、跳过 m 张」。这样前端可以放心地把整批候选图丢进来
+ * （用户一次多选几张），不必自己先筛一遍。
+ * @param {string} songID
+ * @param {string[] | null} previews
+ * @param {boolean | null} embed
+ * @returns {$CancellablePromise<$models.CoverSet>}
+ */
+export function AddMany(songID, previews, embed) {
+    return $Call.ByID(2116337774, songID, previews, embed);
+}
+
+/**
  * Apply 把用户选中的封面设为这首歌的封面。
  * 
  * 传 imageURL 时先下载；传 previewDataURL 时直接解码（前端预览里已经有字节了，
@@ -64,6 +95,32 @@ export function CacheStats() {
 }
 
 /**
+ * CachedPreviews 返回缓存里已有的封面（songID → **当前生效**那张的 data URL）。
+ * 
+ * 为什么需要它：用户换过的封面存在缓存目录（缓存才是真相来源），但前端的
+ * coverOverrides 只是内存表；不主动回填的话，重启应用后换过的封面就"消失"了
+ * （文件里嵌没嵌入取决于设置，默认是不嵌入的）。
+ * @returns {$CancellablePromise<{ [_ in string]?: string } | null>}
+ */
+export function CachedPreviews() {
+    return $Call.ByID(1930890585);
+}
+
+/**
+ * CachedSets 返回所有有缓存封面的歌的封面集合（启动时批量回填用）。
+ * 
+ * 与 CachedPreviews 的区别：这里连 items 的预览一起给，前端一开机就能画出
+ * 每首歌的缩略图列表、并知道哪张在生效、轮播开没开。
+ * 
+ * Embedded 刻意留空：内嵌封面要**逐个打开歌曲文件**去解析，几百首歌就是几百次
+ * 全文件读取（有些文件上百 MB）。那是打开封面面板时才该做的事（List 会做）。
+ * @returns {$CancellablePromise<{ [_ in string]?: $models.CoverSet } | null>}
+ */
+export function CachedSets() {
+    return $Call.ByID(2588416829);
+}
+
+/**
  * ClearCache 清空缓存（封面 + 歌词）。已经写回文件的标签不受影响。
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
@@ -73,6 +130,9 @@ export function ClearCache() {
 
 /**
  * Current 读取这首歌当前生效的封面（缓存优先）。
+ * 
+ * 保留这个 map 形态的接口是因为前端还有旧调用点；新代码请用 List，
+ * 它把「全部封面 + 内嵌封面」一次给全。
  * @param {string} songID
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
@@ -87,6 +147,18 @@ export function Current(songID) {
  */
 export function Fetch(rawURL) {
     return $Call.ByID(238681278, rawURL);
+}
+
+/**
+ * List 返回一首歌的封面集合（缓存项 + 文件内嵌项）。
+ * 
+ * 内嵌项是**只读**的展示：它们来自歌曲文件本身，我们只能整体重写文件，
+ * 没法单独改其中一张，所以下标用负数标记出来给前端区分。
+ * @param {string} songID
+ * @returns {$CancellablePromise<$models.CoverSet>}
+ */
+export function List(songID) {
+    return $Call.ByID(3500497078, songID);
 }
 
 /**
@@ -106,6 +178,24 @@ export function Lookup(songID, override) {
 }
 
 /**
+ * LookupAll 一次性返回**所有来源**的可用封面（按可信度降序，已下载并校验）。
+ * 
+ * 与 Lookup 的区别：Lookup 只给「最可信的那一张」，这里把所有来源的候选
+ * 都给出来（iTunes 单曲/专辑、网易云、Deezer、MusicBrainz + 调用方给的候选地址），
+ * 前端「更换封面」面板就能一次展示多种获取结果，用户自己挑。
+ * 
+ * 关键点：**白图不算命中**。某些图床在专辑没有封面时返回的不是 404，
+ * 而是一张纯白占位图；只看状态码完全发现不了（这正是「封面永远是白的」的成因）。
+ * 校验在 coverfetch.ResolveAll 里做，被丢弃的候选会带原因返回。
+ * @param {string} songID
+ * @param {{ [_ in string]?: any } | null} override
+ * @returns {$CancellablePromise<$models.CoverResult[] | null>}
+ */
+export function LookupAll(songID, override) {
+    return $Call.ByID(2612466631, songID, override);
+}
+
+/**
  * OpenCacheDir 在文件管理器里打开缓存目录。
  * @param {string} kind
  * @returns {$CancellablePromise<void>}
@@ -115,7 +205,17 @@ export function OpenCacheDir(kind) {
 }
 
 /**
- * Reset 恢复原始封面：删掉缓存里的覆盖图。
+ * Remove 删除第 index 张**缓存**封面（内嵌项删不掉，只能用 Reset 清缓存）。
+ * @param {string} songID
+ * @param {number} index
+ * @returns {$CancellablePromise<$models.CoverSet>}
+ */
+export function Remove(songID, index) {
+    return $Call.ByID(2048110046, songID, index);
+}
+
+/**
+ * Reset 恢复原始封面：删掉缓存里的全部封面。
  * 
  * 注意写回文件的封面**无法撤销**（我们不会备份用户的原始标签），
  * 所以这里明确告诉前端：只清缓存，文件里已经写进去的不动。
@@ -124,6 +224,16 @@ export function OpenCacheDir(kind) {
  */
 export function Reset(songID) {
     return $Call.ByID(1598057437, songID);
+}
+
+/**
+ * SetActive 切换当前生效的那张封面。
+ * @param {string} songID
+ * @param {number} index
+ * @returns {$CancellablePromise<$models.CoverSet>}
+ */
+export function SetActive(songID, index) {
+    return $Call.ByID(732586572, songID, index);
 }
 
 /**

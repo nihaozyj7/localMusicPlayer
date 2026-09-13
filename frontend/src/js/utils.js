@@ -99,45 +99,9 @@ export function groupBy(arr, keyFn) {
   return map;
 }
 
-/** LRC 文本 → [{time, text}] */
-export function parseLrc(text) {
-  if (!text) return [];
-  const lines = [];
-  const tag = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
-  for (const raw of text.split(/\r?\n/)) {
-    const times = [];
-    let m;
-    tag.lastIndex = 0;
-    while ((m = tag.exec(raw))) {
-      const min = Number(m[1]);
-      const sec = Number(m[2]);
-      const frac = m[3] ? Number(`0.${m[3].padEnd(3, "0")}`) : 0;
-      times.push((min * 60 + sec + frac) * 1000);
-    }
-    const content = raw.replace(tag, "").trim();
-    if (!times.length || !content) continue;
-    for (const t of times) lines.push({ time: t, text: content });
-  }
-  return lines.sort((a, b) => a.time - b.time);
-}
-
-/** 二分查找当前歌词行索引（-1 表示还没到第一句） */
-export function findLyricIndex(lines, currentMs) {
-  if (!lines || !lines.length) return -1;
-  let lo = 0;
-  let hi = lines.length - 1;
-  let ans = -1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (lines[mid].time <= currentMs) {
-      ans = mid;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  return ans;
-}
+/** LRC 解析与定位已随「歌词渲染」一起抽到 @musicplayer/player-skins（src/lrc.js）。
+ *  这里刻意不再保留副本：两份实现迟早会漂，而歌词行号算错的表现是「高亮错行」，
+ *  非常难查。需要解析/定位请从包入口 import。 */
 
 /** 自然排序（含中文数字感知） */
 const collator = new Intl.Collator("zh-Hans-CN", { numeric: true, sensitivity: "base" });

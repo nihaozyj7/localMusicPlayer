@@ -1,8 +1,10 @@
-version: '3'
+version: "3"
 
 # ============================================================================
-#  公共构建任务（按本项目的「零构建前端」改写）
-#  · 前端不经过 Vite/npm：tools/build-frontend.mjs 负责同步 frontend/dist
+#  公共构建任务
+#  · 前端走 Vite + npm workspaces：tools/build-frontend.mjs 构建 frontend/dist
+#    （Vite 打包 → 拷 frontend/bindings → 同步内置主题），需要 node_modules，
+#    缺失时由 frontend:deps → npm install 补上
 #  · 绑定由 wails3 generate bindings -b -i 生成（bundled runtime，无需 npm 包）
 # ============================================================================
 
@@ -43,22 +45,50 @@ tasks:
     cmds:
       - node tools/build-ffmpeg.mjs --info
 
+  frontend:deps:
+    summary: 安装前端依赖（npm workspaces，仅 node_modules 缺失时执行）
+    run: once
+    status:
+      - test -d node_modules
+    sources:
+      - package.json
+      - frontend/package.json
+      - frontend/packages/player-skins/package.json
+    cmds:
+      - npm install
+
   build:frontend:
-    summary: 同步静态前端到 frontend/dist（不使用打包器）
+    summary: 构建前端到 frontend/dist（Vite 打包 + Wails 绑定 + 内置主题）
     run: once
     sources:
       - frontend/src/**/*
+      - frontend/packages/**/*
+      - frontend/vite.config.js
+      - package.json
       - tools/build-frontend.mjs
     generates:
       - frontend/dist/**/*
     deps:
+      - task: frontend:deps
       - task: generate:bindings
       - task: ffmpeg:build
     cmds:
       - node tools/build-frontend.mjs
 
+  check:frontend:
+    summary: 前端工程化检查（lint + 类型检查 + 单测）
+    cmds:
+      - npm run check
+
   dev:frontend:
-    summary: 启动界面预览服务器（浏览器里调试界面用）
+    summary: 启动界面预览服务器（Vite，带 HMR；需先 npm install）
+    deps:
+      - task: frontend:deps
+    cmds:
+      - npm run dev
+
+  dev:frontend:static:
+    summary: 零依赖静态预览（不需要 node_modules，但没有 HMR / 依赖解析能力有限）
     cmds:
       - node tools/dev-server.js {{.VITE_PORT}}
 

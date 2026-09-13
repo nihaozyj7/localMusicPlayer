@@ -21,6 +21,7 @@ import (
 	"musicplayer/internal/loudness"
 	"musicplayer/internal/lyrics"
 	"musicplayer/internal/media"
+	"musicplayer/internal/metacache"
 	"musicplayer/internal/theme"
 )
 
@@ -516,14 +517,38 @@ func (s *PlaylistService) Export(id string) (string, error) {
 	return out, nil
 }
 
-// ---------------------------------------------------------------------------
-// Lyrics 服务
-// ---------------------------------------------------------------------------
+/* --------------------------------------------------------------------------
+   Lyrics 服务
+   --------------------------------------------------------------------------
+   读取链（与设置里的「歌词来源优先级」一致）：
+     内嵌歌词 → 同目录同名 .lrc → 歌词缓存 → 在线自动匹配
+
+   写回的两种情形：
+     · 用户手动匹配（前端搜索候选 → 应用）→ Save()
+     · 播放时自动匹配成功 → AutoMatch() 内部顺手写缓存
+   两者都会按设置里的「把封面/歌词写进歌曲文件」决定是否同时嵌入音频文件。
+   没有缓存这一层是实测的 bug：手动匹配的歌词只存在前端内存里，
+   关掉应用再打开就没了。
+   -------------------------------------------------------------------------- */
 
 // LyricsService 歌词接口
 type LyricsService struct {
 	store *bootstrap.Store
 	songs func(id string) (bootstrap.Song, bool)
+	// cache 歌词缓存（可空：为空时跳过缓存层）
+	cache *metacache.Store
+	// online 在线歌词聚合器（可空：为空时不做在线自动匹配）
+	online LyricsMatcher
+	// ai 元数据清洗（可选）
+	ai *AiService
+}
+
+// LyricsMatcher 在线歌词匹配的最小接口。
+//
+// 用接口而不是直接依赖 lyricsfetch.Aggregator：测试里可以塞一个假的，
+// 而且「在线歌词」这件事将来换实现（换源、加缓存）不会牵动本服务。
+type LyricsMatcher interface {
+	Match(ctx context.Context, title, artist string, durationMS int64) (lrc, provider, matchedTitle, matchedArtist string, err error)
 }
 
 // NewLyricsService 构造服务
@@ -531,13 +556,186 @@ func NewLyricsService(store *bootstrap.Store, songs func(id string) (bootstrap.S
 	return &LyricsService{store: store, songs: songs}
 }
 
-// Load 按设置里的优先级加载歌词
+// setCache 注入歌词缓存（main 里装配）。
+func (s *LyricsService) setCache(cache *metacache.Store) { s.cache = cache }
+
+// setOnline 注入在线歌词匹配器（main 里装配）。
+func (s *LyricsService) setOnline(m LyricsMatcher) { s.online = m }
+
+// setAI 注入元数据清洗服务（可选）。
+func (s *LyricsService) setAI(ai *AiService) { s.ai = ai }
+
+// cachedLyrics 返回「按 id 读缓存」的闭包，供 internal/lyrics 使用。
+func (s *LyricsService) cachedLyrics(songID string) lyrics.Cache {
+	if s.cache == nil {
+		return nil
+	}
+	return func(id string) (string, bool) { return s.cache.Lyrics(id) }
+}
+
+// Load 按设置里的优先级加载歌词（**只读本地**，不联网）。
+//
+// 之所以不在这里联网：本方法在「每次切歌」时都会被调用，联网等待会把
+// 播放界面卡住十几秒。在线自动匹配走 AutoMatch，由前端在本地读不到时再触发。
+//
+// 在线试听曲目（不在本地曲库里）也走这里：它们没有本地文件，但可能有缓存
+// （用户手动匹配过），所以查不到歌曲时不去报错，而是继续读缓存。
 func (s *LyricsService) Load(songID string) (lyrics.Result, error) {
 	song, ok := s.songs(songID)
 	if !ok {
-		return lyrics.Result{}, fmt.Errorf("歌曲不存在: %s", songID)
+		// 不是本地歌曲：只可能命中缓存
+		if text, hit := s.cacheGet(songID); hit {
+			return lyrics.Result{LRC: text, Source: lyrics.SourceCache}, nil
+		}
+		return lyrics.Result{LRC: "", Source: lyrics.SourceNone}, nil
 	}
-	return lyrics.Load(song.Path, s.store.Get().LyricsSources), nil
+	return lyrics.Load(songID, song.Path, s.store.Get().LyricsSources, s.cachedLyrics(songID)), nil
+}
+
+// AutoMatch 本地读不到歌词时，联网自动匹配一次，并把结果写进缓存。
+//
+// 返回的 Result.Source 形如 online:lrclib；没匹配到返回 source=none 而不是错误
+// （「这首歌没有歌词」是正常结果，不该让前端弹错误）。
+func (s *LyricsService) AutoMatch(songID string) (lyrics.Result, error) {
+	song, ok := s.songs(songID)
+	if !ok {
+		return lyrics.Result{LRC: "", Source: lyrics.SourceNone}, nil
+	}
+	if !lyrics.WantOnline(s.store.Get().LyricsSources) {
+		return lyrics.Result{LRC: "", Source: lyrics.SourceNone}, nil
+	}
+	if s.online == nil {
+		return lyrics.Result{LRC: "", Source: lyrics.SourceNone}, nil
+	}
+
+	title, artist := s.cleanMetaFor(song)
+	if strings.TrimSpace(title) == "" {
+		return lyrics.Result{LRC: "", Source: lyrics.SourceNone}, nil
+	}
+	// 文件名当标题的「无标签文件」（Track 07 / 01 / unknown…）匹配在线歌词
+	// 只会撞上别人的歌词 —— 错的歌词比没有歌词更糟，直接不搜。
+	if isPlaceholderTitle(title) && strings.TrimSpace(artist) == "" {
+		return lyrics.Result{LRC: "", Source: lyrics.SourceNone}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	lrc, provider, matchedTitle, matchedArtist, err := s.online.Match(ctx, title, artist, song.Duration)
+	if err != nil || strings.TrimSpace(lrc) == "" {
+		return lyrics.Result{LRC: "", Source: lyrics.SourceNone}, nil
+	}
+
+	// 匹配到就落缓存：下一次打开（甚至离线）也还在，这是「第二次打开又没有了」的修法。
+	// 写缓存失败不影响本次显示，所以忽略错误只记日志。
+	s.saveToCache(songID, lrc, "online:"+provider)
+
+	src := lyrics.SourceOnline
+	if provider != "" {
+		src = "online:" + provider
+	}
+	return lyrics.Result{LRC: lrc, Source: src, Title: matchedTitle, Artist: matchedArtist}, nil
+}
+
+// Save 保存用户手动匹配到的歌词：写缓存，并按设置决定是否嵌入音频文件。
+//
+// embed 是显式传入的（nil = 按配置走）：前端配置是防抖同步的，
+// 「刚开开关就应用歌词」时后端读到的可能还是旧值。
+func (s *LyricsService) Save(songID, lrc, source string, embed *bool) (map[string]any, error) {
+	lrc = strings.TrimSpace(lrc)
+	if lrc == "" {
+		return nil, errors.New("歌词内容为空")
+	}
+	if strings.TrimSpace(source) == "" {
+		source = "user"
+	}
+	if s.cache == nil {
+		return nil, errors.New("歌词缓存不可用")
+	}
+	if _, err := s.cache.SaveLyrics(songID, lrc, source); err != nil {
+		return nil, err
+	}
+
+	out := map[string]any{"ok": true, "cached": true, "source": source, "embedded": false}
+	song, ok := s.songs(songID)
+	if !ok {
+		// 在线试听曲目：没有本地文件可写，缓存就是全部
+		out["note"] = "已缓存歌词（在线曲目没有本地文件，不写嵌入）"
+		return out, nil
+	}
+
+	embedEnabled := s.store.Get().EmbedMeta
+	if embed != nil {
+		embedEnabled = *embed
+	}
+	if !embedEnabled {
+		out["note"] = "已缓存歌词"
+		return out, nil
+	}
+	if !metacache.SupportedEmbed(song.Ext) {
+		out["note"] = "歌词已缓存；该格式暂不支持写入文件"
+		return out, nil
+	}
+	res, err := metacache.EmbedLyrics(song.Path, lrc)
+	switch {
+	case err == nil && res.OK:
+		out["embedded"] = true
+		out["note"] = "已写入歌曲文件：" + res.Message
+	case errors.Is(err, metacache.ErrUnsupported):
+		out["note"] = "歌词已缓存；该格式暂不支持写入文件"
+	default:
+		out["note"] = "歌词已缓存，但写入文件失败：" + errText(err)
+	}
+	return out, nil
+}
+
+// LoadCached 只读缓存（前端在「本地 + 在线」都拿不到时用它确认一次）。
+func (s *LyricsService) LoadCached(songID string) map[string]any {
+	if text, ok := s.cacheGet(songID); ok {
+		return map[string]any{"lrc": text, "source": lyrics.SourceCache, "cached": true}
+	}
+	return map[string]any{"lrc": "", "source": lyrics.SourceNone, "cached": false}
+}
+
+func (s *LyricsService) saveToCache(songID, text, source string) {
+	if s.cache == nil {
+		return
+	}
+	if _, err := s.cache.SaveLyrics(songID, text, source); err != nil {
+		log.Printf("[lyrics] 写入缓存失败 %s: %v", songID, err)
+	}
+}
+
+func (s *LyricsService) cacheGet(songID string) (string, bool) {
+	if s.cache == nil {
+		return "", false
+	}
+	return s.cache.Lyrics(songID)
+}
+
+// cleanMetaFor 用 AI 清洗脏标题（可选），并过滤掉「未知歌手」这类占位元数据。
+func (s *LyricsService) cleanMetaFor(song bootstrap.Song) (string, string) {
+	title, artist := song.Title, song.Artist
+	if s.ai != nil && s.ai.Enabled() {
+		if cleaned, err := s.ai.ExtractMeta(song.Title, song.Artist, song.Album, filepath.Base(song.Path)); err == nil {
+			if strings.TrimSpace(cleaned.Title) != "" {
+				title = cleaned.Title
+			}
+			if strings.TrimSpace(cleaned.Artist) != "" {
+				artist = cleaned.Artist
+			}
+		}
+	}
+	if isPlaceholderMeta(artist) {
+		artist = ""
+	}
+	return title, artist
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // ---------------------------------------------------------------------------
@@ -1201,9 +1399,9 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 						out = append(out, s)
 					}
 				}
-				if len(out) > 0 {
-					c.LyricsSources = out
-				}
+				// 规范化：去重、去掉未知项、补齐 cache 等缺项。
+				// 前端只会把「拖过的顺序」推上来，合法性由后端兜住。
+				c.LyricsSources = lyrics.NormalizeSources(out)
 			}
 		case "filterRules":
 			if list, ok := raw.([]any); ok {
@@ -1255,6 +1453,27 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			c.RowClickAction = bootstrap.NormalizeRowClickAction(asString(raw, c.RowClickAction))
 		case "listDensity":
 			c.ListDensity = bootstrap.NormalizeListDensity(asString(raw, c.ListDensity))
+		case "showDesktopLyrics":
+			c.ShowDesktopLyrics = asBool(raw, c.ShowDesktopLyrics)
+		case "coverCarousel":
+			c.CoverCarousel = asBool(raw, c.CoverCarousel)
+		case "coverCarouselInterval":
+			// 下限 2 秒：比这更快的轮播只会变成闪烁
+			c.CoverCarouselInterval = bootstrap.NormalizeCarouselInterval(asInt(raw, c.CoverCarouselInterval))
+		case "shuffleMode":
+			if asString(raw, c.ShuffleMode) == "once" {
+				c.ShuffleMode = "once"
+			} else {
+				c.ShuffleMode = "reshuffle"
+			}
+		case "aiBaseUrl":
+			c.AIBaseURL = strings.TrimSpace(asString(raw, c.AIBaseURL))
+		case "aiApiKey":
+			c.AIAPIKey = strings.TrimSpace(asString(raw, c.AIAPIKey))
+		case "aiThinking":
+			c.AIThinking = asBool(raw, c.AIThinking)
+		case "aiModelId":
+			c.AIModelID = strings.TrimSpace(asString(raw, c.AIModelID))
 		}
 	}
 }

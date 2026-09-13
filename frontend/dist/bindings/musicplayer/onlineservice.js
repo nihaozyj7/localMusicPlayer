@@ -13,6 +13,9 @@ import * as http$0 from "../net/http/models.js";
 /**
  * CoverLookup 返回一首歌的封面地址（同源）。没找到时 available=false，
  * 前端据此「不显示封面」而不是留一个破图。
+ * 
+ * 走的是 coverfetch 的 Resolve（挑候选 → 下载 → 体检），因此返回的地址
+ * 一定是一张**能显示、且不是纯白占位图**的图；白图会被当成「没找到」。
  * @param {string} title
  * @param {string} artist
  * @param {string} album
@@ -57,7 +60,10 @@ export function InvalidateCovers() {
 }
 
 /**
- * Lyrics 自动匹配并抓取一首歌的歌词（播放时按需调用）。
+ * Lyrics 自动匹配并抓取一首歌的歌词（在线试听曲目用）。
+ * 
+ * 标题与歌手都要传给聚合器：评分靠它们做实体对齐，只给关键词会让所有候选
+ * 都落在「信息不足」的基础分上，翻唱/Live 版很容易被选成第一名。
  * @param {string} title
  * @param {string} artist
  * @param {number} duration

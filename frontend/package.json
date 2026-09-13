@@ -1,0 +1,15 @@
+{
+  "name": "@musicplayer/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "音乐播放器前端（原生 ESM 源码 + Vite 构建），产物同步到 frontend/dist 供 go:embed",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@musicplayer/player-skins": "*"
+  }
+}

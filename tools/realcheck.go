@@ -137,7 +137,7 @@ func main() {
 	}
 
 	if len(songs) > 0 {
-		lr := lyrics.Load(songs[0].Path, store.Get().LyricsSources)
+		lr := lyrics.Load(songs[0].ID, songs[0].Path, store.Get().LyricsSources, nil)
 		fmt.Printf("\n歌词: 来源=%s 行数=%d\n", lr.Source, strings.Count(lr.LRC, "\n"))
 	}
 

@@ -87,15 +87,19 @@ await new Promise((r) => server.listen(PORT, "127.0.0.1", r));
 console.log(`页面: http://127.0.0.1:${PORT}/   追踪 ${SECONDS} 秒…\n`);
 
 const profile = mkdtempSync(path.join(tmpdir(), "mp-probe-"));
-const edge = spawn(EDGE, [
-  "--headless=new",
-  `--remote-debugging-port=${CDP}`,
-  `--user-data-dir=${profile}`,
-  "--no-first-run",
-  "--disable-extensions",
-  "--autoplay-policy=no-user-gesture-required",
-  `http://127.0.0.1:${PORT}/`,
-], { stdio: "ignore" });
+const edge = spawn(
+  EDGE,
+  [
+    "--headless=new",
+    `--remote-debugging-port=${CDP}`,
+    `--user-data-dir=${profile}`,
+    "--no-first-run",
+    "--disable-extensions",
+    "--autoplay-policy=no-user-gesture-required",
+    `http://127.0.0.1:${PORT}/`,
+  ],
+  { stdio: "ignore" }
+);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -131,7 +135,9 @@ ws.addEventListener("message", (ev) => {
     lines.push(text);
     if (text.startsWith("EV ")) {
       const o = JSON.parse(text.slice(3));
-      console.log(`  +${String(o.dt).padStart(5)}ms  ${o.ev.padEnd(17)} rs=${o.rs} ns=${o.ns} t=${o.ct} dur=${o.dur} buf=${o.buf}${o.code ? ` code=${o.code}` : ""}${o.msg ? ` ${o.msg}` : ""}`);
+      console.log(
+        `  +${String(o.dt).padStart(5)}ms  ${o.ev.padEnd(17)} rs=${o.rs} ns=${o.ns} t=${o.ct} dur=${o.dur} buf=${o.buf}${o.code ? ` code=${o.code}` : ""}${o.msg ? ` ${o.msg}` : ""}`
+      );
     } else {
       console.log(text);
     }

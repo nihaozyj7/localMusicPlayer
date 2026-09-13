@@ -166,14 +166,16 @@
   transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
-.navitem:hover .navitem__more,
-.navitem:focus-within .navitem__more {
+/* 只有「有更多按钮」的导航项（自定义歌单）才把数量换成更多按钮；
+   「本地歌曲」「播放列表」没有右键菜单 / 更多按钮，数量必须一直显示 ——
+   否则鼠标一移上去数量就消失，看起来像被隐藏了。 */
+.navitem:has(.navitem__more):hover .navitem__more,
+.navitem:has(.navitem__more):focus-within .navitem__more {
   opacity: 1;
 }
 
-/* 悬浮时把数量藏起来，保证同一时刻只看到一个 */
-.navitem:hover .navitem__badge,
-.navitem:focus-within .navitem__badge {
+.navitem:has(.navitem__more):hover .navitem__badge,
+.navitem:has(.navitem__more):focus-within .navitem__badge {
   opacity: 0;
 }
 

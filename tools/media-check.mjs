@@ -18,7 +18,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, "..");
 
 const EDGE = [
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
@@ -156,15 +155,19 @@ await new Promise((r) => server.listen(PAGE_PORT, "127.0.0.1", r));
 console.log(`页面地址: http://127.0.0.1:${PAGE_PORT}/   （音频源: ${AUDIO_URL.replace(/t=.*/, "t=***")}）`);
 
 const profile = mkdtempSync(path.join(tmpdir(), "mp-mediacheck-"));
-const edge = spawn(EDGE, [
-  "--headless=new",
-  `--remote-debugging-port=${CDP_PORT}`,
-  `--user-data-dir=${profile}`,
-  "--no-first-run",
-  "--disable-extensions",
-  "--autoplay-policy=no-user-gesture-required",
-  `http://127.0.0.1:${PAGE_PORT}/`,
-], { stdio: "ignore" });
+const edge = spawn(
+  EDGE,
+  [
+    "--headless=new",
+    `--remote-debugging-port=${CDP_PORT}`,
+    `--user-data-dir=${profile}`,
+    "--no-first-run",
+    "--disable-extensions",
+    "--autoplay-policy=no-user-gesture-required",
+    `http://127.0.0.1:${PAGE_PORT}/`,
+  ],
+  { stdio: "ignore" }
+);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

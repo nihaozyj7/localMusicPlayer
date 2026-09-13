@@ -1,0 +1,48 @@
+/* ==========================================================================
+   background-layer.css — 整窗背景层（background-layer.js 的样式）
+   --------------------------------------------------------------------------
+   宿主把 .skin-bg 容器放在 .app 下、所有内容之下；这里只负责它长什么样。
+   `position: fixed` + 高 z-index 让它盖住侧边栏与主内容，
+   但仍低于标题栏与播放控件，控制按钮不会被遮住。
+   ========================================================================== */
+
+.skin-bg {
+  position: fixed;
+  inset: 0;
+  /* 盖住侧边栏与主内容（两者在 --z-content=10 这一层），
+     但仍在标题栏（70）与播放控件（40）之下 */
+  z-index: 25;
+  overflow: hidden;
+  background: var(--bg-app);
+  pointer-events: none;
+
+  --skin-bg-blur: 54px;
+  --skin-bg-scale: 1.14;
+  --skin-bg-brightness: 0.85;
+  --skin-bg-veil: var(--immersive-veil, rgba(0, 0, 0, 0.4));
+}
+
+.skin-bg[hidden] {
+  display: none;
+}
+
+.skin-bg__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(var(--skin-bg-blur)) saturate(1.5) brightness(var(--skin-bg-brightness));
+  transform: scale(var(--skin-bg-scale));
+  transition: opacity var(--dur) var(--ease);
+}
+
+.skin-bg__veil {
+  position: absolute;
+  inset: 0;
+  background: var(--skin-bg-veil);
+}
+
+.skin-bg__grain {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 80% at 50% 40%, transparent 40%, rgba(0, 0, 0, 0.35) 100%);
+}

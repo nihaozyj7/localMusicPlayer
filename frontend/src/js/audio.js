@@ -216,6 +216,22 @@ function audioEl() {
   return el;
 }
 
+/**
+ * 真实音频元素（播放界面皮肤通过 ctx.audio 拿到它）。
+ *
+ * 需求里说「提供音频本身和播放进度」——皮肤可能想读 buffered（画缓冲条）、
+ * 挂自己的 timeupdate 监听，或做可视化，所以这里把元素本身交出去，
+ * 而不是只给一个进度快照。元素由本模块独占管理：皮肤只读、不要改 src/播放状态。
+ */
+export function audioElement() {
+  try {
+    return audioEl();
+  } catch (err) {
+    console.warn("[audio] 音频元素不可用", err);
+    return null;
+  }
+}
+
 function bindEvents(node) {
   if (node.dataset.bound === "1") return;
   node.dataset.bound = "1";
@@ -274,6 +290,11 @@ function bindEvents(node) {
 
   node.addEventListener("ended", () => {
     endedAt = performance.now();
+    // 定时停止优先：本首结束即停，即使处于单曲循环也不重播。
+    if (state.sleepTimer?.type === "after-song") {
+      playNext(true);
+      return;
+    }
     if (state.playMode === "loop-one") {
       node.currentTime = 0;
       node.play().catch(() => {});

@@ -1,0 +1,31 @@
+node_modules/
+frontend/dist/
+frontend/bindings/
+frontend/.bindings-tmp-*/
+bin/
+build/ffmpeg/
+internal/ffmpeg/bin/
+internal/theme/builtin/
+.task/
+*.exe
+*.exe~
+
+# 生成物：格式化只会制造噪音
+docs/screenshots/
+
+# Go 侧不做 Prettier（由 gofmt 负责）
+*.go
+go.mod
+go.sum
+
+# --------------------------------------------------------------------------
+# 尚未纳入格式化的区域（历史遗留，属"逐步收紧"的一部分）
+# --------------------------------------------------------------------------
+# frontend/src 里的界面代码是**手调过的**：
+#   · styles/ 里大量数值是量出来的（见 tools/measure-*.mjs 的量测报告），
+#     Prettier 会重排声明、拆并多值属性，虽然语义等价但会让量测对比失去意义；
+#   · index.html 里内联元素的空格是**有语义的**（htmlWhitespaceSensitivity），
+#     自动格式化会改变行内间距，属于会真的改画面的改动。
+# 这些文件仍然受 ESLint 约束（正确性），只是不参与 Prettier 检查。
+# 新写的代码（frontend/packages、frontend/tests、tools、根配置）全部纳入。
+frontend/src/

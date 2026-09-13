@@ -47,7 +47,9 @@ for (let i = 0; i < 60 && !target; i += 1) {
   try {
     const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
     target = list.find((x) => x.type === "page" && x.webSocketDebuggerUrl);
-  } catch { /* 等启动 */ }
+  } catch {
+    /* 等启动 */
+  }
 }
 if (!target) {
   console.error("无法接入 WebView2");
@@ -61,7 +63,10 @@ const waiting = new Map();
 const logs = [];
 ws.addEventListener("message", (ev) => {
   const m = JSON.parse(ev.data);
-  if (m.id && waiting.has(m.id)) { waiting.get(m.id)(m.result); waiting.delete(m.id); }
+  if (m.id && waiting.has(m.id)) {
+    waiting.get(m.id)(m.result);
+    waiting.delete(m.id);
+  }
   if (m.method === "Runtime.consoleAPICalled") {
     logs.push((m.params.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
   }
@@ -69,7 +74,10 @@ ws.addEventListener("message", (ev) => {
 function send(method, params = {}) {
   msgId += 1;
   const id = msgId;
-  return new Promise((r) => { waiting.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
+  return new Promise((r) => {
+    waiting.set(id, r);
+    ws.send(JSON.stringify({ id, method, params }));
+  });
 }
 async function evaluate(expression) {
   const res = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
@@ -169,16 +177,24 @@ console.log("\n================ 判定 ================");
 const ok1 = result?.backendMeasured && result?.gainDB !== null;
 const ok2 = Number.isFinite(result?.frontendGain) || result?.playing;
 const ok3 = afterChange?.oldStandardStillValid === false;
-console.log(ok1 ? `  ✓ 播放时按需算出了补偿：${result.integrated} LUFS → ${result.gainDB} dB（耗时 ${result.waitedMs}ms）`
-               : `  ✗ 没有按需算出补偿: ${JSON.stringify(result)}`);
-console.log(ok2 ? `  ✓ 补偿已进入前端增益表: ${result.frontendGain}` : `  ! 前端增益表未更新: ${result?.frontendGain}`);
-console.log(ok3 ? "  ✓ 改了目标响度后旧补偿已失效"
-               : `  ✗ 改标准后旧补偿仍然有效: ${JSON.stringify(afterChange)}`);
+console.log(
+  ok1
+    ? `  ✓ 播放时按需算出了补偿：${result.integrated} LUFS → ${result.gainDB} dB（耗时 ${result.waitedMs}ms）`
+    : `  ✗ 没有按需算出补偿: ${JSON.stringify(result)}`
+);
+console.log(
+  ok2 ? `  ✓ 补偿已进入前端增益表: ${result.frontendGain}` : `  ! 前端增益表未更新: ${result?.frontendGain}`
+);
+console.log(ok3 ? "  ✓ 改了目标响度后旧补偿已失效" : `  ✗ 改标准后旧补偿仍然有效: ${JSON.stringify(afterChange)}`);
 
 console.log("\n================ 控制台（最后 10 条）================");
 for (const l of logs.slice(-10)) console.log("  " + l);
 
-writeFileSync(path.join(workDir, "loudtest.json"), JSON.stringify({ before, result, afterChange, logs }, null, 2), "utf8");
+writeFileSync(
+  path.join(workDir, "loudtest.json"),
+  JSON.stringify({ before, result, afterChange, logs }, null, 2),
+  "utf8"
+);
 ws.close();
 child.kill();
 await sleep(400);

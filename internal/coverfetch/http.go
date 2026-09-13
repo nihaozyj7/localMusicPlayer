@@ -161,8 +161,9 @@ func Download(ctx context.Context, rawURL string) (ImageData, error) {
 		return ImageData{}, err
 	}
 	req.Header.Set("User-Agent", UserAgent)
-	// 图床基本都校验 Referer，给一个自家站点地址最稳
-	req.Header.Set("Referer", "https://"+hostOf(rawURL)+"/")
+	// 图床基本都校验 Referer。注意不能一律用图片自己的域名：网易云 CDN
+	// 与 B 站图床都期待「站点首页」作为来源，用错会 403 或返回占位白图。
+	req.Header.Set("Referer", refererFor(rawURL))
 	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
 
 	resp, err := client.Do(req)
@@ -187,6 +188,9 @@ func Download(ctx context.Context, rawURL string) (ImageData, error) {
 	if ct == "" {
 		return ImageData{}, fmt.Errorf("%s: 返回的内容不是图片", hostOf(rawURL))
 	}
+	// 统一成规范类型（image/jpg → image/jpeg，并以魔数为准）：
+	// 这个值会被写进缓存索引、data URL 与代理响应头，必须干净。
+	ct = NormalizeMIME(ct, body)
 	final := rawURL
 	if resp.Request != nil && resp.Request.URL != nil {
 		final = resp.Request.URL.String()

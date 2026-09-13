@@ -28,7 +28,13 @@ const H = 800;
 const dir = prepareMeasureDir(join(root, "frontend", "src"), join(root, ".task", "measure"));
 
 const BINDINGS = join(root, "frontend", "bindings");
-const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png" };
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+};
 const server = createServer((req, res) => {
   const p = decodeURIComponent(new URL(req.url, "http://x").pathname);
   if (p === "/wails/runtime.js") {
@@ -38,8 +44,13 @@ export const Call = { ByID(){return Promise.reject(new Error("preview"))}, ByNam
 export const Events = { On(){return ()=>{}}, Off(){}, Emit(){return Promise.resolve()} };
 export default { Call, Events };`);
   }
-  const f = p.startsWith("/bindings/") ? join(BINDINGS, p.slice("/bindings/".length)) : join(dir, p === "/" ? "index.html" : p.replace(/^\//, ""));
-  if (!existsSync(f) || statSync(f).isDirectory()) { res.writeHead(404); return res.end("404"); }
+  const f = p.startsWith("/bindings/")
+    ? join(BINDINGS, p.slice("/bindings/".length))
+    : join(dir, p === "/" ? "index.html" : p.replace(/^\//, ""));
+  if (!existsSync(f) || statSync(f).isDirectory()) {
+    res.writeHead(404);
+    return res.end("404");
+  }
   res.writeHead(200, { "Content-Type": MIME[extname(f)] || "application/octet-stream" });
   res.end(readFileSync(f));
 });
@@ -47,19 +58,53 @@ await new Promise((r) => server.listen(4988, "127.0.0.1", r));
 
 const prof = join(tmpdir(), "verify-" + Date.now());
 mkdirSync(prof, { recursive: true });
-const edge = spawn(EDGE, ["--headless=new", "--disable-gpu", "--no-sandbox", "--no-first-run", "--no-default-browser-check", `--user-data-dir=${prof}`, `--remote-debugging-port=${CDP_PORT}`, "about:blank"], { stdio: "ignore" });
+const edge = spawn(
+  EDGE,
+  [
+    "--headless=new",
+    "--disable-gpu",
+    "--no-sandbox",
+    "--no-first-run",
+    "--no-default-browser-check",
+    `--user-data-dir=${prof}`,
+    `--remote-debugging-port=${CDP_PORT}`,
+    "about:blank",
+  ],
+  { stdio: "ignore" }
+);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let ok = false;
-for (let i = 0; i < 60 && !ok; i++) { await sleep(500); try { await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`); ok = true; } catch {} }
-if (!ok) { console.error("CDP 未就绪"); process.exit(1); }
+for (let i = 0; i < 60 && !ok; i++) {
+  await sleep(500);
+  try {
+    await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+    ok = true;
+  } catch {}
+}
+if (!ok) {
+  console.error("CDP 未就绪");
+  process.exit(1);
+}
 
 const targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json();
 const ws = new WebSocket(targets.find((t) => t.type === "page").webSocketDebuggerUrl);
 await new Promise((r) => (ws.onopen = r));
-let msgId = 0; const pending = new Map();
-ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
-const send = (method, params = {}) => new Promise((res) => { const i = ++msgId; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
+let msgId = 0;
+const pending = new Map();
+ws.onmessage = (e) => {
+  const m = JSON.parse(e.data);
+  if (m.id && pending.has(m.id)) {
+    pending.get(m.id)(m);
+    pending.delete(m.id);
+  }
+};
+const send = (method, params = {}) =>
+  new Promise((res) => {
+    const i = ++msgId;
+    pending.set(i, res);
+    ws.send(JSON.stringify({ id: i, method, params }));
+  });
 const evaluate = async (expression) => {
   const r = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
   if (r.result?.exceptionDetails) return { __error: r.result.exceptionDetails.text };
@@ -188,6 +233,8 @@ for (const w of WIDTHS) {
   );
 }
 
-ws.close(); edge.kill(); server.close();
+ws.close();
+edge.kill();
+server.close();
 console.log(anyProblem ? "\n✗ 存在问题" : "\n✓ 全部断点通过：行高正常、文字居中、列对齐、图标尺寸正常");
 process.exit(anyProblem ? 1 : 0);

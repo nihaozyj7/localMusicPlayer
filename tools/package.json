@@ -1,0 +1,6 @@
+{
+  "name": "@musicplayer/tools",
+  "private": true,
+  "type": "commonjs",
+  "description": "开发/自检脚本目录。根 package.json 是 ESM（\"type\":\"module\"），而这里的 dev-server.js / cdp-check.js 等是 CommonJS 脚本，用这个文件把它们的模块类型固定在 CommonJS，避免被根配置牵着走（.mjs 脚本不受影响，始终是 ESM）。"
+}

@@ -7,7 +7,6 @@
    ========================================================================== */
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import http from "node:http";
@@ -79,7 +78,9 @@ ws.addEventListener("message", (ev) => {
     return;
   }
   if (m.method === "Runtime.exceptionThrown") {
-    errors.push("EXC " + m.params.exceptionDetails.text + " " + (m.params.exceptionDetails.exception?.description || ""));
+    errors.push(
+      "EXC " + m.params.exceptionDetails.text + " " + (m.params.exceptionDetails.exception?.description || "")
+    );
   } else if (m.method === "Runtime.consoleAPICalled") {
     const text = (m.params.args || []).map((a) => a.value ?? a.description ?? "").join(" ");
     if (m.params.type === "error" && !/favicon/i.test(text)) errors.push("ERR " + text);
@@ -180,8 +181,20 @@ const navBox = await evalJs(`
 `);
 if (navBox?.x) {
   await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: navBox.x, y: navBox.y, button: "none" });
-  await send("Input.dispatchMouseEvent", { type: "mousePressed", x: navBox.x, y: navBox.y, button: "left", clickCount: 1 });
-  await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: navBox.x, y: navBox.y, button: "left", clickCount: 1 });
+  await send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: navBox.x,
+    y: navBox.y,
+    button: "left",
+    clickCount: 1,
+  });
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: navBox.x,
+    y: navBox.y,
+    button: "left",
+    clickCount: 1,
+  });
 }
 await sleep(500);
 const after = await evalJs(`return window.__app.state.view;`);
@@ -196,8 +209,20 @@ const settingsBox = await evalJs(`
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 `);
 if (settingsBox?.x) {
-  await send("Input.dispatchMouseEvent", { type: "mousePressed", x: settingsBox.x, y: settingsBox.y, button: "left", clickCount: 1 });
-  await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: settingsBox.x, y: settingsBox.y, button: "left", clickCount: 1 });
+  await send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: settingsBox.x,
+    y: settingsBox.y,
+    button: "left",
+    clickCount: 1,
+  });
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: settingsBox.x,
+    y: settingsBox.y,
+    button: "left",
+    clickCount: 1,
+  });
 }
 await sleep(600);
 const opened = await evalJs(`const l = document.getElementById("settings-layer"); return l ? !l.hidden : false;`);
@@ -210,8 +235,20 @@ const closeBox = await evalJs(`
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 `);
 if (closeBox?.x) {
-  await send("Input.dispatchMouseEvent", { type: "mousePressed", x: closeBox.x, y: closeBox.y, button: "left", clickCount: 1 });
-  await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: closeBox.x, y: closeBox.y, button: "left", clickCount: 1 });
+  await send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: closeBox.x,
+    y: closeBox.y,
+    button: "left",
+    clickCount: 1,
+  });
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: closeBox.x,
+    y: closeBox.y,
+    button: "left",
+    clickCount: 1,
+  });
 }
 await sleep(500);
 const closed = await evalJs(`

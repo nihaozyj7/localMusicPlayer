@@ -48,7 +48,7 @@
   width: min(880px, calc(100% - var(--sp-7)));
   max-height: calc(100% - var(--sp-7));
   border: var(--hairline-strong);
-  border-radius: var(--r-lg);
+  border-radius: var(--panel-radius);
   background: var(--glass-bg-strong);
   backdrop-filter: var(--panel-blur);
   box-shadow: var(--panel-shadow);
@@ -107,7 +107,7 @@
   height: var(--btn-sm);
   flex: none;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--btn-radius);
   background: none;
   color: var(--text-3);
   cursor: pointer;
@@ -131,6 +131,88 @@
 }
 
 /* --------------------------------------------------------------------------
+   搜索历史（输入框为空时显示；可单条删除 / 一键清空）
+   -------------------------------------------------------------------------- */
+.search-overlay__history {
+  padding: var(--sp-2) var(--sp-4) var(--sp-3);
+  border-bottom: var(--hairline);
+}
+
+.search-overlay__history[hidden] {
+  display: none;
+}
+
+.search-overlay__history-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.search-overlay__history-clear {
+  height: 22px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--btn-radius);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.search-overlay__history-clear:hover {
+  color: var(--text-1);
+  background: var(--surface-hover);
+}
+
+.search-overlay__history-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.search-overlay__history-chip {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  border-radius: var(--btn-radius);
+  background: var(--surface-1);
+  border: var(--hairline);
+}
+
+.search-overlay__history-key {
+  height: 26px;
+  max-width: 220px;
+  padding: 0 var(--sp-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.search-overlay__history-key:hover {
+  color: var(--text-1);
+}
+
+.search-overlay__history-del {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 26px;
+  color: var(--text-3);
+}
+
+.search-overlay__history-del:hover {
+  color: var(--danger);
+  background: var(--surface-hover);
+}
+
+.search-overlay__history-del svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* --------------------------------------------------------------------------
    标签页 + 结果数
    -------------------------------------------------------------------------- */
 .search-overlay__head {
@@ -146,7 +228,7 @@
   display: inline-flex;
   gap: var(--sp-1);
   padding: 2px;
-  border-radius: var(--r-sm);
+  border-radius: var(--panel-radius);
   background: var(--surface-1);
 }
 

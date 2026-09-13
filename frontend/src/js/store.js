@@ -13,8 +13,10 @@ import { backend, connect, emit, isWails, on } from "./bridge.js";
 
 const LS_KEY = "music-player.state.v1";
 
-/** 播放模式 */
-export const PLAY_MODES = ["sequence", "loop-all", "loop-one", "shuffle"];
+/** 播放模式
+ *  「sequence（顺序）」现在的语义就是「列表循环」——按列表顺序播完自动回到第一首，
+ *  所以不再单独保留一个行为完全相同的 loop-all（旧配置里的 loop-all 仍能正常播放）。 */
+export const PLAY_MODES = ["sequence", "loop-one", "shuffle"];
 
 const DEFAULT_CONFIG = {
   theme: "dark-minimal", // 主题 id（= themes/ 下的文件名）
@@ -22,6 +24,7 @@ const DEFAULT_CONFIG = {
   glassBlur: 22,
   glassBlurCustom: false, // 用户是否手动调整过毛玻璃强度（true 才覆盖主题令牌）
   glassAlpha: 62,
+  glassAlphaCustom: false, // 用户是否手动调整过面板透明度（true 才按配置实时合成）
   nativeBackdrop: "off", // 窗口原生材质：off | auto | mica | acrylic | tabbed（改了要重启）
   animations: true,
   sidebarWidth: 232,
@@ -34,9 +37,22 @@ const DEFAULT_CONFIG = {
   autoScanOnStart: true,
   watchFolders: true,
   playerViewMode: "classic", // classic | immersive | minimal
-  lyricsSources: ["lrc-file", "embedded", "online"],
+  // 与 Go 侧 bootstrap.Config 的默认值保持一致：
+  // 内嵌歌词 → 同目录 .lrc → 本程序缓存 → 在线自动匹配
+  lyricsSources: ["embedded", "lrc-file", "cache", "online"],
   lyricsFontSize: 16,
   lyricsLines: 7,
+  // 桌面歌词（悬浮在窗口上的歌词，区别于详情页里的歌词）
+  showDesktopLyrics: false,
+
+  /* 随机播放行为：reshuffle（打乱后播完重新打乱）| once（打乱后顺序播完即停） */
+  shuffleMode: "reshuffle",
+
+  /* AI 元数据清洗（设置 → AI 元数据） */
+  aiBaseUrl: "",
+  aiApiKey: "",
+  aiThinking: false,
+  aiModelId: "",
   cacheDir: "%APPDATA%\\MusicPlayer\\cache",
   scanConcurrency: 4,
 
@@ -55,11 +71,14 @@ const DEFAULT_CONFIG = {
   // 默认关闭：这会在用户的音乐文件上做修改，必须由用户明确开启。
   embedMeta: false,
 
-  /* 交互 */
+  // 交互
   // 单击歌曲行的行为：next（加入下一首播放） | play（立即播放） | append（加入末尾）
   rowClickAction: "next",
   // 列表密度：compact（紧凑） | cozy（默认） | roomy（宽松）
   listDensity: "cozy",
+  /* 封面轮播（详情页）：只影响详情页显示哪一张，不动「当前生效封面」 */
+  coverCarousel: false,
+  coverCarouselInterval: 10, // 秒
 };
 
 function initialState() {
@@ -95,11 +114,14 @@ function initialState() {
     sortKey: "addedAt",
     sortDir: "desc",
 
-    /* 封面覆盖表：songId → dataURL
+    /* 封面集合表：songId → { items:[{preview,source,provider,width,height}], active }
        ------------------------------------------------------------------
-       用户在「封面搜索」里选定的封面。缓存目录里的文件是真相来源，
-       这里只是内存里的即时预览（换封面后立刻重绘，不必等重新读文件）。 */
-    coverOverrides: new Map(),
+       一首歌现在可以有多张封面（需求：支持多封面的嵌入与读取 + 轮播）。
+       缓存目录里的图片文件才是持久真相，这里只是内存里的即时预览：
+       应用/切换封面后立刻重绘，不必等曲库重扫。
+       `active` 是「当前生效」那张（列表缩略图 / 底栏 / 写回文件都用它）。
+       轮播开关**不在这里**：它是全局偏好 config.coverCarousel（见 setCoverSet）。 */
+    coverSets: new Map(),
     settingsOpen: false,
 
     /* 播放 */
@@ -113,6 +135,8 @@ function initialState() {
     volume: 0.8,
     muted: false,
     shuffleOrder: [],
+    // 定时停止：null | { type: "after-song" }
+    sleepTimer: null,
 
     /* 响度均衡：songId → 补偿增益(dB)，由后端测量结果算出 */
     loudnessGains: {},
@@ -445,11 +469,16 @@ export function appendToQueue(songIds) {
 }
 
 export function addNextInQueue(songId) {
-  const rest = state.queue.filter((id) => id !== songId);
-  const at = state.currentId ? rest.indexOf(state.currentId) : -1;
-  const next = rest.slice();
-  next.splice(at + 1, 0, songId);
-  state.queue = next;
+  if (!songId) return;
+  // 已经在播放的歌不需要再排到「下一首」：避免把当前歌自己挪到队首。
+  if (songId === state.currentId) return;
+
+  const queue = state.queue.filter((id) => id !== songId);
+  const at = state.currentId ? queue.indexOf(state.currentId) : -1;
+  if (at >= 0) queue.splice(at + 1, 0, songId);
+  // 没有正在播放的歌时，排在队首 = 下一次开始播放就轮到它。
+  else queue.unshift(songId);
+  state.queue = queue;
   commit();
 }
 
@@ -495,24 +524,86 @@ export function songById(id) {
 }
 
 /* --------------------------------------------------------------------------
-   封面覆盖表
+   封面集合
    --------------------------------------------------------------------------
-   用户在「封面搜索」里选定的封面（data URL）。缓存目录里的图片文件才是
-   持久真相，这里只是内存里的即时预览：换完封面立刻重绘，不必等曲库重扫。
-   删除（传空值）就回落到文件自带封面。
+   前端只保存「预览用的 data URL + 元信息」，真正的图片文件在后端缓存目录里。
+   所有变更都以后端返回的集合为准（见 coverpanel.js：应用封面后直接
+   setCoverSets / setCoverSet 覆盖本地状态），这样多端状态不会漂。
+
+   为什么要有一个统一入口 coverSetOf：封面在四个地方被消费 ——
+   列表缩略图、底栏、播放详情页、封面面板自己。以前各自读不同的表
+   （coverOverrides / song.cover），于是「列表和详情页显示的不是同一张」。
+   现在统一读这里，单一真源。
    -------------------------------------------------------------------------- */
-export function setCoverOverride(id, dataURL) {
+
+/** 取某首歌的封面集合（永远是同一个形状，调用方不必判空） */
+export function coverSetOf(id) {
+  const set = state.coverSets.get(id);
+  if (!set) return { items: [], active: 0 };
+  if (!Array.isArray(set.items)) set.items = [];
+  return set;
+}
+
+/** 当前生效封面的预览地址（空串 = 回落到文件自带封面） */
+export function activeCoverOf(id) {
+  if (!id) return "";
+  const set = coverSetOf(id);
+  const item = set.items[set.active] || set.items[0];
+  return item?.preview || "";
+}
+
+/**
+ * 整首覆盖（后端返回新集合时用）。
+ *
+ * 注意这里**不含轮播开关**：轮播是「详情页要不要轮换显示」的全局偏好
+ * （config.coverCarousel），不是每首歌的属性。放进每首歌的集合里会出现
+ * 「这首歌开、那首歌关」两个真源，用户根本记不住自己在哪首开的。
+ */
+export function setCoverSet(id, set) {
   if (!id) return;
-  if (dataURL) state.coverOverrides.set(id, dataURL);
-  else state.coverOverrides.delete(id);
+  if (!set || !Array.isArray(set.items) || !set.items.length) {
+    state.coverSets.delete(id);
+  } else {
+    const items = set.items.filter((i) => i && i.preview);
+    state.coverSets.set(id, {
+      items,
+      active: Math.max(0, Math.min(Number(set.active) || 0, items.length - 1)),
+    });
+  }
   commit();
 }
 
-export function coverOverrideOf(id) {
-  return state.coverOverrides.get(id) || "";
+/** 批量覆盖（启动时从后端回填） */
+export function setCoverSets(map) {
+  if (!map || typeof map !== "object") return;
+  for (const [id, set] of Object.entries(map)) {
+    if (!set || !Array.isArray(set.items)) continue;
+    const items = set.items.filter((i) => i && i.preview);
+    if (!items.length) continue;
+    state.coverSets.set(id, {
+      items,
+      active: Math.max(0, Math.min(Number(set.active) || 0, items.length - 1)),
+    });
+  }
+  commit();
 }
 
-// 让 utils.js#coverOf 能读到覆盖表（避免 utils ⇄ store 循环 import）
+/** 兼容旧调用：设置「唯一一张」封面（空值 = 清空） */
+export function setCoverOverride(id, dataURL) {
+  if (!id) return;
+  if (dataURL) setCoverSet(id, { items: [{ preview: dataURL, source: "user" }], active: 0 });
+  else {
+    state.coverSets.delete(id);
+    commit();
+  }
+}
+
+/** 兼容旧调用：取当前生效封面 */
+export function coverOverrideOf(id) {
+  return activeCoverOf(id);
+}
+
+// 让 utils.js#coverOf 能读到封面表（避免 utils ⇄ store 循环 import）
 setCoverOverrideGetter(coverOverrideOf);
 
 /* --------------------------------------------------------------------------
@@ -588,22 +679,76 @@ export function togglePlay() {
   emit(state.playing ? "player:play" : "player:pause", { songId: state.currentId });
 }
 
+/* --------------------------------------------------------------------------
+   随机播放：先把当前队列洗成一张「洗牌顺序表」，然后按表顺序播完；
+   播到末尾后按设置决定是重新洗牌继续，还是就此停止。
+   -------------------------------------------------------------------------- */
+function shuffleIndices(n) {
+  const a = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function ensureShuffleOrder() {
+  const n = state.queue.length;
+  if (!n) {
+    state.shuffleOrder = [];
+    return;
+  }
+  if (state.shuffleOrder.length !== n) {
+    state.shuffleOrder = shuffleIndices(n);
+  }
+}
+
+function reshuffle() {
+  state.shuffleOrder = shuffleIndices(state.queue.length);
+}
+
 export function nextIndex(step = 1) {
   const { queue, currentId, playMode } = state;
   if (!queue.length) return -1;
   const i = queue.indexOf(currentId);
-  if (i < 0) return 0;
+
   if (playMode === "shuffle") {
-    if (queue.length === 1) return i;
-    let n = i;
-    while (n === i) n = Math.floor(Math.random() * queue.length);
-    return n;
+    ensureShuffleOrder();
+    const order = state.shuffleOrder;
+    if (!order.length) return -1;
+    if (queue.length === 1) return 0;
+
+    let pos = order.indexOf(i);
+    if (pos < 0) pos = step > 0 ? -1 : order.length; // 未在序列里时，向前/向后各从一个合理位置开始
+    let nextPos = pos + step;
+
+    if (nextPos < 0) nextPos = order.length - 1;
+    if (nextPos >= order.length) {
+      if (step < 0) return -1;
+      // 随机模式播到末尾：only-once 模式停下，否则重新洗牌从头再来
+      if (state.config.shuffleMode === "once") return -1;
+      reshuffle();
+      nextPos = 0;
+    }
+    return order[nextPos];
   }
-  if (playMode === "sequence" && i + step >= queue.length) return -1;
+
+  // 顺序播放 / 列表循环：按列表顺序无限循环（需求：顺序播放即列表循环）。
+  // loop-one 由 ended 处理（audio.js / mock ticker），这里按 next 语义前进。
+  if (i < 0) return 0;
   return (i + step + queue.length) % queue.length;
 }
 
 export function playNext(auto = false) {
+  // 定时停止：当前这首播完就停，不再进下一首。
+  if (auto && state.sleepTimer?.type === "after-song") {
+    state.sleepTimer = null;
+    state.playing = false;
+    state.position = state.duration || 0;
+    commit();
+    emit("player:pause", { songId: state.currentId });
+    return;
+  }
   const i = nextIndex(1);
   if (i < 0) {
     if (auto) {
@@ -647,6 +792,7 @@ export function cyclePlayMode() {
   const i = PLAY_MODES.indexOf(state.playMode);
   state.playMode = PLAY_MODES[(i + 1) % PLAY_MODES.length];
   state.config.playMode = state.playMode;
+  if (state.playMode === "shuffle") reshuffle();
   commit();
 }
 
@@ -670,6 +816,11 @@ export function startMockTicker() {
     if (audioEngineActive()) return; // 真实播放中，交给 <audio> 事件
     state.position += 250;
     if (state.position >= state.duration) {
+      if (state.sleepTimer?.type === "after-song") {
+        // 定时停止：本首结束即停（loop-one 也一样）
+        playNext(true);
+        return;
+      }
       if (state.playMode === "loop-one") {
         state.position = 0;
       } else {
@@ -775,6 +926,12 @@ const SYNCED_KEYS = [
   "lyricsFontSize",
   "lyricsLines",
   "lyricsSources",
+  "showDesktopLyrics",
+  "shuffleMode",
+  "aiBaseUrl",
+  "aiApiKey",
+  "aiThinking",
+  "aiModelId",
   "cacheDir",
   "loudnessMode",
   "loudnessTarget",
@@ -784,6 +941,8 @@ const SYNCED_KEYS = [
   "embedMeta",
   "rowClickAction",
   "listDensity",
+  "coverCarousel",
+  "coverCarouselInterval",
 ];
 
 let syncTimer = null;

@@ -6,7 +6,10 @@
   --col-handle: 26px;
   --col-index: 38px;
   --col-cover: 48px;
-  --col-album: 22%;
+  /* 专辑列整条轨道的宽度。写成「轨道尺寸函数」而不是固定值，
+     是为了让「隐藏专辑列」只需要把它改成 0 —— 表头与数据行的
+     grid-template-columns 不必各写两遍（少写一处就会错位一列）。 */
+  --col-album: minmax(0, 1fr);
   --col-time: 68px;
   --col-heart: 44px;
   --col-more: 40px;
@@ -36,7 +39,7 @@
   grid-template-rows: 100%;
   grid-template-columns:
     var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 2.2fr)
-    minmax(0, 1fr) var(--col-time) var(--col-heart) var(--col-more);
+    var(--col-album) var(--col-time) var(--col-heart) var(--col-more);
   align-items: center;
   gap: var(--sp-3);
   height: 34px;
@@ -57,7 +60,7 @@
 }
 
 .tracks__head[data-mode="library"] {
-  grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 2.2fr) minmax(0, 1fr)
+  grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 2.2fr) var(--col-album)
     var(--col-time) var(--col-heart) var(--col-more);
 }
 
@@ -68,7 +71,7 @@
 
 .tracks__head[data-mode="playlist"] {
   grid-template-columns: var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 2.2fr)
-    minmax(0, 1fr) var(--col-time) var(--col-heart) var(--col-more);
+    var(--col-album) var(--col-time) var(--col-heart) var(--col-more);
 }
 
 /* 表头里的爱心图标必须显式给尺寸。
@@ -102,6 +105,24 @@
   color: var(--text-1);
 }
 
+/* 表头 # 与数据行的序号统一居中，避免「#」和最上面的数字错位。 */
+.tracks__head .col-index {
+  display: grid;
+  place-items: center;
+  font-family: var(--font-num);
+}
+
+/* 标题 / 专辑统一左对齐；时长统一右对齐（与数据行 .track__time 一致）。 */
+.tracks__sort {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.tracks__sort[data-sort="duration"] {
+  justify-content: flex-end;
+  text-align: right;
+}
+
 .tracks__sort svg {
   width: 11px;
   height: 11px;
@@ -122,7 +143,7 @@
   display: grid;
   grid-template-columns:
     var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 2.2fr)
-    minmax(0, 1fr) var(--col-time) var(--col-heart) var(--col-more);
+    var(--col-album) var(--col-time) var(--col-heart) var(--col-more);
   align-items: center;
   gap: var(--sp-3);
   height: var(--row-h);
@@ -134,7 +155,7 @@
 }
 
 .tracks[data-mode="library"] .track {
-  grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 2.2fr) minmax(0, 1fr)
+  grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 2.2fr) var(--col-album)
     var(--col-time) var(--col-heart) var(--col-more);
 }
 
@@ -177,9 +198,10 @@
   background: var(--accent);
 }
 
-.track[data-selected="true"] {
-  background: var(--surface-active);
-}
+/* 说明：这里曾经有一条 .track[data-selected="true"] 的高亮规则，但没有任何代码
+   写过 data-selected —— 真正的高亮一直走 aria-current（见上）。两个「选中」概念
+   各写一半，正是「列表高亮和正在播放的不是同一首歌」的根源。
+   现在统一：选中 = 正在播放 = state.currentId，标记只用 aria-current。 */
 
 /* —— 拖拽 —— */
 .track__handle {
@@ -400,7 +422,7 @@
   width: 30px;
   height: 30px;
   justify-self: center;
-  border-radius: var(--r-full);
+  border-radius: var(--btn-radius);
   color: var(--heart-off);
   transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
     transform var(--dur-fast) var(--ease);
@@ -451,7 +473,7 @@
   width: 28px;
   height: 28px;
   justify-self: center;
-  border-radius: var(--r-full);
+  border-radius: var(--btn-radius);
   color: var(--text-3);
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
@@ -476,21 +498,96 @@
 
 /* —— 列表密度（设置里统一控制，对所有列表生效）——
    档位值必须与 Go 侧 bootstrap.ListDensities 一致：
-   compact（紧凑） / cozy（标准） / roomy（宽松） */
+   compact（紧凑） / cozy（标准） / roomy（宽松）
+
+   这里的规则挂在 **根元素**（:root[data-density]）上，而不是只挂在 .tracks 上。
+   原因：密度是「全局显示设置」，需要同时影响曲目表格、底部播放列表面板、
+   搜索结果列表等所有列表。之前只写 .tracks[...]，于是底部播放列表面板
+   完全不跟着变（实测到的问题）；而底部面板 / 选项面板 / 搜索弹层都在
+   #app 之外，所以挂 #app 也不够，必须挂根元素。
+   .tracks 上的 data-density 仍然保留：它让「只改某个表格」成为可能，
+   也让旧的调试手段继续可用。 */
+:root[data-density="compact"] .track,
 .tracks[data-density="compact"] .track {
   height: var(--row-h-compact);
 }
 
+:root[data-density="compact"] .track__cover,
 .tracks[data-density="compact"] .track__cover {
   --size-cover-sm: 30px;
 }
 
+:root[data-density="roomy"] .track,
 .tracks[data-density="roomy"] .track {
   height: calc(var(--row-h) + 12px);
 }
 
+:root[data-density="roomy"] .track__cover,
 .tracks[data-density="roomy"] .track__cover {
   --size-cover-sm: 42px;
+}
+
+/* 底部播放列表面板（.queue-item 用内边距控制行高，没有固定 height） */
+:root[data-density="compact"] .queue-item {
+  padding: 4px var(--sp-2);
+  gap: var(--sp-2);
+}
+
+:root[data-density="compact"] .queue-item__cover {
+  width: 26px;
+  height: 26px;
+}
+
+:root[data-density="roomy"] .queue-item {
+  padding: var(--sp-3) var(--sp-2);
+}
+
+:root[data-density="roomy"] .queue-item__cover {
+  width: 40px;
+  height: 40px;
+}
+
+/* 搜索结果列表：缩略图跟随密度一起缩放 */
+:root[data-density="compact"] .search-row {
+  padding: 5px var(--sp-3);
+}
+
+:root[data-density="compact"] .search-row__cover {
+  --size-cover-sm: 30px;
+}
+
+:root[data-density="roomy"] .search-row {
+  padding: 14px var(--sp-3);
+}
+
+:root[data-density="roomy"] .search-row__cover {
+  --size-cover-sm: 46px;
+}
+
+/* ==========================================================================
+   「专辑」列显隐
+   --------------------------------------------------------------------------
+   由表头右键菜单控制（见 tracks.js#openColumnMenu），状态存在配置里
+   （showAlbumColumn），因此重启后仍然是用户选的那个样子。
+
+   隐藏方式是「把列宽归零 + 让单元格自己裁剪」，**不能**用 display:none 把
+   单元格从网格里拿掉：网格项一旦不参与布局，后面的单元格会整体前移一格，
+   时长跑进 0 宽的专辑列里、爱心跑进时长列 —— 表头与数据行各错各的。
+   保持网格项数量不变、只把宽度收成 0，两边的列数与列宽就永远一致。
+
+   这些规则放在媒体查询之前：窄窗口下媒体查询会进一步收列（那时它自己
+   已经不排专辑列了），不受这里影响。
+   ========================================================================== */
+.tracks[data-album="off"] {
+  --col-album: 0px;
+}
+
+/* 单元格必须在 0 宽列里被裁掉，否则文字会溢出到相邻列上 */
+.tracks[data-album="off"] .track__album,
+.tracks[data-album="off"] .col-album {
+  overflow: hidden;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 /* ==========================================================================

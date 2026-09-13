@@ -110,7 +110,9 @@ async function boot(label) {
       awaitPromise: true,
     });
     if (res?.exceptionDetails) {
-      throw new Error(`页面求值异常: ${res.exceptionDetails.text} ${res.exceptionDetails.exception?.description || ""}`);
+      throw new Error(
+        `页面求值异常: ${res.exceptionDetails.text} ${res.exceptionDetails.exception?.description || ""}`
+      );
     }
     return res?.result?.value;
   };
@@ -165,7 +167,11 @@ try {
       embedMeta: cfg?.embedMeta,
     };
   `);
-  check("写入响度设置后后端立即返回新值", written.mode === "track" && written.target === -14 && written.limit === false, JSON.stringify(written));
+  check(
+    "写入响度设置后后端立即返回新值",
+    written.mode === "track" && written.target === -14 && written.limit === false,
+    JSON.stringify(written)
+  );
   check("下载目录有默认值（系统音乐目录 / downloads）", /downloads$/i.test(written.downloadDir), written.downloadDir);
 
   // 新增的交互/在线设置也一起写进去（重启后一起验证）
@@ -209,7 +215,11 @@ try {
   check("设置界面「逐曲均衡」按钮存在且为选中态", ui.exists && ui.pressed === "true", JSON.stringify(ui));
   check("设置界面有「在线歌曲」分区", ui.hasOnlineCard === true, JSON.stringify(ui.sections));
   check("设置以弹出层形式打开", ui.layerOpen === true, JSON.stringify({ layerOpen: ui.layerOpen }));
-  check("新增设置项回显正确（单击行为/密度/写回文件）", ui.hasDensity && ui.hasRowClick && ui.hasEmbed === "true", JSON.stringify(ui));
+  check(
+    "新增设置项回显正确（单击行为/密度/写回文件）",
+    ui.hasDensity && ui.hasRowClick && ui.hasEmbed === "true",
+    JSON.stringify(ui)
+  );
 } finally {
   await first.close();
 }
@@ -263,7 +273,11 @@ if (existsSync(cfgPath)) {
     "rowClickAction",
     "listDensity",
   ].filter((k) => !raw.includes(`"${k}"`));
-  check("config.json 里写入了全部设置键", missing.length === 0, missing.length ? `缺少 ${missing.join(", ")}` : cfgPath);
+  check(
+    "config.json 里写入了全部设置键",
+    missing.length === 0,
+    missing.length ? `缺少 ${missing.join(", ")}` : cfgPath
+  );
 } else {
   check("config.json 已生成", false, cfgPath);
 }

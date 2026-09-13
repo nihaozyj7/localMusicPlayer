@@ -129,7 +129,9 @@ async function evalJs(expression) {
     awaitPromise: true,
   });
   if (res?.exceptionDetails) {
-    throw new Error(`页面求值异常: ${res.exceptionDetails.text} ${res.exceptionDetails.exception?.description || ""}`);
+    throw new Error(
+      `页面求值异常: ${res.exceptionDetails.text} ${res.exceptionDetails.exception?.description || ""}`
+    );
   }
   return res?.result?.value;
 }
@@ -152,8 +154,27 @@ async function navigate(url) {
    场景
    -------------------------------------------------------------------------- */
 try {
-  /* ---- 1/2：封面按钮切换详情页，侧边栏不跳变 ---- */
+  /* ---- 0：先确认「页面里动态 import 到的 store」就是应用自己在用的那一份 ----
+     本脚本多处用 `import("./js/store.js")` 读/改状态。在**零依赖静态服务器**
+     （node tools/dev-server.js）下模块 URL 就是 /js/store.js，拿到的是同一个实例；
+     但 Vite 会给模块 URL 加查询串，`import("/js/store.js")` 会**再建一个空实例**，
+     于是断言全部读到 songs=0、currentId=null —— 看起来像功能坏了，其实是量错了对象。
+     这里用「动态 import 到的歌曲数 vs 页面真实渲染的行数」提前把这种情况挡住。 */
   await navigate(`${BASE}?playing=1`);
+  const inst = await evalJs(`
+    const { state } = await import("./js/store.js");
+    return { songs: state.songs.length, rows: document.querySelectorAll(".track").length };
+  `);
+  if (inst.songs === 0 && inst.rows > 0) {
+    console.error(
+      `[环境错误] 页面里的 store 与应用不是同一个实例（动态 import 读到 ${inst.songs} 首，页面渲染了 ${inst.rows} 行）。\n` +
+        `           本脚本要对着零依赖静态服务器跑：node tools/dev-server.js 5173\n` +
+        `           再执行：node tools/ui-interact.mjs http://127.0.0.1:5173/`
+    );
+    process.exit(2);
+  }
+
+  /* ---- 1/2：封面按钮切换详情页，侧边栏不跳变 ---- */
   const before = await evalJs(`
     const s = document.querySelector(".sidebar").getBoundingClientRect();
     return { w: Math.round(s.width), pvHidden: document.getElementById("playerview").hidden };
@@ -193,7 +214,13 @@ try {
   );
   check(
     "底栏按钮齐全：喜欢 / 添加到歌单 / 音量 / 播放顺序 / 手动匹配歌词 / 桌面歌词 / 播放列表",
-    bar.hasHeart && bar.hasAdd && bar.hasVolume && bar.hasMode && bar.hasLyricsMatch && bar.hasDesktopLyrics && bar.hasQueue,
+    bar.hasHeart &&
+      bar.hasAdd &&
+      bar.hasVolume &&
+      bar.hasMode &&
+      bar.hasLyricsMatch &&
+      bar.hasDesktopLyrics &&
+      bar.hasQueue,
     ""
   );
   check(
@@ -370,13 +397,19 @@ try {
     line.click();
     return { t, position: Math.round(window.__app.state.position) };
   `);
-  check("点击歌词行 → 跳转到对应时间", Math.abs(seeked.position - seeked.t) < 1200, `t=${seeked.t} pos=${seeked.position}`);
+  check(
+    "点击歌词行 → 跳转到对应时间",
+    Math.abs(seeked.position - seeked.t) < 1200,
+    `t=${seeked.t} pos=${seeked.position}`
+  );
 
-  /* ---- 4：沉浸模式 ---- */
-  await evalJs(`document.querySelector('[data-pv-mode="immersive"]').click(); return 1;`);
+  /* ---- 4：沉浸样式 ----
+     注意：样式 id 现在挂在 data-pv-skin 上（data-pv-mode 作为兼容属性保留），
+     整窗背景层的 id 也从 #immersive-bg 改成了宿主统一的 #skin-background。 */
+  await evalJs(`document.querySelector('[data-pv-skin="immersive"]').click(); return 1;`);
   await sleep(900);
   const imm = await evalJs(`
-    const bg = document.getElementById("immersive-bg");
+    const bg = document.getElementById("skin-background");
     const r = bg.getBoundingClientRect();
     const card = document.querySelector(".immersive__card");
     const cs = getComputedStyle(card);
@@ -417,7 +450,7 @@ try {
   /* ---- 5：标题栏设置按钮 ----
      设置现在是**弹出层**（不再切换 state.view），所以断言的是「层被打开
      且里面有设置内容」，而不是「view === 'settings'」。 */
-  await evalJs(`document.querySelector('[data-pv-mode="classic"]').click(); return 1;`);
+  await evalJs(`document.querySelector('[data-pv-skin="classic"]').click(); return 1;`);
   await sleep(300);
   await evalJs(`
     document.getElementById("btn-settings").click();

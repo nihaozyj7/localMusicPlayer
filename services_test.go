@@ -12,6 +12,23 @@ import (
 	"musicplayer/internal/library"
 )
 
+// hermeticDownloadDir 给测试一个隔离的「下载目录」。
+//
+// 为什么必须有：bootstrap.Config.EffectiveFolders 会把 DownloadDir **自动**
+// 拼成扫描根（下载目录由程序管理，不需要用户手动添加），而它的默认值是
+// 系统音乐目录下的 downloads。于是「本机上真实存在的那个目录」会跟着
+// 一起被扫进测试曲库——「应该扫到 1 首，实际 2 首」这类失败就是这么来的，
+// 换台机器换个目录又可能变绿，属于典型的环境依赖测试。
+// 凡是会真的去扫描的测试，都要顺手把 DownloadDir 也指到临时目录。
+func hermeticDownloadDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "downloads")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("创建临时下载目录失败: %v", err)
+	}
+	return dir
+}
+
 // writeTestWAV 生成一个最小的可解析 WAV（时长 durationSec 秒）
 func writeTestWAV(t *testing.T, path string, durationSec int) {
 	t.Helper()
@@ -57,8 +74,12 @@ func newTestService(t *testing.T) (*LibraryService, *bootstrap.Store, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 清空默认过滤规则，避免小体积测试文件被「排除 <10KB」过滤
-	if err := store.Update(func(c *bootstrap.Config) { c.FilterRules = []bootstrap.FilterRule{} }); err != nil {
+	// 清空默认过滤规则，避免小体积测试文件被「排除 <10KB」过滤；
+	// 同时把下载目录隔离到临时目录（否则会扫到本机真实的下载目录）
+	if err := store.Update(func(c *bootstrap.Config) {
+		c.FilterRules = []bootstrap.FilterRule{}
+		c.DownloadDir = hermeticDownloadDir(t)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	lib := library.NewManager(store)

@@ -1,0 +1,35 @@
+{
+  "name": "musicplayer-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "本地音乐播放器（Go + Wails3）：前端工程化工作区（npm workspaces + Vite）",
+  "workspaces": [
+    "frontend",
+    "frontend/packages/*"
+  ],
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace @musicplayer/app",
+    "preview": "npm run preview --workspace @musicplayer/app",
+    "build:assets": "npm run build --workspace @musicplayer/app",
+    "build": "node tools/build-frontend.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import ./frontend/tests/register.mjs --test \"frontend/tests/*.test.js\"",
+    "check": "npm run lint && npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^16.5.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6"
+  }
+}

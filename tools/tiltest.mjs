@@ -52,7 +52,9 @@ for (let i = 0; i < 60 && !target; i += 1) {
   try {
     const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
     target = list.find((x) => x.type === "page" && x.webSocketDebuggerUrl);
-  } catch { /* 等启动 */ }
+  } catch {
+    /* 等启动 */
+  }
 }
 if (!target) {
   console.error("无法接入 WebView2");
@@ -66,7 +68,10 @@ const waiting = new Map();
 const consoleLines = [];
 ws.addEventListener("message", (ev) => {
   const m = JSON.parse(ev.data);
-  if (m.id && waiting.has(m.id)) { waiting.get(m.id)(m.result); waiting.delete(m.id); }
+  if (m.id && waiting.has(m.id)) {
+    waiting.get(m.id)(m.result);
+    waiting.delete(m.id);
+  }
   if (m.method === "Runtime.consoleAPICalled") {
     consoleLines.push((m.params.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
   }
@@ -74,7 +79,10 @@ ws.addEventListener("message", (ev) => {
 function send(method, params = {}) {
   msgId += 1;
   const id = msgId;
-  return new Promise((r) => { waiting.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
+  return new Promise((r) => {
+    waiting.set(id, r);
+    ws.send(JSON.stringify({ id, method, params }));
+  });
 }
 async function evaluate(expression) {
   const res = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
@@ -123,7 +131,9 @@ console.log(JSON.stringify(styles, null, 2));
 
 console.log("\n================ 结论 ================");
 const ok = styles?.标题栏 === "drag" && styles?.拖拽区 === "drag";
-console.log(ok ? "  ✓ 标题栏计算样式为 drag（runtime 会发起窗口拖动）" : `  ✗ 标题栏不是 drag：${JSON.stringify(styles)}`);
+console.log(
+  ok ? "  ✓ 标题栏计算样式为 drag（runtime 会发起窗口拖动）" : `  ✗ 标题栏不是 drag：${JSON.stringify(styles)}`
+);
 if (styles?.按钮容器 !== "no-drag" || styles?.最小化按钮 !== "no-drag") {
   console.log(`  ! 按钮区域应为 no-drag，实际 容器=${styles?.按钮容器} 按钮=${styles?.最小化按钮}`);
 } else {

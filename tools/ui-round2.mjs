@@ -154,7 +154,13 @@ async function realClick(selector) {
   if (!box) return { clicked: false, reason: "元素不存在或不可见" };
   await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x, y: box.y, button: "none" });
   await send("Input.dispatchMouseEvent", { type: "mousePressed", x: box.x, y: box.y, button: "left", clickCount: 1 });
-  await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x, y: box.y, button: "left", clickCount: 1 });
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: box.x,
+    y: box.y,
+    button: "left",
+    clickCount: 1,
+  });
   return { clicked: true, ...box };
 }
 
@@ -175,9 +181,7 @@ try {
       });
     return { center: at(w / 2, h / 2), sidebar: at(100, 120), header: at(w - 200, 90), layers };
   `);
-  const blocking = (hit.layers || []).filter(
-    (l) => !l.missing && l.hidden === true && l.display !== "none"
-  );
+  const blocking = (hit.layers || []).filter((l) => !l.missing && l.hidden === true && l.display !== "none");
   check(
     "没有任何隐藏的覆盖层留在布局里",
     blocking.length === 0,
@@ -238,10 +242,20 @@ try {
     sameRight,
     JSON.stringify(sidebar.info.map((r) => `${r.name}:${r.tailRight}`))
   );
-  check("「我喜欢」也有更多按钮（内置歌单同样有菜单）", sidebar.lockedRow?.hasMore === true, JSON.stringify(sidebar.lockedRow));
+  check(
+    "「我喜欢」也有更多按钮（内置歌单同样有菜单）",
+    sidebar.lockedRow?.hasMore === true,
+    JSON.stringify(sidebar.lockedRow)
+  );
   // 数量与按钮叠在同一竖直位置
-  const stacked = sidebar.info.filter((r) => r.badgeTop !== null && r.moreTop !== null).every((r) => Math.abs(r.badgeTop - r.moreTop) <= 6);
-  check("数量标记与更多按钮叠在同一位置", stacked, JSON.stringify(sidebar.info.map((r) => `${r.badgeTop}/${r.moreTop}`)));
+  const stacked = sidebar.info
+    .filter((r) => r.badgeTop !== null && r.moreTop !== null)
+    .every((r) => Math.abs(r.badgeTop - r.moreTop) <= 6);
+  check(
+    "数量标记与更多按钮叠在同一位置",
+    stacked,
+    JSON.stringify(sidebar.info.map((r) => `${r.badgeTop}/${r.moreTop}`))
+  );
 
   /* 「我喜欢」右键能出菜单 */
   const likedMenu = await evalJs(`
@@ -280,7 +294,9 @@ try {
   `);
   check(
     "单击歌曲 = 加入下一首播放（默认），不打断当前播放",
-    click.action === "next" && click.after.queue.length === 1 && click.after.queue[0] === click.id &&
+    click.action === "next" &&
+      click.after.queue.length === 1 &&
+      click.after.queue[0] === click.id &&
       click.after.current === click.before.current,
     JSON.stringify(click)
   );
@@ -311,7 +327,11 @@ try {
 
   /* 6. 设置是弹出层（用真实鼠标点击打开） */
   const openSettingsClick = await realClick("#btn-settings");
-  check("真实鼠标点击设置按钮能命中它", openSettingsClick.clicked && openSettingsClick.hitsSelf, JSON.stringify(openSettingsClick));
+  check(
+    "真实鼠标点击设置按钮能命中它",
+    openSettingsClick.clicked && openSettingsClick.hitsSelf,
+    JSON.stringify(openSettingsClick)
+  );
   await sleep(500);
   const settings = await evalJs(`
     const layer = document.getElementById("settings-layer");
@@ -347,7 +367,11 @@ try {
     const tracks = document.querySelector(".tracks");
     return { cfg: store.state.config.listDensity, dom: tracks?.dataset.density };
   `);
-  check("改列表密度会写进配置并作用到列表", density.cfg === "compact" && density.dom === "compact", JSON.stringify(density));
+  check(
+    "改列表密度会写进配置并作用到列表",
+    density.cfg === "compact" && density.dom === "compact",
+    JSON.stringify(density)
+  );
 
   await realClick("[data-settings-close]");
   await sleep(400);

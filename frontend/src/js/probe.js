@@ -155,9 +155,10 @@ export function runProbe() {
   else if (themeBtn && settingsBtn.x < themeBtn.x) issues.push("标题栏设置按钮不在主题切换右侧");
   if (document.querySelector(".sidebar__foot")) issues.push("侧边栏底部仍存在旧的操作区");
 
-  /* 4.3 沉浸模式：详情页不能有卡片边框；整窗背景层存在且可见 */
+  /* 4.3 沉浸样式：详情页不能有卡片边框；整窗背景层存在且可见
+         （data-skin 是新钩子：样式由 @musicplayer/player-skins 的皮肤声明） */
   const pv = document.getElementById("playerview");
-  if (pv?.dataset.mode === "immersive" && pv.dataset.state === "opened") {
+  if (pv?.dataset.skin === "immersive" && pv.dataset.state === "opened") {
     const card = document.querySelector(".immersive__card");
     const cardStyle = card ? getComputedStyle(card) : null;
     info.immersive = cardStyle
@@ -174,12 +175,12 @@ export function runProbe() {
       }
       if (cardStyle.boxShadow !== "none") issues.push(`沉浸模式歌词区仍有阴影: ${cardStyle.boxShadow}`);
     }
-    const bg = document.querySelector(".immersive-bg");
+    const bg = document.querySelector(".skin-bg");
     const bgRect = bg ? bg.getBoundingClientRect() : null;
     info.immersiveBg = bgRect
       ? { hidden: bg.hidden, w: Math.round(bgRect.width), h: Math.round(bgRect.height) }
       : null;
-    if (!bg || bg.hidden) issues.push("沉浸模式缺少整窗背景层");
+    if (!bg || bg.hidden) issues.push("沉浸样式缺少整窗背景层");
     else if (bgRect.width < vw - 1 || bgRect.height < vh - 1) {
       issues.push(`沉浸背景未铺满窗口: ${Math.round(bgRect.width)}x${Math.round(bgRect.height)} ≠ ${vw}x${vh}`);
     }

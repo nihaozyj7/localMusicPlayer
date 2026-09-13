@@ -141,7 +141,9 @@ async function evalJs(expression) {
     awaitPromise: true,
   });
   if (res?.exceptionDetails) {
-    throw new Error(`页面求值异常: ${res.exceptionDetails.text} ${res.exceptionDetails.exception?.description || ""}`);
+    throw new Error(
+      `页面求值异常: ${res.exceptionDetails.text} ${res.exceptionDetails.exception?.description || ""}`
+    );
   }
   return res?.result?.value;
 }
@@ -303,10 +305,15 @@ try {
     check(
       "下载目录被当作扫描根（无需手动添加文件夹）",
       hasDownloadRoot,
-      folderList.map((f) => `${f.id}:${f.path}`).join(" | ").slice(0, 200)
+      folderList
+        .map((f) => `${f.id}:${f.path}`)
+        .join(" | ")
+        .slice(0, 200)
     );
     check("下载的歌出现在本地曲库里", inLibrary.hits > 0, JSON.stringify(inLibrary));
-    console.log(`     扫描：曲库 ${inLibrary.scanned} 首 err=${inLibrary.scanError} sample=${JSON.stringify(inLibrary.sample)}`);
+    console.log(
+      `     扫描：曲库 ${inLibrary.scanned} 首 err=${inLibrary.scanError} sample=${JSON.stringify(inLibrary.sample)}`
+    );
   }
 
   /* 3c. 更换封面：真的落进缓存目录 */
@@ -381,7 +388,7 @@ try {
         JSON.stringify(coverApply)
       );
       check("封面缓存目录已创建", existsSync(coverApply.cacheDir), coverApply.cacheDir);
-      console.log(`     封面来源：${coverApply.provider}　嵌入文件：${coverApply.embedded}`);
+      console.log(`     封面来源：${coverApply.provider} 嵌入文件：${coverApply.embedded}`);
     }
   }
 
@@ -406,7 +413,9 @@ try {
   `);
   check(
     "试听只进播放列表、不进本地曲库",
-    preview.inQueue === true && preview.inSongs === false && preview.resolved === true &&
+    preview.inQueue === true &&
+      preview.inSongs === false &&
+      preview.resolved === true &&
       preview.after.songs === preview.before.songs,
     JSON.stringify(preview)
   );
@@ -429,7 +438,11 @@ try {
     check(
       "确认后歌曲被迁移到新目录",
       Number(migration.applied?.migrated) > 0 && existsSync(path.join(migratedDir, saved.name)),
-      JSON.stringify({ migrated: migration.applied?.migrated, skipped: migration.applied?.skipped, dir: migration.applied?.dir })
+      JSON.stringify({
+        migrated: migration.applied?.migrated,
+        skipped: migration.applied?.skipped,
+        dir: migration.applied?.dir,
+      })
     );
     check("迁移后旧位置不再有该文件", !existsSync(path.join(downloadDir, saved.name)), downloadDir);
   }

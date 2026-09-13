@@ -15,7 +15,6 @@ import {
 import { addSongsTo } from "./playlists.js";
 import { confirmDeletePlaylist, promptNewPlaylist, promptRenamePlaylist } from "./playlists.js";
 import { clearSearch } from "./searchpanel.js";
-import { refreshSettingsPlayer } from "./settingsplayer.js";
 import {
   LIKED_ID,
   clearQueue,
@@ -118,8 +117,8 @@ function toolbarHtml() {
 
   // 列表密度按钮已移到设置界面（对所有列表生效），工具条上不再有它
   if (v === "queue") {
+    // 反转顺序按钮已移除（需求）：排序改为在列表里直接拖拽。
     return `
-      <button class="btn btn--icon" type="button" data-tool="queue-reverse" data-tip="反转顺序">${icon("shuffle")}</button>
       <button class="btn" type="button" data-tool="queue-clear">${icon("trash")}<span>清空列表</span></button>
       ${playAll}`;
   }
@@ -232,8 +231,6 @@ export function openSettings(section = null) {
     bindSettingsSliders(body, { commit });
     if (section) scrollToSection(section);
   }
-  // 设置层底部的紧凑播放控件：立刻画一次，别等到下一个 tick 才出现内容
-  refreshSettingsPlayer();
   layer.querySelector(".settings-layer__close")?.focus({ preventScroll: true });
 }
 export function closeSettings() {
@@ -374,7 +371,7 @@ export function bindShell() {
     handle.classList.add("is-dragging-handle");
   });
 
-  $("#sidebar").addEventListener("pointerup", (e) => {
+  $("#sidebar").addEventListener("pointerup", () => {
     $$("#playlist-nav .navitem").forEach((n) => n.classList.remove("is-dragging-handle"));
   });
 
@@ -550,11 +547,6 @@ async function handleTool(tool) {
     case "queue-clear":
       clearQueue();
       toast("播放列表已清空");
-      break;
-    case "queue-reverse":
-      state.queue = state.queue.slice().reverse();
-      commit();
-      toast("已反转播放顺序");
       break;
     case "pl-more":
       openPlaylistMenu(state.playlistId, $("#content-header [data-tool='pl-more']"));

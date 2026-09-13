@@ -59,7 +59,18 @@ func newTestManager(t *testing.T) (*Manager, *bootstrap.Store, string) {
 	if err != nil {
 		t.Fatalf("创建配置存储失败: %v", err)
 	}
-	if err := store.Update(func(c *bootstrap.Config) { c.FilterRules = []bootstrap.FilterRule{} }); err != nil {
+	if err := store.Update(func(c *bootstrap.Config) {
+		// 清空默认规则 + 隔离下载目录。
+		// 后者是必须的：EffectiveFolders 会把 DownloadDir 自动当成扫描根，
+		// 默认值指向本机真实的「音乐/downloads」，那里的文件会让
+		// 「应该扫到 N 首」的断言在本机上失败（换台机器又可能变绿）。
+		c.FilterRules = []bootstrap.FilterRule{}
+		dir := filepath.Join(t.TempDir(), "downloads")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("创建临时下载目录失败: %v", err)
+		}
+		c.DownloadDir = dir
+	}); err != nil {
 		t.Fatalf("清空默认规则失败: %v", err)
 	}
 	m := NewManager(store)

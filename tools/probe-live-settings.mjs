@@ -71,49 +71,73 @@ console.log(`已放置测试曲目：${probeSongPath}（id=${probeSongId}）`);
 
 // 配置文件：只加我们那个音乐文件夹（不用默认的「下载目录」，它指向不存在的 downloads，
 // 会让扫描结果为空）。注意 JSON 里用正斜杠，Wails 的配置读写都不介意。
-writeFileSync(path.join(dataDir, "config.json"), JSON.stringify({
-  theme: "dark-minimal",
-  themeMode: "dark",
-  showLyrics: true,
-  playMode: "sequence",
-  volume: 0.8,
-  autoScanOnStart: true,
-  watchFolders: false,
-  scanConcurrency: 4,
-  lyricsFontSize: 16,
-  lyricsLines: 7,
-  lyricsSources: ["lrc-file", "embedded", "online"],
-  loudnessMode: "off",
-  loudnessTarget: -16,
-  loudnessLimit: true,
-  onlineCover: false,
-  embedMeta: false,
-  rowClickAction: "next",
-  listDensity: "cozy",
-  folders: [
-    { id: "f_probe", path: musicDir.replace(/\\/g, "/"), trackCount: 0, status: "ok", watching: false, addedAt: Date.now() },
-  ],
-  likedIds: [],
-  playlists: [],
-  // 显式给空数组：后端在没配过过滤规则时会填回默认规则（含「小于 10KB 排除」）
-  filterRules: [],
-}, null, 2), "utf8");
+writeFileSync(
+  path.join(dataDir, "config.json"),
+  JSON.stringify(
+    {
+      theme: "dark-minimal",
+      themeMode: "dark",
+      showLyrics: true,
+      playMode: "sequence",
+      volume: 0.8,
+      autoScanOnStart: true,
+      watchFolders: false,
+      scanConcurrency: 4,
+      lyricsFontSize: 16,
+      lyricsLines: 7,
+      lyricsSources: ["lrc-file", "embedded", "online"],
+      loudnessMode: "off",
+      loudnessTarget: -16,
+      loudnessLimit: true,
+      onlineCover: false,
+      embedMeta: false,
+      rowClickAction: "next",
+      listDensity: "cozy",
+      folders: [
+        {
+          id: "f_probe",
+          path: musicDir.replace(/\\/g, "/"),
+          trackCount: 0,
+          status: "ok",
+          watching: false,
+          addedAt: Date.now(),
+        },
+      ],
+      likedIds: [],
+      playlists: [],
+      // 显式给空数组：后端在没配过过滤规则时会填回默认规则（含「小于 10KB 排除」）
+      filterRules: [],
+    },
+    null,
+    2
+  ),
+  "utf8"
+);
 
 /* 预置两份缓存，这样「打开写进文件开关 → 弹确认框 → 真写入」这条路径能被真正走到
    （这条分支只在缓存里确实有东西时才弹）。 */
 const cacheMeta = path.join(dataDir, "cache", "meta");
 mkdirSync(path.join(cacheMeta, "covers"), { recursive: true });
 mkdirSync(path.join(cacheMeta, "lyrics"), { recursive: true });
-writeFileSync(path.join(cacheMeta, "covers", `${probeSongId}.jpg`), Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0xff, 0xd9]));
-writeFileSync(path.join(cacheMeta, "covers", "index.json"), JSON.stringify({
-  version: 1,
-  entries: { [probeSongId]: { file: `${probeSongId}.jpg`, mime: "image/jpeg", source: "user", at: Date.now() } },
-}));
+writeFileSync(
+  path.join(cacheMeta, "covers", `${probeSongId}.jpg`),
+  Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0xff, 0xd9])
+);
+writeFileSync(
+  path.join(cacheMeta, "covers", "index.json"),
+  JSON.stringify({
+    version: 1,
+    entries: { [probeSongId]: { file: `${probeSongId}.jpg`, mime: "image/jpeg", source: "user", at: Date.now() } },
+  })
+);
 writeFileSync(path.join(cacheMeta, "lyrics", `${probeSongId}.lrc`), "[00:01.00]probe lyrics\n");
-writeFileSync(path.join(cacheMeta, "lyrics", "index.json"), JSON.stringify({
-  version: 1,
-  entries: { [probeSongId]: { file: `${probeSongId}.lrc`, source: "user", at: Date.now() } },
-}));
+writeFileSync(
+  path.join(cacheMeta, "lyrics", "index.json"),
+  JSON.stringify({
+    version: 1,
+    entries: { [probeSongId]: { file: `${probeSongId}.lrc`, source: "user", at: Date.now() } },
+  })
+);
 console.log(`预置：${probeSongPath}（id=${probeSongId}）+ 一份封面与歌词缓存`);
 
 const child = spawn(EXE, [], {
@@ -162,10 +186,8 @@ const send = (m, p = {}) =>
     pending.set(id, r);
     ws.send(JSON.stringify({ id, method: m, params: p }));
   });
-let wsReady = false;
 await new Promise((r) =>
   ws.addEventListener("open", () => {
-    wsReady = true;
     r();
   })
 );
@@ -245,11 +267,7 @@ const opened = await evalJs(`(() => {
   };
 })()`);
 check("设置层已打开", opened.layerOpen === true, JSON.stringify(opened.layer));
-check(
-  "标题栏没有被设置层盖住（顶部仍在标题栏之下）",
-  opened.layer.y >= 36,
-  `layer.y=${opened.layer.y}`
-);
+check("标题栏没有被设置层盖住（顶部仍在标题栏之下）", opened.layer.y >= 36, `layer.y=${opened.layer.y}`);
 check("面板里能看到紧凑播放控件", opened.sp && opened.sp.h > 40, JSON.stringify(opened.sp));
 check(
   "紧凑播放控件在面板底部（不与标题栏重叠）",
@@ -257,7 +275,11 @@ check(
   `sp=${opened.sp.y}..${opened.sp.bottom} panel=${opened.panel.y}..${opened.panel.bottom}`
 );
 check("导航栏紧贴面板标题栏（间距 ≤ 20px）", opened.gapHeadToNav <= 20, `gap=${opened.gapHeadToNav}px`);
-check("标题栏的设置按钮仍然可点（没被层吃掉）", opened.titlebarSettingsClickable === "self", opened.titlebarSettingsClickable);
+check(
+  "标题栏的设置按钮仍然可点（没被层吃掉）",
+  opened.titlebarSettingsClickable === "self",
+  opened.titlebarSettingsClickable
+);
 
 /* ---- 2. 点导航项 → 点开关，选中态不能跳回第一个 ---- */
 const navPersist = await evalJs(`(() => {
@@ -270,11 +292,7 @@ const navPersist = await evalJs(`(() => {
   const afterSegment = sel();
   return { afterNav, afterToggle, afterSegment };
 })()`);
-check(
-  "点开关后导航选中态保持在「播放」",
-  navPersist.afterToggle.includes("播放"),
-  JSON.stringify(navPersist)
-);
+check("点开关后导航选中态保持在「播放」", navPersist.afterToggle.includes("播放"), JSON.stringify(navPersist));
 check(
   "点分段控件后导航选中态仍然保持在「播放」",
   navPersist.afterSegment.includes("播放"),
@@ -355,17 +373,17 @@ const lyrics = await evalJs(`(() => {
     hasMatch: !!document.getElementById("btn-lyrics-match"),
   };
 })()`);
-check(
-  "点「桌面歌词」不影响详情页歌词（两件事分开）",
-  lyrics.afterDesktop === lyrics.before,
-  JSON.stringify(lyrics)
-);
+check("点「桌面歌词」不影响详情页歌词（两件事分开）", lyrics.afterDesktop === lyrics.before, JSON.stringify(lyrics));
 check(
   "底栏 / 设置层都没有歌词显隐按钮（需求：歌词不提供隐藏入口）",
   lyrics.hasLyricsVisible === false && lyrics.hasSpLyrics === false,
   JSON.stringify(lyrics)
 );
-check("底栏没有全屏按钮", lyrics.hasFullscreen === false && lyrics.hasDesktop === true && lyrics.hasMatch === true, JSON.stringify(lyrics));
+check(
+  "底栏没有全屏按钮",
+  lyrics.hasFullscreen === false && lyrics.hasDesktop === true && lyrics.hasMatch === true,
+  JSON.stringify(lyrics)
+);
 
 /* ---- 5. 把缓存写进文件：开关打开时，缓存里有东西就该弹确认框 ---- */
 // 先等缓存统计真的回来了（它决定「弹框」还是「只 toast 一句」），

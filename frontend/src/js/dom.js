@@ -265,3 +265,78 @@ export function bindCoverFallback(img) {
     true
   );
 }
+
+/* --------------------------------------------------------------------------
+   全局 Tooltip：把 data-tip 提示提到 body 顶层，避免被 overflow 裁剪或超出视口。
+   -------------------------------------------------------------------------- */
+export function initTooltips() {
+  let tip = document.getElementById("app-tip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.className = "app-tip";
+    tip.id = "app-tip";
+    tip.setAttribute("role", "tooltip");
+    document.body.appendChild(tip);
+  }
+
+  let current = null;
+
+  const titlebarFromRoot = () => {
+    const v = getComputedStyle(document.documentElement).getPropertyValue("--h-titlebar").trim();
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : 36;
+  };
+
+  function position() {
+    if (!current) return;
+    const r = current.getBoundingClientRect();
+    // 先放到右上角让 offsetWidth/Height 可量，再按可视区夹取
+    tip.style.left = "0px";
+    tip.style.top = "0px";
+    const tw = tip.offsetWidth;
+    const th = tip.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const topBar = titlebarFromRoot();
+
+    let left = r.left + r.width / 2 - tw / 2;
+    let top = r.top - th - 6;
+    if (top < topBar + 4) top = r.bottom + 6; // 上方放不下就放到下方
+    left = Math.max(8, Math.min(left, vw - tw - 8));
+    top = Math.max(topBar + 4, Math.min(top, vh - th - 8));
+    tip.style.left = `${left}px`;
+    tip.style.top = `${top}px`;
+  }
+
+  function show(target) {
+    const text = target?.getAttribute?.("data-tip");
+    if (!text) {
+      hide();
+      return;
+    }
+    tip.textContent = text;
+    tip.dataset.visible = "true";
+    current = target;
+    position();
+  }
+
+  function hide() {
+    delete tip.dataset.visible;
+    current = null;
+  }
+
+  document.addEventListener("mouseover", (e) => {
+    const t = e.target.closest?.("[data-tip]");
+    if (t) show(t);
+    else hide();
+  });
+
+  document.addEventListener("mouseout", (e) => {
+    const t = e.target.closest?.("[data-tip]");
+    if (t && !t.contains(e.relatedTarget)) hide();
+  });
+
+  document.addEventListener("pointerdown", hide, true);
+  window.addEventListener("scroll", hide, true);
+  window.addEventListener("resize", hide);
+}

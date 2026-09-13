@@ -47,6 +47,84 @@ let onlineResults = [];
 let onlineQuery = "";
 
 /* --------------------------------------------------------------------------
+   搜索历史（localStorage 持久化，可单条删除 / 一键清空）
+   -------------------------------------------------------------------------- */
+const HISTORY_KEY = "music-player.search.history.v1";
+const HISTORY_MAX = 20;
+let historyEl = null;
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter((x) => typeof x === "string" && x.trim()) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(list) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)));
+  } catch {
+    /* 隐私模式等情况下写不进去就静默失败 */
+  }
+}
+
+function addHistory(keyword) {
+  const k = (keyword || "").trim();
+  if (!k) return;
+  const list = loadHistory().filter((x) => x !== k);
+  list.unshift(k);
+  saveHistory(list);
+  renderHistory();
+}
+
+function removeHistory(keyword) {
+  const list = loadHistory().filter((x) => x !== keyword);
+  saveHistory(list);
+  renderHistory();
+}
+
+function clearHistory() {
+  saveHistory([]);
+  renderHistory();
+}
+
+function renderHistory() {
+  if (!historyEl) return;
+  const list = loadHistory();
+  if (!list.length) {
+    historyEl.hidden = true;
+    historyEl.innerHTML = "";
+    return;
+  }
+  historyEl.hidden = false;
+  historyEl.innerHTML = `
+    <div class="search-overlay__history-title">
+      <span>搜索历史</span>
+      <button type="button" class="search-overlay__history-clear" data-history-act="clear">清空</button>
+    </div>
+    <div class="search-overlay__history-list">
+      ${list
+        .map(
+          (k) => `
+        <span class="search-overlay__history-chip" data-history-keyword="${esc(k)}">
+          <button type="button" class="search-overlay__history-key" data-history-act="use">${esc(k)}</button>
+          <button type="button" class="search-overlay__history-del" data-history-act="del" aria-label="删除「${esc(k)}」">${icon("close")}</button>
+        </span>`
+        )
+        .join("")}
+    </div>`;
+}
+
+function updateHistoryVisibility() {
+  const hasText = Boolean((input?.value || "").trim());
+  if (hasText && historyEl) historyEl.hidden = true;
+  else renderHistory();
+}
+
+/* --------------------------------------------------------------------------
    标题栏搜索按钮
    -------------------------------------------------------------------------- */
 export function buildTitlebarSearch() {
@@ -91,6 +169,7 @@ function buildOverlay() {
         <button class="search-overlay__close" type="button" data-search-close
           data-tip="关闭（结果会保留）" aria-label="关闭搜索">${icon("close")}</button>
       </div>
+      <div class="search-overlay__history" id="search-history" hidden></div>
       <div class="search-overlay__head">
         <div class="search-overlay__tabs" id="search-tabs" role="tablist">
           <button class="search-overlay__tab" type="button" role="tab" data-search-tab="online" aria-pressed="true">
@@ -112,8 +191,30 @@ function buildOverlay() {
   headline = overlay.querySelector("#search-headline");
   input = overlay.querySelector("#search-input");
   clearBtn = overlay.querySelector("#search-clear");
+  historyEl = overlay.querySelector("#search-history");
 
   clearBtn.addEventListener("click", () => clearSearch({ focus: true }));
+
+  // 搜索历史：点关键词复用、点 × 删除该条、点「清空」全部删除
+  historyEl?.addEventListener("click", (e) => {
+    const actEl = e.target.closest("[data-history-act]");
+    if (!actEl) return;
+    const act = actEl.dataset.historyAct;
+    if (act === "clear") {
+      clearHistory();
+      return;
+    }
+    const keyword = e.target.closest("[data-history-keyword]")?.dataset.historyKeyword || "";
+    if (act === "del") {
+      removeHistory(keyword);
+      return;
+    }
+    if (act === "use") {
+      if (input) input.value = keyword;
+      syncClearButton();
+      submitSearch();
+    }
+  });
 
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -132,6 +233,7 @@ function buildOverlay() {
   // 输入时只更新「清空按钮」的可见性，绝不让外壳整体重渲染（那会丢焦点）
   input.addEventListener("input", () => {
     syncClearButton();
+    updateHistoryVisibility();
     // 本地结果可以边打边看（弹层已经打开时实时刷新）
     if (state.searchOpen && state.searchTab === "local") renderBody();
   });
@@ -188,6 +290,7 @@ function buildOverlay() {
   });
 
   syncClearButton();
+  updateHistoryVisibility();
 }
 
 /** 搜索按钮：打开/关闭搜索弹层 */
@@ -205,6 +308,8 @@ export function openOverlay() {
   // 先解除 hidden 再切 opened，否则同一帧内的过渡不触发
   requestAnimationFrame(() => overlay.setAttribute("data-state", "opened"));
   $("#btn-search")?.setAttribute("aria-pressed", "true");
+  // 每次打开都按最新的历史重画一次（历史可能在别处被改动过）
+  updateHistoryVisibility();
   // 光标自动聚焦到搜索框
   requestAnimationFrame(() => {
     input?.focus();
@@ -238,6 +343,8 @@ function submitSearch() {
     clearSearch({ focus: true });
     return;
   }
+  addHistory(keyword);
+  updateHistoryVisibility();
   if (state.searchTab === "online") runOnlineSearch(keyword);
   else renderBody();
 }
@@ -250,6 +357,7 @@ export function clearSearch({ focus = false } = {}) {
   onlineQuery = "";
   searchSeq += 1; // 作废进行中的请求
   syncClearButton();
+  updateHistoryVisibility();
   if (built && body) {
     body.innerHTML = emptyHint("输入关键词后按回车开始搜索");
     headline.textContent = "";

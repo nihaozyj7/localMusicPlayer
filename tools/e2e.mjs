@@ -13,7 +13,10 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
-const EXE = path.resolve(ROOT, process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/musicplayer.exe");
+const EXE = path.resolve(
+  ROOT,
+  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/musicplayer.exe"
+);
 const PORT = Number(process.env.MP_PORT || 9371);
 const QUERY = process.env.MP_QUERY || "";
 const WANT_LOUDNESS = process.env.MP_LOUDNESS !== "0";
@@ -34,9 +37,15 @@ for (let i = 0; i < 60 && !target; i += 1) {
   try {
     const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
     target = list.find((x) => x.type === "page" && x.webSocketDebuggerUrl);
-  } catch { /* wait */ }
+  } catch {
+    /* wait */
+  }
 }
-if (!target) { console.error("无法接入 WebView2"); child.kill(); process.exit(1); }
+if (!target) {
+  console.error("无法接入 WebView2");
+  child.kill();
+  process.exit(1);
+}
 
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 let id = 0;
@@ -45,14 +54,27 @@ const logs = [];
 const exceptions = [];
 ws.addEventListener("message", (ev) => {
   const m = JSON.parse(ev.data);
-  if (m.id && waiting.has(m.id)) { waiting.get(m.id)(m.result); waiting.delete(m.id); }
-  if (m.method === "Runtime.consoleAPICalled") logs.push((m.params.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
-  if (m.method === "Runtime.exceptionThrown") exceptions.push(m.params.exceptionDetails.text + " " + (m.params.exceptionDetails.exception?.description || ""));
+  if (m.id && waiting.has(m.id)) {
+    waiting.get(m.id)(m.result);
+    waiting.delete(m.id);
+  }
+  if (m.method === "Runtime.consoleAPICalled")
+    logs.push((m.params.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
+  if (m.method === "Runtime.exceptionThrown")
+    exceptions.push(m.params.exceptionDetails.text + " " + (m.params.exceptionDetails.exception?.description || ""));
 });
-const send = (method, params = {}) => { id += 1; const i = id; return new Promise((r) => { waiting.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); }); };
+const send = (method, params = {}) => {
+  id += 1;
+  const i = id;
+  return new Promise((r) => {
+    waiting.set(i, r);
+    ws.send(JSON.stringify({ id: i, method, params }));
+  });
+};
 async function evaluate(expression) {
   const res = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
-  if (res?.exceptionDetails) return { __error: res.exceptionDetails.text + " " + (res.exceptionDetails.exception?.description || "") };
+  if (res?.exceptionDetails)
+    return { __error: res.exceptionDetails.text + " " + (res.exceptionDetails.exception?.description || "") };
   return res?.result?.value;
 }
 
@@ -175,8 +197,16 @@ if (WANT_LOUDNESS) {
     };
   })()`);
   console.log("   " + JSON.stringify(loud));
-  check("对正在播放的歌按需算出响度", loud?.measured === true, loud?.measured ? `${loud.integrated} LUFS / TP ${loud.truePeak}` : JSON.stringify(loud));
-  check("补偿进入前端增益表", loud?.frontendGain !== null && loud?.frontendGain !== undefined, `${loud?.frontendGain} dB`);
+  check(
+    "对正在播放的歌按需算出响度",
+    loud?.measured === true,
+    loud?.measured ? `${loud.integrated} LUFS / TP ${loud.truePeak}` : JSON.stringify(loud)
+  );
+  check(
+    "补偿进入前端增益表",
+    loud?.frontendGain !== null && loud?.frontendGain !== undefined,
+    `${loud?.frontendGain} dB`
+  );
   check("补偿进入 Web Audio 增益图", Boolean(loud?.graph?.graph), JSON.stringify(loud?.graph));
 }
 
@@ -201,6 +231,12 @@ if (exceptions.length) {
   for (const e of exceptions.slice(-6)) console.log("  " + e);
 }
 
-writeFileSync(path.join(workDir, "e2e.json"), JSON.stringify({ results, render, play, logs, exceptions }, null, 2), "utf8");
-ws.close(); child.kill(); await sleep(300);
+writeFileSync(
+  path.join(workDir, "e2e.json"),
+  JSON.stringify({ results, render, play, logs, exceptions }, null, 2),
+  "utf8"
+);
+ws.close();
+child.kill();
+await sleep(300);
 process.exit(failed.length ? 1 : 0);

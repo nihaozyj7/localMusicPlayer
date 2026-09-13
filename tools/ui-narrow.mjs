@@ -166,5 +166,7 @@ for (const w of WIDTHS) {
 ws.close();
 child.kill();
 console.log("");
-console.log(failures.length ? `窄窗口自检失败：${failures.join(", ")}` : `窄窗口自检全部通过（${WIDTHS.length} 档宽度）`);
+console.log(
+  failures.length ? `窄窗口自检失败：${failures.join(", ")}` : `窄窗口自检全部通过（${WIDTHS.length} 档宽度）`
+);
 process.exit(failures.length ? 1 : 0);

@@ -9,10 +9,9 @@
    封面搜索层同理，从播放详情页或歌曲菜单里唤起。
    ========================================================================== */
 
-/* 设置层铺满「标题栏之下」的整个区域（标题栏必须露出来：窗口按钮与拖动区在
+/* 设置层 = 全屏遮罩，只避开标题栏（标题栏必须露出来：窗口按钮与拖动区在
    设置打开时也要能用，需求原文是「需要避开标题栏」）。
-   因此这里不再像封面层那样在底部留出底栏的高度 —— 设置层自带一条紧凑播放
-   控件（见 .settings-player），它就长在原来底栏的位置上。
+   遮罩一直铺到窗口底边，底栏播放控件被盖住即可 —— 里面不再放重复的播放控件。
    外边距收到最小、面板撑满：面板高度固定，切分区时高度不再跳。 */
 .settings-layer {
   position: fixed;
@@ -79,7 +78,7 @@
   width: min(920px, 100%);
   max-height: 100%;
   border: var(--hairline-strong);
-  border-radius: var(--r-lg);
+  border-radius: var(--panel-radius);
   background: var(--glass-bg-strong);
   backdrop-filter: var(--panel-blur);
   box-shadow: var(--panel-shadow);
@@ -128,7 +127,7 @@
   width: var(--btn-sm);
   height: var(--btn-sm);
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--btn-radius);
   background: none;
   color: var(--text-3);
   cursor: pointer;
@@ -259,27 +258,109 @@
   color: var(--text-2);
 }
 
-/* 「按别的关键词搜索」：下载来的文件没有标签时的救急入口 */
-.cover-panel__advanced {
+/* —— 分区（这首歌的封面 / 联网搜索）—— */
+.cover-panel__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.cover-panel__section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.cover-panel__section-title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+/* —— 这首歌已有的封面（可以有多张）—— */
+.cover-set {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: var(--sp-3);
+}
+
+.cover-set__empty {
+  grid-column: 1 / -1;
+  padding: var(--sp-3);
   border: var(--hairline);
   border-radius: var(--r-sm);
-  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-1);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.cover-set__item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  border: var(--hairline);
+  border-radius: var(--r-sm);
   background: var(--surface-1);
 }
 
-.cover-panel__advanced summary {
-  cursor: pointer;
-  font-size: var(--fs-sm);
+.cover-set__item[data-active="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.cover-set__item--embedded {
+  border-style: dashed;
+}
+
+.cover-set__item img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+}
+
+.cover-set__badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 1px 6px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
+
+.cover-set__badge--ghost {
+  background: var(--glass-bg-strong);
   color: var(--text-2);
+  border: var(--hairline);
 }
 
-.cover-panel__fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+.cover-set__ops {
+  display: flex;
+  gap: var(--sp-1);
+}
+
+.cover-set__ops .btn {
+  flex: 1;
+}
+
+/* —— 关键词搜索行 —— */
+.cover-panel__search {
+  display: flex;
   gap: var(--sp-2);
-  margin: var(--sp-2) 0;
 }
 
+.cover-panel__search .field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* —— 候选多选：选中态 + 勾选角标 + 底部应用条 —— */
 .cover-panel__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
@@ -287,6 +368,7 @@
 }
 
 .cover-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
@@ -303,11 +385,39 @@
   background: var(--surface-2);
 }
 
+.cover-card[data-selected="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
 .cover-card img {
   width: 100%;
   aspect-ratio: 1;
   object-fit: cover;
   border-radius: var(--r-xs);
+}
+
+/* 勾选角标：数据多选一定要有明确的「已选」标记，否则用户不确定点没点上 */
+.cover-card__check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.cover-card__check svg {
+  width: 13px;
+  height: 13px;
+}
+
+.cover-card[data-selected="true"] .cover-card__check {
+  display: grid;
 }
 
 .cover-card__meta {
@@ -322,6 +432,31 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cover-panel__selectbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  position: sticky;
+  bottom: 0;
+}
+
+.cover-panel__selectinfo {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.cover-panel__foot {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding-top: var(--sp-2);
+  border-top: var(--hairline);
 }
 
 /* --------------------------------------------------------------------------
@@ -360,33 +495,6 @@
 }
 
 /* --------------------------------------------------------------------------
-   播放详情页：返回按钮右侧的「封面」按钮
+   播放详情页：封面相关的按钮现在是 .viewmode__btn（与播放界面样式组同一套样式），
+   旧的 .playerview__action 已经不用了，样式一并删除，避免留下"改了没反应"的死规则。
    -------------------------------------------------------------------------- */
-.playerview__action {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-  height: var(--btn-md);
-  padding: 0 var(--sp-3);
-  border: var(--hairline);
-  border-radius: var(--r-sm);
-  background: var(--surface-1);
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-
-.playerview__action:hover {
-  background: var(--surface-2);
-  color: var(--text-1);
-}
-
-.playerview__action svg {
-  width: 15px;
-  height: 15px;
-}
-
-.playerview__action[hidden] {
-  display: none;
-}

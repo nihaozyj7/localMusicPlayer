@@ -12,7 +12,7 @@
   flex-direction: column;
   width: min(360px, calc(100vw - var(--sp-6)));
   max-height: min(58vh, 460px);
-  border-radius: var(--r-lg);
+  border-radius: var(--panel-radius);
   background: var(--glass-bg-strong);
   border: var(--panel-border);
   backdrop-filter: var(--panel-blur);
@@ -114,10 +114,18 @@
 .queue-item__index {
   flex: none;
   width: 20px;
+  display: grid;
+  place-items: center;
   font-family: var(--font-num);
   font-size: var(--fs-xs);
   color: var(--text-3);
-  text-align: right;
+}
+
+/* 当前播放行用「播放」图标代替序号：必须显式给尺寸，
+   否则 SVG 默认 300×150 会把这一行撑得特别高（就是那个高度异常 bug）。 */
+.queue-item__index svg {
+  width: 12px;
+  height: 12px;
 }
 
 .queue-item__cover {
@@ -185,11 +193,259 @@
   color: var(--danger);
 }
 
+/* 播放列表面板里的拖拽排序状态 */
+.queue-item.is-dragging {
+  opacity: 0.4;
+}
+
+.queue-item.is-drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.queue-item.is-drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
 .queue-panel__empty {
   padding: var(--sp-5) var(--sp-4);
   text-align: center;
   font-size: var(--fs-sm);
   color: var(--text-3);
+}
+
+/* —— 播放选项面板（底栏「选项」按钮打开）—— */
+.options-panel {
+  position: fixed;
+  right: var(--sp-4);
+  bottom: calc(var(--h-playerbar) + var(--sp-2));
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  width: min(300px, calc(100vw - var(--sp-6)));
+  border-radius: var(--panel-radius);
+  background: var(--glass-bg-strong);
+  border: var(--panel-border);
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  box-shadow: var(--panel-shadow);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(10px) scale(0.98);
+  transform-origin: 100% 100%;
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-slide);
+}
+
+.options-panel[hidden] {
+  display: none;
+}
+
+.options-panel[data-state="opened"] {
+  opacity: 1;
+  transform: none;
+}
+
+.options-panel__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-2) var(--sp-2) var(--sp-4);
+  border-bottom: var(--hairline);
+}
+
+.options-panel__title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.options-panel__btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-xs);
+  color: var(--text-3);
+}
+
+.options-panel__btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.options-panel__btn:hover {
+  color: var(--text-1);
+  background: var(--surface-hover);
+}
+
+.options-panel__body {
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.option-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.option-row__label {
+  flex: none;
+  width: 88px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.options-panel .rangeslider {
+  flex: 1;
+  width: auto;
+}
+
+/* --------------------------------------------------------------------------
+   定时停止面板（底栏「定时停止」按钮打开）
+   --------------------------------------------------------------------------
+   与选项面板同一套外观，但**上方是一条可拖拽的 0~300 分钟滑条**：
+   菜单只能给几档预设，用户想「47 分钟后停」就没法表达。
+   -------------------------------------------------------------------------- */
+.sleep-panel {
+  position: fixed;
+  right: var(--sp-4);
+  bottom: calc(var(--h-playerbar) + var(--sp-2));
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  width: min(340px, calc(100vw - var(--sp-6)));
+  border-radius: var(--panel-radius);
+  background: var(--glass-bg-strong);
+  border: var(--panel-border);
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  box-shadow: var(--panel-shadow);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(10px) scale(0.98);
+  transform-origin: 100% 100%;
+  transition:
+    opacity var(--dur) var(--ease-out),
+    transform var(--dur) var(--ease-slide);
+}
+
+.sleep-panel[hidden] {
+  display: none;
+}
+
+.sleep-panel[data-state="opened"] {
+  opacity: 1;
+  transform: none;
+}
+
+.sleep-panel__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-2) var(--sp-2) var(--sp-4);
+  border-bottom: var(--hairline);
+}
+
+.sleep-panel__icon {
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+}
+
+.sleep-panel__title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.sleep-panel__body {
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* 上方：读数 + 可拖拽的条 + 刻度 */
+.sleep-panel__bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.sleep-panel__readout {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.sleep-panel__value {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.sleep-panel__sub {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.sleep-panel__slider {
+  width: 100%;
+}
+
+.sleep-panel__scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.sleep-panel__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.sleep-panel__hint {
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-3);
+}
+
+/* —— 桌面歌词（悬浮在窗口正上方的歌词条）—— */
+.desktop-lyrics {
+  position: fixed;
+  top: calc(var(--h-titlebar) + var(--sp-3));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5000;
+  max-width: min(720px, calc(100vw - var(--sp-7)));
+  pointer-events: none;
+}
+
+.desktop-lyrics[hidden] {
+  display: none;
+}
+
+.desktop-lyrics__line {
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--panel-radius);
+  background: var(--glass-bg-strong);
+  border: var(--panel-border);
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  box-shadow: var(--panel-shadow);
+  color: var(--text-1);
+  font-size: var(--fs-lg);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* —— 下拉菜单 —— */
@@ -315,7 +571,7 @@
 
 .modal {
   width: min(420px, calc(100vw - 48px));
-  border-radius: var(--r-lg);
+  border-radius: var(--panel-radius);
   background: var(--glass-bg-strong);
   border: var(--panel-border);
   backdrop-filter: var(--panel-blur);
@@ -366,7 +622,7 @@
   width: 100%;
   height: var(--btn-md);
   padding: 0 var(--sp-3);
-  border-radius: var(--r-sm);
+  border-radius: var(--btn-radius);
   border: var(--hairline);
   background: var(--surface-1);
   color: var(--text-1);
@@ -449,17 +705,12 @@
   animation: fade-in var(--dur) var(--ease) reverse forwards;
 }
 
-/* —— Tooltip（纯 CSS，靠 data-tip）—— */
-[data-tip] {
-  position: relative;
-}
+/* —— Tooltip：由 dom.js 提升到 body 顶层渲染，见 .app-tip ——
+   数据仍在 data-tip 上，但不再用 ::after（避免被 overflow 裁剪或超出视口）。 */
 
-[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%) translateY(2px);
+.app-tip {
+  position: fixed;
+  z-index: 9999;
   padding: 3px 8px;
   border-radius: var(--r-xs);
   background: var(--glass-bg-strong);
@@ -469,20 +720,13 @@
   color: var(--text-1);
   font-size: var(--fs-xs);
   white-space: nowrap;
-  opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
-  z-index: var(--z-modal);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
 }
 
-[data-tip]:hover::after {
+.app-tip[data-visible="true"] {
   opacity: 1;
-  transform: translateX(-50%);
-}
-
-[data-tip-pos="bottom"]::after {
-  top: calc(100% + 6px);
-  bottom: auto;
 }
 
 /* —— 全屏遮罩式加载（重新扫描）—— */
@@ -507,7 +751,7 @@
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-5) var(--sp-6);
-  border-radius: var(--r-lg);
+  border-radius: var(--panel-radius);
   background: var(--glass-bg-strong);
   border: var(--panel-border);
   backdrop-filter: var(--panel-blur);

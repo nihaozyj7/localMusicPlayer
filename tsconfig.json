@@ -1,0 +1,36 @@
+{
+  // 前端类型检查（JSDoc + tsc，不引入 TS 源码）
+  //
+  // 采用「逐个文件收紧」的策略，而不是一次性给历史代码补类型：
+  //   · checkJs=false → 默认只做**语法**检查（拼错、坏字符、括号不配对这类），
+  //     整个 frontend/**/*.js 都会被解析，因此语法错误一个都跑不掉；
+  //   · 文件顶部写 `// @ts-check` 的才会做**类型**检查 —— 新代码
+  //     （packages/player-skins、playerhost.js 等）都带这个标记，
+  //     历史文件在后续逐个补齐类型时再加。
+  // 好处：CI 现在就能拦住真实错误，又不会因为历史代码的 100+ 条噪音
+  // 让 `npm run check` 永远红着（红着的检查等于没有检查）。
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "types": []
+  },
+  "include": [
+    "frontend/src/js/**/*.js",
+    "frontend/packages/player-skins/src/**/*.js",
+    "frontend/tests/**/*.js",
+    "frontend/tests/**/*.mjs"
+  ],
+  "exclude": ["node_modules", "frontend/dist", "frontend/bindings"]
+}

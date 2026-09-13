@@ -195,6 +195,7 @@ func TestWriteCacheToFilesMatchesLibraryIDs(t *testing.T) {
 	// 注意要用空切片而不是 nil：nil 会被 store 当成「没配过」而重新填回默认规则。
 	if err := store.Update(func(c *bootstrap.Config) {
 		c.FilterRules = []bootstrap.FilterRule{}
+		c.DownloadDir = hermeticDownloadDir(t)
 		c.Folders = []bootstrap.Folder{{ID: "f_test", Path: musicDir, Status: "ok"}}
 		c.AutoScanOnStart = false
 		c.WatchFolders = false

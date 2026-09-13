@@ -64,7 +64,7 @@ const audioServer = createServer((req, res) => {
     "Access-Control-Allow-Headers": "Range, Content-Type",
     "Access-Control-Expose-Headers": "Content-Length, Content-Range",
     "Accept-Ranges": "bytes",
-    "Vary": "Origin",
+    Vary: "Origin",
   });
   res.end(WAV);
 });
@@ -140,15 +140,19 @@ for (const c of CASES) {
   const profile = mkdtempSync(path.join(tmpdir(), "mp-oc-"));
   const cdp = 9400 + Math.floor(Math.random() * 200);
 
-  const edge = spawn(EDGE, [
-    "--headless=new",
-    `--remote-debugging-port=${cdp}`,
-    `--user-data-dir=${profile}`,
-    "--no-first-run",
-    "--disable-extensions",
-    "--autoplay-policy=no-user-gesture-required",
-    pageUrl,
-  ], { stdio: "ignore", env: { ...process.env, NO_PROXY: "localhost,127.0.0.1" } });
+  const edge = spawn(
+    EDGE,
+    [
+      "--headless=new",
+      `--remote-debugging-port=${cdp}`,
+      `--user-data-dir=${profile}`,
+      "--no-first-run",
+      "--disable-extensions",
+      "--autoplay-policy=no-user-gesture-required",
+      pageUrl,
+    ],
+    { stdio: "ignore", env: { ...process.env, NO_PROXY: "localhost,127.0.0.1" } }
+  );
 
   let target = null;
   for (let i = 0; i < 40 && !target; i += 1) {
@@ -156,7 +160,9 @@ for (const c of CASES) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${cdp}/json/list`)).json();
       target = list.find((x) => x.type === "page" && x.webSocketDebuggerUrl);
-    } catch { /* 还没起来 */ }
+    } catch {
+      /* 还没起来 */
+    }
   }
   if (!target) {
     console.log(`【${c.label}】无法连接调试端口，跳过\n`);
@@ -178,9 +184,19 @@ for (const c of CASES) {
   const pending = new Map();
   ws.addEventListener("message", (ev) => {
     const m = JSON.parse(ev.data);
-    if (m.id && pending.has(m.id)) { pending.get(m.id)(m.result); pending.delete(m.id); }
+    if (m.id && pending.has(m.id)) {
+      pending.get(m.id)(m.result);
+      pending.delete(m.id);
+    }
   });
-  const send = (method) => { id += 1; const i = id; return new Promise((res) => { pending.set(i, res); ws.send(JSON.stringify({ id: i, method })); }); };
+  const send = (method) => {
+    id += 1;
+    const i = id;
+    return new Promise((res) => {
+      pending.set(i, res);
+      ws.send(JSON.stringify({ id: i, method }));
+    });
+  };
   await send("Runtime.enable");
 
   for (let i = 0; i < 30 && !result; i += 1) await sleep(500);
@@ -191,7 +207,11 @@ for (const c of CASES) {
 
   ws.close();
   edge.kill();
-  try { rmSync(profile, { recursive: true, force: true }); } catch { /* 忽略 */ }
+  try {
+    rmSync(profile, { recursive: true, force: true });
+  } catch {
+    /* 忽略 */
+  }
   await sleep(300);
 }
 

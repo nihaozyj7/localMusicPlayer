@@ -29,6 +29,7 @@ func newLoudnessFixture(t *testing.T) (*LoudnessService, *library.Manager, strin
 
 	if err := store.Update(func(c *bootstrap.Config) {
 		c.FilterRules = []bootstrap.FilterRule{} // 别把测试文件过滤掉
+		c.DownloadDir = hermeticDownloadDir(t)   // 别扫到本机真实的下载目录
 		c.Folders = []bootstrap.Folder{{ID: "f1", Path: musicDir, Status: "ok"}}
 	}); err != nil {
 		t.Fatal(err)

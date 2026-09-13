@@ -24,9 +24,35 @@ type OnlineService struct {
 	// 单独一个包，第三方接口变动时只改 internal/coverfetch。
 	covers *coverfetch.Aggregator
 	token  string
+	// ai 自动匹配前清洗元数据（可选，见 services_ai.go）
+	ai *AiService
 
 	mu    sync.Mutex
 	cache map[string]*onlineAudioCache
+}
+
+// setAI 注入 AI 元数据清洗服务（可选）。故意不导出，避免出现在前端绑定里。
+func (s *OnlineService) setAI(ai *AiService) { s.ai = ai }
+
+// cleanMeta 用 AI 清洗元数据；未配置或失败时原样返回。
+func (s *OnlineService) cleanMeta(title, artist, album string) (string, string, string) {
+	if s.ai == nil || !s.ai.Enabled() {
+		return title, artist, album
+	}
+	cleaned, err := s.ai.ExtractMeta(title, artist, album, "")
+	if err != nil {
+		return title, artist, album
+	}
+	if strings.TrimSpace(cleaned.Title) != "" {
+		title = cleaned.Title
+	}
+	if strings.TrimSpace(cleaned.Artist) != "" {
+		artist = cleaned.Artist
+	}
+	if strings.TrimSpace(cleaned.Album) != "" {
+		album = cleaned.Album
+	}
+	return title, artist, album
 }
 
 type onlineAudioCache struct {
@@ -114,7 +140,10 @@ func (s *OnlineService) coverURLForTrack(t bilibili.Track) string {
 	return onlinePrefix + "cover?" + q.Encode()
 }
 
-// Lyrics 自动匹配并抓取一首歌的歌词（播放时按需调用）。
+// Lyrics 自动匹配并抓取一首歌的歌词（在线试听曲目用）。
+//
+// 标题与歌手都要传给聚合器：评分靠它们做实体对齐，只给关键词会让所有候选
+// 都落在「信息不足」的基础分上，翻唱/Live 版很容易被选成第一名。
 func (s *OnlineService) Lyrics(title, artist string, duration int64) (map[string]any, error) {
 	if s.lyrics == nil {
 		return map[string]any{"lrc": "", "source": "none"}, nil
@@ -122,10 +151,13 @@ func (s *OnlineService) Lyrics(title, artist string, duration int64) (map[string
 	if strings.TrimSpace(title) == "" {
 		return map[string]any{"lrc": "", "source": "none"}, nil
 	}
+	// 自动匹配前先让 AI 清洗元数据（脏标题会让在线匹配大幅跑偏）
+	title, artist, _ = s.cleanMeta(title, artist, "")
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	res, err := s.lyrics.Match(ctx, lyricsfetch.SearchRequest{
-		Keyword:  title,
+		Title:    title,
+		Artist:   artist,
 		Duration: duration,
 		Limit:    12,
 	})
@@ -143,10 +175,14 @@ func (s *OnlineService) Lyrics(title, artist string, duration int64) (map[string
 
 // CoverLookup 返回一首歌的封面地址（同源）。没找到时 available=false，
 // 前端据此「不显示封面」而不是留一个破图。
+//
+// 走的是 coverfetch 的 Resolve（挑候选 → 下载 → 体检），因此返回的地址
+// 一定是一张**能显示、且不是纯白占位图**的图；白图会被当成「没找到」。
 func (s *OnlineService) CoverLookup(title, artist, album string, durationMS int64, fallback string) (map[string]any, error) {
 	if !s.coversEnabled() {
 		return map[string]any{"available": false, "reason": "disabled"}, nil
 	}
+	title, artist, album = s.cleanMeta(title, artist, album)
 	req := coverfetch.Request{
 		Title:       title,
 		Artist:      artist,
@@ -158,9 +194,9 @@ func (s *OnlineService) CoverLookup(title, artist, album string, durationMS int6
 		return map[string]any{"available": false, "reason": "no-keyword"}, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), coverfetch.DefaultTotalTimeout+4*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), coverfetch.DefaultTotalTimeout+6*time.Second)
 	defer cancel()
-	cover, err := s.covers.Find(ctx, req)
+	cover, err := s.covers.Resolve(ctx, req)
 	if err != nil || !cover.Valid() {
 		return map[string]any{"available": false, "reason": "not-found"}, nil
 	}
@@ -170,6 +206,8 @@ func (s *OnlineService) CoverLookup(title, artist, album string, durationMS int6
 		"score":     cover.Score,
 		"url":       onlinePrefix + "cover?src=" + url.QueryEscape(cover.URL) + "&t=" + s.token,
 		"source":    cover.URL,
+		"width":     cover.Info.Width,
+		"height":    cover.Info.Height,
 	}, nil
 }
 
@@ -210,6 +248,11 @@ func (s *OnlineService) Handler() http.Handler {
 // 为什么必须代理而不是让 WebView 直接加载第三方图片：
 // 页面 CSP 是 img-src 'self' data:，外链图片会被浏览器直接拒绝；
 // 而且不少图床校验 Referer，浏览器直连也会 403。
+//
+// 「白图」处理：图床在专辑没有封面时常常不返回 404，而是回一张纯白占位图。
+// 这里在写出响应之前做一次体检（coverfetch.InspectImage），发现是白图就当
+// 「这次没有封面」返回 204 —— 前端会显示「无封面」而不是一块白方块。
+// 走 title/artist 这条路时还会继续往下试其它候选（Resolve）。
 func (s *OnlineService) handleCover(w http.ResponseWriter, r *http.Request) {
 	if !s.checkToken(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -217,45 +260,56 @@ func (s *OnlineService) handleCover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
+	ctx, cancel := context.WithTimeout(r.Context(), 24*time.Second)
+	defer cancel()
+
 	src := strings.TrimSpace(q.Get("src"))
+	var body []byte
+	var contentType, finalURL string
+
 	if src == "" {
-		lookup, err := s.CoverLookup(
-			q.Get("title"), q.Get("artist"), q.Get("album"),
-			parseInt64(q.Get("duration")), q.Get("fallback"),
-		)
-		if err != nil || lookup["available"] != true {
-			// 204 = 「这次没有封面」，前端把它当成「不显示封面」而不是加载失败
+		req := coverfetch.Request{
+			Title:       q.Get("title"),
+			Artist:      q.Get("artist"),
+			Album:       q.Get("album"),
+			Duration:    parseInt64(q.Get("duration")),
+			FallbackURL: q.Get("fallback"),
+		}
+		resolved, err := s.covers.Resolve(ctx, req)
+		if err != nil {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		// 代理端自己解析出的真实图源优先；没有就用调用方给的候选地址
-		if real, ok := lookup["source"].(string); ok && real != "" {
-			src = real
-		} else {
-			src = strings.TrimSpace(q.Get("fallback"))
+		body = resolved.Image.Body
+		contentType = resolved.MIME
+		finalURL = resolved.Image.URL
+	} else {
+		if !coverfetch.AllowedImageURL(src) {
+			http.Error(w, "image host not allowed", http.StatusForbidden)
+			return
 		}
-	}
-
-	if !coverfetch.AllowedImageURL(src) {
-		http.Error(w, "image host not allowed", http.StatusForbidden)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-	defer cancel()
-	img, err := coverfetch.Download(ctx, src)
-	if err != nil {
-		w.WriteHeader(http.StatusNoContent)
-		return
+		img, err := coverfetch.Download(ctx, src)
+		if err != nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if _, err := coverfetch.InspectImage(img.Body); err != nil {
+			// 空白占位图 / 坏图：当成「没有封面」，别把白块发给前端
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		body = img.Body
+		contentType = coverfetch.NormalizeMIME(img.ContentType, img.Body)
+		finalURL = img.URL
 	}
 
 	h := w.Header()
-	h.Set("Content-Type", img.ContentType)
+	h.Set("Content-Type", contentType)
 	h.Set("Cache-Control", fmt.Sprintf("private, max-age=%d", int(coverTTL.Seconds())))
-	h.Set("Content-Length", fmt.Sprint(len(img.Body)))
-	h.Set("X-Cover-Source", img.URL)
+	h.Set("Content-Length", fmt.Sprint(len(body)))
+	h.Set("X-Cover-Source", finalURL)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(img.Body)
+	_, _ = w.Write(body)
 }
 
 func parseInt64(s string) int64 {
@@ -383,10 +437,15 @@ func (s *OnlineService) SearchLyrics(title, artist string, duration int64) ([]ma
 	if s.lyrics == nil {
 		return nil, fmt.Errorf("lyrics service disabled")
 	}
+	title, artist, _ = s.cleanMeta(title, artist, "")
+	keyword := title
+	if strings.TrimSpace(artist) != "" {
+		keyword = title + " " + artist
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	items, err := s.lyrics.Search(ctx, lyricsfetch.SearchRequest{
-		Keyword:  title,
+		Keyword:  keyword,
 		Duration: duration,
 		Limit:    12,
 	})

@@ -1,0 +1,54 @@
+/* ==========================================================================
+   示例样式 — 复制这个目录改名，就是一个属于你的播放界面样式
+   --------------------------------------------------------------------------
+   怎么用：
+     1. 把整个 _template 目录复制一份，改名成你的样式 id（例如 aurora）
+     2. 编辑 skin.js（结构）与 skin.css（外观）
+     3. 回到应用「设置 → 播放界面 → 重新扫描样式」
+     4. 样式按钮组里就会出现它
+
+   这个文件（skin.css）里的选择器都以
+       .playerview[data-skin="<你的样式 id>"]
+   开头。**必须这样自己限定作用域**：你的样式和应用里其它样式共用一张样式表，
+   不加限定就会把别人的界面一起改掉。
+
+   可以随便用的 CSS 变量（由应用主题提供，深浅色会自动跟随）：
+     --accent           强调色          --text-1 / --text-2 / --text-3  文字层级
+     --surface-1 / --surface-2        卡片底色
+     --glass-bg / --glass-blur        毛玻璃
+     --lyric-size / --lyric-pad       歌词字号 / 居中留白
+   ========================================================================== */
+
+.playerview[data-skin="__SKIN_ID__"] .demo {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.playerview[data-skin="__SKIN_ID__"] .demo__cover {
+  width: 220px;
+  height: 220px;
+  border-radius: 12px;
+  object-fit: cover;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 35%);
+}
+
+.playerview[data-skin="__SKIN_ID__"] .demo__title {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.playerview[data-skin="__SKIN_ID__"] .demo__sub {
+  color: var(--text-2);
+}
+
+/* 歌词区由 createLyricsView 生成（.lyrics / .lyrics__scroll / .lyric），
+   这里只调它的排版参数，不用自己写滚动逻辑。 */
+.playerview[data-skin="__SKIN_ID__"] .pv-lyrics-host {
+  flex: 1 1 auto;
+  min-height: 0;
+}

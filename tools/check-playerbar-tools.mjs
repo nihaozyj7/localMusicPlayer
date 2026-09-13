@@ -130,16 +130,45 @@ const tools = await evalJs(`(() => {
     hasSpLyrics: !!document.getElementById("sp-lyrics-toggle"),
     matchIcon: match?.querySelector("use")?.getAttribute("href") || null,
     matchTip: match?.dataset.tip || null,
+    settingsLayerTools: document.querySelectorAll(".settings-layer .mode-btn, .settings-layer .transport__btn").length,
   };
 })()`);
 
-check("底栏没有歌词显隐按钮（需求：歌词不提供隐藏入口）", tools.hasLyricsVisible === false, JSON.stringify(tools.bar));
+check(
+  "底栏没有歌词显隐按钮（需求：歌词不提供隐藏入口）",
+  tools.hasLyricsVisible === false,
+  JSON.stringify(tools.bar)
+);
 check("底栏没有全屏按钮", tools.hasFullscreen === false, JSON.stringify(tools.bar));
 check("底栏保留「桌面歌词」按钮", tools.hasDesktop === true, JSON.stringify(tools.bar));
-check("手动匹配歌词入口在（不再依赖运行时 inject）", tools.bar.includes("btn-lyrics-match"), JSON.stringify(tools.bar));
-check("手动匹配歌词图标/提示正确", tools.matchIcon === "#i-search" && tools.matchTip === "手动匹配歌词", `${tools.matchIcon} / ${tools.matchTip}`);
+check(
+  "手动匹配歌词入口在（不再依赖运行时 inject）",
+  tools.bar.includes("btn-lyrics-match"),
+  JSON.stringify(tools.bar)
+);
+// 需求：手动匹配歌词的图标换成「词」字（放大镜表达不出「匹配歌词」）
+check(
+  "手动匹配歌词图标/提示正确",
+  tools.matchIcon === "#i-lyric-match" && tools.matchTip === "手动匹配歌词",
+  `${tools.matchIcon} / ${tools.matchTip}`
+);
+// 控件顺序：播放模式 / 歌词匹配 / 桌面歌词 / 定时停止 / 选项 / 播放列表
+check(
+  "底栏控件顺序符合需求",
+  JSON.stringify(tools.bar) ===
+    JSON.stringify([
+      "btn-mode",
+      "btn-lyrics-match",
+      "btn-desktop-lyrics",
+      "btn-sleep",
+      "btn-options",
+      "btn-playlist",
+    ]),
+  JSON.stringify(tools.bar)
+);
 check("设置层紧凑控件里没有歌词显隐按钮", tools.hasSpLyrics === false, JSON.stringify(tools.sp));
-check("设置层紧凑控件按钮为 静音 / 播放模式", JSON.stringify(tools.sp) === JSON.stringify(["sp-mute", "sp-mode"]), JSON.stringify(tools.sp));
+// 设置层里不再放一套重复的播放控件（底栏那套被遮罩盖住即可，见 index.html 的说明）
+check("设置层里没有重复的播放控件", tools.settingsLayerTools === 0, `找到 ${tools.settingsLayerTools} 个`);
 
 const opened = await evalJs(`(() => {
   document.getElementById("btn-lyrics-match").click();

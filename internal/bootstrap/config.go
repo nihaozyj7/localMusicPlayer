@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"musicplayer/internal/lyrics"
 )
 
 /* --------------------------------------------------------------------------
@@ -135,6 +137,26 @@ type Config struct {
 	// 原来每张表头各有一个密度按钮，现在统一到设置里，对所有列表生效。
 	ListDensity string `json:"listDensity"`
 
+	// ShowDesktopLyrics 是否显示桌面歌词（悬浮在窗口上的歌词）。
+	ShowDesktopLyrics bool `json:"showDesktopLyrics"`
+	// ShuffleMode 随机播放行为：reshuffle | once。
+	ShuffleMode string `json:"shuffleMode"`
+
+	// —— 封面轮播（播放详情页）——
+	// CoverCarousel 是否轮播多张封面。
+	// 刻意做成**全局偏好**而不是每首一份：一首歌有几张封面是数据，
+	// 「要不要轮着看」是习惯；放进每首歌里会出现「这首开、那首关」，
+	// 用户根本记不住自己在哪首开的。
+	CoverCarousel bool `json:"coverCarousel"`
+	// CoverCarouselInterval 轮播间隔（秒），下限 2 秒，默认 10 秒。
+	CoverCarouselInterval int `json:"coverCarouselInterval"`
+
+	// —— AI 元数据清洗（设置 → AI 元数据）——
+	AIBaseURL  string `json:"aiBaseUrl"`
+	AIAPIKey   string `json:"aiApiKey"`
+	AIThinking bool   `json:"aiThinking"`
+	AIModelID  string `json:"aiModelId"`
+
 	Folders     []Folder     `json:"folders"`
 	FilterRules []FilterRule `json:"filterRules"`
 	LikedIDs    []string     `json:"likedIds"`
@@ -199,7 +221,10 @@ func DefaultConfig() *Config {
 		ScanConcurrency: 4,
 		LyricsFontSize:  16,
 		LyricsLines:     7,
-		LyricsSources:   []string{"lrc-file", "embedded", "online"},
+		// 歌词来源优先级：内嵌 → 同目录 .lrc → 本程序缓存 → 在线自动匹配。
+		// 与 internal/lyrics.DefaultSources 保持一致；normalize() 会补齐缺项，
+		// 因此从旧版本升级上来的配置也能拿到 cache 这一层。
+		LyricsSources: []string{"embedded", "lrc-file", "cache", "online"},
 		Folders:         []Folder{},
 		FilterRules: []FilterRule{
 			{ID: "rule_size", Type: "size", Op: "lt", Value: "10240", Unit: "B", Scope: "exclude", Enabled: true},
@@ -220,7 +245,40 @@ func DefaultConfig() *Config {
 
 		RowClickAction: "next",
 		ListDensity:    "cozy",
+
+		ShowDesktopLyrics: false,
+		ShuffleMode:       "reshuffle",
+
+		// 封面轮播默认关闭：多封面时才会有意义，用户明确打开才动
+		CoverCarousel:         false,
+		CoverCarouselInterval: 10,
+
+		AIBaseURL:  "",
+		AIAPIKey:   "",
+		AIThinking: false,
+		AIModelID:  "",
 	}
+}
+
+// CarouselIntervalBounds 轮播间隔的合法范围（秒）
+const (
+	MinCarouselInterval = 2
+	MaxCarouselInterval = 300
+)
+
+// NormalizeCarouselInterval 把轮播间隔夹到 [2, 300] 秒，非法值落回 10 秒。
+// 下限 2 秒是因为更快的轮播只会变成闪烁；上限 300 秒与定时停止的滑条量程一致。
+func NormalizeCarouselInterval(seconds int) int {
+	if seconds <= 0 {
+		return 10
+	}
+	if seconds < MinCarouselInterval {
+		return MinCarouselInterval
+	}
+	if seconds > MaxCarouselInterval {
+		return MaxCarouselInterval
+	}
+	return seconds
 }
 
 // RowClickActions 单击歌曲行的可选行为
@@ -239,6 +297,14 @@ func NormalizeRowClickAction(v string) string {
 
 // ListDensities 列表密度可选值
 var ListDensities = []string{"compact", "cozy", "roomy"}
+
+// normalizeLyricsSources 规范化歌词来源优先级。
+//
+// 复用 internal/lyrics 里的同一份实现：设置界面展示的顺序、读取时真正用的顺序
+// 必须是同一个真相，所以不能各写一遍。
+func normalizeLyricsSources(sources []string) []string {
+	return lyrics.NormalizeSources(sources)
+}
 
 // NormalizeListDensity 规范化列表密度，非法值落回 cozy
 func NormalizeListDensity(v string) string {
@@ -461,6 +527,8 @@ func normalize(cfg *Config) {
 	}
 	if len(cfg.LyricsSources) == 0 {
 		cfg.LyricsSources = def.LyricsSources
+	} else {
+		cfg.LyricsSources = normalizeLyricsSources(cfg.LyricsSources)
 	}
 	if cfg.PlayMode == "" {
 		cfg.PlayMode = def.PlayMode
@@ -482,6 +550,9 @@ func normalize(cfg *Config) {
 	}
 	cfg.RowClickAction = NormalizeRowClickAction(cfg.RowClickAction)
 	cfg.ListDensity = NormalizeListDensity(cfg.ListDensity)
+	if cfg.ShuffleMode != "once" {
+		cfg.ShuffleMode = "reshuffle"
+	}
 	// 响度均衡：模式与目标值都要收敛到合法范围，避免手改配置写坏后
 	// 前端拿到奇怪的值（例如 target=0 会让补偿算成 +16dB 的巨响）。
 	switch cfg.LoudnessMode {

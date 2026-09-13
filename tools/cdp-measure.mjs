@@ -27,13 +27,23 @@ const EDGE = [
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
   "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
 ].find((p) => existsSync(p));
-if (!EDGE) { console.error("找不到 msedge.exe"); process.exit(1); }
+if (!EDGE) {
+  console.error("找不到 msedge.exe");
+  process.exit(1);
+}
 
 /* ---- 复制最新的 frontend/src 并注入测量脚本（每次都重新复制，避免量到旧 CSS） ---- */
 const dir = prepareMeasureDir(join(root, "frontend", "src"), join(root, ".task", "measure"));
 console.log("已从 frontend/src 重新复制到 .task/measure（保证量的是最新源码）");
 const BINDINGS = join(root, "frontend", "bindings");
-const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json; charset=utf-8" };
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".json": "application/json; charset=utf-8",
+};
 const server = createServer((req, res) => {
   const p = decodeURIComponent(new URL(req.url, "http://x").pathname);
   if (p === "/wails/runtime.js") {
@@ -46,7 +56,10 @@ export default { Call, Events };`);
   const f = p.startsWith("/bindings/")
     ? join(BINDINGS, p.slice("/bindings/".length))
     : join(dir, p === "/" ? "index.html" : p.replace(/^\//, ""));
-  if (!existsSync(f) || statSync(f).isDirectory()) { res.writeHead(404); return res.end("404 " + p); }
+  if (!existsSync(f) || statSync(f).isDirectory()) {
+    res.writeHead(404);
+    return res.end("404 " + p);
+  }
   res.writeHead(200, { "Content-Type": MIME[extname(f)] || "application/octet-stream" });
   res.end(readFileSync(f));
 });
@@ -55,14 +68,22 @@ await new Promise((r) => server.listen(4993, "127.0.0.1", r));
 /* ---- 启动 Edge（独立 profile，每次全新） ---- */
 const prof = join(tmpdir(), "cdp-profile-" + Date.now());
 mkdirSync(prof, { recursive: true });
-const edge = spawn(EDGE, [
-  "--headless=new", "--disable-gpu", "--no-sandbox", "--no-first-run",
-  "--no-default-browser-check", "--disable-extensions",
-  `--user-data-dir=${prof}`,
-  `--remote-debugging-port=${CDP_PORT}`,
-  `--window-size=${W},${H}`,
-  "about:blank",
-], { stdio: "ignore", detached: false });
+const edge = spawn(
+  EDGE,
+  [
+    "--headless=new",
+    "--disable-gpu",
+    "--no-sandbox",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-extensions",
+    `--user-data-dir=${prof}`,
+    `--remote-debugging-port=${CDP_PORT}`,
+    `--window-size=${W},${H}`,
+    "about:blank",
+  ],
+  { stdio: "ignore", detached: false }
+);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -74,15 +95,27 @@ for (let i = 0; i < 60; i++) {
     const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
     version = await r.json();
     break;
-  } catch { /* 还没起来 */ }
+  } catch {
+    /* 还没起来 */
+  }
 }
-if (!version) { console.error("CDP 端点未就绪"); edge.kill(); server.close(); process.exit(1); }
+if (!version) {
+  console.error("CDP 端点未就绪");
+  edge.kill();
+  server.close();
+  process.exit(1);
+}
 console.log("浏览器:", version.Browser);
 
 /* 连到 page target */
 const targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json();
 const page = targets.find((t) => t.type === "page");
-if (!page) { console.error("没有 page target"); edge.kill(); server.close(); process.exit(1); }
+if (!page) {
+  console.error("没有 page target");
+  edge.kill();
+  server.close();
+  process.exit(1);
+}
 
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((r) => (ws.onopen = r));
@@ -91,7 +124,10 @@ let msgId = 0;
 const pending = new Map();
 ws.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
-  if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+  if (m.id && pending.has(m.id)) {
+    pending.get(m.id)(m);
+    pending.delete(m.id);
+  }
 };
 function send(method, params = {}) {
   const id = ++msgId;
@@ -102,7 +138,10 @@ function send(method, params = {}) {
 }
 async function evaluate(expression) {
   const r = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-  if (r.result?.exceptionDetails) return { __error: r.result.exceptionDetails.text + " " + (r.result.exceptionDetails.exception?.description || "") };
+  if (r.result?.exceptionDetails)
+    return {
+      __error: r.result.exceptionDetails.text + " " + (r.result.exceptionDetails.exception?.description || ""),
+    };
   return r.result?.result?.value;
 }
 

@@ -58,7 +58,7 @@
   gap: var(--sp-2);
   height: var(--btn-md);
   padding: 0 var(--sp-3);
-  border-radius: var(--r-sm);
+  border-radius: var(--btn-radius);
   border: var(--hairline);
   background: var(--surface-1);
   color: var(--text-1);
@@ -131,6 +131,19 @@
   font-size: var(--fs-sm);
 }
 
+/* 更小一档：封面集合的缩略图下面要放两个操作按钮，用 --sm 会撑破格子 */
+.btn--xs {
+  height: 22px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-xs);
+  gap: 3px;
+}
+
+.btn--xs svg {
+  width: 12px;
+  height: 12px;
+}
+
 /* —— 加载中的旋转图标 —— */
 .btn.is-busy svg {
   animation: spin 900ms linear infinite;
@@ -156,7 +169,7 @@
   width: 200px;
   height: var(--btn-md);
   padding: 0 var(--sp-3) 0 32px;
-  border-radius: var(--r-sm);
+  border-radius: var(--btn-radius);
   border: var(--hairline);
   background: var(--surface-1);
   color: var(--text-1);
@@ -195,7 +208,7 @@
 .select__field {
   height: var(--btn-md);
   padding: 0 26px 0 var(--sp-3);
-  border-radius: var(--r-sm);
+  border-radius: var(--btn-radius);
   border: var(--hairline);
   background: var(--surface-1);
   color: var(--text-2);

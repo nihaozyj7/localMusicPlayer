@@ -11,16 +11,17 @@
    ========================================================================== */
 
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 
-const EXE = path.resolve(ROOT, process.argv.includes("--exe")
-  ? process.argv[process.argv.indexOf("--exe") + 1]
-  : "bin/musicplayer-debug.exe");
+const EXE = path.resolve(
+  ROOT,
+  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/musicplayer-debug.exe"
+);
 const PORT = 9334;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -40,7 +41,9 @@ for (let i = 0; i < 60 && !target; i += 1) {
   try {
     const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
     target = list.find((x) => x.type === "page" && x.webSocketDebuggerUrl);
-  } catch { /* 等启动 */ }
+  } catch {
+    /* 等启动 */
+  }
 }
 if (!target) {
   console.error("无法接入 WebView2");
@@ -60,7 +63,10 @@ const consoleLines = [];
 
 ws.addEventListener("message", (ev) => {
   const m = JSON.parse(ev.data);
-  if (m.id && waiting.has(m.id)) { waiting.get(m.id)(m.result); waiting.delete(m.id); }
+  if (m.id && waiting.has(m.id)) {
+    waiting.get(m.id)(m.result);
+    waiting.delete(m.id);
+  }
   if (m.method === "Runtime.consoleAPICalled") {
     consoleLines.push((m.params.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
   }
@@ -82,7 +88,10 @@ ws.addEventListener("message", (ev) => {
 function send(method, params = {}) {
   msgId += 1;
   const id = msgId;
-  return new Promise((resolve) => { waiting.set(id, resolve); ws.send(JSON.stringify({ id, method, params })); });
+  return new Promise((resolve) => {
+    waiting.set(id, resolve);
+    ws.send(JSON.stringify({ id, method, params }));
+  });
 }
 
 await new Promise((r) => ws.addEventListener("open", r));
@@ -157,7 +166,11 @@ console.log(JSON.stringify(counts, null, 2));
 console.log("\n================ 控制台（最后 10 条）================");
 for (const l of consoleLines.slice(-10)) console.log("  " + l);
 
-writeFileSync(path.join(workDir, "netprobe.json"), JSON.stringify({ version, probe: probe?.result?.value, netEvents, consoleLines }, null, 2), "utf8");
+writeFileSync(
+  path.join(workDir, "netprobe.json"),
+  JSON.stringify({ version, probe: probe?.result?.value, netEvents, consoleLines }, null, 2),
+  "utf8"
+);
 console.log(`\n完整结果: ${path.join(workDir, "netprobe.json")}`);
 
 ws.close();

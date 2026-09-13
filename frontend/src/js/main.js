@@ -4,7 +4,7 @@
    职责：装配 store / 主题 / 侧边栏 / 内容区 / 播放控件 / 播放界面 / 快捷键
    ========================================================================== */
 
-import { $, closeMenu, toast } from "./dom.js";
+import { $, closeMenu, initTooltips, toast } from "./dom.js";
 import { backend, isWails, on, startMockWatcher } from "./bridge.js";
 import {
   applyRules,
@@ -17,6 +17,7 @@ import {
   playNext,
   playPrev,
   rescan,
+  setCoverSets,
   setVolume,
   songById,
   state,
@@ -25,9 +26,8 @@ import {
   togglePlay,
   startMockTicker,
 } from "./store.js";
-import { bindShell, doRescan, navigate, renderShell, toggleSettings, settingsLayerOpen, closeSettings, openSettings } from "./shell.js";
+import { bindShell, doRescan, navigate, renderShell, toggleSettings, openSettings } from "./shell.js";
 import { initPlayerBar, paintPlayerBar, toggleQueuePanel } from "./playerbar.js";
-import { initSettingsPlayer, paintSettingsPlayer } from "./settingsplayer.js";
 import {
   applyVolume,
   applyGainForSong,
@@ -38,12 +38,15 @@ import {
 } from "./audio.js";
 import {
   closePlayer,
+  currentLyricLine,
+  ensureLyricsLoaded,
+  nextCover,
   openPlayer,
   renderPlayerView,
   setPlayerViewMode,
   syncPlaybackState,
   togglePlayer,
-} from "./playerview.js";
+} from "./playerhost.js";
 import { applyResolvedTheme, applyCoverSeed, discoverThemes, extractCoverSeed, getTheme } from "./theme.js";
 import { refreshBackdropState } from "./backdrop.js";
 import { initSearchPanel } from "./searchpanel.js";
@@ -67,6 +70,9 @@ function renderKey() {
     state.sortKey,
     state.sortDir,
     state.config.listDensity,
+    // 专辑列显隐是「表格结构」级别的变化，必须在键里：
+    // 否则表头右键切完之后状态变了、DOM 却没重绘（实测就是这个原因）
+    state.config.showAlbumColumn === false ? "no-album" : "album",
     state.visibleSongs.map((s) => s.id).join(","),
     state.playlists.map((p) => `${p.id}:${p.name}:${p.songIds.length}`).join(","),
     state.songs.length,
@@ -77,20 +83,78 @@ function renderKey() {
   ].join("|");
 }
 
+/**
+ * 曲目列表的「选中行」= 当前播放行。
+ *
+ * 单一真源是 state.currentId：列表里不再各自维护一份选中状态
+ * （以前 CSS 里有 .track[data-selected] 但没有任何代码写过它，而高亮用的是
+ * aria-current —— 两个概念各写一半，于是「列表高亮和正在播放的不是一首歌」）。
+ * 这里在**不重建整张表**的前提下把 aria-current / data-playing 对齐到 currentId，
+ * 这样切歌（包括自动下一首、随机播放）都能立刻同步，长列表也不会全量重绘。
+ */
+function paintTrackSelection() {
+  const rows = document.querySelectorAll(".track");
+  if (!rows.length) return;
+  const current = state.currentId ?? "";
+  rows.forEach((row) => {
+    const isCurrent = row.dataset.id === current;
+    const marked = row.getAttribute("aria-current") === "true";
+    if (isCurrent !== marked) row.setAttribute("aria-current", String(isCurrent));
+    const playing = isCurrent && state.playing ? "true" : "false";
+    if (row.dataset.playing !== playing) row.dataset.playing = playing;
+  });
+}
+
 function tick() {
+  applyDensity();
   const key = renderKey();
   if (key !== lastKey) {
     lastKey = key;
     renderShell();
   }
+  // 选中行同步必须在 renderShell 之后：重建表格时行是新的，要重新对齐一次
+  paintTrackSelection();
   paintPlayerBar();
-  // 设置层自带的紧凑播放控件（层关着时它自己会直接返回）
-  paintSettingsPlayer();
   renderPlayerView();
+  paintDesktopLyrics();
   syncPlaybackState();
   // 真实播放：切歌 / 播放暂停状态变化时同步到 <audio>，并套用响度补偿
   syncAudio();
   applyGainForSong();
+}
+
+/**
+ * 把「列表密度」写到根元素（<html>）上。
+ *
+ * 为什么挂在根元素而不是 #app 或各个 .tracks 上：密度是全局显示设置，要同时
+ * 对曲目表格（本地歌曲 / 播放列表 / 歌单）、底部播放列表面板、搜索结果列表生效。
+ *  - 只写在 .tracks 上的话，底部播放列表面板（.queue-item）完全不跟着变；
+ *  - 只写在 #app 上的话也不行 —— 播放列表面板 / 选项面板 / 搜索弹层都是
+ *    #app **之外**的浮层（见 index.html），同样漏掉。
+ * 这里每次 tick 都写一次（值没变时直接返回，几乎零成本），
+ * 这样任何改动密度的入口都不需要记得手动同步。
+ */
+function applyDensity() {
+  const root = document.documentElement;
+  const next = state.config.listDensity || "cozy";
+  if (root.dataset.density !== next) root.dataset.density = next;
+}
+
+/* 桌面歌词悬浮条：只在「窗口歌词」开启且确实有当前行时显示。 */
+function paintDesktopLyrics() {
+  const layer = document.getElementById("desktop-lyrics");
+  if (!layer) return;
+  const line = document.getElementById("desktop-lyrics-line");
+  const show = state.config.showDesktopLyrics && state.playing;
+  // 详情页没打开时歌词还没装载，这里补一次（有缓存/进行中会直接返回）
+  if (show) ensureLyricsLoaded();
+  const text = show ? currentLyricLine() : "";
+  if (show && text) {
+    line.textContent = text;
+    layer.hidden = false;
+  } else {
+    layer.hidden = true;
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -130,8 +194,27 @@ async function toggleTheme() {
   toast(nextMode === "dark" ? "已切换到深色主题" : "已切换到浅色主题", { duration: 1500 });
 }
 
-/** 封面取色 → 写入 --seed 令牌（开关打开时生效） */
-function bindCoverAccent() {
+/* --------------------------------------------------------------------------
+   封面缓存回填
+   --------------------------------------------------------------------------
+   用户换过的封面写在缓存目录里（缓存才是真相来源），但前端的 coverOverrides
+   只是一张内存表。不回填的话，重启应用后换过的封面就「消失」了（除非用户
+   开了「把封面写进歌曲文件」）。这里启动时一次性把缓存里的封面灌回来。
+   -------------------------------------------------------------------------- */
+async function hydrateCachedCovers() {
+  if (!isWails()) return;
+  try {
+    const map = await backend.coverCachedSets();
+    if (!map || typeof map !== "object") return;
+    setCoverSets(map);
+    const n = Object.keys(map).length;
+    if (n) console.info(`[cover] 已从缓存回填 ${n} 首歌的封面（含多封面）`);
+  } catch (err) {
+    console.info("[cover] 封面缓存回填跳过", err?.message ?? err);
+  }
+}
+
+/** 封面取色 → 写入 --seed 令牌（开关打开时生效） */function bindCoverAccent() {
   const img = $("#bar-cover-img");
   if (!img) return;
   img.addEventListener("load", () => {
@@ -225,18 +308,42 @@ function bindWindowControls() {
   $("#btn-settings")?.addEventListener("click", () => toggleSettings());
 
   $("#btn-player-back")?.addEventListener("click", closePlayer);
-  // 播放详情页：返回按钮右侧的「封面」按钮 → 打开封面搜索弹层
+  // 播放详情页头部：「封面」按钮 → 打开封面面板（与轮播开关同属一个按钮组）
   $("#btn-player-cover")?.addEventListener("click", async () => {
     const song = state.currentId ? songById(state.currentId) : null;
     if (!song || song.online) return;
     const { openCoverPanel } = await import("./coverpanel.js");
     openCoverPanel(song.id);
   });
-  $("#playerview-mode")?.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-pv-mode]");
-    if (!btn) return;
-    setPlayerViewMode(btn.dataset.pvMode);
+  // 轮播开关：与「封面」按钮同一个按钮组（样式与旁边的播放界面样式组一致）
+  $("#btn-cover-carousel")?.addEventListener("click", () => setCoverCarousel(!state.config.coverCarousel));
+  // 点播放详情页上的封面：多封面时手动切下一张
+  $("#playerview-stage")?.addEventListener("click", (e) => {
+    if (!e.target.closest(".disc__label, .disc__platter")) return;
+    nextCover();
   });
+  $("#playerview-mode")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-pv-skin]");
+    if (!btn) return;
+    setPlayerViewMode(btn.dataset.pvSkin);
+  });
+}
+
+/**
+ * 开关封面轮播。
+ *
+ * 轮播是全局设置（详情页显示哪一张），但「这首歌有几张封面」是逐曲的：
+ * 只有一张时按钮会被置灰，所以这里不必额外判断。
+ */
+function setCoverCarousel(on) {
+  state.config.coverCarousel = Boolean(on);
+  commit();
+  toast(
+    state.config.coverCarousel
+      ? `已开启封面轮播（每 ${Number(state.config.coverCarouselInterval) || 10} 秒换一张）`
+      : "已关闭封面轮播",
+    { duration: 1600 }
+  );
 }
 
 /* --------------------------------------------------------------------------
@@ -426,6 +533,13 @@ function applyPreviewParams() {
     }, 8000);
   }
   if (q.get("query")) state.query = q.get("query");
+  // 列表密度：?density=compact —— 给无头浏览器自检用（见 tools/*.mjs）
+  const density = q.get("density");
+  if (density && ["compact", "cozy", "roomy"].includes(density)) {
+    state.config.listDensity = density;
+  }
+  // 专辑列显隐：?album=off
+  if (q.get("album") === "off") state.config.showAlbumColumn = false;
 }
 
 /* --------------------------------------------------------------------------
@@ -439,14 +553,13 @@ async function main() {
   await refreshBackdropState();
 
   bindShell();
+  initTooltips();
   // 搜索必须早于首次渲染：它往标题栏插入搜索按钮，并负责搜索结果弹层的构建
   initSearchPanel();
   initPlayerBar({
     onOpenPlayer: togglePlayer,
     onToggleQueue: () => toggleQueuePanel(),
   });
-  // 设置层里的紧凑播放控件：动作与底栏共用同一套 store，只是少几个按钮
-  initSettingsPlayer({ onOpenPlayer: togglePlayer });
   bindWindowControls();
   bindShortcuts();
   bindBackendEvents();
@@ -468,6 +581,8 @@ async function main() {
   // 响度能力与补偿表（后端可用时）
   await refreshLoudnessState();
   await refreshLoudnessGains();
+  // 换过的封面存在缓存目录里，启动时回填，避免「重启后又变回原始封面」
+  await hydrateCachedCovers();
 
   // 预览模式下的进度模拟（真实播放时自动让位给 <audio> 事件）
   startMockTicker();

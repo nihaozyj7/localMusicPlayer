@@ -1,8 +1,13 @@
 /* ==========================================================================
-   playerview.css — 播放界面三种样式：经典 / 沉浸 / 简约
+   playerview.css — 播放详情页的「外壳」（宿主部分）
    --------------------------------------------------------------------------
-   底色在 layout.css（.playerview 铺满窗口，用窗口底色令牌 --bg-window）。
-   沉浸模式下底色清空，整窗由 .app 里的 #immersive-bg 封面虚化图负责。
+   三种样式（经典 / 沉浸 / 简约）的实现已经抽到独立包
+   frontend/packages/player-skins（那里也有它们各自的 CSS），
+   这里只留宿主自己的东西：
+     · 头部（返回 / 封面按钮组 / 样式按钮组）
+     · 舞台容器
+   舞台内部的排版由皮肤自己的 CSS 负责，皮肤的选择器都写成
+   `.playerview[data-skin="<id>"] …`，宿主只负责把 data-skin 打在 .playerview 上。
    ========================================================================== */
 
 .playerview__head {
@@ -10,7 +15,7 @@
   align-items: center;
   gap: var(--sp-3);
   height: 52px;
-  /* 详情页现在铺满整窗，head 自己留出内边距，别让「返回」贴着窗口边 */
+  /* 详情页铺满整窗，head 自己留出内边距，别让「返回」贴着窗口边 */
   padding: 0 var(--sp-6);
 }
 
@@ -20,10 +25,12 @@
   gap: var(--sp-2);
   height: var(--btn-md);
   padding: 0 var(--sp-3);
-  border-radius: var(--r-sm);
+  border-radius: var(--btn-radius);
   color: var(--text-2);
   font-size: var(--fs-md);
-  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  transition:
+    color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
 }
 
 .playerview__back svg {
@@ -36,360 +43,19 @@
   background: var(--surface-hover);
 }
 
-.playerview__crumb {
-  font-size: var(--fs-sm);
-  color: var(--text-3);
-}
-
 .playerview__stage {
   position: relative;
   min-height: 0;
   overflow: hidden;
 }
 
-/* ==========================================================================
-   经典：左唱片 + 右歌词
-   ========================================================================== */
-
-.playerview[data-mode="classic"] .playerview__stage {
-  display: grid;
-  grid-template-columns: minmax(280px, 38%) minmax(0, 1fr);
-  align-items: stretch;
-  gap: var(--sp-7);
-  padding: var(--sp-5) var(--sp-7) var(--sp-6);
-  /* 铺满整窗后，超宽屏上把内容收在中间，别让歌词行拉到一整屏那么长 */
-  width: 100%;
-  max-width: 1180px;
-  margin: 0 auto;
-}
-
-.disc {
-  position: relative;
+/* 皮肤挂载失败时的兜底提示（宁可显示一行说明，也不要白屏） */
+.skin-error {
   display: grid;
   place-items: center;
-  align-self: center;
-  width: min(100%, 400px);
-  aspect-ratio: 1 / 1;
-  margin: 0 auto;
-}
-
-.disc__shadow {
-  position: absolute;
-  inset: 6%;
-  border-radius: var(--r-full);
-  background: var(--accent-weak);
-  filter: blur(38px);
-  opacity: 0.55;
-  z-index: 0;
-}
-
-.disc__platter {
-  position: relative;
-  z-index: 1;
-  width: 100%;
   height: 100%;
-  border-radius: var(--r-full);
-  background: var(--vinyl);
-  border: 1px solid var(--border-1);
-  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-  display: grid;
-  place-items: center;
-  animation: spin 26s linear infinite;
-  animation-play-state: paused;
-}
-
-.disc[data-spinning="true"] .disc__platter {
-  animation-play-state: running;
-}
-
-.disc__label {
-  width: 62%;
-  height: 62%;
-  border-radius: var(--r-full);
-  overflow: hidden;
-  border: 1px solid var(--border-2);
-  box-shadow: inset 0 0 0 8px rgba(0, 0, 0, 0.28);
-}
-
-.disc__label img,
-.disc__label .cover-placeholder {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: var(--r-full);
-}
-
-.disc__hole {
-  position: absolute;
-  width: 5.5%;
-  height: 5.5%;
-  border-radius: var(--r-full);
-  background: var(--bg-app);
-  border: 1px solid var(--border-2);
-  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.7);
-}
-
-.disc__arm {
-  position: absolute;
-  top: 2%;
-  right: 4%;
-  width: 22%;
-  height: 22%;
-  border-radius: var(--r-full);
-  border: 2px solid var(--border-2);
-  border-left-color: transparent;
-  border-bottom-color: transparent;
-  transform: rotate(-32deg);
-  opacity: 0.5;
-  z-index: 2;
-  pointer-events: none;
-}
-
-.classic__side {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-4);
-  min-width: 0;
-  min-height: 0;
-  /* 让歌词区真正拿到一个确定的高度：只写 max-height 的话，
-     高度是"内容高度"，歌词就永远撑开、既不滚动也不定位。 */
-  height: 100%;
-  max-height: 100%;
-}
-
-.classic__info {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.classic__title {
-  font-size: var(--fs-2xl);
-  font-weight: var(--fw-semibold);
-  letter-spacing: -0.02em;
-  color: var(--text-1);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.classic__artist {
-  font-size: var(--fs-lg);
-  color: var(--text-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.classic__album {
-  font-size: var(--fs-sm);
-  color: var(--text-3);
-}
-
-/* ==========================================================================
-   沉浸：封面虚化铺满整窗 + 居中歌词（没有卡片边框）
-   ========================================================================== */
-
-.playerview[data-mode="immersive"] .playerview__stage {
-  display: grid;
-  place-items: center;
-  padding: var(--sp-5) var(--sp-6) var(--sp-6);
-}
-
-/* 铺满整个窗口（含标题栏与播放控件区域），这样才叫"沉浸"。
-   它是 .app 的直接子元素（不在 .playerview 内），所以不会被后者的
-   transform 动效建立出的包含块裁掉，可以真正盖住整窗。 */
-.immersive-bg {
-  position: fixed;
-  inset: 0;
-  /* 盖住侧边栏与主内容（两者都在 --z-content=10 这一层），
-     但仍在标题栏（70）与播放控件（40）之下，控制按钮不会被遮住 */
-  z-index: 25;
-  overflow: hidden;
-  background: var(--bg-app);
-  pointer-events: none;
-}
-
-.immersive-bg[hidden] {
-  display: none;
-}
-
-.immersive-bg img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  filter: blur(var(--immersive-blur, 54px)) saturate(1.5) brightness(0.85);
-  transform: scale(1.14);
-}
-
-.immersive-bg__veil {
-  position: absolute;
-  inset: 0;
-  background: var(--immersive-veil);
-}
-
-.immersive-bg__grain {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(120% 80% at 50% 40%, transparent 40%, rgba(0, 0, 0, 0.35) 100%);
-}
-
-/* 歌词容器：没有任何卡片背景 / 边框 / 阴影，纯文字浮在封面虚化图上 */
-.immersive__card {
-  position: relative;
-  z-index: 3;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--sp-4);
-  width: min(760px, 100%);
-  /* 必须给出确定的高度，否则内部歌词滚动区没有可比较的 100%，
-     会一路撑高而不产生滚动（表现为歌词不会自动滚动、也滚不动）。 */
-  height: 100%;
-  max-height: 100%;
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  overflow: visible;
-}
-
-.immersive__info {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  text-align: center;
-  z-index: 1;
-  text-shadow: 0 1px 18px rgba(0, 0, 0, 0.5);
-}
-
-.immersive__title {
-  font-size: var(--fs-xl);
-  font-weight: var(--fw-semibold);
-  letter-spacing: -0.01em;
-  color: var(--text-1);
-}
-
-.immersive__artist {
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-}
-
-/* ==========================================================================
-   简约：无封面，居中歌词
-   ========================================================================== */
-
-.playerview[data-mode="minimal"] .playerview__stage {
-  display: grid;
-  place-items: center;
   padding: var(--sp-6);
-}
-
-.minimal__inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--sp-5);
-  width: min(680px, 100%);
-  height: 100%;
-  max-height: 100%;
-  min-height: 0;
-}
-
-.minimal__info {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  text-align: center;
-}
-
-.minimal__title {
-  font-size: var(--fs-lg);
-  font-weight: var(--fw-medium);
-  color: var(--text-2);
-}
-
-.minimal__artist {
-  font-size: var(--fs-sm);
   color: var(--text-3);
-}
-
-/* 简约模式下歌词独占视觉重心 */
-.playerview[data-mode="minimal"] .lyrics {
-  --lyric-size: 19px;
-  --lyric-size-active: 26px;
-  --lyric-dim: 0.34;
-}
-
-.playerview[data-mode="immersive"] .lyrics {
-  --lyric-size: 16px;
-  --lyric-size-active: 22px;
-  --lyric-dim: 0.4;
-}
-
-.playerview[data-mode="immersive"] .lyrics,
-.playerview[data-mode="minimal"] .lyrics {
-  width: 100%;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-/* 非沉浸模式下歌词卡片有边界 */
-.playerview[data-mode="classic"] .lyrics {
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: 100%;
-}
-
-@media (max-width: 900px) {
-  .playerview[data-mode="classic"] .playerview__stage {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 40%) minmax(0, 1fr);
-    gap: var(--sp-4);
-    padding: var(--sp-4);
-  }
-
-  .disc {
-    width: min(100%, 240px);
-  }
-}
-
-/* ==========================================================================
-   沉浸模式下，chrome（标题栏 / 侧边栏 / 播放控件）不能有自己的底色 ——
-   任何一块实色面板压在封面虚化图上都会立刻破掉沉浸感。
-   这里把它们全部清成透明，只留内容与细描边。
-   ========================================================================== */
-
-.app[data-mode="immersive"][data-view="player"] .titlebar,
-.app[data-mode="immersive"][data-view="player"] .playerbar {
-  background: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  border-color: transparent;
-  box-shadow: none;
-}
-
-.app[data-mode="immersive"][data-view="player"] .titlebar::after,
-.app[data-mode="immersive"][data-view="player"] .playerbar::before {
-  background: var(--glass-highlight);
-  opacity: 0.25;
-}
-
-/* 侧边栏在沉浸模式下也退成半透明，避免一整块灰玻璃压住封面 */
-.app[data-mode="immersive"][data-view="player"] .sidebar {
-  background: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  border-right-color: transparent;
-}
-
-.app[data-mode="immersive"][data-view="player"] .sidebar .navitem[aria-selected="true"] {
-  background: var(--surface-hover);
+  font-size: var(--fs-md);
+  text-align: center;
 }

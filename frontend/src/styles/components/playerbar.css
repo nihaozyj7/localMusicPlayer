@@ -159,7 +159,7 @@
   place-items: center;
   width: 30px;
   height: 30px;
-  border-radius: var(--r-full);
+  border-radius: var(--btn-radius);
   color: var(--heart-off);
   transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
     transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
@@ -223,7 +223,7 @@
   place-items: center;
   width: var(--btn-md);
   height: var(--btn-md);
-  border-radius: var(--r-full);
+  border-radius: var(--btn-radius);
   color: var(--text-2);
   transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
     transform var(--dur-fast) var(--ease);
@@ -397,7 +397,7 @@
   place-items: center;
   width: 30px;
   height: 30px;
-  border-radius: var(--r-full);
+  border-radius: var(--btn-radius);
   color: var(--text-2);
   transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
 }
@@ -429,7 +429,7 @@
   width: 32px;
   height: 32px;
   flex: none;
-  border-radius: var(--r-full);
+  border-radius: var(--btn-radius);
   color: var(--text-2);
   transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
 }
@@ -496,13 +496,23 @@
   background: var(--surface-2);
 }
 
+/* 定时停止：倒计时剩余分钟角标（hidden 时彻底隐藏，覆盖 display:grid） */
+#btn-sleep .mode-btn__badge[hidden] {
+  display: none;
+}
+
+#btn-sleep[aria-pressed="true"] {
+  background: var(--surface-2);
+  color: var(--accent);
+}
+
 /* 播放页样式切换（播放界面头部用） */
 .viewmode {
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 2px;
-  border-radius: var(--r-full);
+  border-radius: var(--panel-radius);
   background: var(--surface-1);
   border: var(--hairline);
 }
@@ -512,7 +522,7 @@
   place-items: center;
   width: 30px;
   height: 26px;
-  border-radius: var(--r-full);
+  border-radius: var(--btn-radius);
   color: var(--text-3);
   transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
 }
@@ -530,6 +540,18 @@
 .viewmode__btn[aria-pressed="true"] {
   background: var(--accent);
   color: var(--accent-text);
+}
+
+/* 按钮组里可能有「当前不可用」的项：封面相关按钮对在线试听曲目没有意义，
+   轮播开关在只有一张封面时也没意义。置灰而不是隐藏，按钮组的位置才不会跳。 */
+.viewmode__btn:disabled {
+  opacity: 0.34;
+  cursor: not-allowed;
+}
+
+.viewmode__btn:disabled:hover {
+  color: var(--text-3);
+  background: none;
 }
 
 /* —— 窄窗口 ——

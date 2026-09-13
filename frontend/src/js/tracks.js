@@ -49,8 +49,12 @@ function rowHtml(song, index, mode) {
     mode === "playlist"
       ? `<div class="track__handle" data-handle="1" title="拖动排序">${icon("grip")}</div>`
       : `<div class="col-handle"></div>`;
+  // 「选中行」与「正在播放行」是同一件事：唯一真源是 state.currentId
+  // （同一份数据也驱动底栏与播放详情页，不再各维护一个选中态）。
   return `
-    <div class="track" data-id="${song.id}" data-index="${index}" aria-current="${isCurrent}" data-playing="${state.playing}">
+    <div class="track" data-id="${song.id}" data-index="${index}" aria-current="${isCurrent}" data-playing="${
+      isCurrent && state.playing ? "true" : "false"
+    }">
       ${handle}
       <div class="track__index">
         <span class="track__num u-num">${index + 1}</span>
@@ -82,7 +86,8 @@ export function renderTracks(container) {
   const mode = trackTableMode();
   const songs = state.visibleSongs;
   container.innerHTML = `
-    <div class="tracks" data-mode="${mode}" data-density="${state.config.listDensity || "cozy"}">
+    <div class="tracks" data-mode="${mode}" data-density="${state.config.listDensity || "cozy"}"
+         data-album="${state.config.showAlbumColumn === false ? "off" : "on"}">
       <div class="tracks__head" data-mode="${mode}">
         <div class="col-handle"></div>
         <div class="col-index">#</div>
@@ -108,6 +113,56 @@ export function renderTracks(container) {
 
   // 封面加载失败 → 默认封面（不要留下浏览器破碎图标）
   container.querySelectorAll(".track__cover img").forEach(bindCoverFallback);
+}
+
+/* --------------------------------------------------------------------------
+   表头右键菜单：列显隐
+   --------------------------------------------------------------------------
+   需求：在歌曲列表表头右键，选择显示/隐藏某一列。
+   目前开放「专辑」一列 —— 其余列（#/封面/标题/时长/爱心/更多）是列表的骨架，
+   关掉任何一个表格都会失去意义，所以不做成可选项。
+   以后要加列：往 COLUMN_TOGGLES 里加一条，并在 CSS 里写好对应的隐藏规则即可
+   （隐藏统一用「列宽归零 + 内容 display:none」，表头与数据行才不会错位）。
+   -------------------------------------------------------------------------- */
+const COLUMN_TOGGLES = [
+  {
+    id: "album",
+    label: "专辑",
+    icon: "album",
+    isOn: () => state.config.showAlbumColumn !== false,
+    set: (on) => {
+      state.config.showAlbumColumn = on;
+    },
+  },
+];
+
+export function openColumnMenu(x, y) {
+  const items = [{ kind: "label", label: "显示的列" }];
+  for (const col of COLUMN_TOGGLES) {
+    items.push({ id: `col-${col.id}`, label: col.label, icon: col.icon, checked: col.isOn() });
+  }
+  items.push({ kind: "sep" });
+  items.push({ id: "col-reset", label: "恢复默认列", icon: "refresh" });
+
+  openMenu({
+    x,
+    y,
+    items,
+    onPick: (id) => {
+      if (id === "col-reset") {
+        for (const col of COLUMN_TOGGLES) col.set(true);
+        commit();
+        toast("已恢复默认列", { duration: 1400 });
+        return;
+      }
+      const col = COLUMN_TOGGLES.find((c) => `col-${c.id}` === id);
+      if (!col) return;
+      const next = !col.isOn();
+      col.set(next);
+      commit();
+      toast(next ? `已显示「${col.label}」列` : `已隐藏「${col.label}」列`, { duration: 1400 });
+    },
+  });
 }
 
 /* --------------------------------------------------------------------------
@@ -268,6 +323,13 @@ export function bindTrackEvents(container, handlers = {}) {
   });
 
   container.addEventListener("contextmenu", (e) => {
+    // 表头右键 = 列显隐菜单（需求：表头右键可以选择显示/隐藏某一列）
+    const head = e.target.closest(".tracks__head");
+    if (head) {
+      e.preventDefault();
+      openColumnMenu(e.clientX, e.clientY);
+      return;
+    }
     const row = e.target.closest(".track");
     if (!row) return;
     e.preventDefault();
@@ -476,9 +538,11 @@ function bindDragSort(container) {
     const from = dragIndex;
     cleanup();
     if (targetIndex === from) return;
-    // moveItem 语义：先删除源元素，再插入到目标索引（drop-after 需要 +1）
-    const to = after ? targetIndex + 1 : targetIndex;
-    reorderQueue(from, to);
+    // moveItem 的 to 是「删掉源元素之后」的插入下标，因此向下拖时要减 1 抵消位移。
+    let insertAt = after ? targetIndex + 1 : targetIndex;
+    if (from < insertAt) insertAt -= 1;
+    if (insertAt === from) return;
+    reorderQueue(from, insertAt);
     toast("已更新播放顺序", { duration: 1400 });
   });
 

@@ -35,7 +35,7 @@
 .settings__nav-item {
   height: 30px;
   padding: 0 var(--sp-3);
-  border-radius: var(--r-sm);
+  border-radius: var(--btn-radius);
   color: var(--text-2);
   font-size: var(--fs-md);
   transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
@@ -502,6 +502,70 @@
   background: var(--accent);
   color: var(--accent-text);
   font-weight: var(--fw-medium);
+}
+
+/* —— 播放界面样式（皮肤）卡片 —— */
+.skincard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  border: var(--hairline);
+  text-align: left;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.skincard:hover {
+  background: var(--surface-2);
+  transform: translateY(-2px);
+}
+
+.skincard[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.skincard__icon {
+  display: inline-flex;
+  color: var(--text-2);
+}
+
+.skincard__icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.skincard__name {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+
+.skincard__id {
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.skincard__badge {
+  position: absolute;
+  top: var(--sp-2);
+  right: var(--sp-2);
+  height: 18px;
+  padding: 0 7px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 10px;
 }
 
 /* —— 主题选择卡片 —— */

@@ -12,7 +12,10 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
-const EXE = path.resolve(ROOT, process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/musicplayer.exe");
+const EXE = path.resolve(
+  ROOT,
+  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/musicplayer.exe"
+);
 const PORT = Number(process.env.MP_PORT || 9391);
 const QUERY = process.env.MP_QUERY || "转码测试样本";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -32,9 +35,15 @@ for (let i = 0; i < 60 && !target; i += 1) {
   try {
     const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
     target = list.find((x) => x.type === "page" && x.webSocketDebuggerUrl);
-  } catch { /* wait */ }
+  } catch {
+    /* wait */
+  }
 }
-if (!target) { console.error("无法接入"); child.kill(); process.exit(1); }
+if (!target) {
+  console.error("无法接入");
+  child.kill();
+  process.exit(1);
+}
 
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 let id = 0;
@@ -42,13 +51,25 @@ const waiting = new Map();
 const logs = [];
 ws.addEventListener("message", (ev) => {
   const m = JSON.parse(ev.data);
-  if (m.id && waiting.has(m.id)) { waiting.get(m.id)(m.result); waiting.delete(m.id); }
-  if (m.method === "Runtime.consoleAPICalled") logs.push((m.params.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
+  if (m.id && waiting.has(m.id)) {
+    waiting.get(m.id)(m.result);
+    waiting.delete(m.id);
+  }
+  if (m.method === "Runtime.consoleAPICalled")
+    logs.push((m.params.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
 });
-const send = (method, params = {}) => { id += 1; const i = id; return new Promise((r) => { waiting.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); }); };
+const send = (method, params = {}) => {
+  id += 1;
+  const i = id;
+  return new Promise((r) => {
+    waiting.set(i, r);
+    ws.send(JSON.stringify({ id: i, method, params }));
+  });
+};
 async function evaluate(expression) {
   const res = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
-  if (res?.exceptionDetails) return { __error: res.exceptionDetails.text + " " + (res.exceptionDetails.exception?.description || "") };
+  if (res?.exceptionDetails)
+    return { __error: res.exceptionDetails.text + " " + (res.exceptionDetails.exception?.description || "") };
   return res?.result?.value;
 }
 
@@ -58,7 +79,10 @@ console.log(`验收目标：${EXE}\n等待启动与扫描…`);
 await sleep(12000);
 
 const results = [];
-const check = (name, pass, detail) => { results.push({ name, pass, detail }); console.log(`  ${pass ? "✓" : "✗"} ${name}${detail ? `  — ${detail}` : ""}`); };
+const check = (name, pass, detail) => {
+  results.push({ name, pass, detail });
+  console.log(`  ${pass ? "✓" : "✗"} ${name}${detail ? `  — ${detail}` : ""}`);
+};
 
 console.log("\n[1] 找到并播放 wma 样本（应走转码）");
 const play = await evaluate(`(async () => {
@@ -94,7 +118,9 @@ const play = await evaluate(`(async () => {
     duration: el && Number.isFinite(el.duration) ? Number(el.duration.toFixed(3)) : null,
     moving, samples: seen, waitMs: Date.now() - t0,
     error: el?.error ? { code: el.error.code, message: el.error.message } : null,
-    currentSrcIsWav: /tc_|\.wav/i.test(el?.src || ''),
+    // 注意：这一行在模板字符串里，要交给浏览器当正则用，
+    // 所以必须写 \\\\. 才是「转义的点」；写 \\. 到了浏览器就变成「任意字符」。
+    currentSrcIsWav: /tc_|\\.wav/i.test(el?.src || ''),
   };
 })()`);
 console.log("   " + JSON.stringify({ ...play, samples: undefined }));
@@ -127,7 +153,12 @@ console.log("\n================ 汇总 ================");
 const failed = results.filter((r) => !r.pass);
 console.log(`  ${results.length - failed.length}/${results.length} 项通过`);
 for (const f of failed) console.log(`  ✗ ${f.name} — ${f.detail}`);
-if (logs.length) { console.log("\n控制台:"); for (const l of logs.slice(-8)) console.log("  " + l); }
+if (logs.length) {
+  console.log("\n控制台:");
+  for (const l of logs.slice(-8)) console.log("  " + l);
+}
 
-ws.close(); child.kill(); await sleep(300);
+ws.close();
+child.kill();
+await sleep(300);
 process.exit(failed.length ? 1 : 0);

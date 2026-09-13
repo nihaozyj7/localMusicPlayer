@@ -32,6 +32,14 @@
  * @property {boolean} embedMeta - EmbedMeta 是否把抓到的封面/歌词写回歌曲文件自身的标签。 默认关闭：写标签会改写用户的音乐文件，必须是用户明确开启的行为。 关闭时封面与歌词仍然可用，只是放在缓存目录里（见 internal/metacache）。
  * @property {string} rowClickAction - —— 交互 —— RowClickAction 单击歌曲行的行为： next  —— 加入「下一首播放」（默认，不打断当前播放） play  —— 立即播放 append —— 追加到播放列表末尾
  * @property {string} listDensity - ListDensity 列表密度：compact | cozy | roomy。 原来每张表头各有一个密度按钮，现在统一到设置里，对所有列表生效。
+ * @property {boolean} showDesktopLyrics - ShowDesktopLyrics 是否显示桌面歌词（悬浮在窗口上的歌词）。
+ * @property {string} shuffleMode - ShuffleMode 随机播放行为：reshuffle | once。
+ * @property {boolean} coverCarousel - —— 封面轮播（播放详情页）—— CoverCarousel 是否轮播多张封面。 刻意做成**全局偏好**而不是每首一份：一首歌有几张封面是数据， 「要不要轮着看」是习惯；放进每首歌里会出现「这首开、那首关」， 用户根本记不住自己在哪首开的。
+ * @property {number} coverCarouselInterval - CoverCarouselInterval 轮播间隔（秒），下限 2 秒，默认 10 秒。
+ * @property {string} aiBaseUrl - —— AI 元数据清洗（设置 → AI 元数据）——
+ * @property {string} aiApiKey
+ * @property {boolean} aiThinking
+ * @property {string} aiModelId
  * @property {Folder[] | null} folders
  * @property {FilterRule[] | null} filterRules
  * @property {string[] | null} likedIds

@@ -144,8 +144,11 @@
   display: none;
 }
 
-/* 沉浸模式：整窗由 #immersive-bg 的封面虚化图负责，详情页自身不能有底色 */
-.playerview[data-mode="immersive"] {
+/* 整窗背景类样式（沉浸）：整窗由 #skin-background 的封面虚化图负责，
+   详情页自身不能有底色。至于「哪种样式需要背景层」由皮肤自己声明
+   （skin.background），这里的钩子是「背景层正在显示时」——宿主给 .app 打
+   data-mode="<皮肤id>"，沉浸皮肤在包里的 CSS 里接管。 */
+.playerview[data-skin="immersive"] {
   background: none;
 }
 

@@ -11,6 +11,7 @@ import * as LyricsService from "./lyricsservice.js";
 import * as MediaService from "./mediaservice.js";
 import * as OnlineService from "./onlineservice.js";
 import * as PlaylistService from "./playlistservice.js";
+import * as SkinService from "./skinservice.js";
 import * as ThemeService from "./themeservice.js";
 import * as WindowService from "./windowservice.js";
 export {
@@ -23,6 +24,7 @@ export {
     MediaService,
     OnlineService,
     PlaylistService,
+    SkinService,
     ThemeService,
     WindowService
 };
@@ -30,6 +32,19 @@ export {
 import * as $models from "./models.js";
 
 /**
+ * CoverItem 一张封面（缓存里的可编辑项，或文件内嵌的只读项）。
+ * @typedef {$models.CoverItem} CoverItem
+ */
+
+/**
  * Result 一次封面操作的结果（前端弹层直接用这个渲染）。
  * @typedef {$models.CoverResult} CoverResult
+ */
+
+/**
+ * CoverSet 一首歌的封面集合。
+ * 
+ * 这里没有「轮播开关」：轮播是全局偏好（bootstrap.Config.CoverCarousel），
+ * 前端根据自己的设置决定要不要轮换显示 Items。服务端只负责给数据。
+ * @typedef {$models.CoverSet} CoverSet
  */

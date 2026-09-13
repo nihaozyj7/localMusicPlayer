@@ -25,6 +25,11 @@ func NewITunes() *iTunesProvider { return &iTunesProvider{} }
 func (p *iTunesProvider) Name() string { return "itunes" }
 
 // Find 查询封面。
+//
+// 同时查「单曲」与「专辑」两个实体：单曲命中率更高（能按时长/歌手确认），
+// 专辑结果的封面通常更干净（不会混进单曲的推广图）。两边的候选合并后统一排序，
+// 用户就能在「换封面」面板里同时看到多种选择 —— 这正是需求里
+// 「提供多种获取方式同时进行」的意思。
 func (p *iTunesProvider) Find(ctx context.Context, req Request) (FindResult, error) {
 	req = req.Normalize()
 	keyword := req.Keyword()
@@ -35,10 +40,32 @@ func (p *iTunesProvider) Find(ctx context.Context, req Request) (FindResult, err
 		return FindResult{}, nil
 	}
 
+	songs, err := p.search(ctx, keyword, "song", req)
+	if err != nil && len(songs) == 0 {
+		// 单曲查询失败仍可继续尝试专辑查询，不直接放弃这个来源
+		songs = nil
+	}
+	albums, _ := p.search(ctx, keyword, "album", req)
+
+	candidates := dedupeCovers(append(songs, albums...))
+	if len(candidates) == 0 {
+		return FindResult{}, nil
+	}
+	// 按可信度降序：接口返回的顺序对我们没有意义
+	sortCovers(candidates)
+	return FindResult{Cover: candidates[0], Candidates: candidates}, nil
+}
+
+// search 查一种实体（song / album）并转成候选。
+func (p *iTunesProvider) search(ctx context.Context, keyword, entity string, req Request) ([]Cover, error) {
+	limit := "15"
+	if entity == "album" {
+		limit = "10"
+	}
 	q := url.Values{
 		"term":   {keyword},
-		"entity": {"song"},
-		"limit":  {"15"},
+		"entity": {entity},
+		"limit":  {limit},
 	}
 
 	var resp struct {
@@ -50,20 +77,43 @@ func (p *iTunesProvider) Find(ctx context.Context, req Request) (FindResult, err
 			ArtworkURL100  string `json:"artworkUrl100"`
 			ArtworkURL60   string `json:"artworkUrl60"`
 			TrackTimeMills int64  `json:"trackTimeMillis"`
+			TrackCount     int    `json:"trackCount"`
 		} `json:"results"`
 	}
 	endpoint := "https://itunes.apple.com/search?" + q.Encode()
 	if err := getJSON(ctx, endpoint, &resp, nil); err != nil {
-		return FindResult{}, err
+		return nil, err
 	}
 	if len(resp.Results) == 0 {
-		return FindResult{}, nil
+		return nil, nil
 	}
 
 	candidates := make([]Cover, 0, len(resp.Results))
 	for _, item := range resp.Results {
 		raw := firstNonEmpty(item.ArtworkURL100, item.ArtworkURL60)
 		if raw == "" {
+			continue
+		}
+		if entity == "album" {
+			// 专辑结果按「专辑名（没有专辑名时退回专辑名=曲名的情况）」确认
+			titleForConfirm := req.Album
+			if normalizeText(titleForConfirm) == "" {
+				titleForConfirm = req.Title
+			}
+			name := firstNonEmpty(item.CollectionName, item.TrackName)
+			if !confirmMatch(Request{Title: titleForConfirm, Artist: req.Artist}, name, item.ArtistName) {
+				continue
+			}
+			candidates = append(candidates, Cover{
+				URL:      bigArtwork(raw),
+				Provider: p.Name(),
+				MIME:     "image/jpeg",
+				Width:    600,
+				Height:   600,
+				// 专辑候选同时参考专辑名与曲名两个维度（与网易云来源一致）
+				Score: scoreMatch(req, name, item.ArtistName, req.Album, 0) +
+					scoreMatch(req, req.Title, item.ArtistName, name, 0),
+			})
 			continue
 		}
 		if !confirmMatch(req, item.TrackName, item.ArtistName) {
@@ -79,13 +129,7 @@ func (p *iTunesProvider) Find(ctx context.Context, req Request) (FindResult, err
 				item.TrackTimeMills),
 		})
 	}
-	candidates = dedupeCovers(candidates)
-	if len(candidates) == 0 {
-		return FindResult{}, nil
-	}
-	// 按可信度降序：接口返回的顺序对我们没有意义
-	sortCovers(candidates)
-	return FindResult{Cover: candidates[0], Candidates: candidates}, nil
+	return candidates, nil
 }
 
 // bigArtwork 把 100×100 的缩略图地址换成 600×600。

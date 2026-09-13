@@ -62,5 +62,5 @@ desktop.ini
 config.local.json
 config.json
 
-# ---- ??????????? ----
+# ---- 自检脚本的临时工作目录（.tmp-appinspect / .tmp-checkapp 等）----
 .tmp-*/

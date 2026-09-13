@@ -49,7 +49,9 @@ for (let i = 0; i < 60 && !target; i += 1) {
   try {
     const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
     target = list.find((x) => x.type === "page" && x.webSocketDebuggerUrl);
-  } catch { /* 等启动 */ }
+  } catch {
+    /* 等启动 */
+  }
 }
 if (!target) {
   console.error("无法接入 WebView2");
@@ -63,7 +65,10 @@ const waiting = new Map();
 const logs = [];
 ws.addEventListener("message", (ev) => {
   const m = JSON.parse(ev.data);
-  if (m.id && waiting.has(m.id)) { waiting.get(m.id)(m.result); waiting.delete(m.id); }
+  if (m.id && waiting.has(m.id)) {
+    waiting.get(m.id)(m.result);
+    waiting.delete(m.id);
+  }
   if (m.method === "Runtime.consoleAPICalled") {
     logs.push((m.params.args || []).map((a) => a.value ?? a.description ?? "").join(" "));
   }
@@ -71,7 +76,10 @@ ws.addEventListener("message", (ev) => {
 function send(method, params = {}) {
   msgId += 1;
   const id = msgId;
-  return new Promise((r) => { waiting.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
+  return new Promise((r) => {
+    waiting.set(id, r);
+    ws.send(JSON.stringify({ id, method, params }));
+  });
 }
 async function evaluate(expression) {
   const res = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
@@ -111,7 +119,8 @@ console.log(JSON.stringify(located, null, 2));
 
 if (!located?.id) {
   console.error("没有找到曲目");
-  ws.close(); child.kill();
+  ws.close();
+  child.kill();
   process.exit(1);
 }
 
@@ -171,7 +180,9 @@ if (play?.error) {
 } else {
   console.log(`  ✓ 正在解码播放：currentTime 在推进（${play?.movingSamples}/15 次采样发生变化）`);
   console.log(`    采样序列: ${play?.samples?.join(", ")}`);
-  console.log(`    时长 ${play?.duration}s${play?.samples?.some((v, i, a) => i > 0 && v < a[i - 1] - 0.5) ? "（中途回绕 = 循环播放，正常）" : ""}`);
+  console.log(
+    `    时长 ${play?.duration}s${play?.samples?.some((v, i, a) => i > 0 && v < a[i - 1] - 0.5) ? "（中途回绕 = 循环播放，正常）" : ""}`
+  );
 }
 
 console.log("\n================ 控制台（最后 12 条）================");

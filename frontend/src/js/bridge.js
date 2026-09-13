@@ -20,6 +20,19 @@
                Backdrop / Restart
    ========================================================================== */
 
+/* --------------------------------------------------------------------------
+   绑定入口的说明符必须是「变量」
+   --------------------------------------------------------------------------
+   wails3 generate bindings 的产物不在源码树里按相对路径可达：
+     · 浏览器里 `../bindings/…` 是**按 URL** 解析的（/js/bridge.js → /bindings/…），
+       在构建产物里就是 dist/bindings/…，由 tools/build-frontend.mjs 原样拷贝；
+     · 但打包器会按**文件路径**解析字符串字面量，于是找不到 src/bindings/ 而报错。
+   所以这里统一用变量 + @vite-ignore：打包器不碰它，运行时由浏览器解析。
+   -------------------------------------------------------------------------- */
+const BINDINGS_ENTRY = "../bindings/musicplayer/index.js";
+const WAILS_RUNTIME = "/wails/runtime.js";
+const EVENTS_ENTRY = "../bindings/github.com/wailsapp/wails/v3/internal/eventcreate.js";
+
 let bindings = null;
 let active = false;
 
@@ -40,7 +53,7 @@ export const backendState = {
 export async function connect() {
   if (active) return true;
   try {
-    const mod = await import("../bindings/musicplayer/index.js");
+    const mod = await import(/* @vite-ignore */ BINDINGS_ENTRY);
     if (!mod?.LibraryService) return false;
 
     // 这里必须真调一次后端：预览服务器也提供 /wails/runtime.js 桩，
@@ -59,6 +72,7 @@ export async function connect() {
       Online: mod.OnlineService,
       Download: mod.DownloadService,
       Cover: mod.CoverService,
+      Skins: mod.SkinService,
     };
     active = true;
     try {
@@ -97,10 +111,10 @@ async function ensureEvents() {
   if (eventsMod) return eventsMod;
   if (!active) return null;
   try {
-    eventsMod = await import("/wails/runtime.js");
+    eventsMod = await import(/* @vite-ignore */ WAILS_RUNTIME);
   } catch {
     try {
-      eventsMod = await import("../bindings/github.com/wailsapp/wails/v3/internal/eventcreate.js");
+      eventsMod = await import(/* @vite-ignore */ EVENTS_ENTRY);
     } catch {
       eventsMod = null;
     }
@@ -163,6 +177,14 @@ export const backend = {
 
   /* ---- 歌词 ---- */
   loadLyrics: (songId) => call(bindings?.Lyrics?.Load, songId),
+  // 本地（内嵌 / .lrc / 缓存）都读不到时，联网自动匹配一次；后端会把结果写进缓存
+  lyricsAutoMatch: (songId) => call(bindings?.Lyrics?.AutoMatch, songId),
+  // 保存「用户手动匹配」的歌词：写缓存，并按设置决定是否嵌入音频文件
+  lyricsSave: (songId, lrc, source = "user", embed = null) =>
+    call(bindings?.Lyrics?.Save, songId, lrc, source, embed),
+  lyricsCached: (songId) => call(bindings?.Lyrics?.LoadCached, songId),
+  // 在线试听曲目没有本地文件，歌词只能在线匹配
+  onlineLyrics: (title, artist, duration) => call(bindings?.Online?.Lyrics, title, artist, duration),
 
   /* ---- 主题 ---- */
   listThemes: () => call(bindings?.Themes?.List),
@@ -224,16 +246,38 @@ export const backend = {
   downloadApplyDir: (dir, migrate) => call(bindings?.Download?.ApplyDir, dir, migrate),
   downloadOpenDir: (dir) => call(bindings?.Download?.OpenDir, dir),
 
-  /* ---- 封面（本地歌曲） ---- */
-  // override 可临时覆盖标题/歌手/专辑（下载来的文件没有标签时很有用）
+  /* ---- 播放界面皮肤（样式包） ---- */
+  // 用户数据目录里的第三方样式；文件由后端托管在 /skins/<id>/<file>
+  listSkins: () => call(bindings?.Skins?.List),
+  reloadSkins: () => call(bindings?.Skins?.Reload),
+  skinDir: () => call(bindings?.Skins?.Dir),
+  revealSkinDir: () => call(bindings?.Skins?.RevealDir),
+
+  /* ---- 封面（本地歌曲，支持多张） ---- */
+  // override 里可以给 keyword（纯关键词搜索）或 title/artist/album（精细搜索）
   coverLookupSong: (songId, override = {}) => call(bindings?.Cover?.Lookup, songId, override),
+  // 一次把所有来源的候选都取回来（已下载 + 已校验），前端并排展示
+  coverLookupSongAll: (songId, override = {}) => call(bindings?.Cover?.LookupAll, songId, override),
   coverFetchURL: (url) => call(bindings?.Cover?.Fetch, url),
-  // embed 显式传入「是否写回歌曲文件」：设置是防抖同步的，
-  // 靠后端读配置会有竞态（刚开开关就换封面时后端可能还没收到）
+  // 这首歌的封面集合：缓存里的（可增删/切换）+ 文件内嵌的（只读展示）
+  coverList: (songId) => call(bindings?.Cover?.List, songId),
+  // 追加一张并设为当前生效；embed 显式传入「是否写回歌曲文件」
+  // （设置是防抖同步的，靠后端读配置会有竞态：刚开开关就换封面时后端可能还没收到）
+  coverAdd: (songId, imageURL, preview, embed = null) =>
+    call(bindings?.Cover?.Add, songId, imageURL, preview, embed),
+  // 多选后一次应用：逐个 data URL 追加（第一张成为当前生效封面）
+  coverAddMany: (songId, previews, embed = null) =>
+    call(bindings?.Cover?.AddMany, songId, previews, embed),
+  coverSetActive: (songId, index) => call(bindings?.Cover?.SetActive, songId, index),
+  coverRemove: (songId, index) => call(bindings?.Cover?.Remove, songId, index),
+  // 旧接口保留（单张语义 = 追加一张并设为当前）
   coverApply: (songId, imageURL, preview, embed = null) =>
     call(bindings?.Cover?.ApplyWith, songId, imageURL, preview, embed),
   coverReset: (songId) => call(bindings?.Cover?.Reset, songId),
   coverCurrent: (songId) => call(bindings?.Cover?.Current, songId),
+  // 启动时一次性回填「缓存里已有的封面集合」，这样换过的封面重启后还在
+  coverCachedSets: () => call(bindings?.Cover?.CachedSets),
+  coverCachedPreviews: () => call(bindings?.Cover?.CachedPreviews),
   coverCacheStats: () => call(bindings?.Cover?.CacheStats),
   coverOpenCacheDir: (kind) => call(bindings?.Cover?.OpenCacheDir, kind),
   coverClearCache: () => call(bindings?.Cover?.ClearCache),

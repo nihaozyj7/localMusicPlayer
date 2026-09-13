@@ -9,6 +9,10 @@
      5. utilities 原子类
    新增主题：在 themes/ 下新增一个 CSS 文件，并在此处按主题加入一行 @import。
    （后续由 Go 后端扫描 themes/ 目录自动注入 <link>，届时无需手改本文件。）
+
+   注意：歌词区与三种播放样式的 CSS **不在这里** —— 它们跟着「播放详情界面」
+   一起抽到了独立包 frontend/packages/player-skins（由包的入口 import），
+   宿主样式表只负责播放页的外壳与其它界面。
    ========================================================================== */
 
 @import "./base.css";
@@ -27,9 +31,7 @@
 @import "./components/tracktable.css";
 @import "./components/playerbar.css";
 @import "./components/playerview.css";
-@import "./components/lyrics.css";
 @import "./components/settings.css";
-@import "./components/settingsplayer.css";
 @import "./components/overlay.css";
 @import "./components/layers.css";
 
