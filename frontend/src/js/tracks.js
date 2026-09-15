@@ -1,9 +1,13 @@
 /* ==========================================================================
-   tracks.js — 曲目表格渲染与交互（所有歌曲 / 播放列表 / 歌单 共用）
+   tracks.js — 曲目行交互与菜单（纯逻辑，渲染在 ui/track-table.js）
+   --------------------------------------------------------------------------
+   迁移前这个文件同时是「表格渲染器」（tableStates / rowFields / patchRowEl /
+   reconcileRows 近 200 行手写增量 diff）与「行交互」。迁移后渲染交给
+   <mp-track-table>（Lit keyed repeat），这里只留动作。
    ========================================================================== */
 
-import Sortable from "sortablejs";
-import { bindCoverFallback, icon, openMenu, openModal, toast } from "./dom.js";
+import { html } from "lit";
+import { openMenu, openModal, toast } from "./ui/overlays.js";
 import { addSongsTo } from "./playlists.js";
 import {
   LIKED_ID,
@@ -16,13 +20,11 @@ import {
   playlistById,
   removeFromQueue,
   removeSongsFromPlaylist,
-  reorderQueue,
   songById,
   state,
   toggleLike,
-  toggleSelectedSong,
 } from "./store.js";
-import { DEFAULT_COVER, coverOf, esc, fmtCount, fmtTime } from "./utils.js";
+import { esc, fmtCount } from "./utils.js";
 
 export const SORT_LABELS = {
   addedAt: "添加时间",
@@ -36,327 +38,38 @@ export const SORT_LABELS = {
 };
 
 /* --------------------------------------------------------------------------
-   渲染
-   -------------------------------------------------------------------------- */
-
-/** 队列视图需要拖拽手柄，因此按 playlist 模式渲染 */
-export function trackTableMode() {
-  return state.view === "queue" ? "playlist" : "library";
-}
-
-/** 「#」列的内容：普通态是序号 + 播放按钮，多选态是勾选框。 */
-function indexCellHtml(song, index, selecting) {
-  if (selecting) {
-    const checked = state.selectedIds.has(song.id);
-    return `<span class="track__check" role="checkbox" aria-checked="${checked}">${icon("check")}</span>`;
-  }
-  return `<span class="track__num u-num">${index + 1}</span>
-        <div class="track__bars"><span></span><span></span><span></span><span></span></div>
-        <button class="track__play" type="button" data-act="play" aria-label="播放 ${esc(song.title)}">${icon("play")}</button>`;
-}
-
-function rowHtml(song, index, mode, selecting) {
-  const isCurrent = song.id === state.currentId;
-  const liked = isLiked(song.id);
-  // 歌单多选模式：把「#」列换成勾选框，点整行即勾选
-  const checked = selecting && state.selectedIds.has(song.id);
-  const handle =
-    mode === "playlist"
-      ? `<div class="track__handle" data-handle="1" title="拖动排序">${icon("grip")}</div>`
-      : `<div class="col-handle"></div>`;
-  // 「选中行」与「正在播放行」是同一件事：唯一真源是 state.currentId
-  // （同一份数据也驱动底栏与播放详情页，不再各维护一个选中态）。
-  const indexCell = indexCellHtml(song, index, selecting);
-  return `
-    <div class="track" data-id="${song.id}" data-index="${index}" data-selectable="${selecting ? "1" : "0"}" aria-selected="${checked}" aria-current="${isCurrent}" data-playing="${
-      isCurrent && state.playing ? "true" : "false"
-    }">
-      ${handle}
-      <div class="track__index">
-        ${indexCell}
-      </div>
-      <div class="track__cover">
-        <img src="${esc(coverOf(song))}" alt="" loading="lazy" draggable="false" />
-      </div>
-      <div class="track__main">
-        <div class="track__title">${esc(song.title)}</div>
-        <div class="track__sub">
-          <span class="track__artist">${esc(song.artist)}</span>
-          <span class="track__tag">${esc(song.ext)}</span>
-        </div>
-      </div>
-      <div class="track__album u-ellipsis">${esc(song.album)}</div>
-      <div class="track__time">${fmtTime(song.duration)}</div>
-      <button class="track__heart" type="button" data-act="like" aria-pressed="${liked}" aria-label="加入我喜欢" data-tip="${liked ? "取消喜欢" : "加入我喜欢"}">
-        ${icon("heart")}
-      </button>
-      <button class="track__more" type="button" data-act="more" aria-label="更多操作" aria-expanded="false">
-        ${icon("more")}
-      </button>
-    </div>`;
-}
-
-/* --------------------------------------------------------------------------
-   增量渲染
+   单击 / 双击行为
    --------------------------------------------------------------------------
-   ★ 这里不再「整表 innerHTML」。
+   需求：点击歌曲默认「添加到下一首播放」，而不是「播放全部」；
+   用户可以在设置里改回「立即播放」或「加到末尾」。
 
-   用户看到的两处闪烁都出在这一段：
-     · 每次 commit 都重建整张表 → 所有 <img> 被重新创建，浏览器把每张封面
-       重新解码一遍，列表闪一下（切歌、启动回填封面时最明显）；
-     · 行的 hover / 拖拽中间态 / 焦点全部丢掉；
-     · 长列表下字符串与节点量都是 O(n)。
-
-   现在按 song.id 复用行元素：
-     · 表结构（.tracks / 表头）只在「结构级」变化时重建（视图模式 / 排序字段）；
-     · 已有的行只把**变了的字段**写回去，顺序用 insertBefore 对齐
-       （连续相同的情况下一个节点都不移动）；
-     · 不再可见的歌才移除元素。
-   于是「换歌」（只有 currentId 变）与「封面回填」（只有 img src 变）都不再
-   重建 DOM，封面也不会重新加载。
+   双击始终是「立即播放并从这一首开始」—— 这是各地播放器的通用约定，
+   不受设置影响（否则把设置改成 next 之后就没有「马上听这首」的入口了）。
    -------------------------------------------------------------------------- */
+export function activateRow(row, { silent = false } = {}) {
+  const songId = row?.dataset?.id;
+  if (!songId) return;
+  const action = state.config.rowClickAction || "next";
 
-/** 一张表的结构级状态（行缓存 + 上次的表头模式），按 .tracks 元素存 */
-const tableStates = new WeakMap();
-
-function tableState(table) {
-  let st = tableStates.get(table);
-  if (!st) {
-    st = { headMode: "", mode: "", rows: new Map() };
-    tableStates.set(table, st);
-  }
-  return st;
-}
-
-/** 表头 HTML。队列（playlist 模式）的顺序由拖拽决定，表头渲染成静态文本。 */
-function headHtml(mode) {
-  const sortable = mode !== "playlist";
-  const sortCell = (key, label, cls = "") =>
-    sortable
-      ? `<button class="tracks__sort ${cls}" type="button" data-sort="${key}">${label}${icon("chevron-down")}</button>`
-      : `<div class="tracks__sort ${cls}" data-static="1">${label}</div>`;
-  return `
-    <div class="tracks__head" data-mode="${mode}">
-      <div class="col-handle"></div>
-      <div class="col-index">#</div>
-      <div class="col-cover"></div>
-      ${sortCell("title", "标题")}
-      ${sortCell("album", "专辑", "col-album")}
-      ${sortCell("duration", "时长")}
-      <div class="col-heart" title="我喜欢">${icon("heart")}</div>
-      <div class="col-more"></div>
-    </div>`;
-}
-
-/** 排序方向指示（升序时箭头翻转，由 CSS 的 .is-asc 负责） */
-function applySortIndicators(head) {
-  head.querySelectorAll(".tracks__sort").forEach((btn) => {
-    if (btn.dataset.sort !== state.sortKey) {
-      delete btn.dataset.dir;
-      btn.classList.remove("is-asc");
-      return;
-    }
-    btn.dataset.dir = state.sortDir;
-    btn.classList.toggle("is-asc", state.sortDir === "asc");
-  });
-}
-
-function createRowEl(song, index, mode, selecting) {
-  const tpl = document.createElement("template");
-  tpl.innerHTML = rowHtml(song, index, mode, selecting).trim();
-  const el = tpl.content.firstElementChild;
-  // 封面加载失败 → 默认封面（不要留下浏览器破碎图标）
-  bindCoverFallback(el.querySelector(".track__cover img"));
-  return el;
-}
-
-/**
- * 这一行当前「该长什么样」的全部字段。
- * 与上一份快照逐字段比较，只把变了的写回 DOM。
- */
-function rowFields(song, index, selecting) {
-  return {
-    index,
-    title: song.title,
-    artist: song.artist,
-    album: song.album,
-    ext: song.ext,
-    duration: song.duration,
-    // 封面地址在 coverOf 里始终是同一个字符串对象（来自 Map / song 本身），
-    // 所以这里的 === 是 O(1) 的指针比较，不会因为 data URL 很长而变慢。
-    cover: coverOf(song),
-    liked: isLiked(song.id),
-    current: song.id === state.currentId,
-    playing: song.id === state.currentId && Boolean(state.playing),
-    selecting,
-    checked: selecting && state.selectedIds.has(song.id),
-  };
-}
-
-/** img → 这一行最终想要的封面地址（预加载是异步的，用它挡掉过期的写入） */
-const coverWants = new WeakMap();
-
-/**
- * 换封面地址。
- *
- * 为什么不直接写 img.src：那样浏览器会先丢掉旧图，新图解码完成之前那一格
- * 是空的 —— 几十行同时换封面看起来就是「整个列表闪了一下」。除了 data:
- * （同源内存图，本来就快），其余地址先在一个游离的 Image 上预加载，就绪之后
- * 再替换，旧图一直留到新图可以显示为止。
- */
-function setCoverSrc(img, src) {
-  if (!img) return;
-  const want = src || DEFAULT_COVER;
-  if (img.getAttribute("src") === want) return;
-  coverWants.set(img, want);
-  if (want.startsWith("data:")) {
-    img.src = want;
+  if (action === "play") {
+    const ids = state.visibleSongs.map((s) => s.id);
+    playContext(ids, Number(row.dataset.index), currentContext());
     return;
   }
-  const probe = new Image();
-  probe.decoding = "async";
-  // 加载成功与失败都换过去：失败时由 bindCoverFallback 兜底成默认封面。
-  // 不换的话这一行会一直停在上一首歌的封面上，比空白更糟。
-  const swap = () => {
-    if (coverWants.get(img) === want) img.src = want;
-  };
-  probe.addEventListener("load", swap);
-  probe.addEventListener("error", swap);
-  probe.src = want;
-}
 
-/**
- * 按 id 把已有的行对齐到目标顺序，只创建新出现的歌、只移除消失的歌。
- *
- * 顺序对调用的是 insertBefore：连续相同的情况下 cursor 一路跟到底，
- * 一个节点都不会被移动 —— 这正是「重绘一次列表却什么都没动」的效果。
- */
-function reconcileRows(body, songs, mode, selecting, st) {
-  // 视图模式变了（本地歌曲 ↔ 播放列表）：行的骨架不同（拖拽手柄列），
-  // 整块重建一次最省心，而这只发生在切换视图时。
-  if (st.mode !== mode) {
-    st.mode = mode;
-    st.rows.clear();
-    body.textContent = "";
+  if (action === "append") {
+    appendToQueue([songId]);
+    if (!silent) toast("已加入播放列表末尾", { tone: "success", duration: 1500 });
+    return;
   }
 
-  const seen = new Set();
-  let cursor = body.firstElementChild;
-
-  for (let i = 0; i < songs.length; i += 1) {
-    const song = songs[i];
-    let entry = st.rows.get(song.id);
-    if (!entry) {
-      entry = { el: createRowEl(song, i, mode, selecting), fields: null };
-      st.rows.set(song.id, entry);
-    }
-
-    const next = rowFields(song, i, selecting);
-    if (entry.fields) patchRowEl(entry.el, song, next, entry.fields);
-    entry.fields = next;
-    seen.add(song.id);
-
-    if (cursor === entry.el) cursor = cursor.nextElementSibling;
-    else body.insertBefore(entry.el, cursor);
-  }
-
-  // 不再可见的行（被筛选掉 / 移出队列）：这时候才真的移除元素
-  for (const [id, entry] of st.rows) {
-    if (seen.has(id)) continue;
-    entry.el.remove();
-    st.rows.delete(id);
-  }
-}
-
-function patchRowEl(el, song, next, prev) {
-  if (prev.index !== next.index) {
-    el.dataset.index = String(next.index);
-    const num = el.querySelector(".track__num");
-    if (num) num.textContent = String(next.index + 1);
-  }
-
-  // 序号列在「普通」与「多选」两种形态之间切换：整格换掉最省事，
-  // 里面只有图标与文字，不涉及图片，不会闪。
-  if (prev.selecting !== next.selecting) {
-    el.dataset.selectable = next.selecting ? "1" : "0";
-    el.querySelector(".track__index").innerHTML = indexCellHtml(song, next.index, next.selecting);
-  } else if (prev.checked !== next.checked) {
-    el.querySelector(".track__check")?.setAttribute("aria-checked", String(next.checked));
-  }
-
-  if (prev.title !== next.title) {
-    el.querySelector(".track__title").textContent = song.title;
-    el.querySelector(".track__play")?.setAttribute("aria-label", `播放 ${song.title}`);
-  }
-  if (prev.artist !== next.artist) el.querySelector(".track__artist").textContent = song.artist;
-  if (prev.ext !== next.ext) el.querySelector(".track__tag").textContent = song.ext;
-  if (prev.album !== next.album) el.querySelector(".track__album").textContent = song.album;
-  if (prev.duration !== next.duration) el.querySelector(".track__time").textContent = fmtTime(song.duration);
-
-  if (prev.cover !== next.cover) setCoverSrc(el.querySelector(".track__cover img"), next.cover);
-
-  if (prev.liked !== next.liked) {
-    const heart = el.querySelector(".track__heart");
-    heart.setAttribute("aria-pressed", String(next.liked));
-    heart.dataset.tip = next.liked ? "取消喜欢" : "加入我喜欢";
-  }
-
-  if (prev.current !== next.current) el.setAttribute("aria-current", String(next.current));
-  if (prev.playing !== next.playing) el.dataset.playing = next.playing ? "true" : "false";
-  if (prev.checked !== next.checked) el.setAttribute("aria-selected", String(next.checked));
-}
-
-export function renderTracks(container) {
-  const mode = trackTableMode();
-  const songs = state.visibleSongs;
-  const selecting = state.view === "playlist" && state.playlistSelecting;
-
-  // 只有「第一次渲染 / 表格被换掉」才建骨架；之后一直在它上面做增量
-  let table = container.querySelector(":scope > .tracks");
-  if (!table) {
-    container.innerHTML = `
-      <div class="tracks">
-        <div class="tracks__head"></div>
-        <div class="tracks__body"></div>
-      </div>`;
-    table = container.firstElementChild;
-  }
-  const st = tableState(table);
-
-  // 列显隐 / 密度是 CSS 级变化：只改属性，不重建 DOM
-  table.dataset.mode = mode;
-  table.dataset.density = state.config.listDensity || "cozy";
-  table.dataset.album = state.config.showAlbumColumn === false ? "off" : "on";
-
-  // 表头只在「结构变了」时重建；排序字段/方向只改属性（见 applySortIndicators），
-  // 这样点排序不会把表头按钮重建一遍（重建会丢掉它的 hover / 焦点态）。
-  if (st.headMode !== mode) {
-    st.headMode = mode;
-    const box = document.createElement("div");
-    box.innerHTML = headHtml(mode).trim();
-    table.querySelector(".tracks__head").replaceWith(box.firstElementChild);
-  }
-  applySortIndicators(table.querySelector(".tracks__head"));
-
-  reconcileRows(table.querySelector(".tracks__body"), songs, mode, selecting, st);
-
-  // 队列的拖拽排序交给 SortableJS（需求：不要自己实现拖拽逻辑）。
-  // 只在队列视图绑定：本地歌曲 / 歌单的顺序由排序字段决定，拖拽没有意义。
-  if (state.view === "queue") bindQueueSort(table);
-  else if (queueSortable) {
-    queueSortable.destroy();
-    queueSortable = null;
-  }
+  // next（默认）
+  addNextInQueue(songId);
+  if (!silent) toast("已设为下一首播放", { tone: "success", duration: 1500 });
 }
 
 /* --------------------------------------------------------------------------
    表头右键菜单：列显隐
-   --------------------------------------------------------------------------
-   需求：在歌曲列表表头右键，选择显示/隐藏某一列。
-   目前开放「专辑」一列 —— 其余列（#/封面/标题/时长/爱心/更多）是列表的骨架，
-   关掉任何一个表格都会失去意义，所以不做成可选项。
-   以后要加列：往 COLUMN_TOGGLES 里加一条，并在 CSS 里写好对应的隐藏规则即可
-   （隐藏统一用「列宽归零 + 内容 display:none」，表头与数据行才不会错位）。
    -------------------------------------------------------------------------- */
 const COLUMN_TOGGLES = [
   {
@@ -397,199 +110,6 @@ export function openColumnMenu(x, y) {
       toast(next ? `已显示「${col.label}」列` : `已隐藏「${col.label}」列`, { duration: 1400 });
     },
   });
-}
-
-/* --------------------------------------------------------------------------
-   单击行为
-   --------------------------------------------------------------------------
-   需求：点击歌曲默认「添加到下一首播放」，而不是「播放全部」；
-   用户可以在设置里改回「立即播放」或「加到末尾」。
-
-   双击始终是「立即播放并从这一首开始」—— 这是各地播放器的通用约定，
-   不受设置影响（否则把设置改成 next 之后就没有「马上听这首」的入口了）。
-   -------------------------------------------------------------------------- */
-export function activateRow(row, { silent = false } = {}) {
-  const songId = row?.dataset?.id;
-  if (!songId) return;
-  const action = state.config.rowClickAction || "next";
-
-  if (action === "play") {
-    const ids = state.visibleSongs.map((s) => s.id);
-    playContext(ids, Number(row.dataset.index), currentContext());
-    return;
-  }
-
-  if (action === "append") {
-    appendToQueue([songId]);
-    if (!silent) toast("已加入播放列表末尾", { tone: "success", duration: 1500 });
-    return;
-  }
-
-  // next（默认）
-  addNextInQueue(songId);
-  if (!silent) toast("已设为下一首播放", { tone: "success", duration: 1500 });
-}
-
-/* --------------------------------------------------------------------------
-   空态
-   -------------------------------------------------------------------------- */
-export function renderEmpty(container, { kind = "library" } = {}) {
-  const map = {
-    library: {
-      icon: "music",
-      title: "曲库还没有歌曲",
-      desc: "在设置里添加本地音乐文件夹，程序会自动扫描并监听这些文件夹的变化。",
-      ok: "添加音乐文件夹",
-      act: "add-folder",
-    },
-    queue: {
-      icon: "queue",
-      title: "播放列表是空的",
-      desc: "从「所有歌曲」或任意歌单里选择歌曲加入播放列表。",
-      ok: "去所有歌曲",
-      act: "goto-library",
-    },
-    playlist: {
-      icon: "playlist",
-      title: "这个歌单还没有歌曲",
-      desc: "在「所有歌曲」里点击每首歌后面的爱心或更多菜单，把歌曲加进来。",
-      ok: "去所有歌曲",
-      act: "goto-library",
-    },
-    search: {
-      icon: "search",
-      title: "没有找到匹配的歌曲",
-      desc: "换个关键词试试，或清空搜索框。",
-      ok: "清空搜索",
-      act: "clear-search",
-    },
-  };
-  const cfg = map[kind] || map.library;
-  // 空态也只在「内容变了」时重绘：commit 很频繁，每次都把这块空壳重建一遍
-  // 会让里面的按钮丢焦点，也会让 .page / 空态动画重新播一次。
-  if (container.dataset.empty === kind && container.querySelector(":scope > .empty")) return;
-  container.dataset.empty = kind;
-  container.innerHTML = `
-    <div class="empty">
-      <svg class="empty__art" aria-hidden="true"><use href="#i-${cfg.icon}"/></svg>
-      <div class="empty__title">${esc(cfg.title)}</div>
-      ${cfg.desc ? `<div class="empty__desc">${esc(cfg.desc)}</div>` : ""}
-      ${
-        cfg.ok
-          ? `<div class="empty__actions"><button class="btn btn--primary" type="button" data-empty-act="${cfg.act}">${esc(cfg.ok)}</button></div>`
-          : ""
-      }
-    </div>`;
-}
-
-/* --------------------------------------------------------------------------
-   行内交互
-   -------------------------------------------------------------------------- */
-export function bindTrackEvents(container, handlers = {}) {
-  if (container.dataset.bound === "1") return;
-  container.dataset.bound = "1";
-  container.__handlers = handlers;
-
-  container.addEventListener("click", (e) => {
-    // 拖拽排序刚结束时会跟着冒泡一个 click：不拦的话会误判成「单击歌曲行」，
-    // 把刚拖过的那首歌设为「下一首播放」。
-    if (shouldIgnoreRowClick()) return;
-
-    // 歌单多选模式：点整行 = 勾选 / 取消勾选。
-    // 这个判断放在最前面，连「播放 / 爱心 / 更多」按钮也一起拦截 ——
-    // 多选时用户的目标就是勾选，误触发别的动作反而更烦。
-    const selectRow = e.target.closest(".track");
-    if (selectRow && state.view === "playlist" && state.playlistSelecting) {
-      e.preventDefault();
-      toggleSelectedSong(selectRow.dataset.id);
-      return;
-    }
-
-    const h = container.__handlers || {};
-    const emptyAct = e.target.closest("[data-empty-act]")?.dataset.emptyAct;
-    if (emptyAct === "add-folder") return h.onAddFolder?.();
-    if (emptyAct === "goto-library") return h.onGotoLibrary?.();
-    if (emptyAct === "clear-search") return h.onClearSearch?.();
-
-    const sortBtn = e.target.closest("[data-sort]");
-    if (sortBtn) {
-      const key = sortBtn.dataset.sort;
-      if (state.sortKey === key) {
-        state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
-      } else {
-        state.sortKey = key;
-        state.sortDir = key === "addedAt" ? "desc" : "asc";
-      }
-      commit();
-      return;
-    }
-
-    const actEl = e.target.closest("[data-act]");
-    if (!actEl) {
-      const row = e.target.closest(".track");
-      if (row) {
-        // 单击行为的默认值是「加入下一首播放」——之前在设置里可以改。
-        // 双击才是「立即播放并从这一首开始」（见下面的 dblclick）。
-        activateRow(row, { silent: false });
-      }
-      return;
-    }
-
-    const row = actEl.closest(".track");
-    const songId = row?.dataset.id;
-    if (!songId) return;
-
-    switch (actEl.dataset.act) {
-      case "play": {
-        const ids = state.visibleSongs.map((s) => s.id);
-        playContext(ids, Number(row.dataset.index), currentContext());
-        break;
-      }
-      case "like": {
-        toggleLike(songId);
-        const liked = isLiked(songId);
-        actEl.setAttribute("aria-pressed", String(liked));
-        actEl.dataset.tip = liked ? "取消喜欢" : "加入我喜欢";
-        toast(liked ? "已加入「我喜欢」" : "已从「我喜欢」移除", {
-          tone: liked ? "success" : "info",
-          duration: 1500,
-        });
-        break;
-      }
-      case "more":
-        openTrackMenu(actEl, songId);
-        break;
-      default:
-        break;
-    }
-  });
-
-  container.addEventListener("dblclick", (e) => {
-    // 多选模式下双击不进入播放（否则选歌时会被突然切歌打断）
-    if (state.view === "playlist" && state.playlistSelecting) return;
-    const row = e.target.closest(".track");
-    if (!row) return;
-    const ids = state.visibleSongs.map((s) => s.id);
-    playContext(ids, Number(row.dataset.index), currentContext());
-    state.playerOpen = true;
-    state.pvMode = state.config.playerViewMode;
-    commit();
-  });
-
-  container.addEventListener("contextmenu", (e) => {
-    // 表头右键 = 列显隐菜单（需求：表头右键可以选择显示/隐藏某一列）
-    const head = e.target.closest(".tracks__head");
-    if (head) {
-      e.preventDefault();
-      openColumnMenu(e.clientX, e.clientY);
-      return;
-    }
-    const row = e.target.closest(".track");
-    if (!row) return;
-    e.preventDefault();
-    openTrackMenu(null, row.dataset.id, { x: e.clientX, y: e.clientY });
-  });
-
 }
 
 /* --------------------------------------------------------------------------
@@ -700,20 +220,21 @@ export function openTrackMenu(anchor, songId, pos = null) {
 }
 
 function openAddToPlaylist(songId) {
-  const body = `
-    <div class="setting__hint">点击歌单即可把这首歌加进去。</div>
-    <div class="u-row u-wrap">
-      ${state.playlists
-        .map(
-          (p) => `<button class="btn btn--sm" type="button" data-pl="${p.id}">
-            ${icon(p.id === LIKED_ID ? "heart" : "playlist")}<span>${esc(p.name)}</span>
-          </button>`
-        )
-        .join("")}
-    </div>`;
+  const playlists = state.playlists;
   const { root } = openModal({
     title: "加入歌单",
-    body,
+    body: html`
+      <div class="setting__hint">点击歌单即可把这首歌加进去。</div>
+      <div class="u-row u-wrap">
+        ${playlists.map(
+          (p) => html`
+            <button class="btn btn--sm" type="button" data-pl=${p.id}>
+              <svg aria-hidden="true"><use href="#i-${p.id === LIKED_ID ? "heart" : "playlist"}"></use></svg>
+              <span>${p.name}</span>
+            </button>`
+        )}
+      </div>
+    `,
     okText: "完成",
     cancelText: "关闭",
     onOk: () => true,
@@ -728,22 +249,13 @@ function openAddToPlaylist(songId) {
 /* --------------------------------------------------------------------------
    定位到当前播放
    --------------------------------------------------------------------------
-   需求：歌单 / 曲库这种长列表里换歌之后，列表**不会跟着滚动**，用户根本
-   不知道现在播到哪一首（正在播的那一行在滚动区之外）。这里给出统一的
-   「定位」能力，三个地方共用：
-
-     · 曲库 / 歌单的工具条按钮（shell.js）
-     · 底栏「播放列表」面板（playerbar.js）
-     · 播放列表（队列）视图 —— 用的就是同一套曲目表格
-
-   当前播放行在列表里存在时：滚到它、闪一下（.is-located，让用户确认
-   「找的就是这一行」）。不存在时如实说明，不做「静默什么都不发生」。
+   曲库 / 歌单这种长列表里换歌之后，列表不会自己滚动，用户根本不知道
+   现在播到哪一首。这里给出统一的「定位」能力，三个地方共用。
    -------------------------------------------------------------------------- */
 
 /** 落点提示的动画时长：与 tracktable.css 的 track-locate 保持一致 */
 const LOCATE_HIGHLIGHT_MS = 1500;
 
-/** 给一个条目加上「刚定位到这里」的落点提示 */
 export function highlightLocated(el) {
   if (!el) return;
   el.classList.remove("is-located");
@@ -755,11 +267,9 @@ export function highlightLocated(el) {
 /**
  * 把某个元素滚进视野。
  *
- * 优先用 scrollIntoView：它自己认 sticky 表头与 scroll-padding，
- * 不用手写偏移量。队列视图里那个条目已经可见时会产生「真实滚动」，
- * 被外层容器拦下来会抛异常（浏览器差异），因此兜底按容器滚。
+ * 优先用 scrollIntoView：它自己认 sticky 表头与 scroll-padding，不用手写偏移量。
  */
-function scrollAndHighlight(el) {
+export function scrollAndHighlight(el) {
   if (!el) return;
   try {
     el.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -769,13 +279,6 @@ function scrollAndHighlight(el) {
   highlightLocated(el);
 }
 
-/**
- * 兜底：只让「最近的可滚动祖先」动，不牵扯整页。
- *
- * 为什么不直接算「祖先滚动容器」：在个别布局下让浏览器接管滚动没动静
- * （元素确实在滚动区之外、但祖先链上没有可滚动盒）。这时手工算一次，
- * 保证按钮不会变成「点了没反应」。
- */
 function scrollIntoContainer(el) {
   const scroller = el.closest(".content-body, .queue-panel__body");
   if (!scroller) return;
@@ -790,7 +293,6 @@ function scrollIntoContainer(el) {
   }
 }
 
-/** 在指定的曲目表格里找到当前播放行（没有就返回 null） */
 function currentRowIn(root) {
   const id = state.currentId;
   if (!id) return null;
@@ -798,7 +300,6 @@ function currentRowIn(root) {
   return row ? { el: row } : null;
 }
 
-/** 队列面板里的当前播放条目（没有就返回 null） */
 function currentQueueItem() {
   const id = state.currentId;
   if (!id) return null;
@@ -806,12 +307,6 @@ function currentQueueItem() {
   return body?.querySelector(`.queue-item[data-queue-id="${CSS.escape(id)}"]`) || null;
 }
 
-/**
- * 曲库 / 歌单视图的「定位到当前播放」。
- *
- * 列表可能已经被搜素 / 筛选裁掉了那一行（state.visibleSongs 里没有它），
- * 这时不做任何越权操作 —— 只提示原因，避免用户以为按钮坏了。
- */
 export function locateCurrentSong({ notify = true } = {}) {
   if (!state.currentId) {
     if (notify) toast("当前没有正在播放的歌曲", { tone: "info", duration: 1600 });
@@ -832,12 +327,6 @@ export function locateCurrentSong({ notify = true } = {}) {
   return true;
 }
 
-/**
- * 播放列表面板（底栏「播放列表」按钮弹出的那块）的「定位到当前播放」。
- *
- * 面板没打开时会先打开它 —— 按钮就在面板标题栏上，正常不会走到这条路，
- * 但外部调用（例如以后的快捷键）也不该悄悄失败。
- */
 export function locateCurrentQueueItem({ notify = true } = {}) {
   if (!state.queue.length) {
     if (notify) toast("播放列表是空的", { tone: "info", duration: 1600 });
@@ -852,51 +341,17 @@ export function locateCurrentQueueItem({ notify = true } = {}) {
   return true;
 }
 
-
 /* --------------------------------------------------------------------------
-   队列拖拽排序（SortableJS）
-   --------------------------------------------------------------------------
-   需求：不要自己实现拖拽逻辑；并且「拖拽排序后界面要真的看到效果」。
-   以前是手写 HTML5 DnD，而队列视图还会再按 sortKey 排一次序，
-   把拖拽结果整个盖掉 —— 于是提示成功、界面没变化。
-   现在：
-     · 拖拽交给 SortableJS（成熟库，触屏 / 键盘 / 自动滚动都已处理好）；
-     · 队列视图不再二次排序（见 store.js#recalcVisible）；
-     · onEnd 调用 reorderQueue()，它会顺手把播放模式切回「列表循环」。
+   拖拽抑制：拖完紧接着的 click 不是用户「点击行」
    -------------------------------------------------------------------------- */
-
-/** 容器会随视图重建，保留实例、重建前销毁，避免事件重复绑定 */
-let queueSortable = null;
-
-/** 刚刚拖拽结束的时间戳：抑制紧随其后的 click，否则会误触「加入下一首播放」 */
 let lastDragEndAt = 0;
+
+export function markDragEnd() {
+  lastDragEndAt = Date.now();
+}
 
 export function shouldIgnoreRowClick() {
   return Date.now() - lastDragEndAt < 260;
-}
-
-function bindQueueSort(container) {
-  const body = container.querySelector(".tracks__body");
-  if (!body) return;
-  // 表格现在是增量渲染的，同一个 body 会一直用下去：已经绑过就不要再
-  // destroy + create 一遍 —— 那会在每次重绘时打断用户正在进行的拖拽。
-  if (queueSortable && queueSortable.el === body) return;
-  queueSortable?.destroy();
-  queueSortable = Sortable.create(body, {
-    handle: "[data-handle]",
-    draggable: ".track",
-    animation: 160,
-    ghostClass: "is-dragging",
-    chosenClass: "is-dragging",
-    onEnd(evt) {
-      lastDragEndAt = Date.now();
-      const from = evt.oldIndex;
-      const to = evt.newIndex;
-      if (from == null || to == null || from === to) return;
-      reorderQueue(from, to);
-      toast("已调整播放顺序 · 播放模式已切回列表循环", { duration: 1800 });
-    },
-  });
 }
 
 /* --------------------------------------------------------------------------
@@ -914,3 +369,7 @@ export function playAllVisible(shuffled = false) {
   playContext(ids, 0, currentContext());
   toast(shuffled ? "已随机播放" : `开始播放 ${fmtCount(ids.length)} 首`, { duration: 1600 });
 }
+
+export const SORT_KEYS = ["addedAt", "title", "artist", "album", "duration", "size", "playCount"];
+
+export { esc };

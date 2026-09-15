@@ -126,6 +126,10 @@ function initialState() {
     selectedIds: new Set(),
     playerOpen: false,
     queueOpen: false,
+    // 底栏两个浮层（选项 / 定时停止）的开合：以前存在各模块的局部变量里，
+    // 现在是状态，组件照着渲染，也就不需要「谁去 hidden 哪个节点」的约定。
+    optionsOpen: false,
+    sleepOpen: false,
     pvMode: "classic",
     query: "",
     // 搜索浮层：{ open: boolean, tab: 'local'|'online' }。
@@ -144,6 +148,15 @@ function initialState() {
        轮播开关**不在这里**：它是全局偏好 config.coverCarousel（见 setCoverSet）。 */
     coverSets: new Map(),
     settingsOpen: false,
+    // 设置层当前高亮的分区；settingsRev 是「强制重绘一次设置层」的显式信号
+    // （重扫主题 / 导入样式这类不经过 state 的变更需要一个版本号来驱动组件）
+    settingsSection: "library",
+    settingsRev: 0,
+    // 扫描进度文案（#scanning 覆盖层由组件按 state.scanning 渲染）
+    scanText: "正在扫描音乐文件夹…",
+    /* 歌单版本号：歌单数组与每首歌单的 songIds 都是**原地改**的，
+       引用比较抓不到变化，所以用一个显式版本号让组件声明依赖。 */
+    playlistVersion: 0,
 
     /* 播放 */
     queue: [],
@@ -169,6 +182,15 @@ function initialState() {
 
     /* 窗口原生材质：后端给出的「当前生效值 / 是否支持 / 是否待重启」 */
     backdropState: null,
+
+    /* 桌面背景歌词的可用性探测结果（不支持时按钮置灰并说明原因） */
+    desktopWallpaperSupport: null,
+
+    /* 浏览器预览下主窗口内的悬浮歌词条（真实应用里歌词在独立窗口上） */
+    floatingLyrics: { show: false, text: "" },
+
+    /* 歌词工作台（在线匹配 / 微调 / 手动编辑）的开合 */
+    lyricsOpen: false,
 
     /* 配置 */
     config: { ...DEFAULT_CONFIG },
@@ -484,6 +506,17 @@ export function playlistById(id) {
 
 export const LIKED_ID = "liked";
 
+/**
+ * 歌单数据变了（新增/改名/删除/增删歌曲/排序）。
+ *
+ * 为什么要显式版本号：歌单是**原地修改**的（`pl.name = …`、`pl.songIds = …`），
+ * 组件做依赖比较时看引用永远相等，侧边栏就会停在旧内容上。
+ * 迁移前靠 renderKey 里手工拼一长串 "id:name:count" 来兜住这件事。
+ */
+function bumpPlaylists() {
+  state.playlistVersion = (state.playlistVersion || 0) + 1;
+}
+
 export function isLiked(songId) {
   return state.likedIds.has(songId);
 }
@@ -498,6 +531,7 @@ export function toggleLike(songId) {
     liked.songIds = set.has(songId)
       ? uniq([...liked.songIds, songId])
       : liked.songIds.filter((id) => id !== songId);
+    bumpPlaylists();
   }
   // immediate：爱心按钮的按下态要跟着这次点击立刻变化。
   // 默认的 rAF 合并会让底栏比点击慢一帧，用户看到的就是"点了没反应"。
@@ -517,6 +551,7 @@ export function createPlaylist(name) {
     createdAt: Date.now(),
   };
   state.playlists = [...state.playlists, pl];
+  bumpPlaylists();
   commit();
   if (isWails()) backend.createPlaylist(clean);
   return pl;
@@ -528,6 +563,7 @@ export function renamePlaylist(id, name) {
   const clean = String(name || "").trim();
   if (!clean) return false;
   pl.name = clean;
+  bumpPlaylists();
   commit();
   if (isWails()) backend.renamePlaylist(id, clean);
   return true;
@@ -537,6 +573,7 @@ export function deletePlaylist(id) {
   const pl = playlistById(id);
   if (!pl || pl.locked) return false;
   state.playlists = state.playlists.filter((p) => p.id !== id);
+  bumpPlaylists();
   if (state.playlistId === id) {
     state.view = "library";
     state.playlistId = null;
@@ -552,6 +589,7 @@ export function addSongsToPlaylist(id, songIds) {
   const before = pl.songIds.length;
   pl.songIds = uniq([...pl.songIds, ...songIds]);
   if (id === LIKED_ID) state.likedIds = new Set(pl.songIds);
+  bumpPlaylists();
   commit();
   if (isWails()) backend.addSongsToPlaylist(id, songIds);
   return pl.songIds.length - before;
@@ -564,6 +602,7 @@ export function removeSongsFromPlaylist(id, songIds) {
   const before = pl.songIds.length;
   pl.songIds = pl.songIds.filter((x) => !drop.has(x));
   if (id === LIKED_ID) state.likedIds = new Set(pl.songIds);
+  bumpPlaylists();
   commit();
   if (isWails()) backend.removeSongsFromPlaylist(id, songIds);
   return before - pl.songIds.length;
@@ -579,6 +618,7 @@ export function movePlaylist(from, to) {
   const next = moveItem(custom, from, to);
   const liked = playlistById(LIKED_ID);
   state.playlists = [liked, ...next].filter(Boolean);
+  bumpPlaylists();
   commit();
 }
 
@@ -1057,6 +1097,7 @@ function seedFromMock() {
   state.filterRules = MOCK_FILTER_RULES.slice();
   state.playlists = MOCK_PLAYLISTS.map((p) => ({ ...p, songIds: p.songIds.slice() }));
   state.likedIds = new Set(playlistById(LIKED_ID)?.songIds || []);
+  bumpPlaylists();
   const { kept, excluded } = applyRules(state.allSongsRaw, state.filterRules);
   state.songs = kept;
   state.lastScan = {
@@ -1242,11 +1283,13 @@ function applyPersisted(saved) {
   if (Array.isArray(saved.userPlaylists)) {
     const liked = state.playlists.find((p) => p.id === LIKED_ID);
     state.playlists = [liked, ...saved.userPlaylists].filter(Boolean);
+    bumpPlaylists();
   }
   if (Array.isArray(saved.liked)) {
     const liked = playlistById(LIKED_ID);
     if (liked) liked.songIds = saved.liked.slice();
     state.likedIds = new Set(saved.liked);
+    bumpPlaylists();
   }
   // 队列与当前曲目**不能在这里校验**：此刻曲库还是空的（真实后端要先 await
   // hydrateFromBackend），任何 id 都会被判成「不存在」，于是队列被清空、
@@ -1340,6 +1383,7 @@ export async function hydrateFromBackend() {
     }));
     const liked = state.playlists.find((p) => p.id === LIKED_ID);
     if (liked) state.likedIds = new Set(liked.songIds);
+    bumpPlaylists();
   }
 
   // 队列与当前曲目可能引用了已不存在的 id，做一次清理。

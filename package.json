@@ -22,6 +22,9 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --import ./frontend/tests/register.mjs --test \"frontend/tests/*.test.js\"",
+    "verify:lit": "node tools/verify-lit.mjs",
+    "shot:lit": "node tools/shot-lit.mjs",
+    "perf:lit": "node tools/perf-lit.mjs frontend/dist lit",
     "check": "npm run lint && npm run typecheck && npm run test"
   },
   "devDependencies": {

@@ -107,3 +107,40 @@
   background-size: 220% 100%;
   animation: shimmer 1.4s linear infinite;
 }
+
+/* --------------------------------------------------------------------------
+   Lit 组件宿主
+   --------------------------------------------------------------------------
+   组件走 light DOM（见 js/ui/base.js 的说明）：自定义元素自己不画盒子，
+   只把模板产出的真实元素（.app / .titlebar / .main …）插进文档，
+   于是所有既有 CSS（含主题与皮肤包）都按原选择器照常命中。
+
+   为什么必须显式写：自定义元素的默认 display 是 inline，
+   用它包一个 grid / flex 容器会把布局整个压扁。display:contents 让宿主元素
+   在布局上「不存在」，子元素直接参与父级布局 —— 与迁移前 index.html 里
+   这些元素平铺在 body 下的效果完全一致。
+   -------------------------------------------------------------------------- */
+mp-app,
+mp-titlebar,
+mp-sidebar,
+mp-content,
+mp-content-header,
+mp-track-table,
+mp-playerbar,
+mp-progress,
+mp-queue-panel,
+mp-options-panel,
+mp-sleep-panel,
+mp-download-panel,
+mp-playerview,
+mp-settings-layer,
+mp-lyrics-panel,
+mp-search-overlay,
+mp-cover-layer,
+mp-floating-lyrics,
+mp-menu,
+mp-modal,
+mp-toasts,
+mp-desktop-lyrics {
+  display: contents;
+}

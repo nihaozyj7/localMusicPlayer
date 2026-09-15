@@ -14,8 +14,8 @@
    ========================================================================== */
 
 import { state } from "./store.js";
-import { applyDesktopLyrics, syncDesktopLyricsButtons } from "./desktop-lyrics.js";
-import { applyDesktopWallpaper, syncDesktopWallpaperButtons } from "./desktop-wallpaper.js";
+import { applyDesktopLyrics } from "./desktop-lyrics.js";
+import { applyDesktopWallpaper } from "./desktop-wallpaper.js";
 
 /** 三个取值与 Go 侧 desktopModeOff / desktopModeLyrics / desktopModeWallpaper 一一对应 */
 export const DESKTOP_MODE = Object.freeze({
@@ -31,11 +31,12 @@ export function currentDesktopMode() {
   return DESKTOP_MODE.off;
 }
 
-/** 同步两个按钮的按下态（启动时调用一次；之后每次切换由各自模块负责）。 */
-export function syncDesktopModeButtons() {
-  syncDesktopLyricsButtons();
-  syncDesktopWallpaperButtons();
-}
+/**
+ * 兼容保留：迁移前这里要手工同步两个按钮的按下态。
+ * 现在按钮的 aria-pressed 由 Lit 组件按 state.config 渲染，
+ * 后端回滚配置后组件会自己跟上，不再需要这个入口。
+ */
+export function syncDesktopModeButtons() {}
 
 /**
  * 切到指定模式。

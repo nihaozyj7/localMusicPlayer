@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@musicplayer/player-skins": "*",
+    "lit": "^3.3.3",
     "sortablejs": "^1.15.7"
   }
 }

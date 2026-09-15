@@ -136,6 +136,10 @@ export function createSlider(root, opts = {}) {
     setBuffer(pct) {
       if (bufferEl) bufferEl.style.width = `${clamp(pct, 0, 100)}%`;
     },
+    /** 该值对应的展示文本（与气泡里的一致，供外部标签复用） */
+    text(next = value) {
+      return opts.format ? opts.format(next) : String(next);
+    },
     paint,
   };
 }

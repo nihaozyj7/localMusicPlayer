@@ -9,7 +9,8 @@
 
 import { backend, isWails } from "./bridge.js";
 import { animationDurationValue, setRuntimeTokens, replaceStyleRules } from "./runtime-tokens.js";
-import { state } from "./store.js";
+import { commit, state } from "./store.js";
+import { toast } from "./ui/overlays.js";
 import { isPlaceholderCoverUrl } from "./utils.js";
 
 /** 内置主题登记表（新增主题时可在此追加，或依赖后端自动扫描） */
@@ -38,6 +39,19 @@ const BUILTIN_THEMES = [
 ];
 
 const registry = BUILTIN_THEMES.slice();
+
+/* --------------------------------------------------------------------------
+   注册表版本号
+   --------------------------------------------------------------------------
+   主题列表是 Lit 组件之外的可变数据（重扫 / 导入 / 移除都会改），
+   store 的订阅广播覆盖不到它。组件把它放进 deps() 就能跟着更新 ——
+   这就是「以原始值数组声明依赖」在非 store 数据上的用法。
+   -------------------------------------------------------------------------- */
+let registryVersion = 0;
+
+export function themeRegistryVersion() {
+  return registryVersion;
+}
 
 export function listThemes() {
   return registry;
@@ -115,6 +129,7 @@ function syncThemeRegistry(list) {
 
   registry.length = 0;
   registry.push(...next);
+  registryVersion += 1;
   return registry;
 }
 
@@ -324,6 +339,21 @@ function seedFor(config, themeId, secondary = false) {
   if (themeId !== "cover-dark") return null;
   const hex = normalizeSeed(secondary ? config.coverSeed2 : config.coverSeed);
   return hex || null;
+}
+
+/**
+ * 底栏「切换深浅色」按钮：在深色 / 浅色之间切换（写 themeMode，不改 theme）。
+ *
+ * 以前它长在 main.js 里 —— 主题相关的东西散在入口文件并不合适，
+ * 迁移时顺手收进主题模块（调用方只有标题栏）。
+ */
+export async function toggleTheme() {
+  const resolved = getTheme(state.config.theme);
+  const nextMode = resolved?.mode === "light" ? "dark" : "light";
+  state.config.themeMode = nextMode;
+  await applyResolvedTheme(state.config);
+  commit();
+  toast(nextMode === "dark" ? "已切换到深色主题" : "已切换到浅色主题", { duration: 1500 });
 }
 
 /* --------------------------------------------------------------------------

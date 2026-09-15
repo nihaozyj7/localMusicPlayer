@@ -1,7 +1,15 @@
 /* ==========================================================================
-   playlists.js — 歌单相关业务动作（新建 / 重命名 / 删除 / 加入）
+   playlists.js — 歌单业务动作（新建 / 重命名 / 删除 / 加入 / 菜单）
+   --------------------------------------------------------------------------
+   迁移点：弹窗内容从 HTML 字符串改成 Lit 模板（`html``…``），
+   不再有字符串拼接与 esc()。「添加歌曲」的勾选列表抽成
+   <mp-add-songs>（见 ui/add-songs.js），筛选不再重建整段 HTML。
+
+   另外：歌单菜单（播放 / 加入播放列表 / 重命名 / 删除 / 导出）从 shell.js
+   挪到这里 —— 它是歌单的业务动作，侧边栏与内容区工具条都要用。
    ========================================================================== */
 
+import { html } from "lit";
 import {
   LIKED_ID,
   addSongsToPlaylist,
@@ -11,14 +19,17 @@ import {
   renamePlaylist,
   state,
 } from "./store.js";
-import { openModal, toast } from "./dom.js";
-import { esc, fmtCount } from "./utils.js";
+import { openMenu, openModal, toast } from "./ui/overlays.js";
+import { navigate } from "./shell.js";
+import { fmtCount } from "./utils.js";
+// 只为注册自定义元素（弹窗体里要用 <mp-add-songs>）
+import "./ui/add-songs.js";
 
 export function promptNewPlaylist(onDone) {
   openModal({
     title: "新建歌单",
     desc: "歌单名称可以随时修改。",
-    body: `<input class="input" data-field="name" type="text" placeholder="例如：深夜循环" maxlength="40" />`,
+    body: html`<input class="input" data-field="name" type="text" placeholder="例如：深夜循环" maxlength="40" />`,
     okText: "创建",
     onOk: (values) => {
       const name = String(values.name || "").trim();
@@ -37,7 +48,7 @@ export function promptRenamePlaylist(id, onDone) {
   if (!pl || pl.locked) return;
   openModal({
     title: "重命名歌单",
-    body: `<input class="input" data-field="name" type="text" value="${esc(pl.name)}" maxlength="40" />`,
+    body: html`<input class="input" data-field="name" type="text" .value=${pl.name} maxlength="40" />`,
     okText: "保存",
     onOk: (values) => {
       const name = String(values.name || "").trim();
@@ -78,12 +89,12 @@ export function addSongsTo(id, songIds) {
 export function likedPlaylist() {
   return playlistById(LIKED_ID);
 }
+
 /**
  * 打开「添加歌曲到歌单」弹层。
  *
  * 需求：歌单里的「添加」按钮 → 列出所有歌曲 → 勾选后加入歌单。
  * 已经在歌单里的歌显示为已选中且不可取消（避免用户误以为没加进去）。
- * 弹层里带一个筛选框：曲库动辄上千首，不给筛选根本翻不到。
  */
 export function promptAddSongs(id) {
   const pl = playlistById(id);
@@ -94,78 +105,75 @@ export function promptAddSongs(id) {
   }
 
   const already = new Set(pl.songIds);
-  const body = `
-    <input class="input" id="addsongs-filter" type="text" placeholder="筛选歌曲（标题 / 歌手 / 专辑）" autocomplete="off" spellcheck="false" />
-    <div class="addsongs__head">
-      <span id="addsongs-count"></span>
-      <span class="addsongs__actions">
-        <button class="btn btn--sm" type="button" data-addsongs="none">清空选择</button>
-        <button class="btn btn--sm" type="button" data-addsongs="all">全选</button>
-      </span>
-    </div>
-    <div class="addsongs" id="addsongs-list"></div>`;
-
-  const { root } = openModal({
+  openModal({
     title: `添加歌曲到「${pl.name}」`,
     desc: "勾选要加入的歌曲；已经在歌单里的会保持选中。",
-    body,
+    body: html`<mp-add-songs .playlistId=${id}></mp-add-songs>`,
     okText: "加入歌单",
     onOk: (_values, modal) => {
-      const ids = [...modal.querySelectorAll("[data-song-check]:checked")].map(
-        (n) => n.dataset.songCheck
-      );
+      const ids = [...modal.querySelectorAll("[data-song-check]:checked")].map((n) => n.dataset.songCheck);
       const fresh = ids.filter((sid) => !already.has(sid));
       if (!fresh.length) return "没有选中新的歌曲";
       addSongsTo(id, fresh);
       return true;
     },
   });
+}
 
-  const listEl = root.querySelector("#addsongs-list");
-  const filterEl = root.querySelector("#addsongs-filter");
-  const countEl = root.querySelector("#addsongs-count");
+/* --------------------------------------------------------------------------
+   歌单菜单
+   -------------------------------------------------------------------------- */
+export function openPlaylistMenu(id, anchor) {
+  const pl = playlistById(id);
+  if (!pl) return;
+  const items = [
+    { id: "play", label: "播放这个歌单", icon: "play" },
+    { id: "queue", label: "加入播放列表", icon: "queue" },
+    { id: "sep1", kind: "sep" },
+  ];
+  // 「我喜欢」也是歌单，只是内置的：它照样有菜单，只是没有重命名/删除。
+  if (!pl.locked) {
+    items.push({ id: "rename", label: "重命名", icon: "edit" });
+    items.push({ id: "delete", label: "删除歌单", icon: "trash", danger: true });
+    items.push({ id: "sep2", kind: "sep" });
+  }
+  items.push({ id: "export", label: "导出为 m3u", icon: "file" });
 
-  const paint = () => {
-    const q = (filterEl?.value || "").trim().toLowerCase();
-    const songs = state.songs.filter(
-      (s) => !q || `${s.title} ${s.artist} ${s.album}`.toLowerCase().includes(q)
-    );
-    const free = state.songs.filter((s) => !already.has(s.id)).length;
-    countEl.textContent = q
-      ? `匹配 ${fmtCount(songs.length)} 首`
-      : `共 ${fmtCount(state.songs.length)} 首 · 其中 ${fmtCount(free)} 首尚未加入`;
-    listEl.innerHTML = songs.length
-      ? songs
-          .map((s) => {
-            const inList = already.has(s.id);
-            return `
-              <label class="addsongs__row">
-                <input type="checkbox" data-song-check="${s.id}" ${inList ? "checked disabled" : ""} />
-                <span class="addsongs__text">
-                  <span class="addsongs__title u-ellipsis">${esc(s.title)}</span>
-                  <span class="addsongs__sub u-ellipsis">${esc(s.artist)}${s.album ? ` · ${esc(s.album)}` : ""}</span>
-                </span>
-                ${inList ? '<span class="addsongs__tag">已在歌单</span>' : ""}
-              </label>`;
-          })
-          .join("")
-      : '<div class="addsongs__empty">没有匹配的歌曲</div>';
-  };
-
-  filterEl?.addEventListener("input", paint);
-  // 筛选框里按回车不应该直接提交弹层（openModal 监听的是 document 上的 keydown）
-  filterEl?.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    e.stopPropagation();
+  const rect = anchor.getBoundingClientRect();
+  openMenu({
+    x: rect.left,
+    y: rect.bottom + 6,
+    align: "right",
+    items,
+    onPick: async (action) => {
+      switch (action) {
+        case "play":
+          playPlaylist(pl);
+          break;
+        case "queue": {
+          const m = await import("./store.js");
+          m.appendToQueue(pl.songIds);
+          toast(`已把 ${fmtCount(pl.songIds.length)} 首加入播放列表`, { tone: "success" });
+          break;
+        }
+        case "rename":
+          promptRenamePlaylist(pl.id);
+          break;
+        case "delete":
+          confirmDeletePlaylist(pl.id, () => navigate("library"));
+          break;
+        case "export":
+          toast("导出 m3u 需要接入后端后实现", { duration: 2200 });
+          break;
+        default:
+          break;
+      }
+    },
   });
+}
 
-  root.addEventListener("click", (e) => {
-    const act = e.target.closest("[data-addsongs]")?.dataset.addsongs;
-    if (!act) return;
-    const boxes = [...listEl.querySelectorAll("[data-song-check]:not(:disabled)")];
-    for (const box of boxes) box.checked = act === "all";
+function playPlaylist(pl) {
+  import("./store.js").then(({ playContext }) => {
+    playContext(pl.songIds.slice(), 0, { type: "playlist", id: pl.id });
   });
-
-  paint();
 }

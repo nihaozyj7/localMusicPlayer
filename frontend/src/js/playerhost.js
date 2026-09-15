@@ -21,6 +21,7 @@
    ========================================================================== */
 
 import { $ } from "./dom.js";
+import { requestAppUpdate } from "./ui/base.js";
 import { MOCK_LYRICS, MOCK_LYRICS_ALT } from "./mock.js";
 import { backend, isWails } from "./bridge.js";
 import { audioElement, seekTo, spectrum } from "./audio.js";
@@ -443,7 +444,7 @@ async function discoverSkins() {
 export async function reloadSkins() {
   skinsReady = null;
   await ensureSkins();
-  paintSkinButtons();
+  bumpSkinVersion();
 }
 
 /**
@@ -467,28 +468,22 @@ export function skinLoadFailures() {
   return skinFailures.slice();
 }
 
-function paintSkinButtons() {
-  const box = $("#playerview-mode");
-  if (!box) return;
-  const html = listSkins()
-    .map((s) => {
-      const id = esc(s.id);
-      const name = esc(s.name || s.id);
-      // data-pv-mode 是历史属性名：留着它，旧自检脚本仍能按样式切换
-      return `<button class="viewmode__btn" type="button" data-pv-skin="${id}" data-pv-mode="${id}"
-        aria-pressed="false" data-tip="${name}" aria-label="${name}">
-        <svg><use href="#i-${esc(s.icon || "disc")}"/></svg>
-      </button>`;
-    })
-    .join("");
-  if (box.dataset.rendered !== html) {
-    box.dataset.rendered = html;
-    box.innerHTML = html;
-  }
-  const active = state.pvMode;
-  box.querySelectorAll(".viewmode__btn").forEach((btn) => {
-    btn.setAttribute("aria-pressed", String(btn.dataset.pvSkin === active));
-  });
+/**
+ * 皮肤注册表版本号。
+ *
+ * 「可用样式清单」是 Lit 组件之外的可变数据（内置 + 运行时加载的第三方样式，
+ * 还能被重扫 / 移除）。组件把它放进依赖数组就能跟着更新 ——
+ * 取代了迁移前那句 paintSkinButtons() 里的 innerHTML 重建。
+ */
+let skinVersion = 0;
+
+export function skinRegistryVersion() {
+  return skinVersion;
+}
+
+function bumpSkinVersion() {
+  skinVersion += 1;
+  requestAppUpdate();
 }
 
 /* ==========================================================================
@@ -721,6 +716,10 @@ function mountSkin(id) {
   host.view.dataset.skinBackground = skin.background ? "yes" : "no";
   document.getElementById("app")?.setAttribute("data-mode", skin.id);
 
+  // 皮肤 id 可能与请求的不一致（请求的样式被删了 → resolveSkin 回退）。
+  // 写回 state，这样 Lit 渲染出来的 data-skin / 按钮按下态与真正挂载的样式一致。
+  state.pvMode = skin.id;
+
   const ctx = makeCtx();
   host.ctx = ctx;
 
@@ -880,17 +879,11 @@ export async function renderPlayerView() {
   }
 
   const view = host.view;
-  const appEl = document.getElementById("app");
   const song = currentSong();
   const open = Boolean(state.playerOpen);
 
-  if (appEl) {
-    // data-view 驱动侧边栏收起与播放界面铺满；data-mode 供样式自己的 chrome 规则用
-    appEl.dataset.view = open ? "player" : "library";
-  }
-  // 「详情页显示歌词」开关：关掉时歌词区收起，详情页只留封面/曲目信息
-  view.dataset.lyrics = state.config.showLyrics === false ? "off" : "on";
-
+  // 注：.app 的 data-view 与 .playerview 的 data-lyrics 现在由 Lit 组件按 state 渲染，
+  // 宿主不再碰它们 —— 同一份 DOM 属性只有一个写入方。
   if (!open) {
     if (view.dataset.state !== "closed") {
       view.dataset.state = "closed";
@@ -915,7 +908,6 @@ export async function renderPlayerView() {
   view.hidden = false;
 
   await ensureSkins();
-  paintSkinButtons();
 
   const wanted = state.pvMode || state.config.playerViewMode || "";
   const remounted = host.mountedId !== wanted;
@@ -937,11 +929,6 @@ export async function renderPlayerView() {
     view.dataset.state = "opened";
     setSkinBackground("opened");
   }
-
-  // 「更换封面」对在线试听曲目没有意义（没有本地文件可写）
-  const coverBtn = $("#btn-player-cover");
-  if (coverBtn) coverBtn.disabled = !song || Boolean(song.online);
-  paintCarouselButton();
 
   if (!host.skin) return;
 
@@ -983,23 +970,6 @@ function resetPushed() {
   lastPushed.lyricsText = null;
   lastPushed.options = null;
   lastPushed.playing = null;
-}
-
-/** 轮播开关按钮的可用态与按下态 */
-function paintCarouselButton() {
-  const btn = $("#btn-cover-carousel");
-  if (!btn) return;
-  const covers = coverListOf(currentSong());
-  const enabled = state.config.coverCarousel === true;
-  const usable = covers.length > 1;
-  btn.disabled = !usable;
-  btn.setAttribute("aria-pressed", String(enabled && usable));
-  const seconds = carouselSettings().seconds;
-  btn.dataset.tip = usable
-    ? enabled
-      ? "关闭封面轮播"
-      : `开启封面轮播（每 ${seconds} 秒换一张）`
-    : "这首歌只有一张封面";
 }
 
 /* --------------------------------------------------------------------------

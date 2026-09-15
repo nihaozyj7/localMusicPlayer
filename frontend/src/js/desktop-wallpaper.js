@@ -47,6 +47,7 @@ import { backend, isWails } from "./bridge.js";
 import { commit, state } from "./store.js";
 import { spectrum } from "./audio.js";
 import { paintFloatingLyricBar } from "./desktop-lyrics.js";
+import { requestAppUpdate } from "./ui/base.js";
 import { getRuntimeTokens } from "./runtime-tokens.js";
 import { resolveSkin } from "@musicplayer/player-skins";
 import {
@@ -61,15 +62,14 @@ export function desktopWallpaperEnabled() {
   return state.config.showDesktopWallpaper === true;
 }
 
-/** 把「桌面背景歌词」按钮与设置里同名开关的选中态同步成当前配置值。 */
+/**
+ * 通知界面「桌面背景歌词的可用 / 开关状态变了」。
+ *
+ * 迁移前这里直接改 #btn-desktop-wallpaper / #opt-desktop-wallpaper 的属性，
+ * 现在只广播一次，由 Lit 组件按 state.config 与 state.desktopWallpaperSupport 渲染。
+ */
 export function syncDesktopWallpaperButtons() {
-  const on = desktopWallpaperEnabled();
-  // 底栏那个是独立的开关按钮（与桌面歌词互斥由 desktop-mode.js 保证），
-  // 所以按 aria-pressed 表达按下态；设置里的开关是 role="switch"，继续用 aria-checked。
-  const btn = document.getElementById("btn-desktop-wallpaper");
-  if (btn) btn.setAttribute("aria-pressed", String(on));
-  const sw = document.getElementById("opt-desktop-wallpaper");
-  if (sw) sw.setAttribute("aria-checked", String(on));
+  requestAppUpdate();
 }
 
 /**
@@ -92,13 +92,12 @@ export async function probeDesktopWallpaperSupport() {
   }
   if (supported) return true;
 
-  for (const id of ["btn-desktop-wallpaper", "opt-desktop-wallpaper"]) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    el.disabled = true;
-    el.setAttribute("aria-disabled", "true");
-    el.dataset.tip = reason || "当前系统不支持桌面背景歌词";
-  }
+  // 支持能力写进 state：按钮的 disabled / 提示语由组件渲染
+  state.desktopWallpaperSupport = {
+    supported: false,
+    reason: reason || "当前系统不支持桌面背景歌词",
+  };
+  requestAppUpdate();
   return false;
 }
 
