@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -1279,6 +1280,31 @@ type WindowService struct {
 	wallpaperProbed    bool
 	wallpaperSupported bool
 	wallpaperReason    string
+
+	// wallpaperShown 记录「当前这个背景歌词窗口显示出来没有」。
+	//
+	// 窗口是**隐藏创建**的（见 desktop_wallpaper.go#ensureDesktopWallpaper）：
+	// 页面自己的底色是深色，而皮肤要等主窗口把数据推过来才画得出东西，
+	// 创建后立刻显示的话用户先看到的是一块纯色 —— 也就是「刚打开时黑一下」。
+	// 所以显示时机推迟到「页面确认第一帧画进 DOM」（MarkDesktopWallpaperPainted），
+	// 另有兜底定时器保证页面出任何问题时窗口也不会永远不出现。
+	wallpaperShown atomic.Bool
+	// wallpaperGen 每次创建新的背景歌词窗口就 +1。
+	// 兜底定时器带着创建时的代数回调，用来判断「我等的是不是当前这个窗口」——
+	// 否则「关掉很快又打开」时，上一个窗口留下的定时器会把新窗口提前显示出来。
+	// 只在持有 wallpaperMu 时读写。
+	wallpaperGen uint64
+
+	// —— 主窗口显示时机 / 托盘 ——
+	//
+	// shown 记录「主窗口到底显示出来没有」。前端的 Ready 与 main.go 的兜底
+	// 定时器都会调 MarkReady，只有真正显示成功才置位（见 MarkReady）。
+	shown atomic.Bool
+	// tray 是「关闭时最小化到托盘」用的系统托盘图标；开关关闭时为 nil。
+	trayMu sync.Mutex
+	tray   *application.SystemTray
+	// quitting 由托盘菜单的「退出」置位。置位后关闭窗口不再被拦成「收进托盘」。
+	quitting atomic.Bool
 }
 
 // NewWindowService 构造服务（app 由 main 在创建应用后注入）
@@ -1367,6 +1393,131 @@ func (s *WindowService) IsMaximized() bool {
 		return w.IsMaximised()
 	}
 	return false
+}
+
+/* --------------------------------------------------------------------------
+   主窗口的显示时机 + 系统托盘
+   -------------------------------------------------------------------------- */
+
+// MarkReady 前端把 DOM 装配好之后调用：这时才把主窗口显示出来。
+//
+// 为什么窗口创建时是 Hidden（见 main.go 的 winOpts）：Wails 在不隐藏时会用
+// 带 WS_VISIBLE 的样式创建窗口，而 WebView2 在页面渲染完成前会先亮一块白底 ——
+// 那正是首屏那一下闪烁（Wails issue #4611 的修法就是创建时排除 WS_VISIBLE）。
+//
+// 刻意**不用** sync.Once 锁死：前端的信号有可能到得太早 —— 窗口实现还在
+// pendingRun 里没跑起来时，WebviewWindow.Show() 只会去 InvokeSync(w.Run)
+// 然后**直接返回、不显示窗口**。锁死的话后面所有重试（包括 main.go 的兜底
+// 定时器）都会被这次「假成功」吃掉，窗口就永远不出来了（表现为「第一次打不开、
+// 再点一次才出来」）。这里改为「没真正显示过就继续试」。
+func (s *WindowService) MarkReady() {
+	if s.shown.Load() {
+		return
+	}
+	s.ShowMain()
+}
+
+// ShowMain 显示并聚焦主窗口（前端 ready / 兜底定时器 / 托盘点击 / 第二个实例）
+//
+// 可以重复调用：已经显示时只是再 Focus 一下（托盘点击、第二次启动都需要这个语义）。
+func (s *WindowService) ShowMain() {
+	w := s.current()
+	if w == nil {
+		return
+	}
+	if w.IsMinimised() {
+		w.UnMinimise()
+	}
+	w.Show()
+	w.Focus()
+	// IsVisible 读的是窗口实现的真实状态：显示成功才置位，
+	// 这样「信号到得太早」的那一次不会把后续重试挡掉。
+	if w.IsVisible() {
+		s.shown.Store(true)
+	}
+}
+
+// HideMain 收起主窗口（「关闭时最小化到托盘」用）
+func (s *WindowService) HideMain() {
+	if w := s.current(); w != nil {
+		w.Hide()
+	}
+}
+
+// SetMinimizeToTray 打开 / 关闭「关闭时最小化到托盘」，并立刻同步托盘图标。
+//
+// 值本身也会落盘，所以下次启动时托盘还在（main.go 启动时会读这个开关）。
+// 前端开关走这条路径而不是只推配置：托盘图标必须马上出现 / 消失，
+// 不能等下一次启动。
+func (s *WindowService) SetMinimizeToTray(on bool) bool {
+	if s.store != nil {
+		if err := s.store.Update(func(c *bootstrap.Config) { c.MinimizeToTray = on }); err != nil {
+			log.Printf("[tray] 保存托盘设置失败: %v", err)
+		}
+	}
+	if on {
+		s.ensureTray()
+	} else {
+		s.removeTray()
+	}
+	return on
+}
+
+// hideToTrayOnClose 报告「这次窗口关闭要不要收进托盘」（主窗口的关闭钩子用）。
+//
+// 真正退出（托盘菜单「退出」/ app.Quit）时 quitting 已经置位，这里返回 false，
+// 让 Wails 按正常流程销毁窗口并退出进程。
+func (s *WindowService) hideToTrayOnClose() bool {
+	if s.app == nil || s.quitting.Load() {
+		return false
+	}
+	return s.store != nil && s.store.Get().MinimizeToTray
+}
+
+// quitFromTray 托盘菜单的「退出」：先把 quitting 置位再退出，
+// 否则 Quit 触发的关窗又会被拦成「收进托盘」，应用永远退不掉。
+func (s *WindowService) quitFromTray() {
+	s.quitting.Store(true)
+	if s.app != nil {
+		s.app.Quit()
+	}
+}
+
+// ensureTray 创建托盘图标（已经存在就什么都不做）。
+//
+// SystemTray.New() 在应用 Run 之前调用也是安全的：Wails 会把 impl 的创建
+// 推迟到 app.Run 之后（runOrDeferToAppRun），这里设置的图标与菜单都会被保留。
+func (s *WindowService) ensureTray() {
+	if s.app == nil {
+		return
+	}
+	s.trayMu.Lock()
+	defer s.trayMu.Unlock()
+	if s.tray != nil {
+		return
+	}
+	tray := s.app.SystemTray.New()
+	tray.SetIcon(appIconPNG)
+	tray.SetTooltip("音乐播放器")
+	menu := s.app.NewMenu()
+	menu.Add("显示主界面").OnClick(func(*application.Context) { s.ShowMain() })
+	menu.AddSeparator()
+	menu.Add("退出").OnClick(func(*application.Context) { s.quitFromTray() })
+	tray.SetMenu(menu)
+	// 左键直接显示主界面（Windows 上右键才是菜单，由 SetMenu 自动挂上）
+	tray.OnClick(func() { s.ShowMain() })
+	s.tray = tray
+}
+
+// removeTray 销毁托盘图标（关闭「最小化到托盘」时调）。
+func (s *WindowService) removeTray() {
+	s.trayMu.Lock()
+	tray := s.tray
+	s.tray = nil
+	s.trayMu.Unlock()
+	if tray != nil {
+		tray.Destroy()
+	}
 }
 
 // Backdrop 返回窗口原生材质（Mica / Acrylic…）的状态。
@@ -1600,6 +1751,10 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			c.RowClickAction = bootstrap.NormalizeRowClickAction(asString(raw, c.RowClickAction))
 		case "listDensity":
 			c.ListDensity = bootstrap.NormalizeListDensity(asString(raw, c.ListDensity))
+		case "minimizeToTray":
+			// 前端开关的落盘路径。运行时那半（创建 / 销毁托盘图标）走
+			// WindowService.SetMinimizeToTray，与这里是同一个值，顺序无所谓。
+			c.MinimizeToTray = asBool(raw, c.MinimizeToTray)
 		case "showDesktopLyrics":
 			c.ShowDesktopLyrics = asBool(raw, c.ShowDesktopLyrics)
 		case "showDesktopWallpaper":

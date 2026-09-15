@@ -61,6 +61,7 @@ import {
 } from "./playerhost.js";
 import {
   applyResolvedTheme,
+  applyCoverBackdrop,
   applyCoverSeed,
   discoverThemes,
   extractCoverSeed,
@@ -161,6 +162,7 @@ function tick() {
   paintTrackSelection(rebuilt);
   paintPlayerBar();
   syncCoverAccent();
+  syncThemeBackdrop();
   renderPlayerView();
   paintDesktopLyrics();
   paintDesktopWallpaper();
@@ -426,6 +428,19 @@ function syncCoverAccent() {
 
   accentCoverSrc = src;
   extractSeed(src).then(applySeed);
+}
+
+/**
+ * 把底栏当前这张封面交给「封面取色」主题当整窗底图（见 theme.js#applyCoverBackdrop）。
+ *
+ * 每帧看一眼是最不容易漏的做法：封面地址可能因为手动匹配 / 轮播 / 换歌而变，
+ * 而这一层不依赖任何取色结果，占位封面（没有真正封面时）直接跳过 ——
+ * 拿默认 SVG 当整窗底图只会是一块没有意义的灰。
+ */
+function syncThemeBackdrop() {
+  const img = $("#bar-cover-img");
+  const src = img?.getAttribute("src") || "";
+  applyCoverBackdrop(seedSourceUsable(src) ? src : "");
 }
 
 
@@ -771,6 +786,17 @@ function applyPreviewParams() {
 async function main() {
   await bootstrap();
   applyPreviewParams();
+
+  // 封面缓存回填必须赶在首帧之前。
+  //
+  // 它是「用户换过的封面」的唯一真相（缓存目录才是真相，song.cover 只是文件
+  // 自带的）。如果等首帧画完再回填，列表会先按文件自带封面画一遍、几百毫秒后
+  // 再整片刷成用户选的那张 —— 那正是「进入界面时闪一下」。
+  //
+  // 这里先起头、让它与主题 / 下载面板 / 播放栏的装配并行跑，到首帧之前再收口
+  // （见下面的 await coversReady）：正常情况下它早就完成了，不会真的拖慢启动。
+  const coversReady = hydrateCachedCovers();
+
   await initTheme();
   // 第三方播放界面样式在启动时就扫一遍。
   // 以前样式只在「第一次打开播放详情页」时才扫描，于是刚启动就进设置的话，
@@ -806,6 +832,9 @@ async function main() {
   applyPreviewParams();
 
   subscribe(() => tick());
+  // 收口封面回填：首帧之前把它落进 state，第一帧画出来就是对的封面。
+  // 真慢的时候也只是晚一点点出画面，而不是「先画错、再改」。
+  await coversReady;
   tick();
   applyVolume();
 
@@ -815,11 +844,34 @@ async function main() {
     openSettings();
   }
 
+  // DOM 已经装配好：让 Go 侧把主窗口显示出来。
+  //
+  // 窗口是隐藏创建的（main.go 的 winOpts.Hidden），用来避开 WebView2 在页面
+  // 渲染出第一帧之前先亮一块白底。
+  //
+  // ★ 这里**不能**用 requestAnimationFrame 等首帧：窗口是隐藏的时候 WebView2
+  // 根本不派发 BeginFrame，rAF 回调永远不会执行 —— 而 document.visibilityState
+  // 仍然是 "visible"（它反映的是 WebView 控制器的可见性，不是系统窗口的），
+  // 从 JS 侧完全看不出异常。踩过的坑：前端「准备好了」的信号永远发不出去，
+  // 窗口只能等 Go 那边的兜底定时器，表现就是「第一次打不开、启动要好几年」。
+  // 所以：宏任务立刻发；窗口若已经可见，rAF 那一帧再补发一次（只发一次）。
+  //
+  // 位置刻意放在这里而不是函数最后：后面几步都是「后台慢慢加载」的事
+  // （响度能力、封面缓存回填），曲库大时可能要几百毫秒，等它们跑完再显示窗口，
+  // 用户看到的就是「双击图标后半天没反应」。
+  let windowReadySent = false;
+  const markWindowReady = () => {
+    if (windowReadySent) return;
+    windowReadySent = true;
+    backend.windowReady().catch(() => {});
+  };
+  setTimeout(markWindowReady, 0);
+  requestAnimationFrame(() => requestAnimationFrame(markWindowReady));
+
   // 响度能力与补偿表（后端可用时）
   await refreshLoudnessState();
   await refreshLoudnessGains();
-  // 换过的封面存在缓存目录里，启动时回填，避免「重启后又变回原始封面」
-  await hydrateCachedCovers();
+  // （封面缓存回填已经在首帧之前收口，见 main() 开头的 coversReady）
 
   // 预览模式下的进度模拟（真实播放时自动让位给 <audio> 事件）
   startMockTicker();

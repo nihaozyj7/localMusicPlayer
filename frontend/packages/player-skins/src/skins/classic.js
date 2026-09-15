@@ -11,7 +11,7 @@
 
 import { defineSkin } from "../contract.js";
 import { createLyricsView } from "../lyrics-view.js";
-import { escapeHtml, setCoverImage, subtitleOf } from "../html.js";
+import { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf } from "../html.js";
 import "./classic.css";
 
 /** 当前挂载实例（同一时刻只会有一个 classic 实例） */
@@ -65,7 +65,7 @@ const skin = defineSkin({
 
       paintSong() {
         const m = ctx.media();
-        const s = m.song || {};
+        const s = m.song || EMPTY_TRACK;
         this.title.textContent = s.title || "未在播放";
         this.artist.textContent = subtitleOf(s.artist, "");
         // 专辑单独一行：为空时整行隐藏，避免留下一行空白

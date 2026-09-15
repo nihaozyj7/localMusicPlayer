@@ -63,6 +63,11 @@ let gainNode = null;
 let sourceNode = null;
 let graphBroken = false; // 跨源等原因导致无法建图时退回元素音量
 
+// 频谱分接（只读）：播放界面皮肤用它做「随旋律律动」的可视化。
+// analyser 接在增益之后、**不接** destination，因此对声音没有任何影响。
+let analyserNode = null;
+let analyserData = null;
+
 /** 建立（或复用）Web Audio 链路 */
 function ensureGraph(node) {
   if (graphBroken) return false;
@@ -81,6 +86,17 @@ function ensureGraph(node) {
     // 链路：source → 增益 → 输出。增益里同时含用户音量与响度补偿
     sourceNode.connect(gainNode);
     gainNode.connect(ctx.destination);
+    // 分接一条到 AnalyserNode（可视化用，不接输出）
+    try {
+      analyserNode = ctx.createAnalyser();
+      analyserNode.fftSize = 512;
+      analyserNode.smoothingTimeConstant = 0.76;
+      analyserData = new Uint8Array(analyserNode.frequencyBinCount);
+      gainNode.connect(analyserNode);
+    } catch (err) {
+      analyserNode = null;
+      analyserData = null;
+    }
     // 新建的链路增益是 1，缓存要作废，让下一次 applyGainForSong 真正写进去
     lastAppliedGain = null;
     return true;
@@ -594,6 +610,43 @@ export function stopAudio() {
   loadedFor = null;
   switchPhase = SWITCH_IDLE;
   selfPause = false;
+}
+
+/**
+ * 取当前频谱（0..1 的归一化幅度数组）。
+ *
+ * 分桶刻意用**对数刻度**：线性分桶下低频只占一两个桶、高频占一大片，
+ * 可视化看起来就是「右边一直在抖、左边几乎不动」；对数分桶才像「一段旋律」。
+ *
+ * 拿不到频谱时返回 null（浏览器不支持 Web Audio、音频图没建起来、
+ * 或者当前根本还没播过任何东西）—— 调用方据此保持静态，而不是拿到一列 0。
+ *
+ * @param {number} [bands] 想要的频段数（1..128）
+ * @returns {Float32Array|null}
+ */
+export function spectrum(bands = 32) {
+  if (!analyserNode || !analyserData) return null;
+  analyserNode.getByteFrequencyData(analyserData);
+  const n = Math.max(1, Math.min(128, Math.floor(bands) || 32));
+  const out = new Float32Array(n);
+  const bins = analyserData.length;
+  for (let i = 0; i < n; i += 1) {
+    const lo = Math.floor(bins * (i / n) ** 1.7);
+    const hi = Math.min(bins, Math.max(lo + 1, Math.floor(bins * ((i + 1) / n) ** 1.7)));
+    let sum = 0;
+    for (let j = lo; j < hi; j += 1) sum += analyserData[j];
+    out[i] = sum / ((hi - lo) * 255);
+  }
+  return out;
+}
+
+/** 低频能量（0..1）：给「整体随鼓点放大」这类效果用 */
+export function bassLevel() {
+  const bands = spectrum(8);
+  if (!bands) return null;
+  let sum = 0;
+  for (let i = 0; i < 3; i += 1) sum += bands[i];
+  return sum / 3;
 }
 
 /** 供设置界面显示「当前是否在用 Web Audio 增益」 */

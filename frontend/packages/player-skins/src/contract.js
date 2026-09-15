@@ -53,6 +53,7 @@ export const PATCH_TYPES = [
   "media", // 封面变化 / 轮播切图：{ cover, covers, coverIndex }
   "lyrics", // 歌词装载完成或更新：{ lyrics }
   "progress", // 播放进度（宿主已按帧节流）：{ position, duration, playing, lyricIndex }
+  "spectrum", // 实时频谱（宿主采样，约 30Hz）：{ bands: number[] | null }
   "state", // 播放状态变化（播放/暂停/音量）：{ playing, volume, muted }
   "options", // 设置项变化：{ options }
   "theme", // 主题/深浅色变化：{ themeId, mode }
@@ -80,11 +81,24 @@ export const PATCH_TYPES = [
 
 /**
  * @typedef {Object} SkinMedia
- * @property {object|null} song 曲目对象（宿主 store 里的那一份）
+ * @property {SkinTrack|null} song 曲目（宿主裁好的视图，见 SkinTrack）
  * @property {string} cover 当前生效封面（data URL 或同源 URL）
  * @property {string[]} covers 全部封面（轮播用；至少一张）
  * @property {number} coverIndex 轮播当前下标
  * @property {SkinLyrics} lyrics
+ */
+
+/**
+ * 交给皮肤渲染的曲目视图。**只有这几个字段**：宿主不把内部曲目对象
+ * （本地路径、所属文件夹、来源标记…）递出去 —— 那会让内部结构变成对外契约。
+ * 需要打开文件位置之类的操作，用 ctx.actions。
+ *
+ * @typedef {Object} SkinTrack
+ * @property {string} id 稳定标识（换歌判定用）
+ * @property {string} title
+ * @property {string} artist
+ * @property {string} album
+ * @property {number} duration 毫秒
  */
 
 /**
@@ -135,6 +149,9 @@ export const PATCH_TYPES = [
  * @property {number} [order]
  * @property {string} [description]
  * @property {boolean} [background] 需要整窗背景层
+ * @property {number|boolean} [spectrum] 需要用实时频谱驱动画面。数字 = 要多少段
+ *   （例如游戏风的柱子数），true = 默认 32 段。宿主据此采样并推 spectrum 补丁，
+ *   皮肤只负责把 bands 画上去 —— 皮肤不碰 AudioContext，也不自己跑 rAF
  * @property {string[]} [styles] CSS 相对路径（外部皮肤用；内置皮肤由打包器引入）
  * @property {boolean} [builtin] 是否内置样式（内置样式省略此字段，视为 true）
  * @property {string} [source] 外部样式的来源描述（目录名，便于排错）
@@ -176,6 +193,7 @@ export function defineSkin(skin) {
     order: 100,
     description: "",
     background: false,
+    spectrum: false,
     styles: [],
     update: null,
     destroy: null,

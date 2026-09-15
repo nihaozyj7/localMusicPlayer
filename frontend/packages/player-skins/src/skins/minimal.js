@@ -5,6 +5,7 @@
 
 import { defineSkin } from "../contract.js";
 import { createLyricsView } from "../lyrics-view.js";
+import { EMPTY_TRACK } from "../html.js";
 import "./minimal.css";
 
 let inst = null;
@@ -42,7 +43,7 @@ const skin = defineSkin({
       artist: ctx.root.querySelector("#pv-artist"),
 
       paintSong() {
-        const s = ctx.media().song || {};
+        const s = ctx.media().song || EMPTY_TRACK;
         this.title.textContent = s.title || "未在播放";
         this.artist.textContent = s.artist || "—";
       },

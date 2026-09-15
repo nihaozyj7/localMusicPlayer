@@ -298,6 +298,11 @@ function themeCard() {
   })}
         ${backdropNoteHtml()}
         ${settingRow({
+    label: "关闭时最小化到托盘",
+    hint: "打开后点关闭按钮只把窗口收进系统托盘（任务栏右下角），音乐照常播放；要真正退出请用托盘图标的右键菜单",
+    control: switchHtml("minimizeToTray", state.config.minimizeToTray, "关闭时最小化到托盘"),
+  })}
+        ${settingRow({
     label: "界面动画",
     hint: "关闭后取消过渡与旋转动画，低性能设备更流畅",
     control: switchHtml("animations", state.config.animations, "界面动画"),
@@ -2480,6 +2485,15 @@ export function handleSettingControl(actEl, ctx = {}) {
       if (toggleKey === "animations") {
         // 重新按当前「过渡速度」算一遍 --dur：关掉是 0.001ms，打开则回到该档时长
         setRuntimeToken("--dur", animationDurationValue(state.config))
+      }
+      if (toggleKey === "minimizeToTray") {
+        // 除了写配置（commit 会推给后端），还要立刻让后端创建/销毁托盘图标，
+        // 否则用户拨了开关要等下次启动才看到托盘
+        if (isWails()) {
+          backend.minimizeToTray(next).catch((err) => {
+            console.warn("[settings] 同步托盘开关失败", err)
+          })
+        }
       }
       if (toggleKey === "watchFolders") {
         state.folders.forEach((f) => (f.watching = next))

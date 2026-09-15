@@ -200,19 +200,6 @@
           <path d="M10 9.6l.85 1.9 1.9.85-1.9.85L10 15.1l-.85-1.9-1.9-.85 1.9-.85Z" />
         </symbol>
 
-        <!-- 深邃宇宙：带环行星 + 远处小星 -->
-        <symbol id="i-cosmos" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="4.4" />
-          <ellipse cx="12" cy="12" rx="9.2" ry="3.4" transform="rotate(-22 12 12)" />
-          <path d="M19.6 4.4h.01M4.6 6.2h.01M18.4 19.4h.01" />
-        </symbol>
-
-        <!-- 科幻末世：警示三角 + 闪电（废墟 / 故障） -->
-        <symbol id="i-wasteland" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 3.6 21 20H3Z" />
-          <path d="M12.8 9.2 10 14h2.6l-.7 4.2 3.3-5.2h-2.6Z" />
-        </symbol>
-
         <!-- 游戏风：街机手柄（十字键 + 两个按钮） -->
         <symbol id="i-game" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
           <path d="M7.4 7h9.2a5.4 5.4 0 0 1 5.3 6.4l-.6 3A3.2 3.2 0 0 1 16 18.4l-1.3-1.6h-5.4L8 18.4a3.2 3.2 0 0 1-5.3-2l-.6-3A5.4 5.4 0 0 1 7.4 7Z" />
@@ -387,8 +374,15 @@
       </defs>
     </svg>
 
+    <!-- 应用底色层：位于 .app 之下、body 之上。
+         深色 / 浅色主题在这里铺「从上到下的渐变」（由 --bg-canvas 提供），
+         封面取色主题在这里铺当前封面的重度模糊图（--cover-bg 由 JS 写入，
+         见 theme.js#applyCoverBackdrop）。有了这一层，界面上的面板只要
+         半透明磨砂就能压在上面，不需要为深浅两套各配一套实色。 -->
+    <div class="app-bg" id="app-bg" aria-hidden="true"></div>
+
     <!-- ==================================================================
-         应用骨架（固定：标题栏 / 侧边栏 + 主内容 / 底部播放控件）
+         应用骨架（固定：标题栏 / 侧边栏 + 主内容 + 底部播放控件）
          ================================================================== -->
     <div class="app" id="app" data-view="library" data-mode="classic" data-resolved-theme="dark-minimal">
       <!-- 播放详情页的整窗背景层容器。

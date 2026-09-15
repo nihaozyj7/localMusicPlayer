@@ -167,14 +167,72 @@
   animation-delay: var(--d, 0s);
 }
 
-.app[data-mode="anime"] .an-bg__frame {
+/* --------------------------------------------------------------------------
+   手绘村落：植物 / 房屋 / 小动物（见 anime.js#VILLAGE_SVG）
+   --------------------------------------------------------------------------
+   全部是描边线稿（fill: none），颜色只认 --an-ink，所以它天然跟着纸色走；
+   纯 CSS 画的几何色块在这套「马克笔 + 网点纸」的语言里一眼就假。
+   动画只有三处轻微的生命感：树摇、鸟浮、炊烟上升。 */
+.app[data-mode="anime"] .an-bg__village {
   position: absolute;
-  inset: 10px;
-  border: 2.5px solid var(--an-ink);
-  border-radius: 14px;
-  opacity: 0.55;
+  left: 0;
+  right: 0;
+  bottom: 1%;
+  height: 46%;
   pointer-events: none;
-  box-shadow: inset 0 0 0 6px color-mix(in oklab, var(--an-paper) 50%, transparent);
+  color: var(--an-ink);
+}
+
+.app[data-mode="anime"] .an-veg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.app[data-mode="anime"] .an-veg__ink {
+  opacity: 0.82;
+}
+
+.app[data-mode="anime"] .an-veg__grass {
+  fill: color-mix(in oklab, var(--an-hill) 58%, transparent);
+  stroke: none;
+}
+
+.app[data-mode="anime"] .an-veg__house,
+.app[data-mode="anime"] .an-veg__fence {
+  opacity: 0.92;
+}
+
+.app[data-mode="anime"] .an-veg__pet {
+  opacity: 0.86;
+}
+
+.app[data-mode="anime"] .an-veg__tree--a {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: an-sway calc(var(--an-anim) * 7.5s) ease-in-out infinite;
+}
+
+.app[data-mode="anime"] .an-veg__tree--b {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: an-sway calc(var(--an-anim) * 9.2s) ease-in-out infinite;
+  animation-delay: calc(var(--an-anim) * -3.1s);
+}
+
+.app[data-mode="anime"] .an-veg__birds {
+  transform-box: fill-box;
+  animation: an-bob calc(var(--an-anim) * 5.2s) ease-in-out infinite;
+}
+
+.app[data-mode="anime"] .an-veg__smoke {
+  fill: color-mix(in oklab, var(--an-paper) 62%, #ffffff);
+  stroke: none;
+  opacity: 0.5;
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: an-rise calc(var(--an-anim) * 6.4s) ease-in-out infinite;
 }
 
 /* --------------------------------------------------------------------------
@@ -244,10 +302,11 @@
 }
 
 .playerview[data-skin="anime"] .an-panel__art {
+  /* 不放内描边：分镜格已经有 3px 的墨线外框，里面再套一圈就成了「双层框」，
+     镜头里的封面显得又挤又笨。这里只留圆角裁切。 */
   position: absolute;
   inset: 11px;
   overflow: hidden;
-  border: 2px solid var(--an-ink);
   border-radius: 7px;
   background: var(--an-paper-2);
 }
@@ -524,6 +583,44 @@
   }
 }
 
+@keyframes an-sway {
+  0%,
+  100% {
+    transform: rotate(-1.15deg);
+  }
+
+  50% {
+    transform: rotate(1.15deg);
+  }
+}
+
+@keyframes an-bob {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  50% {
+    transform: translate3d(0, -7px, 0);
+  }
+}
+
+@keyframes an-rise {
+  0% {
+    transform: translate3d(0, 6px, 0) scale(0.86);
+    opacity: 0;
+  }
+
+  35% {
+    opacity: 0.5;
+  }
+
+  100% {
+    transform: translate3d(-8px, -26px, 0) scale(1.1);
+    opacity: 0;
+  }
+}
+
 @keyframes an-petal-fall {
   0% {
     transform: translate3d(0, 0, 0) rotate(0deg) scale(var(--s, 1));
@@ -590,7 +687,10 @@
 .app[data-mode="anime"] .an-bg[data-anim="off"] .an-bg__sun,
 .app[data-mode="anime"] .an-bg[data-anim="off"] .an-bg__speed,
 .app[data-mode="anime"] .an-bg[data-anim="off"] .an-bg__clouds span,
-.app[data-mode="anime"] .an-bg[data-anim="off"] .an-petal {
+.app[data-mode="anime"] .an-bg[data-anim="off"] .an-petal,
+.app[data-mode="anime"] .an-bg[data-anim="off"] .an-veg__tree,
+.app[data-mode="anime"] .an-bg[data-anim="off"] .an-veg__birds,
+.app[data-mode="anime"] .an-bg[data-anim="off"] .an-veg__smoke {
   animation-play-state: paused;
 }
 

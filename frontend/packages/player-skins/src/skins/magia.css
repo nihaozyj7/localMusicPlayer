@@ -1,4 +1,4 @@
-﻿/* ==========================================================================
+/* ==========================================================================
    skin.css — 播放界面样式「魔法阵 · 手绘次元」（id: magia）
    --------------------------------------------------------------------------
    作用域约定（应用的硬性要求）：
@@ -121,7 +121,6 @@
 .app[data-mode="magia"] .mg-bg__streaks,
 .app[data-mode="magia"] .mg-bg__veil,
 .app[data-mode="magia"] .mg-bg__petals,
-.app[data-mode="magia"] .mg-bg__scan,
 .app[data-mode="magia"] .mg-bg__flash {
   position: absolute;
   inset: 0;
@@ -260,20 +259,6 @@
 
 .app[data-mode="magia"] .mg-bg[data-anim="off"] .mg-bg__petals {
   display: none;
-}
-
-/* 扫描线：一条从上往下扫的细亮线 */
-.app[data-mode="magia"] .mg-bg__scan {
-  background: linear-gradient(
-    180deg,
-    transparent 0,
-    transparent 42%,
-    color-mix(in oklab, var(--accent) 34%, transparent) 50%,
-    transparent 58%,
-    transparent 100%
-  );
-  animation: mg-scan calc(var(--mg-anim) * 8.5s) cubic-bezier(0.45, 0, 0.55, 1) infinite;
-  opacity: 0.2;
 }
 
 /* 切歌 / 换行时的白闪（由 --mg-cut 驱动，无定时器） */
@@ -743,19 +728,6 @@
   animation: mg-vinyl calc(var(--mg-anim) * 240s) linear infinite;
 }
 
-.playerview[data-skin="magia"] .mg-disc__sheen {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    118deg,
-    transparent 34%,
-    color-mix(in oklab, var(--text-1) 26%, transparent) 47%,
-    transparent 58%
-  );
-  animation: mg-sheen calc(var(--mg-anim) * 5.6s) ease-in-out infinite;
-  opacity: 0.75;
-}
-
 .playerview[data-skin="magia"] .mg-disc__rim {
   position: absolute;
   inset: 0;
@@ -1116,17 +1088,6 @@
   }
 }
 
-@keyframes mg-sheen {
-  0% {
-    transform: translate3d(-42%, 0, 0) rotate(0.001deg);
-  }
-
-  55%,
-  100% {
-    transform: translate3d(42%, 0, 0) rotate(0.001deg);
-  }
-}
-
 @keyframes mg-grid-run {
   from {
     background-position: 0 0, 0 0;
@@ -1144,26 +1105,6 @@
 
   to {
     background-position: 168px 0;
-  }
-}
-
-@keyframes mg-scan {
-  0% {
-    transform: translateY(-60%);
-    opacity: 0;
-  }
-
-  12% {
-    opacity: 0.4;
-  }
-
-  88% {
-    opacity: 0.4;
-  }
-
-  100% {
-    transform: translateY(60%);
-    opacity: 0;
   }
 }
 

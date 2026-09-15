@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -26,6 +27,13 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+// 托盘图标（PNG）。与构建用的窗口/可执行文件图标同源：build/appicon.png，
+// 由 `wails3 task generate:icons` 从它生成 Windows .ico / macOS .icns，
+// 这里嵌进二进制给系统托盘用（Wails 的托盘只认 PNG 字节）。
+//
+//go:embed build/appicon.png
+var appIconPNG []byte
 
 type appState struct {
 	store  *bootstrap.Store
@@ -212,6 +220,17 @@ func main() {
 			DisableQuitOnLastWindowClosed: false,
 			AdditionalBrowserArgs:         browserArgs,
 		},
+		// 单实例：第二次启动时 Wails 会把第二个进程的参数发给已经在跑的实例，
+		// 然后第二个进程自己退出（见 single_instance.go）。回调里要做的就是
+		// 「把已有窗口显示出来并抢焦点」——这正是需求里要的行为。
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "com.musicplayer.app",
+			OnSecondInstanceLaunch: func(application.SecondInstanceData) {
+				if state != nil && state.windowSvc != nil {
+					state.windowSvc.ShowMain()
+				}
+			},
+		},
 	})
 	state.app = app
 	state.librarySvc.app = app
@@ -247,15 +266,22 @@ func main() {
 
 	backdropMode := bootstrap.NormalizeBackdropMode(store.Get().NativeBackdrop)
 	winOpts := application.WebviewWindowOptions{
-		Name:             "main",
-		Title:            "Music Player",
-		Width:            1280,
-		Height:           820,
-		MinWidth:         1000,
-		MinHeight:        680,
-		Frameless:        true,
+		Name:      "main",
+		Title:     "Music Player",
+		Width:     1280,
+		Height:    820,
+		MinWidth:  1000,
+		MinHeight: 680,
+		Frameless: true,
+		// 窗口底色取近黑，和深色主题一致（浅色主题由前端首帧就换掉，见 early_theme.go）
 		BackgroundColour: application.NewRGB(8, 8, 10),
 		URL:              "/",
+		// 先隐藏，等前端把第一帧画完再显示（WindowService.MarkReady）。
+		//
+		// 不隐藏的话 Wails 会用带 WS_VISIBLE 的样式创建窗口，而 WebView2 在页面
+		// 渲染完成前会先亮一块白底 —— 那就是首屏那一下「闪一下」。
+		// 隐藏创建能直接从样式里去掉 WS_VISIBLE（Wails issue #4611 的修法）。
+		Hidden: true,
 	}
 	if backdrop, ok := backdropTypeFor(backdropMode); ok {
 		winOpts.BackgroundType = application.BackgroundTypeTranslucent
@@ -266,6 +292,36 @@ func main() {
 	state.windowBackdrop = backdropMode
 	state.window = app.Window.NewWithOptions(winOpts)
 	state.windowSvc.activeBackdrop = backdropMode
+
+	// 关闭行为：开着「最小化到托盘」时，把这次关闭拦下来，改成隐藏窗口。
+	//
+	// 必须用 RegisterHook 而不是 OnWindowEvent：Hook 比 Listener 先跑，
+	// 取消事件才能同时拦住 Wails 内建的「销毁窗口」和下面那个关桌面歌词的
+	// Listener。用 Listener 的话事件已经在派发途中，窗口照样会被销毁。
+	state.window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		if !state.windowSvc.hideToTrayOnClose() {
+			return
+		}
+		e.Cancel()
+		// 隐藏走主线程（Hide 内部是 InvokeSync）；事件回调本身可能就在主线程上，
+		// 同步调用会自己等自己，所以放 goroutine。
+		go state.windowSvc.HideMain()
+	})
+
+	// 显示时机：窗口是隐藏创建的（避开 WebView2 的白底首帧），正常由前端的
+	// MarkReady 在几百毫秒内显示（见 services.go#MarkReady）。
+	//
+	// 这里补两次定时重试，纯粹是兜底：
+	//   · 前端的信号可能因为脚本报错没发出来；
+	//   · 也可能发得太早（窗口实现还没从 pendingRun 里跑起来，Show() 会直接返回）。
+	// MarkReady 只在「还没真正显示过」时动手，所以重复调用不会抢焦点。
+	time.AfterFunc(1500*time.Millisecond, state.windowSvc.MarkReady)
+	time.AfterFunc(4*time.Second, state.windowSvc.MarkReady)
+
+	// 上次开着「关闭时最小化到托盘」的话，启动时就把托盘图标建出来
+	if store.Get().MinimizeToTray {
+		state.windowSvc.ensureTray()
+	}
 
 	// 主窗口关闭 = 退出应用：桌面歌词与桌面背景歌词都是独立的额外窗口，
 	// 不跟着关的话它们会单独留在桌面上，应用也不会退出

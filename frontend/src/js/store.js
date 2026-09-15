@@ -26,6 +26,7 @@ const DEFAULT_CONFIG = {
   glassAlpha: 62,
   glassAlphaCustom: false, // 用户是否手动调整过面板透明度（true 才按配置实时合成）
   nativeBackdrop: "off", // 窗口原生材质：off | auto | mica | acrylic | tabbed（改了要重启）
+  minimizeToTray: false, // 点关闭按钮时收进系统托盘而不是退出应用
   animations: true,
   // 过渡速度：fast（0.2s，默认）| medium（0.35s）| slow（0.5s）。
   // 与 Go 侧 bootstrap.Config.AnimationsSpeed 保持一致。
@@ -174,6 +175,10 @@ function initialState() {
 
     /* 派生 */
     visibleSongs: [],
+    // visibleVersion 只在「可见列表内容真的变了」时 +1（见 recalcVisible）；
+    // main.js 的渲染键用它判断要不要重绘曲目表。
+    visibleFingerprint: "",
+    visibleVersion: 0,
     likedIds: new Set(),
   };
 }
@@ -396,14 +401,60 @@ function recalcVisible() {
   }
 
   state.visibleSongs = out;
-  // 可见列表的版本号：main.js 的渲染键要用它判断「列表变了没」。
-  // 以前渲染键是 state.visibleSongs.map(id).join(",")，每一帧都要把整个列表
-  // 遍历拼一遍字符串（1000 首就是每帧 1000 次拼接 + 一次大 join）。
-  state.visibleVersion = (state.visibleVersion || 0) + 1;
+  // 可见列表的「版本号」：main.js 的渲染键用它判断「列表到底变了没」。
+  //
+  // ★ 必须由**内容**决定，不能每次 recalcVisible 都自增。
+  // recalcVisible 是 commit() 里无条件跑的，而 commit() 到处都是 ——
+  // 切歌、调音量、播放/暂停、换封面、进度落盘都会来一次。以前这里写的是
+  // 「每调一次就 +1」，等价于「任何一次状态变更都让曲目表整表重绘」，
+  // 用户看到的就是「切一首歌列表闪一下」「进入界面闪一下」。
+  // 现在改成：只有「可见曲目集合 / 顺序」真的变了，版本号才 +1。
+  const fingerprint = visibleFingerprint(out);
+  if (fingerprint !== state.visibleFingerprint) {
+    state.visibleFingerprint = fingerprint;
+    state.visibleVersion = (state.visibleVersion || 0) + 1;
+  }
   // 顺带重建 id → song 索引：songById 在每帧的同步里被调用好几次，
   // 每次都 state.songs.find(...) 是 O(n)，1000 首时每帧要扫几千次。
   songIndex = new Map(state.songs.map((s) => [s.id, s]));
 }
+
+/**
+ * 可见列表的内容指纹。
+ *
+ * 为什么是「指纹」而不是「把 id 拼成字符串」：拼接会为每一首歌分配一个字符串
+ * 再拼成一条大串（1000 首 ≈ 每次 commit 几十 KB 垃圾），而 FNV-1a 只在整数上
+ * 迭代，没有中间对象。为什么不是「只在 commit 时自增」：那正是上面注释里的 bug。
+ *
+ * 覆盖范围：
+ *   · 长度 + 顺序 + 每一首的 id（成员与排序都算进去了）；
+ *   · 曲库数组被整体替换时强制算「变了」（重扫 / 启动从后端灌数据）——
+ *     这时即使 id 一个都没变，标题/封面这些展示字段也可能换了新的对象。
+ *     state.songs 永远是整体替换、从不原地改字段，所以引用比较是可靠的判据。
+ *
+ * 注意：每首歌的**封面**不在指纹里（它在 state.coverSets 里，另有 coverVersion
+ * 参与渲染键），这里只负责「列表本身」。
+ */
+function visibleFingerprint(list) {
+  let h = 0x811c9dc5;
+  h = Math.imul(h ^ list.length, 0x01000193) >>> 0;
+  for (let i = 0; i < list.length; i += 1) {
+    const id = String(list[i].id ?? "");
+    for (let j = 0; j < id.length; j += 1) {
+      h ^= id.charCodeAt(j);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    // 分隔符：不然 ["ab","c"] 与 ["a","bc"] 会撞成同一个指纹
+    h ^= 0x1f;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  const replaced = state.songs !== lastFingerprintSongs ? 1 : 0;
+  lastFingerprintSongs = state.songs;
+  return `${list.length}:${h >>> 0}:${replaced}`;
+}
+
+/** 上一次算指纹时看到的曲库数组（引用比较，见 visibleFingerprint 的说明） */
+let lastFingerprintSongs = null;
 
 /** 曲库 id → song 的索引，随 state.songs 变化在 recalcVisible 里重建 */
 let songIndex = new Map();
@@ -1098,6 +1149,7 @@ const SYNCED_KEYS = [
   "glassBlur",
   "glassAlpha",
   "nativeBackdrop",
+  "minimizeToTray",
   "animations",
   "animationsSpeed",
   "accentFromCover",

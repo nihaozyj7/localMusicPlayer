@@ -7,6 +7,23 @@
    ========================================================================== */
 
 /**
+ * 「没有曲目」时用的空曲目视图。
+ *
+ * 皮肤拿到的 song 是宿主裁好的 SkinTrack（见 contract.js）或 null，
+ * 直接用 `m.song || {}` 会得到一个空对象、字段全是 undefined，
+ * 类型上也拿不到字段。用这个常量兜底，字段齐全、类型也对。
+ *
+ * @type {import("./contract.js").SkinTrack}
+ */
+export const EMPTY_TRACK = Object.freeze({
+  id: "",
+  title: "",
+  artist: "",
+  album: "",
+  duration: 0,
+});
+
+/**
  * HTML 转义。曲目名/歌手名来自文件标签，属于用户数据，拼进模板必须转义。
  * @param {unknown} s
  * @returns {string}

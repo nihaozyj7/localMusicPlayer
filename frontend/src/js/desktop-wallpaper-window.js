@@ -24,6 +24,10 @@
    只在收到推送时写一次 DOM。皮肤自己的 CSS 动画（例如唱片旋转）不在这个范畴，
    那是样式的一部分。加任何一条循环之前请先想清楚 —— 它会让一张静止的壁纸
    每秒重绘 60 次，而那正是「双份资源」最贵的部分。
+
+   连实时频谱也是这样：那个窗口没有音频图，采样由**主窗口**做完，
+   按 ~25Hz 以 spectrum 补丁推过来（desktop-wallpaper.js），皮肤只负责画。
+   所以这里不需要任何「渲染循环」—— 推一帧画一帧，不推就不画。
    ========================================================================== */
 
 import { backend, connect, on } from "./bridge.js";
@@ -361,7 +365,12 @@ function applyPatch(payload) {
   // （实测带 skinId 的那条会排在 song 后面）。早退的话，先到的 song 就被丢掉了
   // —— 表现是桌面上一直停在「未在播放」，直到下一次换歌才恢复。
   // 数据是无条件接受的，皮肤没挂上只是暂时画不出来而已。
-  if (payload.song !== undefined) state.media.song = payload.song;
+  if (payload.song !== undefined) {
+    state.media.song = payload.song;
+    // 收到过主窗口的媒体快照 = 那边已经启动完毕（不是「有歌在播」，
+    // 曲库为空时 song 是 null 也算）。它是首帧就绪的判据之一，见 announcePainted。
+    mediaSeen = true;
+  }
   if (payload.cover !== undefined) state.media.cover = payload.cover;
   if (payload.covers !== undefined) state.media.covers = payload.covers;
   if (payload.coverIndex !== undefined) state.media.coverIndex = payload.coverIndex;
@@ -387,15 +396,47 @@ function applyPatch(payload) {
   const wanted = typeof payload.skinId === "string" ? payload.skinId : mountedId;
   if (wanted !== mountedId) mountSkin(wanted);
 
-  if (!skin) return;
-
   // —— ④ 原样转给皮肤 ——
   // 不改造 type：契约里每个类型都有自己的处理分支，宿主擅自改写（例如把
   // theme 说成 song）会让皮肤少跑它该跑的那一段 —— magia 就是在 theme 里
   // 重新取调色板并把画布尺寸对齐的，被改写成 song 之后粒子颜色会一直停在
   // 挂载时那一套。
-  if (!type) return;
-  ctx.push({ type, ...payload });
+  if (skin && type) ctx.push({ type, ...payload });
+
+  // —— ⑤ 皮肤挂上、数据也落地了 → 告诉后端可以显示窗口了 ——
+  // 必须放在最后：显示时机就是「这一帧画面已经写完」。
+  announcePainted();
+}
+
+/* --------------------------------------------------------------------------
+   首帧就绪
+   --------------------------------------------------------------------------
+   这个窗口是**隐藏创建**的（见 Go 侧 desktop_wallpaper.go#ensureDesktopWallpaper）：
+   页面自己的底色是深色，而皮肤要等主窗口把曲目/封面/歌词/主题推过来才画得出
+   东西 —— 创建后立刻显示，用户先看到的就是一块纯色（「刚打开时黑一下」）。
+
+   所以显示时机由这里决定：皮肤挂上、并且主窗口的媒体快照已经到了，才算
+   「第一帧画好」。Go 那边另有兜底定时器，页面出任何问题时窗口也会显示出来。
+   -------------------------------------------------------------------------- */
+
+/** 是否已经通知过后端显示窗口（只通知一次） */
+let paintedAnnounced = false;
+/** 是否收到过主窗口推来的媒体快照（type: song，哪怕 song 是 null） */
+let mediaSeen = false;
+
+function announcePainted() {
+  if (paintedAnnounced) return;
+  // 两个条件缺一不可：只有样式没有数据 = 空皮肤，只有数据没挂样式 = 空壳。
+  // 注意 mediaSeen 判的是「收到过 song 补丁」而不是「有歌在播」——
+  // 曲库为空、没有当前曲目时 song 是 null，那也是一份合法且已经渲染完的画面。
+  if (!mountedId || !mediaSeen) return;
+  paintedAnnounced = true;
+  // 等一轮宏任务：贴完主题令牌、挂上皮肤之后浏览器还要做一次样式与布局。
+  // 刻意**不用** requestAnimationFrame —— 窗口在显示之前根本不派发 BeginFrame，
+  // rAF 回调永远不会执行（主窗口的 windowReady 也是同一个原因才不用 rAF）。
+  setTimeout(() => {
+    backend.desktopWallpaperPainted?.().catch(() => {});
+  }, 0);
 }
 
 /* --------------------------------------------------------------------------

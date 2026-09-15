@@ -7,6 +7,8 @@
 
    @theme-name 封面取色 · 深色
    @theme-mode dark
+   @theme-builtin-rev 2
+   （内置主题修订号：本文件由程序维护，升级时会替换旧副本；要长期改请复制成新文件）
    @theme-swatch #0b0b12 #2a2a31 #6b6b76 #f7f7fa #ff4d6d
    ========================================================================== */
 
@@ -16,24 +18,30 @@
   --seed: #6b6b76;
   --seed-2: #2a2a31;
 
-  /* 表面 */
-  --bg-app: color-mix(in srgb, var(--seed-2) 18%, #07070a);
-  --bg-canvas:
-    radial-gradient(1000px 700px at 10% -8%, color-mix(in srgb, var(--seed) 34%, transparent), transparent 62%),
-    radial-gradient(920px 660px at 102% 4%, color-mix(in srgb, var(--seed-2) 40%, transparent), transparent 60%),
-    radial-gradient(820px 820px at 50% 120%, color-mix(in srgb, var(--seed) 20%, transparent), transparent 64%);
+  /* 表面
+     整窗底子现在是「当前封面 + 重模糊」（由 .app-bg 渲染，见 base.css；
+     封面地址由 JS 写进 --cover-bg）。这里的 --bg-canvas 只是封面还没加载出来
+     时的兜底渐变，颜色仍然从种子色派生，所以首帧不会是一块死黑。 */
+  --bg-app: color-mix(in srgb, var(--seed-2) 20%, #07070a);
+  --bg-canvas: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--seed) 30%, #0a0a12) 0%,
+    color-mix(in srgb, var(--seed-2) 22%, #08080d) 52%,
+    #06060a 100%
+  );
   --surface-1: color-mix(in srgb, var(--seed) 10%, transparent);
   --surface-2: color-mix(in srgb, var(--seed) 16%, transparent);
   --surface-3: color-mix(in srgb, var(--seed) 24%, transparent);
   --surface-hover: color-mix(in srgb, var(--seed) 12%, transparent);
   --surface-active: color-mix(in srgb, var(--seed) 20%, transparent);
 
-  /* 毛玻璃 */
-  --glass-bg: color-mix(in srgb, var(--seed-2) 46%, rgba(10, 10, 14, 0.62));
-  --glass-bg-strong: color-mix(in srgb, var(--seed-2) 56%, rgba(8, 8, 12, 0.82));
-  --glass-bg-weak: color-mix(in srgb, var(--seed-2) 34%, rgba(12, 12, 16, 0.42));
-  --glass-blur: 26px;
-  --glass-saturate: 1.8;
+  /* 毛玻璃：压在模糊封面上的面板要够透才能看出底下是封面，
+     所以比别的主题更透明一点、模糊也更大一点 */
+  --glass-bg: color-mix(in srgb, var(--seed-2) 26%, rgba(10, 10, 14, 0.5));
+  --glass-bg-strong: color-mix(in srgb, var(--seed-2) 34%, rgba(8, 8, 12, 0.66));
+  --glass-bg-weak: color-mix(in srgb, var(--seed-2) 20%, rgba(12, 12, 16, 0.34));
+  --glass-blur: 30px;
+  --glass-saturate: 1.6;
   --glass-border: color-mix(in srgb, var(--seed) 28%, rgba(255, 255, 255, 0.08));
   --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 42%);
   --glass-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);

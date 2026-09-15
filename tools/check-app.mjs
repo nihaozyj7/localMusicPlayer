@@ -140,7 +140,7 @@ check(
   Array.isArray(skins?.buttons) &&
     // 内置样式清单：变了就必须显式改这里，免得新增样式时漏注册
     skins.buttons.slice(0, 8).join(",") ===
-      "classic,immersive,minimal,anime,cosmos,wasteland,arcade,magia" &&
+      "classic,immersive,minimal,anime,arcade,magia" &&
     skins.skin === "immersive" &&
     skins.hasCard &&
     skins.bgExists,

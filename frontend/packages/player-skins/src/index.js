@@ -6,7 +6,7 @@
    这个包里面提供播放详情界面的背景渲染和交互（歌词的渲染也包含在内）」）：
      · 定义**皮肤接口**（contract.js）；
      · 提供歌词渲染器与整窗背景层的可复用实现；
-     · 内置八种样式：经典 / 沉浸 / 简约 / 二次元手绘 / 深邃宇宙 / 科幻末世 / 游戏风 / 魔法阵；
+     · 内置六种样式：经典 / 沉浸 / 简约 / 二次元手绘 / 游戏风 / 魔法阵；
      · 提供一个注册表：宿主用它列样式、按 id 取样式，第三方皮肤也能注册进来。
 
    扩展方式（两条路，接口完全一样）：
@@ -20,8 +20,6 @@ import classic from "./skins/classic.js";
 import immersive from "./skins/immersive.js";
 import minimal from "./skins/minimal.js";
 import anime from "./skins/anime.js";
-import cosmos from "./skins/cosmos.js";
-import wasteland from "./skins/wasteland.js";
 import arcade from "./skins/arcade.js";
 import magia from "./skins/magia.js";
 import "./lyrics.css";
@@ -31,7 +29,7 @@ import "./background-layer.css";
 import "./fx-lyrics.css";
 
 /** 内置样式（顺序即按钮组顺序的默认依据） */
-export const BUILTIN_SKINS = [classic, immersive, minimal, anime, cosmos, wasteland, arcade, magia];
+export const BUILTIN_SKINS = [classic, immersive, minimal, anime, arcade, magia];
 
 /** 兜底样式：配置里写的 id 不认识时用它 */
 export const DEFAULT_SKIN_ID = "classic";
@@ -50,7 +48,7 @@ export {
 } from "./lrc.js";
 export { createLyricsView } from "./lyrics-view.js";
 export { createBackgroundLayer } from "./background-layer.js";
-export { escapeHtml, setCoverImage, subtitleOf } from "./html.js";
+export { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf } from "./html.js";
 
 /* --------------------------------------------------------------------------
    注册表

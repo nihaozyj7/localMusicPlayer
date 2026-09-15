@@ -44,6 +44,55 @@ body::before {
   transition: opacity var(--dur-slow) var(--ease);
 }
 
+/* 应用底色层（index.html 里的 #app-bg）。
+   · 深色 / 浅色主题：它保持透明，露出 body::before 画的「从上到下渐变」；
+   · 封面取色主题：把当前封面铺满并重度模糊（--cover-bg 由 JS 写入）。
+
+   模糊必须放在这一层、而不是 body 上：body 一旦带 filter 就会变成所有
+   fixed 子元素的包含块，整窗布局（标题栏 / 详情页）全会跟着错位。 */
+.app-bg {
+  position: fixed;
+  /* 比窗口大一圈：模糊会在边缘采样到透明，inset 为负可以避免露白边 */
+  inset: -8%;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--cover-bg, none);
+  background-position: center;
+  background-size: cover;
+  filter: blur(56px) saturate(1.35) brightness(0.62);
+  opacity: 0;
+  transition: opacity var(--dur-slow) var(--ease);
+}
+
+:root[data-theme="cover-dark"] .app-bg {
+  opacity: 1;
+}
+
+/* 压暗层：保证封面无论多亮，压在它上面的文字与图标都还有对比度 */
+.app-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(8, 9, 14, 0.4) 0%, rgba(5, 6, 10, 0.74) 100%);
+}
+
+/* 取色主题下的详情页底：再铺一层同样的封面虚化图。
+   为什么不能像「沉浸」那样干脆 background: none —— 详情页是铺满整窗的绝对定位层
+   （z-index 30），而 .app-bg 在 z-index 0（比曲库列表还低），一旦透明，
+   后面的曲目列表就会从歌词底下透出来。
+   这里按 data-skin-background 区分：**自己不铺背景**的样式（经典 / 简约）才画这一层；
+   声明了 background 的样式（沉浸 / 特效类）由它们的 .skin-bg 负责，画了反而会盖住人家。
+   数据由宿主在 mountSkin 时写（它知道 skin.background），见 playerhost.js。 */
+:root[data-theme="cover-dark"] .playerview[data-skin-background="no"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--cover-bg, none) center / cover no-repeat;
+  filter: blur(60px) saturate(1.35) brightness(0.62);
+  pointer-events: none;
+}
+
 h1,
 h2,
 h3,

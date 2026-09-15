@@ -117,16 +117,16 @@ test("inspectSkinModule：分别识别 default / skin 导出与缺失", () => {
    注册表
    -------------------------------------------------------------------------- */
 
-test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸 → 简约 → 四个特效 → 魔法阵）", () => {
+test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸 → 简约 → 两个特效 → 游戏风 → 魔法阵）", () => {
   // 内置样式是「产品的一部分」：这个清单变了就必须有人显式改这里，
   // 免得新增样式时漏注册、或者顺序被无意打乱。
   assert.deepEqual(
     listSkins().map((s) => s.id),
-    ["classic", "immersive", "minimal", "anime", "cosmos", "wasteland", "arcade", "magia"]
+    ["classic", "immersive", "minimal", "anime", "arcade", "magia"]
   );
   assert.deepEqual(
     BUILTIN_SKINS.map((s) => s.id),
-    ["classic", "immersive", "minimal", "anime", "cosmos", "wasteland", "arcade", "magia"]
+    ["classic", "immersive", "minimal", "anime", "arcade", "magia"]
   );
   for (const skin of BUILTIN_SKINS) {
     assert.equal(typeof skin.mount, "function", `${skin.id} 缺 mount`);
@@ -139,7 +139,7 @@ test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸 → �
 
 test("需要整窗背景层的内置样式（沉浸 / 特效类）都声明了 background", () => {
   const withBg = BUILTIN_SKINS.filter((s) => s.background).map((s) => s.id);
-  assert.deepEqual(withBg, ["immersive", "anime", "cosmos", "wasteland", "arcade", "magia"]);
+  assert.deepEqual(withBg, ["immersive", "anime", "arcade", "magia"]);
   // 经典与简约是「不铺满整窗」的两种：一个左唱片右歌词，一个只留文字
   assert.deepEqual(
     BUILTIN_SKINS.filter((s) => !s.background).map((s) => s.id),

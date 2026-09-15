@@ -1,6 +1,8 @@
 package main
 
 import (
+	"time"
+
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -167,14 +169,17 @@ func (s *WindowService) openDesktopWallpaperWindow() map[string]any {
 	return map[string]any{"ok": true, "enabled": true}
 }
 
-// ensureDesktopWallpaper 确保背景歌词窗口存在并显示
-// （不存在就按「无边框 + 垫到桌面图标之下」新建）。
+// ensureDesktopWallpaper 确保背景歌词窗口存在（不存在就按「无边框 + 垫到桌面
+// 图标之下」新建）。新建出来的窗口是**隐藏的**，显示时机见 armDesktopWallpaperShow 与
+// MarkDesktopWallpaperPainted；已经存在时直接显示。
 //
 // 失败时返回人话原因：这个功能依赖未公开的桌面窗口结构，
 // 失败是**正常结果之一**（比如换了 shell、系统版本不兼容），必须能说清是哪一步。
 func (s *WindowService) ensureDesktopWallpaper() (*application.WebviewWindow, string) {
 	if w := s.desktopWallpaperWindowRef(); w != nil {
-		w.Show()
+		// 已经存在（页面多半也早就画好了）：直接显示。
+		// 幂等 —— 已经显示过就什么都不做。
+		s.showDesktopWallpaperNow()
 		return w, ""
 	}
 	if s.app == nil {
@@ -188,13 +193,88 @@ func (s *WindowService) ensureDesktopWallpaper() (*application.WebviewWindow, st
 		return nil, "拿不到窗口句柄"
 	}
 	// 关键一步：把窗口挂到桌面图标那一层之下。
-	// Window 是 Hidden 创建的，所以这一步失败时屏幕上不会留下任何东西。
+	// Window 是 Hidden 创建的，attachDesktopWallpaperWindow 也不会让它变成可见，
+	// 所以这一步失败时屏幕上不会留下任何东西。
 	if err := attachDesktopWallpaperWindow(hwnd); err != nil {
 		w.Close()
 		return nil, err.Error()
 	}
-	w.Show()
+
+	// ★ 这里刻意**不**立刻 Show()。
+	//
+	// 页面此刻才刚刚开始加载：它自己的底色是深色的，而皮肤要等主窗口把
+	// 曲目/封面/歌词/主题推过来才画得出东西。创建后就显示的话，用户先看到的
+	// 就是一块纯色 —— 「刚打开的时候黑一下」。
+	//
+	// 所以显示时机交给页面自己：它把第一帧写进 DOM 之后调
+	// MarkDesktopWallpaperPainted。同时安排兜底定时器 —— 页面加载失败、
+	// 脚本报错、后端没连上时窗口也必须能出现（那比黑一下更糟）。
+	s.armDesktopWallpaperShow()
 	return w, ""
+}
+
+/* --------------------------------------------------------------------------
+   显示时机
+   --------------------------------------------------------------------------
+   隐藏创建 → 页面画好第一帧 → 再显示。这与主窗口的做法是同一套
+   （见 main.go 的 winOpts.Hidden 与 WindowService.MarkReady，Wails issue #4611）。
+   区别只在于「画好」的判据：主窗口是 DOM 装配完，这里是皮肤挂上、数据落地。
+   -------------------------------------------------------------------------- */
+
+// wallpaperShowFallback 是「页面第一帧迟迟没来」时的兜底显示时刻。
+//
+// 为什么给得比较宽（5 秒）而不是主窗口那样的 1.5 秒。正常路径根本用不到它：
+// 页面画好第一帧就会自己调 MarkDesktopWallpaperPainted（用户手动开关这个模式时，
+// 主窗口早就启动完了，延迟只有几十毫秒）。它真正覆盖的是「启动时恢复上次开着的
+// 桌面背景歌词」——那一刻主窗口还在 bootstrap，曲目/封面/主题都还没推过来，
+// 兜底定得太早就会在主窗口准备好之前把窗口显示出来，又是一次「先黑一下」。
+//
+// 所以宁可多等几秒（这时用户正在看主窗口，桌面上晚一点出现无所谓），也不要
+// 抢在主窗口前面显示一块空画面。页面真的坏了时它仍然保证了窗口最终可见。
+const wallpaperShowFallback = 5 * time.Second
+
+// armDesktopWallpaperShow 给「刚创建的背景歌词窗口」安排显示时机。
+func (s *WindowService) armDesktopWallpaperShow() {
+	s.wallpaperMu.Lock()
+	s.wallpaperGen++
+	gen := s.wallpaperGen
+	s.wallpaperMu.Unlock()
+	s.wallpaperShown.Store(false)
+
+	time.AfterFunc(wallpaperShowFallback, func() { s.showDesktopWallpaper(gen) })
+}
+
+// showDesktopWallpaper 显示背景歌词窗口（幂等）。
+//
+// gen 非 0 时只有「还是同一个窗口」才生效：旧窗口留下的兜底定时器不能把
+// 新窗口提前显示出来。
+func (s *WindowService) showDesktopWallpaper(gen uint64) {
+	if gen != 0 {
+		s.wallpaperMu.Lock()
+		stale := gen != s.wallpaperGen
+		s.wallpaperMu.Unlock()
+		if stale {
+			return
+		}
+	}
+	s.showDesktopWallpaperNow()
+}
+
+// showDesktopWallpaperNow 真正调用 Show()，且只做一次。
+//
+// 为什么用 CompareAndSwap 而不是 sync.Once：页面信号与兜底定时器会并发到达，
+// 谁都可能是第一个；而窗口关掉再打开又是一个新窗口，需要能再来一次。
+func (s *WindowService) showDesktopWallpaperNow() {
+	if !s.wallpaperShown.CompareAndSwap(false, true) {
+		return
+	}
+	w := s.desktopWallpaperWindowRef()
+	if w == nil {
+		// 窗口已经不在了（用户刚关掉 / 创建失败）：把标记退回去，下次再来
+		s.wallpaperShown.Store(false)
+		return
+	}
+	w.Show()
 }
 
 // desktopWallpaperOptions 组装背景歌词窗口参数。
@@ -292,6 +372,21 @@ func (s *WindowService) MarkDesktopWallpaperReady() map[string]any {
 		s.pushDesktopWallpaper(state)
 	}
 	return state
+}
+
+// MarkDesktopWallpaperPainted 由背景歌词窗口在「第一帧内容已经写进 DOM」之后调用。
+//
+// 这是窗口**显示**的触发点（见 ensureDesktopWallpaper 的说明）：窗口创建时是
+// 隐藏的，页面自己只有一块深色底，皮肤要等数据推过来才画得出东西 ——
+// 创建后就显示，用户先看到的就是那块纯色（「刚打开的时候黑一下」）。
+//
+// 必须由页面在 applyPatch 之后调用，而不是在加载完成的 Ready 那一刻：
+// Ready 时全量数据还在路上，这时候显示同样是一块空画面。
+//
+// 幂等：页面重复调用、或兜底定时器已经先显示过，都不会有任何副作用。
+func (s *WindowService) MarkDesktopWallpaperPainted() map[string]any {
+	s.showDesktopWallpaperNow()
+	return map[string]any{"ok": true}
 }
 
 // DesktopWallpaperTouched 报告「背景歌词开关是否已经被用户/前端操作过」。

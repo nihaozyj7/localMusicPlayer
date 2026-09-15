@@ -1033,7 +1033,6 @@ const SHELL_HTML = `
             <span class="mg-disc__aura" aria-hidden="true"></span>
             <span class="mg-disc__artwrap">
               <img class="mg-disc__art" alt="" />
-              <span class="mg-disc__sheen" aria-hidden="true"></span>
             </span>
             <span class="mg-disc__rim" aria-hidden="true"></span>
             <span class="mg-disc__pin" aria-hidden="true"></span>
@@ -1284,7 +1283,6 @@ export default defineSkin({
           <div class="mg-bg__streaks"></div>
           <div class="mg-bg__veil"></div>
           <div class="mg-bg__petals">${buildPetals(14)}</div>
-          <div class="mg-bg__scan"></div>
           <div class="mg-bg__flash"></div>
         </div>`;
       bgRoot.hidden = false;

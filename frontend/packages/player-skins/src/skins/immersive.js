@@ -9,7 +9,7 @@
 import { defineSkin } from "../contract.js";
 import { createLyricsView } from "../lyrics-view.js";
 import { createBackgroundLayer } from "../background-layer.js";
-import { subtitleOf } from "../html.js";
+import { EMPTY_TRACK, subtitleOf } from "../html.js";
 import "./immersive.css";
 
 let inst = null;
@@ -53,7 +53,7 @@ const skin = defineSkin({
 
       paintSong() {
         const m = ctx.media();
-        const s = m.song || {};
+        const s = m.song || EMPTY_TRACK;
         this.title.textContent = s.title || "未在播放";
         this.artist.textContent = subtitleOf(s.artist, s.album);
         // 用当前生效封面当整窗背景；轮播切图时也会走到这里

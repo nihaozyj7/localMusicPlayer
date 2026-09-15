@@ -230,6 +230,11 @@ export const backend = {
   loudnessRefresh: () => call(bindings?.Loudness?.RefreshTools),
 
   /* ---- 窗口 ---- */
+  // 主窗口是「隐藏创建、前端 ready 后再显示」的（防 WebView2 首帧白闪，
+  // 见 main.go 的 winOpts.Hidden 与 WindowService.MarkReady）。
+  windowReady: () => call(bindings?.Window?.MarkReady),
+  // 「关闭时最小化到托盘」：写配置 + 立即创建/销毁托盘图标
+  minimizeToTray: (on) => call(bindings?.Window?.SetMinimizeToTray, Boolean(on)),
   windowMinimize: () => call(bindings?.Window?.Minimize),
   windowToggleMaximize: () => call(bindings?.Window?.ToggleMaximize),
   windowClose: () => call(bindings?.Window?.Close),
@@ -251,6 +256,9 @@ export const backend = {
   desktopWallpaper: (on) => call(bindings?.Window?.SetDesktopWallpaper, Boolean(on)),
   desktopWallpaperState: () => call(bindings?.Window?.DesktopWallpaperState),
   desktopWallpaperReady: () => call(bindings?.Window?.MarkDesktopWallpaperReady),
+  // 页面把「第一帧已经画进 DOM」告诉后端：窗口是隐藏创建的，只有收到这个信号
+  // 才显示出来，否则用户会先看到一块纯色底（「刚打开时黑一下」）。
+  desktopWallpaperPainted: () => call(bindings?.Window?.MarkDesktopWallpaperPainted),
   updateDesktopWallpaper: (payload) => call(bindings?.Window?.UpdateDesktopWallpaper, payload),
 
   /* ---- 在线歌曲 ---- */

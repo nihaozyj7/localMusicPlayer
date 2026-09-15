@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -49,7 +50,9 @@ type Manager struct {
 }
 
 var (
-	reThemeName   = regexp.MustCompile(`@theme-name\s+(.+)`)
+	reThemeName = regexp.MustCompile(`@theme-name\s+(.+)`)
+	// reBuiltinRev 读内置主题头里的修订号（见 theme.go 顶部说明与 syncBuiltin）
+	reBuiltinRev  = regexp.MustCompile(`@theme-builtin-rev\s+(\d+)`)
 	reThemeMode   = regexp.MustCompile(`@theme-mode\s+(\w+)`)
 	reThemeSwatch = regexp.MustCompile(`@theme-swatch\s+([^\r\n*]+)`)
 	reColorHex    = regexp.MustCompile(`#[0-9a-fA-F]{3,8}`)
@@ -76,7 +79,35 @@ func NewManager(dataDir string) (*Manager, error) {
 // Dir 主题目录（供「打开主题文件夹」使用）
 func (m *Manager) Dir() string { return m.dir }
 
-// syncBuiltin 把内置主题写入用户目录；已存在的文件不覆盖（保留用户改动）
+// builtinRev 读一段主题 CSS 里的内置修订号；没有标记时返回 0。
+func builtinRev(css string) int {
+	m := reBuiltinRev.FindStringSubmatch(css)
+	if len(m) != 2 {
+		return 0
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// syncBuiltin 把内置主题写入用户目录。
+//
+// 为什么不是「存在就跳过」：内置主题是**程序的一部分**，它的观感会随版本改进
+// （例如整窗渐变底 + 磨砂面板那一版）。用户目录里躺着旧副本时，前端
+// discoverThemes 会把旧 CSS 注入成独立样式表，而它排在打包样式表之后 ——
+// 结果是「程序升级了，主题却一点没变」。
+//
+// 做法：内置主题文件头带一个 @theme-builtin-rev 修订号。
+//
+//	· 目标文件不存在            → 写入；
+//	· 目标修订号 >= 内置修订号  → 跳过（同一版，或用户自己维护的副本）；
+//	· 目标修订号更小            → 覆盖成新版，覆盖前先留一份 .bak。
+//
+// 一条边界：**从没有修订号的旧文件**（比这个机制更早的版本）修订号按 0 算，
+// 会被升级一次；升级前的那份会写到 <名字>.css.bak，用户真的改过也能找回来。
+// 想长期自定义内置主题仍然可以：把文件复制成别的名字即可（新名字不受管理）。
 func (m *Manager) syncBuiltin() error {
 	entries, err := builtinFS.ReadDir("builtin")
 	if err != nil {
@@ -86,14 +117,23 @@ func (m *Manager) syncBuiltin() error {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".css") {
 			continue
 		}
-		target := filepath.Join(m.dir, e.Name())
-		if _, err := os.Stat(target); err == nil {
-			continue
-		}
 		data, err := builtinFS.ReadFile("builtin/" + e.Name())
 		if err != nil {
 			continue
 		}
+		target := filepath.Join(m.dir, e.Name())
+		want := builtinRev(string(data))
+
+		if existing, readErr := os.ReadFile(target); readErr == nil {
+			// want == 0 说明这个内置文件本身没有修订标记：保持旧行为，不覆盖。
+			if want == 0 || builtinRev(string(existing)) >= want {
+				continue
+			}
+			if err := os.WriteFile(target+".bak", existing, 0o644); err != nil {
+				fmt.Printf("[theme] 备份旧内置主题失败 %s: %v\n", target, err)
+			}
+		}
+
 		if err := os.WriteFile(target, data, 0o644); err != nil {
 			return fmt.Errorf("写入内置主题失败: %w", err)
 		}

@@ -3,25 +3,23 @@
 播放详情页的**样式包**（皮肤）：负责背景渲染、歌词渲染与交互；
 音频、进度、曲目、封面、歌词文本、设置项全部由宿主提供并主动推送。
 
-八种内置样式（按样式按钮组顺序）：
+六种内置样式（按样式按钮组顺序）：
 
 | id          | 名称              | 需要整窗背景层 | 一句话                                            |
 | ----------- | ----------------- | -------------- | ------------------------------------------------- |
 | `classic`   | 经典              | 否             | 左唱片右歌词，信息最完整                          |
 | `immersive` | 沉浸              | 是             | 封面虚化铺满整窗，歌词浮在中间                    |
 | `minimal`   | 简约              | 否             | 无封面，居中歌词                                  |
-| `anime`     | 二次元手绘        | 是             | 漫画分镜 + 网点纸，逐字弹跳与马克笔扫光           |
-| `cosmos`    | 深邃宇宙          | 是             | 透视星场 + 轨道行星，纵深运镜与星尘歌词           |
-| `wasteland` | 科幻末世          | 是             | 废墟控制台与故障艺术，等宽文字解码动效            |
-| `arcade`    | 游戏风            | 是             | 街机框体 + 计分 HUD，对话盒式打字与震屏           |
+| `anime`     | 二次元手绘        | 是             | 漫画分镜 + 网点纸 + 手绘村落，逐字弹跳与马克笔扫光 |
+| `arcade`    | 游戏风            | 是             | 街机框体 + 计分 HUD，像素电平柱跟着真实频谱律动   |
 | `magia`     | 魔法阵 · 手绘次元 | 是             | 手绘夜景 + 旋转魔法阵（原第三方样式，已并入内置） |
 
 **构图必须各不相同**：这几个样式的视觉语言都是"整窗背景"，很容易退化成同一套
 布局只换一层皮（实测被吐槽过"同质化"）。现在骨架分别是——
-`anime` 两栏（分镜格左 / 歌词右）、`cosmos` 单列（行星居中上 / 歌词带铺满下方）、
-`wasteland` 镜像两栏（歌词左 / 监视器右）、`arcade` 单列（机台居中 / 底部游戏对话框）。
+`anime` 两栏（分镜格左 / 歌词右）、`arcade` 单列（机台居中 / 底部游戏对话框）、
+`magia` 镜像两栏（魔法阵左 / 歌词右）。
 
-四个特效样式（`anime` / `cosmos` / `wasteland` / `arcade`）共用两个零件：
+两个特效样式（`anime` / `arcade`）共用两个零件：
 
 - `createFxLyrics(host, opts)`（`src/fx-lyrics.js` + `src/fx-lyrics.css`）：
   把每行拆成**字素单元**，支持逐字入场、逐字点亮（卡拉OK）、运动残影。
@@ -79,7 +77,13 @@ export default defineSkin({
 ```
 
 `update` 的 `patch.type` 取值见 `PATCH_TYPES`：
-`mount | song | media | lyrics | progress | state | options | theme | resize | close | destroy`。
+`mount | song | media | lyrics | progress | state | spectrum | options | theme | resize | close | destroy`。
+
+需要实时频谱的样式在 `defineSkin` 里声明 `spectrum: <段数>`（例如游戏风 = 柱子数），
+宿主会以约 30Hz 推 `{ type: "spectrum", bands: number[] | null }` 过来：
+**采样统一由宿主做**（它才有 `AnalyserNode`），皮肤只负责把 `bands` 画上去 ——
+不碰 `AudioContext`、不自己跑 `requestAnimationFrame`、也不用管窗口可见性。
+`bands: null` 表示停止（没有旋律），回到自己的待机效果。
 
 ### ctx 提供什么
 

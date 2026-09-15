@@ -448,6 +448,36 @@ export function normalizeSeed(value) {
  * 只负责写令牌与持久化；调用方在 active 时再套一次 applyResolvedTheme，
  * 让依赖种子色的派生令牌（面板底色 / 强调色）跟着更新。
  */
+/* --------------------------------------------------------------------------
+   封面取色主题的整窗底图
+   --------------------------------------------------------------------------
+   取色主题的底子改成「当前封面 + 重模糊」（参考「沉浸」样式的背景），而不是
+   只用提取出来的两个种子色 —— 单纯取色出来的底色往往偏灰、也看不出是哪张封面。
+
+   种子色**仍然保留**：封面还没解码完时的首帧兜底、以及强调色派生都靠它。
+
+   这里只写 --cover-bg 一个令牌，真正的渲染在 base.css 的 .app-bg 里；
+   不是取色主题时把它撤掉，否则换到别的主题后旧封面还会一直贴着。
+   -------------------------------------------------------------------------- */
+let coverBackdropSrc = "";
+
+/**
+ * 把当前封面交给取色主题当整窗底图。src 为空 = 撤掉底图（回到渐变）。
+ * @param {string} src 当前的封面地址（data URL / 同源代理地址）
+ */
+export function applyCoverBackdrop(src) {
+  const themeId = document.documentElement.dataset.theme || "";
+  const usable = typeof src === "string" ? src.trim() : "";
+  const want = themeId === SEED_CONSUMER ? usable : "";
+  if (want === coverBackdropSrc) return;
+  coverBackdropSrc = want;
+  // 用 url("…") 包起来：地址里可能带 ? & 之类的查询串，裸写进 background-image
+  // 会被 CSS 解析成一个孤立的自定义属性值而不是图片。
+  setRuntimeTokens({
+    "--cover-bg": want ? `url("${want.replace(/["\\]/g, "\\$&")}")` : null,
+  });
+}
+
 export function applyCoverSeed(seedHex, seed2Hex) {
   const seed = normalizeSeed(seedHex);
   const seed2 = normalizeSeed(seed2Hex) || seed;

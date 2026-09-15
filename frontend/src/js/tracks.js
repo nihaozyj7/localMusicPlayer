@@ -22,7 +22,7 @@ import {
   toggleLike,
   toggleSelectedSong,
 } from "./store.js";
-import { coverOf, esc, fmtCount, fmtTime } from "./utils.js";
+import { DEFAULT_COVER, coverOf, esc, fmtCount, fmtTime } from "./utils.js";
 
 export const SORT_LABELS = {
   addedAt: "添加时间",
@@ -44,11 +44,21 @@ export function trackTableMode() {
   return state.view === "queue" ? "playlist" : "library";
 }
 
-function rowHtml(song, index, mode) {
+/** 「#」列的内容：普通态是序号 + 播放按钮，多选态是勾选框。 */
+function indexCellHtml(song, index, selecting) {
+  if (selecting) {
+    const checked = state.selectedIds.has(song.id);
+    return `<span class="track__check" role="checkbox" aria-checked="${checked}">${icon("check")}</span>`;
+  }
+  return `<span class="track__num u-num">${index + 1}</span>
+        <div class="track__bars"><span></span><span></span><span></span><span></span></div>
+        <button class="track__play" type="button" data-act="play" aria-label="播放 ${esc(song.title)}">${icon("play")}</button>`;
+}
+
+function rowHtml(song, index, mode, selecting) {
   const isCurrent = song.id === state.currentId;
   const liked = isLiked(song.id);
   // 歌单多选模式：把「#」列换成勾选框，点整行即勾选
-  const selecting = state.view === "playlist" && state.playlistSelecting;
   const checked = selecting && state.selectedIds.has(song.id);
   const handle =
     mode === "playlist"
@@ -56,11 +66,7 @@ function rowHtml(song, index, mode) {
       : `<div class="col-handle"></div>`;
   // 「选中行」与「正在播放行」是同一件事：唯一真源是 state.currentId
   // （同一份数据也驱动底栏与播放详情页，不再各维护一个选中态）。
-  const indexCell = selecting
-    ? `<span class="track__check" role="checkbox" aria-checked="${checked}">${icon("check")}</span>`
-    : `<span class="track__num u-num">${index + 1}</span>
-        <div class="track__bars"><span></span><span></span><span></span><span></span></div>
-        <button class="track__play" type="button" data-act="play" aria-label="播放 ${esc(song.title)}">${icon("play")}</button>`;
+  const indexCell = indexCellHtml(song, index, selecting);
   return `
     <div class="track" data-id="${song.id}" data-index="${index}" data-selectable="${selecting ? "1" : "0"}" aria-selected="${checked}" aria-current="${isCurrent}" data-playing="${
       isCurrent && state.playing ? "true" : "false"
@@ -90,48 +96,257 @@ function rowHtml(song, index, mode) {
     </div>`;
 }
 
-export function renderTracks(container) {
-  const mode = trackTableMode();
-  const songs = state.visibleSongs;
-  // 播放列表（队列）的顺序由用户拖拽决定，表头排序对它没有意义：
-  // 这里渲染成静态文本，避免出现「点了排序没反应」的假按钮。
+/* --------------------------------------------------------------------------
+   增量渲染
+   --------------------------------------------------------------------------
+   ★ 这里不再「整表 innerHTML」。
+
+   用户看到的两处闪烁都出在这一段：
+     · 每次 commit 都重建整张表 → 所有 <img> 被重新创建，浏览器把每张封面
+       重新解码一遍，列表闪一下（切歌、启动回填封面时最明显）；
+     · 行的 hover / 拖拽中间态 / 焦点全部丢掉；
+     · 长列表下字符串与节点量都是 O(n)。
+
+   现在按 song.id 复用行元素：
+     · 表结构（.tracks / 表头）只在「结构级」变化时重建（视图模式 / 排序字段）；
+     · 已有的行只把**变了的字段**写回去，顺序用 insertBefore 对齐
+       （连续相同的情况下一个节点都不移动）；
+     · 不再可见的歌才移除元素。
+   于是「换歌」（只有 currentId 变）与「封面回填」（只有 img src 变）都不再
+   重建 DOM，封面也不会重新加载。
+   -------------------------------------------------------------------------- */
+
+/** 一张表的结构级状态（行缓存 + 上次的表头模式），按 .tracks 元素存 */
+const tableStates = new WeakMap();
+
+function tableState(table) {
+  let st = tableStates.get(table);
+  if (!st) {
+    st = { headMode: "", mode: "", rows: new Map() };
+    tableStates.set(table, st);
+  }
+  return st;
+}
+
+/** 表头 HTML。队列（playlist 模式）的顺序由拖拽决定，表头渲染成静态文本。 */
+function headHtml(mode) {
   const sortable = mode !== "playlist";
   const sortCell = (key, label, cls = "") =>
     sortable
       ? `<button class="tracks__sort ${cls}" type="button" data-sort="${key}">${label}${icon("chevron-down")}</button>`
       : `<div class="tracks__sort ${cls}" data-static="1">${label}</div>`;
-  container.innerHTML = `
-    <div class="tracks" data-mode="${mode}" data-density="${state.config.listDensity || "cozy"}"
-         data-album="${state.config.showAlbumColumn === false ? "off" : "on"}">
-      <div class="tracks__head" data-mode="${mode}">
-        <div class="col-handle"></div>
-        <div class="col-index">#</div>
-        <div class="col-cover"></div>
-        ${sortCell("title", "标题")}
-        ${sortCell("album", "专辑", "col-album")}
-        ${sortCell("duration", "时长")}
-        <div class="col-heart" title="我喜欢">${icon("heart")}</div>
-        <div class="col-more"></div>
-      </div>
-      <div class="tracks__body">
-        ${songs.map((s, i) => rowHtml(s, i, mode)).join("")}
-      </div>
+  return `
+    <div class="tracks__head" data-mode="${mode}">
+      <div class="col-handle"></div>
+      <div class="col-index">#</div>
+      <div class="col-cover"></div>
+      ${sortCell("title", "标题")}
+      ${sortCell("album", "专辑", "col-album")}
+      ${sortCell("duration", "时长")}
+      <div class="col-heart" title="我喜欢">${icon("heart")}</div>
+      <div class="col-more"></div>
     </div>`;
+}
 
-  // 排序方向指示
-  container.querySelectorAll(".tracks__sort").forEach((btn) => {
-    if (btn.dataset.sort === state.sortKey) {
-      btn.dataset.dir = state.sortDir;
-      btn.classList.toggle("is-asc", state.sortDir === "asc");
+/** 排序方向指示（升序时箭头翻转，由 CSS 的 .is-asc 负责） */
+function applySortIndicators(head) {
+  head.querySelectorAll(".tracks__sort").forEach((btn) => {
+    if (btn.dataset.sort !== state.sortKey) {
+      delete btn.dataset.dir;
+      btn.classList.remove("is-asc");
+      return;
     }
+    btn.dataset.dir = state.sortDir;
+    btn.classList.toggle("is-asc", state.sortDir === "asc");
   });
+}
 
+function createRowEl(song, index, mode, selecting) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = rowHtml(song, index, mode, selecting).trim();
+  const el = tpl.content.firstElementChild;
   // 封面加载失败 → 默认封面（不要留下浏览器破碎图标）
-  container.querySelectorAll(".track__cover img").forEach(bindCoverFallback);
+  bindCoverFallback(el.querySelector(".track__cover img"));
+  return el;
+}
+
+/**
+ * 这一行当前「该长什么样」的全部字段。
+ * 与上一份快照逐字段比较，只把变了的写回 DOM。
+ */
+function rowFields(song, index, selecting) {
+  return {
+    index,
+    title: song.title,
+    artist: song.artist,
+    album: song.album,
+    ext: song.ext,
+    duration: song.duration,
+    // 封面地址在 coverOf 里始终是同一个字符串对象（来自 Map / song 本身），
+    // 所以这里的 === 是 O(1) 的指针比较，不会因为 data URL 很长而变慢。
+    cover: coverOf(song),
+    liked: isLiked(song.id),
+    current: song.id === state.currentId,
+    playing: song.id === state.currentId && Boolean(state.playing),
+    selecting,
+    checked: selecting && state.selectedIds.has(song.id),
+  };
+}
+
+/** img → 这一行最终想要的封面地址（预加载是异步的，用它挡掉过期的写入） */
+const coverWants = new WeakMap();
+
+/**
+ * 换封面地址。
+ *
+ * 为什么不直接写 img.src：那样浏览器会先丢掉旧图，新图解码完成之前那一格
+ * 是空的 —— 几十行同时换封面看起来就是「整个列表闪了一下」。除了 data:
+ * （同源内存图，本来就快），其余地址先在一个游离的 Image 上预加载，就绪之后
+ * 再替换，旧图一直留到新图可以显示为止。
+ */
+function setCoverSrc(img, src) {
+  if (!img) return;
+  const want = src || DEFAULT_COVER;
+  if (img.getAttribute("src") === want) return;
+  coverWants.set(img, want);
+  if (want.startsWith("data:")) {
+    img.src = want;
+    return;
+  }
+  const probe = new Image();
+  probe.decoding = "async";
+  // 加载成功与失败都换过去：失败时由 bindCoverFallback 兜底成默认封面。
+  // 不换的话这一行会一直停在上一首歌的封面上，比空白更糟。
+  const swap = () => {
+    if (coverWants.get(img) === want) img.src = want;
+  };
+  probe.addEventListener("load", swap);
+  probe.addEventListener("error", swap);
+  probe.src = want;
+}
+
+/**
+ * 按 id 把已有的行对齐到目标顺序，只创建新出现的歌、只移除消失的歌。
+ *
+ * 顺序对调用的是 insertBefore：连续相同的情况下 cursor 一路跟到底，
+ * 一个节点都不会被移动 —— 这正是「重绘一次列表却什么都没动」的效果。
+ */
+function reconcileRows(body, songs, mode, selecting, st) {
+  // 视图模式变了（本地歌曲 ↔ 播放列表）：行的骨架不同（拖拽手柄列），
+  // 整块重建一次最省心，而这只发生在切换视图时。
+  if (st.mode !== mode) {
+    st.mode = mode;
+    st.rows.clear();
+    body.textContent = "";
+  }
+
+  const seen = new Set();
+  let cursor = body.firstElementChild;
+
+  for (let i = 0; i < songs.length; i += 1) {
+    const song = songs[i];
+    let entry = st.rows.get(song.id);
+    if (!entry) {
+      entry = { el: createRowEl(song, i, mode, selecting), fields: null };
+      st.rows.set(song.id, entry);
+    }
+
+    const next = rowFields(song, i, selecting);
+    if (entry.fields) patchRowEl(entry.el, song, next, entry.fields);
+    entry.fields = next;
+    seen.add(song.id);
+
+    if (cursor === entry.el) cursor = cursor.nextElementSibling;
+    else body.insertBefore(entry.el, cursor);
+  }
+
+  // 不再可见的行（被筛选掉 / 移出队列）：这时候才真的移除元素
+  for (const [id, entry] of st.rows) {
+    if (seen.has(id)) continue;
+    entry.el.remove();
+    st.rows.delete(id);
+  }
+}
+
+function patchRowEl(el, song, next, prev) {
+  if (prev.index !== next.index) {
+    el.dataset.index = String(next.index);
+    const num = el.querySelector(".track__num");
+    if (num) num.textContent = String(next.index + 1);
+  }
+
+  // 序号列在「普通」与「多选」两种形态之间切换：整格换掉最省事，
+  // 里面只有图标与文字，不涉及图片，不会闪。
+  if (prev.selecting !== next.selecting) {
+    el.dataset.selectable = next.selecting ? "1" : "0";
+    el.querySelector(".track__index").innerHTML = indexCellHtml(song, next.index, next.selecting);
+  } else if (prev.checked !== next.checked) {
+    el.querySelector(".track__check")?.setAttribute("aria-checked", String(next.checked));
+  }
+
+  if (prev.title !== next.title) {
+    el.querySelector(".track__title").textContent = song.title;
+    el.querySelector(".track__play")?.setAttribute("aria-label", `播放 ${song.title}`);
+  }
+  if (prev.artist !== next.artist) el.querySelector(".track__artist").textContent = song.artist;
+  if (prev.ext !== next.ext) el.querySelector(".track__tag").textContent = song.ext;
+  if (prev.album !== next.album) el.querySelector(".track__album").textContent = song.album;
+  if (prev.duration !== next.duration) el.querySelector(".track__time").textContent = fmtTime(song.duration);
+
+  if (prev.cover !== next.cover) setCoverSrc(el.querySelector(".track__cover img"), next.cover);
+
+  if (prev.liked !== next.liked) {
+    const heart = el.querySelector(".track__heart");
+    heart.setAttribute("aria-pressed", String(next.liked));
+    heart.dataset.tip = next.liked ? "取消喜欢" : "加入我喜欢";
+  }
+
+  if (prev.current !== next.current) el.setAttribute("aria-current", String(next.current));
+  if (prev.playing !== next.playing) el.dataset.playing = next.playing ? "true" : "false";
+  if (prev.checked !== next.checked) el.setAttribute("aria-selected", String(next.checked));
+}
+
+export function renderTracks(container) {
+  const mode = trackTableMode();
+  const songs = state.visibleSongs;
+  const selecting = state.view === "playlist" && state.playlistSelecting;
+
+  // 只有「第一次渲染 / 表格被换掉」才建骨架；之后一直在它上面做增量
+  let table = container.querySelector(":scope > .tracks");
+  if (!table) {
+    container.innerHTML = `
+      <div class="tracks">
+        <div class="tracks__head"></div>
+        <div class="tracks__body"></div>
+      </div>`;
+    table = container.firstElementChild;
+  }
+  const st = tableState(table);
+
+  // 列显隐 / 密度是 CSS 级变化：只改属性，不重建 DOM
+  table.dataset.mode = mode;
+  table.dataset.density = state.config.listDensity || "cozy";
+  table.dataset.album = state.config.showAlbumColumn === false ? "off" : "on";
+
+  // 表头只在「结构变了」时重建；排序字段/方向只改属性（见 applySortIndicators），
+  // 这样点排序不会把表头按钮重建一遍（重建会丢掉它的 hover / 焦点态）。
+  if (st.headMode !== mode) {
+    st.headMode = mode;
+    const box = document.createElement("div");
+    box.innerHTML = headHtml(mode).trim();
+    table.querySelector(".tracks__head").replaceWith(box.firstElementChild);
+  }
+  applySortIndicators(table.querySelector(".tracks__head"));
+
+  reconcileRows(table.querySelector(".tracks__body"), songs, mode, selecting, st);
 
   // 队列的拖拽排序交给 SortableJS（需求：不要自己实现拖拽逻辑）。
   // 只在队列视图绑定：本地歌曲 / 歌单的顺序由排序字段决定，拖拽没有意义。
-  if (state.view === "queue") bindQueueSort(container);
+  if (state.view === "queue") bindQueueSort(table);
+  else if (queueSortable) {
+    queueSortable.destroy();
+    queueSortable = null;
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -250,6 +465,10 @@ export function renderEmpty(container, { kind = "library" } = {}) {
     },
   };
   const cfg = map[kind] || map.library;
+  // 空态也只在「内容变了」时重绘：commit 很频繁，每次都把这块空壳重建一遍
+  // 会让里面的按钮丢焦点，也会让 .page / 空态动画重新播一次。
+  if (container.dataset.empty === kind && container.querySelector(":scope > .empty")) return;
+  container.dataset.empty = kind;
   container.innerHTML = `
     <div class="empty">
       <svg class="empty__art" aria-hidden="true"><use href="#i-${cfg.icon}"/></svg>
@@ -659,6 +878,9 @@ export function shouldIgnoreRowClick() {
 function bindQueueSort(container) {
   const body = container.querySelector(".tracks__body");
   if (!body) return;
+  // 表格现在是增量渲染的，同一个 body 会一直用下去：已经绑过就不要再
+  // destroy + create 一遍 —— 那会在每次重绘时打断用户正在进行的拖拽。
+  if (queueSortable && queueSortable.el === body) return;
   queueSortable?.destroy();
   queueSortable = Sortable.create(body, {
     handle: "[data-handle]",

@@ -3,31 +3,31 @@
 
    @theme-name 浅色 · 黑白极简
    @theme-mode light
+   @theme-builtin-rev 2
+   （内置主题修订号：本文件由程序维护，升级时会替换旧副本；要长期改请复制成新文件）
    @theme-swatch #f2f2f4 #ffffff #d8d8dd #14141a #e8384f
    ========================================================================== */
 
 :root[data-theme="light-minimal"] {
   color-scheme: light;
 
-  /* 表面 */
-  --bg-app: #f2f2f4;
-  --bg-canvas:
-    radial-gradient(1100px 720px at 8% -12%, rgba(0, 0, 0, 0.06), transparent 60%),
-    radial-gradient(900px 620px at 102% -4%, rgba(0, 0, 0, 0.045), transparent 58%),
-    radial-gradient(820px 820px at 46% 118%, rgba(0, 0, 0, 0.03), transparent 64%);
+  /* 表面：与深色同一套结构 —— 一条从上到下的渐变 + 半透明磨砂面板。
+     浅色下「顶白底灰」比满屏纯白耐看，也让面板的边界更清楚。 */
+  --bg-app: #eceef4;
+  --bg-canvas: linear-gradient(180deg, #ffffff 0%, #f2f4f9 44%, #e2e6ef 100%);
   --surface-1: rgba(255, 255, 255, 0.55);
   --surface-2: rgba(255, 255, 255, 0.72);
   --surface-3: rgba(255, 255, 255, 0.88);
-  --surface-hover: rgba(0, 0, 0, 0.035);
-  --surface-active: rgba(0, 0, 0, 0.06);
+  --surface-hover: rgba(15, 18, 30, 0.045);
+  --surface-active: rgba(15, 18, 30, 0.075);
 
-  /* 毛玻璃 */
-  --glass-bg: rgba(255, 255, 255, 0.66);
-  --glass-bg-strong: rgba(255, 255, 255, 0.82);
-  --glass-bg-weak: rgba(255, 255, 255, 0.42);
-  --glass-blur: 22px;
-  --glass-saturate: 1.35;
-  --glass-border: rgba(0, 0, 0, 0.08);
+  /* 毛玻璃：UI 的唯一底色来源 —— 面板全部半透明 + 模糊 */
+  --glass-bg: rgba(255, 255, 255, 0.56);
+  --glass-bg-strong: rgba(255, 255, 255, 0.76);
+  --glass-bg-weak: rgba(255, 255, 255, 0.4);
+  --glass-blur: 26px;
+  --glass-saturate: 1.3;
+  --glass-border: rgba(15, 18, 30, 0.1);
   --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0) 46%);
   --glass-shadow: 0 10px 30px rgba(15, 15, 20, 0.12);
 

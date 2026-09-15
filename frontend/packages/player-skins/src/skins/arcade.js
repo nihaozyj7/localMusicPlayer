@@ -19,12 +19,24 @@
 import { defineSkin } from "../contract.js";
 import { createFxLyrics } from "../fx-lyrics.js";
 import { createCamera } from "../fx-camera.js";
-import { setCoverImage, subtitleOf } from "../html.js";
+import { EMPTY_TRACK, setCoverImage, subtitleOf } from "../html.js";
 import "./arcade.css";
 
 let inst = null;
 
 const MAX_HP = 5;
+
+/** 后方像素电平柱的数量（频谱会被聚合成这么多段） */
+const BAR_COUNT = 30;
+
+/** 底部「像素电平柱」：每根柱子是一列离散方块，高度由宿主推来的频谱帧驱动（见 paintSpectrum） */
+function buildBars(count) {
+  let out = "";
+  for (let i = 0; i < count; i += 1) {
+    out += '<span class="ag-bar ag-bar--' + (i % 3) + '" style="--i:' + i + '"></span>';
+  }
+  return out;
+}
 
 function buildPixels(count) {
   let seed = 0x27d4eb2f;
@@ -67,6 +79,10 @@ const skin = defineSkin({
   order: 70,
   description: "街机框体 + 计分 HUD，对话盒式逐字打字与震屏",
   background: true,
+  // 底部那排像素电平柱要跟着旋律动。这里声明的是**需要多少段频谱**：
+  // 宿主（详情页宿主 / 桌面背景歌词宿主）据此采样并推 spectrum 补丁过来，
+  // 皮肤自己不去碰音频图（见 contract.js 的 PATCH_TYPES）。
+  spectrum: BAR_COUNT,
 
   mount(ctx) {
     const interactive = ctx.options().interactive !== false;
@@ -81,6 +97,9 @@ const skin = defineSkin({
         '<div class="ag-bg__grid"></div>' +
         '<div class="ag-bg__pixels">' +
         buildPixels(18) +
+        "</div>" +
+        '<div class="ag-bg__bars" data-live="false">' +
+        buildBars(BAR_COUNT) +
         "</div>" +
         '<div class="ag-bg__dither"></div>' +
         '<div class="ag-bg__scan"></div>' +
@@ -157,6 +176,55 @@ const skin = defineSkin({
       onSeek: (ms) => ctx.actions.seek(ms),
       interactive,
     });
+
+    /* —— 随旋律律动的后方方块 ——
+       需求：「后方渲染的方块结合旋律做出炫酷效果」。做法是把底部那排像素电平柱
+       接到真实频谱上。
+
+       ★ 采样在**宿主**里做（audio.js 分接 AnalyserNode），这里只负责把推来的
+         一帧画上去 —— 皮肤不碰 AudioContext、不自己跑 rAF、也不管窗口可见性。
+         理由是「谁有数据谁去采」：详情页的宿主有 <audio>，桌面背景歌词窗口没有；
+         让皮肤自己采的话，同一份样式得写两套（一套能采、一套等着别人喂）。
+         现在两边都是 push，皮肤只有这一条渲染路径。
+
+       为什么用 clip-path 而不是 height/scale：
+         · height 每帧写会触发布局；scaleY 会把柱子里的方块拉成长条，丢掉像素感。
+         · clip-path 只做合成，方块本身不动，只是「从下往上亮起来」——
+           正好是 8-bit 音谱的样子。
+       拿不到频谱（还没播、或宿主这一帧没推）时退回 CSS 待机起伏。 */
+    const barsHost = bg ? /** @type {HTMLElement|null} */ (bg.querySelector(".ag-bg__bars")) : null;
+    const bars = /** @type {HTMLElement[]} */ (barsHost ? Array.from(barsHost.querySelectorAll(".ag-bar")) : []);
+
+    /**
+     * 画一帧电平柱。bands 是宿主采好的频谱（0..1，段数由皮肤声明的 spectrum 决定）；
+     * null / 空数组 = 没有旋律，退回待机起伏。
+     * @param {number[]|null|undefined} bands
+     */
+    function paintSpectrum(bands) {
+      if (!bg) return;
+      const data = Array.isArray(bands) && bands.length ? bands : null;
+      if (!data) {
+        if (barsHost) barsHost.dataset.live = "false";
+        bg.style.setProperty("--ag-bass", "0");
+        return;
+      }
+      if (barsHost) barsHost.dataset.live = "true";
+      let bass = 0;
+      const bassBands = Math.min(4, data.length);
+      for (let i = 0; i < bars.length; i += 1) {
+        // 段数对不上时按比例取样（宿主一般照声明推，这里只是兜底）
+        const raw = data.length === bars.length
+          ? data[i]
+          : data[Math.min(data.length - 1, Math.floor((i / bars.length) * data.length))];
+        const v = Math.max(0, Math.min(1, Number(raw) || 0));
+        // 幂次略小于 1：小音量也看得出在跳，大音量不会一直顶满
+        bars[i].style.setProperty("--h", (0.05 + Math.pow(v, 0.85) * 0.95).toFixed(3));
+      }
+      for (let i = 0; i < bassBands; i += 1) {
+        bass += Math.max(0, Math.min(1, Number(data[i]) || 0));
+      }
+      bg.style.setProperty("--ag-bass", (bass / (bassBands || 1)).toFixed(3));
+    }
 
     // 生命条：每格一个方块，纯 DOM（数量少，切换成本可忽略）
     if (hp) {
@@ -254,13 +322,19 @@ const skin = defineSkin({
       resetScore,
       shake,
       paintProgress,
+      paintSpectrum,
       playing: false,
+
+      /* 当前显示的是哪首歌。宿主在挂载后会补推一次 song（内容就是当前这首歌），
+         靠它区分「真的换歌了」和「只是补推」，避免一打开详情页就震屏。 */
+      songId: "",
 
       paintSong() {
         const m = ctx.media();
-        const s = m.song || {};
+        const s = m.song || EMPTY_TRACK;
         title.textContent = s.title || "未在播放";
         artist.textContent = subtitleOf(s.artist, s.album);
+        inst.songId = String(s.id ?? "");
         setCoverImage(art, m.cover, ctx.defaultCover);
       },
 
@@ -278,6 +352,8 @@ const skin = defineSkin({
           el.style.setProperty("--ag-lsize", size + "px");
         }
         camera.setEnabled(on);
+        // 关掉动画时把柱子按回待机（宿主之后推的帧会再点亮它）
+        if (!on) paintSpectrum(null);
       },
     };
 
@@ -285,7 +361,8 @@ const skin = defineSkin({
     inst.paintOptions();
     resetScore();
     paintProgress(ctx.playback().position, ctx.playback().duration);
-    camera.pulse(0.7, 1.1);
+    // 刻意**不**在进场时 pulse：换镜脉冲会把整屏向右推一大段再弹回来，
+    // 刚打开详情页时那一下「整体向右摆」比任何入场动效都晕。
     const m = ctx.media();
     lyrics.setLines(m.lyrics.lines, { emptyText: emptyTextFor(m.lyrics) });
     lyrics.setPosition(ctx.playback().position, { immediate: true });
@@ -297,13 +374,18 @@ const skin = defineSkin({
     switch (patch.type) {
       case "mount":
       case "song": {
+        // 换歌判定要在 paintSong() 之前取（它会更新 inst.songId）。
+        // 打开详情页时宿主也会补推一次 song（内容是当前这首歌，id 没变），
+        // 那种「没换歌」的补推不该重置分数、更不该震屏。
+        const songChanged = Boolean(patch.type === "song" && String(ctx.media().song?.id ?? "") !== inst.songId);
         inst.paintSong();
         const m = ctx.media();
         inst.lyrics.setLines(m.lyrics.lines, { emptyText: emptyTextFor(m.lyrics) });
         inst.lyrics.setPosition(ctx.playback().position, { immediate: true });
-        if (patch.type === "song") {
+        // 只重置计分 + 机台小幅震屏（3.5px，steps 步进），不推相机：
+        // camera.pulse() 会把整屏向右推 150px 再弹回来，那个「摇摆」整条弧线都不要。
+        if (songChanged) {
           inst.resetScore();
-          inst.camera.pulse(1, 1.2);
           inst.shake(1);
         }
         const idx = m.lyrics.index;
@@ -316,8 +398,6 @@ const skin = defineSkin({
       }
       case "media":
         inst.paintCover();
-        inst.camera.pulse(0.5, 0.9);
-        inst.shake(0.5);
         break;
       case "lyrics": {
         const m = ctx.media();
@@ -335,6 +415,10 @@ const skin = defineSkin({
         inst.playing = Boolean(patch.playing);
         inst.cab.dataset.playing = inst.playing ? "true" : "false";
         break;
+      case "spectrum":
+        // 宿主采好的一帧频谱（bands:null = 停止）。皮肤只负责画。
+        inst.paintSpectrum(patch.bands);
+        break;
       case "options":
         inst.paintOptions();
         break;
@@ -343,6 +427,7 @@ const skin = defineSkin({
         break;
       case "close":
         if (inst.bg) inst.bg.dataset.anim = "off";
+        inst.paintSpectrum(null);
         break;
       default:
         break;

@@ -133,9 +133,9 @@ async function main() {
   })()`);
   check(
     "样式按钮组按皮肤注册表渲染",
-    // 内置八种（用户数据目录里的第三方样式会接在后面）
+    // 内置六种（用户数据目录里的第三方样式会接在后面）
     Array.isArray(skins) &&
-      skins.slice(0, 8).join(",") === "classic,immersive,minimal,anime,cosmos,wasteland,arcade,magia",
+      skins.slice(0, 6).join(",") === "classic,immersive,minimal,anime,arcade,magia",
     JSON.stringify(skins)
   );
 

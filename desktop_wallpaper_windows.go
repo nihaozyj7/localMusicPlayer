@@ -66,10 +66,11 @@ const (
 	wsExNoActivate = 0x08000000
 
 	// SetWindowPos
+	// 刻意没有 SWP_SHOWWINDOW：挂载阶段只摆位置、不动可见性
+	//（见 attachDesktopWallpaperWindow 的说明）。
 	hwndBottom      = 1 // HWND_BOTTOM
 	swpNoActivate   = 0x0010
 	swpFrameChanged = 0x0020
-	swpShowWindow   = 0x0040
 )
 
 var (
@@ -138,9 +139,15 @@ func attachDesktopWallpaperWindow(raw unsafe.Pointer) error {
 	//    只有 WS_CHILD 才能待在桌面那棵树里；同时把标题栏/边框那一套去掉，
 	//    WS_EX_TOOLWINDOW 让它彻底不进任务栏与 Alt+Tab，
 	//    WS_EX_NOACTIVATE 保证它永远不会抢焦点（抢了就会把用户正在用的窗口踢到后台）。
+	//
+	//    ★ 这里**必须**保持 WS_VISIBLE 关闭（Window 是 Hidden 创建的，本来就没有）。
+	//    窗口要一直隐藏到页面把第一帧画好（见 desktop_wallpaper.go#ensureDesktopWallpaper），
+	//    显式加上 WS_VISIBLE 或后面带 SWP_SHOWWINDOW 都会让它立刻显示出来 ——
+	//    用户看到的就是「刚打开时黑一下」。
 	style := uint32(getWindowLong(hwnd, gwlStyle))
 	style &^= wsPopup | wsCaption | wsThickFrame | wsSysMenu | wsMinimizeBox | wsMaximizeBox
-	style |= wsChild | wsVisible | wsClipSiblings | wsClipChildren
+	style &^= wsVisible
+	style |= wsChild | wsClipSiblings | wsClipChildren
 	setWindowLong(hwnd, gwlStyle, style)
 
 	exStyle := uint32(getWindowLong(hwnd, gwlExStyle))
@@ -168,8 +175,10 @@ func attachDesktopWallpaperWindow(raw unsafe.Pointer) error {
 		width = int(getSystemMetrics(smCxScreen))
 		height = int(getSystemMetrics(smCyScreen))
 	}
+	// 只摆位置、排 z 序，刻意**不带** SWP_SHOWWINDOW：
+	// 显示时机由宿主决定（页面画好第一帧之后），见函数开头第 1 步的说明。
 	procSetWindowPos.Call(hwnd, hwndBottom, 0, 0, uintptr(width), uintptr(height),
-		swpNoActivate|swpFrameChanged|swpShowWindow)
+		swpNoActivate|swpFrameChanged)
 
 	log.Printf("[desktop-wallpaper] 已挂到桌面壁纸层（%s，父窗口 0x%X，尺寸 %dx%d）",
 		how, layer, width, height)

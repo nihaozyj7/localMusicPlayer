@@ -78,6 +78,14 @@ export function DesktopWallpaperTouched() {
 }
 
 /**
+ * HideMain 收起主窗口（「关闭时最小化到托盘」用）
+ * @returns {$CancellablePromise<void>}
+ */
+export function HideMain() {
+    return $Call.ByID(2514360940);
+}
+
+/**
  * IsFullscreen 当前是否全屏
  * @returns {$CancellablePromise<boolean>}
  */
@@ -105,6 +113,23 @@ export function MarkDesktopLyricsReady() {
 }
 
 /**
+ * MarkDesktopWallpaperPainted 由背景歌词窗口在「第一帧内容已经写进 DOM」之后调用。
+ * 
+ * 这是窗口**显示**的触发点（见 ensureDesktopWallpaper 的说明）：窗口创建时是
+ * 隐藏的，页面自己只有一块深色底，皮肤要等数据推过来才画得出东西 ——
+ * 创建后就显示，用户先看到的就是那块纯色（「刚打开的时候黑一下」）。
+ * 
+ * 必须由页面在 applyPatch 之后调用，而不是在加载完成的 Ready 那一刻：
+ * Ready 时全量数据还在路上，这时候显示同样是一块空画面。
+ * 
+ * 幂等：页面重复调用、或兜底定时器已经先显示过，都不会有任何副作用。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function MarkDesktopWallpaperPainted() {
+    return $Call.ByID(1165274079);
+}
+
+/**
  * MarkDesktopWallpaperReady 由背景歌词窗口在加载完成后调用。
  * 
  * 页面加载完成与窗口创建之间有时序差：创建时推的那一次事件，页面可能还没注册
@@ -114,6 +139,24 @@ export function MarkDesktopLyricsReady() {
  */
 export function MarkDesktopWallpaperReady() {
     return $Call.ByID(1378957625);
+}
+
+/**
+ * MarkReady 前端把 DOM 装配好之后调用：这时才把主窗口显示出来。
+ * 
+ * 为什么窗口创建时是 Hidden（见 main.go 的 winOpts）：Wails 在不隐藏时会用
+ * 带 WS_VISIBLE 的样式创建窗口，而 WebView2 在页面渲染完成前会先亮一块白底 ——
+ * 那正是首屏那一下闪烁（Wails issue #4611 的修法就是创建时排除 WS_VISIBLE）。
+ * 
+ * 刻意**不用** sync.Once 锁死：前端的信号有可能到得太早 —— 窗口实现还在
+ * pendingRun 里没跑起来时，WebviewWindow.Show() 只会去 InvokeSync(w.Run)
+ * 然后**直接返回、不显示窗口**。锁死的话后面所有重试（包括 main.go 的兜底
+ * 定时器）都会被这次「假成功」吃掉，窗口就永远不出来了（表现为「第一次打不开、
+ * 再点一次才出来」）。这里改为「没真正显示过就继续试」。
+ * @returns {$CancellablePromise<void>}
+ */
+export function MarkReady() {
+    return $Call.ByID(1144975395);
 }
 
 /**
@@ -179,6 +222,29 @@ export function SetDesktopWallpaper(on) {
  */
 export function SetFullscreen(on) {
     return $Call.ByID(3237189214, on);
+}
+
+/**
+ * SetMinimizeToTray 打开 / 关闭「关闭时最小化到托盘」，并立刻同步托盘图标。
+ * 
+ * 值本身也会落盘，所以下次启动时托盘还在（main.go 启动时会读这个开关）。
+ * 前端开关走这条路径而不是只推配置：托盘图标必须马上出现 / 消失，
+ * 不能等下一次启动。
+ * @param {boolean} on
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function SetMinimizeToTray(on) {
+    return $Call.ByID(3272139870, on);
+}
+
+/**
+ * ShowMain 显示并聚焦主窗口（前端 ready / 兜底定时器 / 托盘点击 / 第二个实例）
+ * 
+ * 可以重复调用：已经显示时只是再 Focus 一下（托盘点击、第二次启动都需要这个语义）。
+ * @returns {$CancellablePromise<void>}
+ */
+export function ShowMain() {
+    return $Call.ByID(3773652421);
 }
 
 /**

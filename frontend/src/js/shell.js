@@ -48,6 +48,9 @@ const VIEW_TITLES = {
 /* --------------------------------------------------------------------------
    侧边栏
    -------------------------------------------------------------------------- */
+/** 上一次写进侧边栏歌单列表的内容签名（见 renderSidebar 的去重说明） */
+let lastSidebarKey = "\u0000";
+
 export function renderSidebar() {
   const custom = state.playlists.filter((p) => p.id !== LIKED_ID);
   const liked = playlistById(LIKED_ID);
@@ -72,7 +75,17 @@ export function renderSidebar() {
   };
 
   const nav = $("#playlist-nav");
-  nav.innerHTML = [liked, ...custom].filter(Boolean).map(item).join("");
+  // 歌单条目只在「列表本身」变了才重建：innerHTML 重建会把拖拽中间态与
+  // 悬停一起打断，切视图这种「只是选中项变了」的情况完全不必重建
+  // （选中态由下面的循环单独同步）。
+  const navKey = [
+    liked?.id ?? "",
+    custom.map((p) => `${p.id}:${p.name}:${p.locked ? 1 : 0}:${p.songIds.length}`).join(","),
+  ].join("|");
+  if (navKey !== lastSidebarKey) {
+    lastSidebarKey = navKey;
+    nav.innerHTML = [liked, ...custom].filter(Boolean).map(item).join("");
+  }
 
   // 全部导航项的选中态
   $$("[data-nav]").forEach((btn) => {
@@ -149,9 +162,12 @@ function toolbarHtml() {
         <button class="btn btn--sm btn--danger" type="button" data-tool="sel-remove" ${n ? "" : "disabled"}>${icon("trash")}<span>移除所选</span></button>
         <button class="btn btn--sm btn--primary" type="button" data-tool="pl-select">${icon("close")}<span>完成</span></button>`;
     }
-    return `${sortSel}${playAll}${locate}
+    // 定位按钮挪到最右侧「歌单操作（选项）」的左边：它是个「找位置」的动作，
+    // 靠着一组低频操作（多选 / 添加）挤在中间时总被当成其中之一。
+    return `${sortSel}${playAll}
       <button class="btn" type="button" data-tool="pl-select">${icon("check")}<span>多选</span></button>
       <button class="btn" type="button" data-tool="pl-add">${icon("plus")}<span>添加</span></button>
+      ${locate}
       <button class="btn btn--icon" type="button" data-tool="pl-more" data-tip="歌单操作">${icon("more")}</button>`;
   }
 
@@ -250,6 +266,25 @@ export function renderHeader() {
 /* --------------------------------------------------------------------------
    内容区
    -------------------------------------------------------------------------- */
+/* --------------------------------------------------------------------------
+   内容区
+   --------------------------------------------------------------------------
+   ★ .page 容器必须复用，不能每次渲染都新建。
+
+   .page 上挂着一条 fade-in 入场动画（见 content.css）。这里原来是无条件
+   `body.innerHTML = '<div class="page"></div>'`，于是**每一次数据变化**
+   （切歌、扫描结束、封面回填、开关某个设置…）都会新建一个 .page 并重播一遍
+   淡入 —— 用户看到的就是「列表区域闪一下」。现在只有「进入另一个列表」
+   （换视图 / 换歌单）才重建，数据更新全部落在同一个 .page 上做增量。
+   -------------------------------------------------------------------------- */
+
+/** 上一次渲染的「列表身份」：只有它变了才重建 .page（入场动画才只播一次） */
+let lastContentKey = "";
+
+function contentKey() {
+  return `${state.view}|${state.playlistId ?? ""}`;
+}
+
 export function renderContent() {
   const body = $("#content-body");
   const v = state.view;
@@ -264,9 +299,19 @@ export function renderContent() {
     } else {
       renderEmpty(body, { kind: "playlist" });
     }
+    // 空态已经把 .page 换掉了：下一次有歌时属于「重新进入列表」，应当重建
+    lastContentKey = "";
   } else {
-    body.innerHTML = `<div class="page"></div>`;
-    renderTracks(body.querySelector(".page"));
+    const key = contentKey();
+    let page = body.querySelector(":scope > .page");
+    if (!page || key !== lastContentKey) {
+      body.innerHTML = `<div class="page"></div>`;
+      page = body.firstElementChild;
+      lastContentKey = key;
+    }
+    // 空态与列表互斥：切回列表时清掉空态标记（renderEmpty 用它去重）
+    delete body.dataset.empty;
+    renderTracks(page);
   }
 
   bindTrackEvents(body, {

@@ -140,6 +140,13 @@ type Config struct {
 	// 原来每张表头各有一个密度按钮，现在统一到设置里，对所有列表生效。
 	ListDensity string `json:"listDensity"`
 
+	// MinimizeToTray 点窗口关闭按钮时「最小化到系统托盘」而不是退出应用。
+	//
+	// 关闭行为在主窗口的 WindowClosing **钩子**里判断（见 main.go）：钩子比
+	// 监听器先跑，取消事件就能让 Wails 内建的「关窗 = 销毁窗口」不发生。
+	// 托盘图标由 WindowService 按同一个开关创建 / 销毁（见 services.go#ensureTray）。
+	MinimizeToTray bool `json:"minimizeToTray"`
+
 	// —— 封面取色（cover-dark 主题）——
 	// CoverSeed / CoverSeed2 是上一次从封面里提取得出的主色（十六进制）。
 	//

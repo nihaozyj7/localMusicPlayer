@@ -59,7 +59,9 @@
       transparent 2px 66px
     ),
     repeating-linear-gradient(0deg, color-mix(in oklab, var(--ag-cyan) 52%, transparent) 0 2px, transparent 2px 52px);
-  opacity: 0.65;
+  /* 低频越强，网格越亮、越「通电」——--ag-bass 由频谱每帧写入（见 arcade.js） */
+  opacity: calc(0.42 + var(--ag-bass, 0) * 0.58);
+  filter: drop-shadow(0 0 calc(var(--ag-bass, 0) * 10px) color-mix(in oklab, var(--ag-neon) 70%, transparent));
   animation: ag-grid calc(var(--ag-anim) * 2.6s) linear infinite;
 }
 
@@ -77,16 +79,20 @@
   width: var(--s, 10px);
   height: var(--s, 10px);
   opacity: 0;
+  /* 跟着低频一起亮：像素块是「后方渲染的方块」里最显眼的一层 */
+  filter: brightness(calc(1 + var(--ag-bass, 0) * 1.1));
   animation: ag-float calc(var(--ag-anim) * var(--t, 14s)) steps(8, end) infinite;
   animation-delay: var(--d, 0s);
 }
 
 .app[data-mode="arcade"] .ag-pixel--a {
   background: var(--ag-cyan);
+  color: var(--ag-cyan);
 }
 
 .app[data-mode="arcade"] .ag-pixel--b {
   background: var(--ag-neon);
+  color: var(--ag-neon);
 }
 
 /* 方格抖动弹带 */
@@ -114,6 +120,53 @@
   pointer-events: none;
   background-image: repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.32) 0 2px, transparent 2px 4px);
   opacity: 0.6;
+}
+
+/* --------------------------------------------------------------------------
+   像素电平柱：随旋律跳动的方块柱
+   --------------------------------------------------------------------------
+   柱子本身是一整列由 repeating-linear-gradient 画成的离散方块，
+   高度靠 clip-path 从下往上揭开（见 arcade.js#paintSpectrum 的说明：
+   height 会触发布局、scaleY 会把方块拉成长条）。
+   没有频谱（还没开始播 / 桌面背景歌词窗口）时走 CSS 待机起伏。 */
+.app[data-mode="arcade"] .ag-bg__bars {
+  position: absolute;
+  left: 3%;
+  right: 3%;
+  bottom: 0;
+  height: 36%;
+  display: flex;
+  align-items: flex-end;
+  gap: clamp(3px, 0.7vw, 9px);
+  pointer-events: none;
+  opacity: 0.72;
+  mask-image: linear-gradient(0deg, #000 0 58%, transparent 100%);
+  -webkit-mask-image: linear-gradient(0deg, #000 0 58%, transparent 100%);
+}
+
+.app[data-mode="arcade"] .ag-bar {
+  flex: 1 1 0;
+  min-width: 3px;
+  height: 100%;
+  background: repeating-linear-gradient(0deg, currentColor 0 5px, transparent 5px 9px);
+  clip-path: inset(calc((1 - var(--h, 0.12)) * 100%) 0 0 0);
+}
+
+.app[data-mode="arcade"] .ag-bar--0 {
+  color: var(--ag-cyan);
+}
+
+.app[data-mode="arcade"] .ag-bar--1 {
+  color: var(--ag-neon);
+}
+
+.app[data-mode="arcade"] .ag-bar--2 {
+  color: var(--ag-yellow);
+}
+
+.app[data-mode="arcade"] .ag-bg__bars[data-live="false"] .ag-bar {
+  animation: ag-idle 1.9s ease-in-out infinite;
+  animation-delay: calc(var(--i) * -0.12s);
 }
 
 /* chrome 透明化 */
@@ -492,6 +545,17 @@
   }
 }
 
+@keyframes ag-idle {
+  0%,
+  100% {
+    clip-path: inset(84% 0 0 0);
+  }
+
+  50% {
+    clip-path: inset(32% 0 0 0);
+  }
+}
+
 @keyframes ag-float {
   0% {
     opacity: 0;
@@ -518,8 +582,13 @@
 }
 
 .app[data-mode="arcade"] .ag-bg[data-anim="off"] .ag-bg__grid,
-.app[data-mode="arcade"] .ag-bg[data-anim="off"] .ag-pixel {
+.app[data-mode="arcade"] .ag-bg[data-anim="off"] .ag-pixel,
+.app[data-mode="arcade"] .ag-bg[data-anim="off"] .ag-bar {
   animation-play-state: paused;
+}
+
+.app[data-mode="arcade"] .ag-bg[data-anim="off"] .ag-bar {
+  clip-path: inset(76% 0 0 0);
 }
 
 @media (max-width: 980px) {

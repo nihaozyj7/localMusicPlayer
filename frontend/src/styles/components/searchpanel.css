@@ -116,8 +116,14 @@
   font-size: var(--fs-lg);
 }
 
-.search-overlay__input:focus {
+/* 输入框自己**不要**再画一圈焦点环：外层 .search-overlay__field 已经在
+   :focus-within 时把边框染成强调色了。全局 :focus-visible 的 box-shadow
+   会在这个内框上再套一圈（取色主题下 --focus-ring 是彩色，两圈叠在一起
+   特别明显），看起来就是「两个边框重叠」。这里把内侧那圈明确去掉。 */
+.search-overlay__input:focus,
+.search-overlay__input:focus-visible {
   outline: none;
+  box-shadow: none;
 }
 
 .search-overlay__input::placeholder {

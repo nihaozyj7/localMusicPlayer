@@ -23,7 +23,7 @@
 import { $ } from "./dom.js";
 import { MOCK_LYRICS, MOCK_LYRICS_ALT } from "./mock.js";
 import { backend, isWails } from "./bridge.js";
-import { audioElement, seekTo } from "./audio.js";
+import { audioElement, seekTo, spectrum } from "./audio.js";
 import { commit, playNext, playPrev, songById, state, togglePlay } from "./store.js";
 import { DEFAULT_COVER, clamp, coverOf, esc } from "./utils.js";
 import { animationMs } from "./runtime-tokens.js";
@@ -557,12 +557,33 @@ function lyricsSnapshot(song) {
   };
 }
 
+/**
+ * 推给皮肤的「曲目」视图：只带样式真的会渲染的字段。
+ *
+ * 之前这里直接把 store 里的 song 整个递出去 —— 那是个内部对象（本地路径、所属
+ * 文件夹、来源标记、文件大小、缓存状态…），皮肤一个字段都用不到，却让内部结构
+ * 变成了事实上的对外契约：以后想改内部字段都得先考虑皮肤。样式要用路径相关的
+ * 能力就走 ctx.actions（openFolder 之类），不要把路径递出去。
+ *
+ * @param {{id?:string,title?:string,artist?:string,album?:string,duration?:number}|null} song
+ */
+function trackView(song) {
+  if (!song) return null;
+  return {
+    id: song.id ?? "",
+    title: song.title || "",
+    artist: song.artist || "",
+    album: song.album || "",
+    duration: song.duration || 0,
+  };
+}
+
 function mediaSnapshot() {
   const song = currentSong();
   const covers = coverListOf(song);
   const index = clamp(host.carouselIndex, 0, Math.max(0, covers.length - 1));
   return {
-    song,
+    song: trackView(song),
     cover: covers[index] || DEFAULT_COVER,
     covers,
     coverIndex: index,
@@ -616,6 +637,9 @@ function makeCtx() {
     root: host.stage,
     backgroundRoot: host.backgroundRoot,
     audio: audioElement(),
+    // 实时频谱：给「随旋律律动」的样式用（见 audio.js#spectrum）。
+    // 拿不到时返回 null，皮肤据此保持静态。
+    spectrum,
     defaultCover: DEFAULT_COVER,
     get themeId() {
       return document.documentElement.dataset.theme || "";
@@ -692,6 +716,9 @@ function mountSkin(id) {
   host.stage.innerHTML = "";
   // data-skin 是给皮肤 CSS 用的作用域钩子（皮肤包里的选择器都写成 [data-skin="xxx"]）
   host.view.dataset.skin = skin.id;
+  // 这张样式自己会不会铺整窗背景。目前只有主题 CSS 读它：
+  // 「封面取色」主题要在**没有背景层**的样式（经典 / 简约）上补一层封面虚化图。
+  host.view.dataset.skinBackground = skin.background ? "yes" : "no";
   document.getElementById("app")?.setAttribute("data-mode", skin.id);
 
   const ctx = makeCtx();
@@ -987,6 +1014,65 @@ export function syncPlaybackState({ force = false } = {}) {
     push({ type: "state", ...playback });
   }
   push({ type: "progress", ...playback, lyricIndex: lyricsSnapshot(currentSong()).index });
+  pushSpectrum(playback.playing);
+}
+
+/* --------------------------------------------------------------------------
+   频谱：由宿主采样，再按帧推给皮肤
+   --------------------------------------------------------------------------
+   需求原文是「采样应该在主程序里采出来之后交给样式」，这条就是那样做的：
+
+     · 谁有音频谁负责采。详情页宿主有 <audio>（audio.js 里的 AnalyserNode 分接），
+       桌面背景歌词宿主没有 —— 两者现在都是**推**：那个窗口的频谱由主窗口采好
+       经 IPC 送过去（见 desktop-wallpaper.js）。皮肤只有一条渲染路径。
+     · 皮肤用 defineSkin 的 spectrum 字段声明自己要多少段（例如游戏风 = 柱子数），
+       没声明的皮肤这里一次采样都不做，也不会有任何推送。
+     · 30Hz 而不是每帧：电平柱是离散的像素方块，30Hz 看不出台阶，
+       推送量却只有逐帧的 50%。停止播放时补推 bands:null，皮肤回到待机起伏。
+   -------------------------------------------------------------------------- */
+
+/** 频谱推送频率（Hz）。 */
+const SPECTRUM_HZ = 30;
+/** 皮肤声明 spectrum: true 时的默认段数。 */
+const SPECTRUM_DEFAULT_BANDS = 32;
+
+let lastSpecAt = 0;
+/** 皮肤当前是否处在「有频谱」的状态（用来只推一次停止帧）。 */
+let specLive = false;
+
+/** 皮肤要多少段频谱；0 = 这个样式不需要。 */
+function skinSpectrumBands() {
+  const flag = host.skin?.spectrum;
+  if (!flag) return 0;
+  const n = Number(flag);
+  if (!Number.isFinite(n) || n <= 0) return SPECTRUM_DEFAULT_BANDS;
+  return Math.max(1, Math.min(256, Math.round(n)));
+}
+
+function pushSpectrum(playing) {
+  const bands = playing === true ? skinSpectrumBands() : 0;
+  if (!bands) {
+    lastSpecAt = 0;
+    if (!specLive) return;
+    specLive = false;
+    push({ type: "spectrum", bands: null });
+    return;
+  }
+  const at = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+  if (lastSpecAt && at - lastSpecAt < 1000 / SPECTRUM_HZ) return;
+  const data = spectrum(bands);
+  if (!data) {
+    // 音频图还没建起来（还没真正播过第一首）：一直不推，等它可用
+    if (!specLive) return;
+    lastSpecAt = 0;
+    specLive = false;
+    push({ type: "spectrum", bands: null });
+    return;
+  }
+  lastSpecAt = at;
+  specLive = true;
+  // 统一成普通数组：两个宿主的补丁形状一致，皮肤不用分辨 Float32Array
+  push({ type: "spectrum", bands: Array.from(data, (v) => Math.round(v * 1000) / 1000) });
 }
 
 /* --------------------------------------------------------------------------
