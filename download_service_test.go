@@ -261,7 +261,7 @@ func TestRowClickAndDensityPersist(t *testing.T) {
 	svc, _ := newCfgFixture(t)
 
 	if _, err := svc.Set(map[string]any{
-		"rowClickAction": "append",
+		"rowClickAction": "play-list",
 		"listDensity":    "roomy",
 		"embedMeta":      true,
 	}); err != nil {
@@ -273,7 +273,7 @@ func TestRowClickAndDensityPersist(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := reopened.Get()
-	if got.RowClickAction != "append" {
+	if got.RowClickAction != "play-list" {
 		t.Fatalf("rowClickAction 未持久化: %q", got.RowClickAction)
 	}
 	if got.ListDensity != "roomy" {

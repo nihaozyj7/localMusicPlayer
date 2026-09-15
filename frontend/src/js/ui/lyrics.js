@@ -90,7 +90,7 @@ class MpLyricsPanel extends MpElement {
     this._lastScrolledNow = -1;
     this._lastScrolledCursor = -1;
     this._followHold = 0;
-    this._followAuto = false;
+    this._followAutoUntil = 0;
     this._lastOnlineHint = "在线歌词来源";
   }
 
@@ -132,7 +132,7 @@ class MpLyricsPanel extends MpElement {
 
     if (!this.open) return;
     if (activeTab === "nudge") this.paintNudgeFollow();
-    if (activeTab === "edit") this.paintNowRow();
+    if (activeTab === "edit") this.paintEditorFollow();
   }
 
   refreshAll() {
@@ -567,27 +567,50 @@ class MpLyricsPanel extends MpElement {
 
   /** 记下「用户自己在滚」：给两块预览列表都挂上 */
   onFollowScroll() {
-    if (this._followAuto) return;
+    // 平滑滚动会持续派发 scroll 事件；这些事件都是我们自己滚出来的，
+    // 不能把它们当成「用户手动滚动」，否则之后 4 秒都不再跟随（列表就像卡住了）。
+    if (Date.now() < this._followAutoUntil) return;
     this._followHold = Date.now() + 4000;
   }
 
-  /** 把某一行滚进容器可视区中部；用户刚滚过时不抢 */
-  followScroll(box, row) {
+  /**
+   把某一行滚进容器可视区中部；用户刚滚过时不抢（force=true 时不看免打扰）。
+
+   位置用 getBoundingClientRect 相对容器算：行与滚动容器之间隔着若干静态定位的
+   祖先，直接用 row.offsetTop 会把容器上方所有内容的偏移也算进去（滚过头的元凶）。
+   */
+  followScroll(box, row, force = false) {
     if (!box || !row) return;
-    if (Date.now() < this._followHold) return;
-    const top = row.offsetTop - box.clientHeight / 2 + row.offsetHeight / 2;
-    const next = Math.max(0, top);
+    if (!force && Date.now() < this._followHold) return;
+    const boxRect = box.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const next = Math.max(
+      0,
+      box.scrollTop + (rowRect.top - boxRect.top) - (box.clientHeight - rowRect.height) / 2
+    );
     if (Math.abs(box.scrollTop - next) < 2) return;
-    this._followAuto = true;
+    // 覆盖平滑滚动的整个时长，避免它的尾帧被误判成「用户自己在滚」
+    this._followAutoUntil = Date.now() + 700;
     box.scrollTo({ top: next, behavior: "smooth" });
-    setTimeout(() => {
-      this._followAuto = false;
-    }, 120);
   }
 
   /* ------------------------------------------------------------------------
      在线匹配
      ------------------------------------------------------------------------ */
+  /**
+   用当前曲目的「歌名 歌手」预填在线搜索框。
+   迁移前的 online.js#openLyricsPanel 就是打开面板时填一次；三 tab 改造时丢了，
+   结果每次搜歌词都要自己手打歌名（与「搜索」按钮并排的输入框一直是空的）。
+   */
+  prefillOnlineKeyword() {
+    const song = currentTarget();
+    if (!song) return;
+    const next = [song.title, song.artist].filter(Boolean).join(" ").trim();
+    if (!next || next === this._onlineKeyword) return;
+    this._onlineKeyword = next;
+    bumpLyricsPanelTick();
+  }
+
   async refreshOnlineHint() {
     const service = await getBindings();
     if (!service) return;
@@ -716,6 +739,8 @@ class MpLyricsPanel extends MpElement {
     this._nowIndex = -1;
     this._lastScrolledNow = -1;
     this._lastScrolledCursor = -1;
+    this._followHold = 0;
+    this._followAutoUntil = 0;
     this._pendingText = info.text || "";
     bumpLyricsPanelTick();
   }
@@ -847,27 +872,39 @@ class MpLyricsPanel extends MpElement {
       const t = draft.lines[i].time;
       if (typeof t === "number" && t <= state.position) idx = i;
     }
-    if (idx === this._nowIndex) {
-      this.scrollDraftRows();
-      return;
-    }
+    if (idx === this._nowIndex) return;
     this._nowIndex = idx;
     bumpLyricsPanelTick();
+  }
+
+  /**
+   手动编辑页每次重渲染后的「跟随」：先算当前播放行高亮，再把光标行 /
+   当前播放行滚进可视区。滚动只在目标行发生变化时发生一次，所以每次
+   重渲染都调用是安全的（也正是光标被点选后能立刻滚过去的原因）。
+   */
+  paintEditorFollow() {
+    this.paintNowRow();
+    this.scrollDraftRows();
   }
 
   /** 把「打轴光标行」与「当前播放行」滚进可视区（只在它们变化时滚一次） */
   scrollDraftRows() {
     const list = this.querySelector("[data-editor-list]");
     if (!list) return;
+    // 光标是用户自己点出来的，必须滚过去（force=true 不受「用户刚滚过」的免打扰影响）
     if (draft.cursor !== this._lastScrolledCursor) {
-      this._lastScrolledCursor = draft.cursor;
       const row = list.querySelector(`[data-i="${draft.cursor}"]`);
-      if (row) this.followScroll(list, row);
+      if (row) {
+        this._lastScrolledCursor = draft.cursor;
+        this.followScroll(list, row, true);
+      }
     }
     if (this._nowIndex !== this._lastScrolledNow) {
-      this._lastScrolledNow = this._nowIndex;
       const row = list.querySelector(`[data-i="${this._nowIndex}"]`);
-      if (row && this._nowIndex >= 0) this.followScroll(list, row);
+      if (row && this._nowIndex >= 0) {
+        this._lastScrolledNow = this._nowIndex;
+        this.followScroll(list, row);
+      }
     }
   }
 }
@@ -900,6 +937,8 @@ export function openPanel(tab) {
   const el = component();
   if (el) {
     el._refreshHeader();
+    // 打开时就把搜索词填成当前歌曲（迁移前行为）
+    el.prefillOnlineKeyword();
     ensureLyricsLoaded().then(() => {
       el._pendingText = currentLyricsInfo().text || "";
       if (activeTab === "edit") el.ensureDraft(true);

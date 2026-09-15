@@ -105,6 +105,21 @@ test("mergeDraftTimes：重复行（副歌）不会两行抢同一个时间", ()
   assert.deepEqual(merged.map((l) => l.time), [10000, 20000, 30000]);
 });
 
+test("mergeDraftTimes：新文本比旧草稿长很多时不崩（短→整首的情况）", () => {
+  const prev = parseLyricDraft("[00:01.00]第一句\n[00:02.00]第二句");
+  const next = parseLyricDraft(
+    Array.from({ length: 100 }, (_, i) => "第" + (i + 1) + "句歌词").join("\n")
+  );
+  const merged = mergeDraftTimes(prev, next);
+  assert.equal(merged.length, 100);
+  assert.equal(merged[0].time, null, "文本对不上就不该沿用旧时间");
+  assert.deepEqual(
+    merged.map((l) => l.time).filter((t) => t !== null),
+    [],
+    "行数不同且文本不同时不应按位置补齐"
+  );
+});
+
 test("mergeDraftTimes：文本里新写的时间标签优先于旧时间", () => {
   const prev = [{ time: 10000, text: "A" }];
   const next = parseLyricDraft("[00:55.00]A");

@@ -68,18 +68,19 @@ export function getRuntimeTokens() {
    --------------------------------------------------------------------------
    --dur 是全站唯一的过渡时长令牌（见 tokens.css）。弹出层的关闭逻辑必须等
    过渡真的放完才能把元素 hidden —— 这个等待时间要读同一个令牌，
-   固定写死 180~220ms 会在用户把速度调成 0.35s / 0.5s 时把动画尾巴切掉。
+   固定写死 180~220ms 会在用户把速度调成 0.5s / 0.75s 时把动画尾巴切掉。
    -------------------------------------------------------------------------- */
 
-/** 动画档位 → 毫秒（与设置里的「过渡速度」一一对应，默认 fast = 200ms） */
-export const ANIM_SPEEDS = { fast: 200, medium: 350, slow: 500 };
+/** 动画档位 → 毫秒（与设置里的「过渡速度」一一对应，默认 fast = 250ms） */
+export const ANIM_SPEEDS = { fast: 250, medium: 500, slow: 750 };
 
 /**
  * 由配置算出 --dur 应该写什么值。
  *
  * · 关闭动画 → 0.001ms（全站归零，见 settings.js 的界面动画开关）；
- * · 默认档 fast → null（**不覆盖**，让主题 / tokens.css 自己决定，保持可定制）；
- * · medium / slow → 350ms / 500ms。
+ * · 默认档 fast → null（**不覆盖**，让主题 / tokens.css 自己决定，保持可定制；
+ *   tokens.css 的默认 --dur 就是 250ms，与「快速」档一致）；
+ * · medium / slow → 500ms / 750ms。
  */
 export function animationDurationValue(config) {
   if (!config || config.animations === false) return "0.001ms";

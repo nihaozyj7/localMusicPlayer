@@ -38,9 +38,9 @@ import {
  */
 /** 单击歌曲行的可选行为（与 Go 侧 bootstrap.RowClickActions 一致） */
 export const ROW_CLICK_ACTIONS = [
-  { value: "next", label: "加入下一首播放" },
-  { value: "play", label: "立即播放" },
-  { value: "append", label: "加入列表末尾" },
+  { value: "play", label: "播放" },
+  { value: "play-list", label: "播放该歌单" },
+  { value: "next", label: "添加为一首播放" },
 ]
 
 /** 列表密度（与 Go 侧 bootstrap.ListDensities 一致） */
@@ -55,9 +55,9 @@ export const LIST_DENSITIES = [
  * 全站动效时长都由 --dur 派生，所以这里改的是「所有弹出层 / 菜单 / 面板」的节奏。
  */
 export const ANIMATION_SPEEDS = [
-  { value: "fast", label: "快速 0.2s" },
-  { value: "medium", label: "适中 0.35s" },
-  { value: "slow", label: "缓慢 0.5s" },
+  { value: "fast", label: "快速 0.25s" },
+  { value: "medium", label: "适中 0.5s" },
+  { value: "slow", label: "缓慢 0.75s" },
 ]
 
 /** 歌词来源的中文名（与 Go 侧 internal/lyrics 的来源常量一一对应） */
@@ -1040,35 +1040,6 @@ export async function handleSettingsAction(actEl, ctx = {}) {
     }
 
     /* 响度均衡 */
-    case "loudness-measure-all": {
-      if (!isWails()) {
-        toast("响度测量需要后端支持，浏览器预览不可用", { tone: "warning" })
-        return
-      }
-      const box = document.querySelector("#loudness-progress")
-      if (box) box.hidden = false
-      try {
-        const res = await backend.loudnessMeasureAll(state.config.loudnessTarget ?? -16)
-        if (!res?.started) {
-          toast(res?.reason === "already-measuring" ? "已在测量中" : `无法开始测量：${res?.reason ?? "未知原因"}`, {
-            tone: "warning",
-          })
-          if (box) box.hidden = true
-          return
-        }
-        toast(`开始预热 ${res.total} 首歌曲的响度（可选操作，不预热也会在播放时按需计算）…`, { duration: 3000 })
-      } catch (err) {
-        if (box) box.hidden = true
-        toast(`无法开始测量：${err?.message ?? err}`, { tone: "error", duration: 6000 })
-      }
-      break
-    }
-    case "loudness-cancel":
-      if (isWails()) {
-        await backend.loudnessCancel()
-        toast("已请求停止测量")
-      }
-      break
     case "loudness-refresh": {
       if (!isWails()) return
       await refreshLoudnessGains()

@@ -28,7 +28,7 @@ const DEFAULT_CONFIG = {
   nativeBackdrop: "off", // 窗口原生材质：off | auto | mica | acrylic | tabbed（改了要重启）
   minimizeToTray: false, // 点关闭按钮时收进系统托盘而不是退出应用
   animations: true,
-  // 过渡速度：fast（0.2s，默认）| medium（0.35s）| slow（0.5s）。
+  // 过渡速度：fast（0.25s，默认）| medium（0.5s）| slow（0.75s）。
   // 与 Go 侧 bootstrap.Config.AnimationsSpeed 保持一致。
   animationsSpeed: "fast",
   sidebarWidth: 232,
@@ -90,7 +90,7 @@ const DEFAULT_CONFIG = {
   embedMeta: false,
 
   // 交互
-  // 单击歌曲行的行为：next（加入下一首播放） | play（立即播放） | append（加入末尾）
+  // 单击歌曲行的行为：play（播放并加入播放列表） | play-list（播放该歌单并替换列表） | next（添加为下一首播放）
   rowClickAction: "next",
   // 列表密度：compact（紧凑） | cozy（默认） | roomy（宽松）
   listDensity: "cozy",
@@ -169,6 +169,10 @@ function initialState() {
     volume: 0.8,
     muted: false,
     shuffleOrder: [],
+    /* 「添加为一首播放」在随机模式下的落点。
+       随机播放用的是 shuffleOrder 里的随机顺序，往 queue 里插到当前歌后面并不
+       意味着它会真的下一个播，所以额外记一个显式标记，playNext 先消费它。 */
+    forcedNextId: "",
     // 定时停止：null | { type: "after-song" }
     sleepTimer: null,
 
@@ -660,6 +664,7 @@ export function clearSelectedSongs() {
 export function setQueue(songIds, origin = null) {
   state.queue = songIds.slice();
   state.queueOrigin = origin;
+  state.forcedNextId = "";
   commit();
 }
 
@@ -679,6 +684,8 @@ export function addNextInQueue(songId) {
   // 没有正在播放的歌时，排在队首 = 下一次开始播放就轮到它。
   else queue.unshift(songId);
   state.queue = queue;
+  // 随机模式下队列位置决定不了下一个播哪首，用显式标记保证「下一曲」先放它
+  if (state.playMode === "shuffle") state.forcedNextId = songId;
   commit();
 }
 
@@ -688,6 +695,7 @@ export function removeFromQueue(songId) {
   // queue[-1] → null，播放直接停掉（而不是顺延到下一首）。
   const i = state.queue.indexOf(songId);
   state.queue = state.queue.filter((id) => id !== songId);
+  if (state.forcedNextId === songId) state.forcedNextId = "";
   if (state.currentId === songId) {
     // i 是移除前的下标，指向的正好是「原来那首的下一首」；越界时钳到末尾
     state.currentId = state.queue[Math.min(i, state.queue.length - 1)] ?? null;
@@ -725,6 +733,7 @@ function sameIdOrder(a, b) {
 
 export function clearQueue() {
   state.queue = [];
+  state.forcedNextId = "";
   state.currentId = null;
   state.playing = false;
   state.position = 0;
@@ -892,6 +901,8 @@ export function currentSong() {
 export function playSong(songId, options = {}) {
   const song = songById(songId);
   if (!song) return;
+  // 用户主动播了别的歌：之前记的「下一首」标记作废
+  if (state.forcedNextId && state.forcedNextId !== songId) state.forcedNextId = "";
   if (options.queue && options.queue.length) {
     state.queue = options.queue.slice();
     state.queueOrigin = options.origin ?? null;
@@ -910,6 +921,7 @@ export function playContext(songIds, startIndex = 0, origin = null) {
   if (!songIds.length) return;
   state.queue = songIds.slice();
   state.queueOrigin = origin;
+  state.forcedNextId = "";
   playSong(songIds[startIndex], { queue: songIds, origin });
 }
 
@@ -993,6 +1005,15 @@ export function playNext(auto = false) {
     emit("player:pause", { songId: state.currentId });
     return;
   }
+  // 「添加为一首播放」：随机模式下队列下标不代表播放顺序，先消费显式标记
+  if (state.playMode === "shuffle" && state.forcedNextId) {
+    const forced = state.forcedNextId;
+    state.forcedNextId = "";
+    if (state.queue.includes(forced) && forced !== state.currentId) {
+      playSong(forced);
+      return;
+    }
+  }
   const i = nextIndex(1);
   if (i < 0) {
     if (auto) {
@@ -1040,7 +1061,11 @@ export function cyclePlayMode() {
 /** 直接设定播放模式（"sequence" 即列表循环）。 */
 export function setPlayMode(mode) {
   const next = PLAY_MODES.includes(mode) || mode === "loop-all" ? mode : "sequence";
-  if (next !== state.playMode) state.playMode = next;
+  if (next !== state.playMode) {
+    state.playMode = next;
+    // 换了播放模式，之前记下的「添加为一首播放」落点不再适用
+    state.forcedNextId = "";
+  }
   state.config.playMode = state.playMode;
   if (state.playMode === "shuffle") reshuffle();
   commit();

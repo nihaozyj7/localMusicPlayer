@@ -45,7 +45,19 @@ type LibraryService struct {
 
 // NewLibraryService 构造服务（app 由 main 在创建应用后注入）
 func NewLibraryService(lib *library.Manager, watch *library.Watcher, store *bootstrap.Store) *LibraryService {
-	return &LibraryService{lib: lib, watch: watch, store: store}
+	s := &LibraryService{lib: lib, watch: watch, store: store}
+	// 曲库的每一次变化都在这里统一广播 scan:done：
+	//   · 全量扫描（用户点重扫 / 添加文件夹 / 启动扫描）；
+	//   · 增量扫描（文件夹监听、下载完成后 onFileAdded 调用的 RescanPaths）。
+	// 下载入库走的就是第二条 —— 以前只更新了内存里的 songs，没人告诉前端，
+	// 于是「刚下载的歌要重启才出现」。emit 会自己判断 app 是否就绪，
+	// 所以此时（app 还没注入）注册回调是安全的。
+	if lib != nil {
+		lib.SetChangedFunc(func(res library.ScanResult) {
+			s.emit("scan:done", res)
+		})
+	}
+	return s
 }
 
 // ToggleLike 切换「我喜欢」状态，返回切换后的状态
@@ -105,12 +117,12 @@ func (s *LibraryService) runScan(timeout time.Duration) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	res, err := s.lib.Scan(ctx, false)
-	if err != nil {
+	if _, err := s.lib.Scan(ctx, false); err != nil {
 		s.emit("scan:failed", map[string]any{"message": err.Error()})
 		return
 	}
-	s.emit("scan:done", res)
+	// scan:done 由 NewLibraryService 注册的 SetChangedFunc 统一发出
+	// （Scan 内部的 notifyChanged 会带上这次的 ScanResult），这里不再重复发送。
 }
 
 // AddFolder 弹出系统目录选择器并添加；用户取消时返回 cancelled=true。

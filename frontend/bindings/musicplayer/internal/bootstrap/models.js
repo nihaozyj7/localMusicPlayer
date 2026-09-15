@@ -11,7 +11,7 @@
  * @property {number} glassAlpha
  * @property {string} nativeBackdrop - NativeBackdrop 窗口原生材质：off | auto | mica | acrylic | tabbed。 只有 Windows 会用得上，且必须在创建窗口时指定，改了要重启应用。
  * @property {boolean} animations
- * @property {string} animationsSpeed - AnimationsSpeed 界面过渡速度：fast（0.2s）| medium（0.35s）| slow（0.5s）。 前端把它换算成 --dur 令牌，全站动效（含各种弹出层）都从这一个令牌取值。
+ * @property {string} animationsSpeed - AnimationsSpeed 界面过渡速度：fast（0.25s）| medium（0.5s）| slow（0.75s）。 前端把它换算成 --dur 令牌，全站动效（含各种弹出层）都从这一个令牌取值。
  * @property {boolean} accentFromCover
  * @property {boolean} showAlbumColumn
  * @property {boolean} showLyrics
@@ -31,7 +31,7 @@
  * @property {string} downloadDir - —— 在线功能 —— DownloadDir 在线歌曲下载的保存目录。默认是系统「音乐」目录下的 downloads。
  * @property {boolean} onlineCover - OnlineCover 是否联网为在线歌曲抓取封面（多来源，见 internal/coverfetch）。
  * @property {boolean} embedMeta - EmbedMeta 是否把抓到的封面/歌词写回歌曲文件自身的标签。 默认关闭：写标签会改写用户的音乐文件，必须是用户明确开启的行为。 关闭时封面与歌词仍然可用，只是放在缓存目录里（见 internal/metacache）。
- * @property {string} rowClickAction - —— 交互 —— RowClickAction 单击歌曲行的行为： next  —— 加入「下一首播放」（默认，不打断当前播放） play  —— 立即播放 append —— 追加到播放列表末尾
+ * @property {string} rowClickAction - —— 交互 —— RowClickAction 单击歌曲行的行为（与前端 settings.js 的 ROW_CLICK_ACTIONS 一一对应）： play      —— 播放：播这一首，并把它加进播放列表（不动现有列表） play-list —— 播放该歌单：播这一首，并用当前列表替换播放列表 next      —— 添加为一首播放：插到当前歌曲后面（默认，不打断当前播放）
  * @property {string} listDensity - ListDensity 列表密度：compact | cozy | roomy。 原来每张表头各有一个密度按钮，现在统一到设置里，对所有列表生效。
  * @property {boolean} minimizeToTray - MinimizeToTray 点窗口关闭按钮时「最小化到系统托盘」而不是退出应用。 关闭行为在主窗口的 WindowClosing **钩子**里判断（见 main.go）：钩子比 监听器先跑，取消事件就能让 Wails 内建的「关窗 = 销毁窗口」不发生。 托盘图标由 WindowService 按同一个开关创建 / 销毁（见 services.go#ensureTray）。
  * @property {string} coverSeed - —— 封面取色（cover-dark 主题）—— CoverSeed / CoverSeed2 是上一次从封面里提取得出的主色（十六进制）。 为什么要落盘：主题是在页面脚本跑起来之后才套用的，而取色还要等封面 图片解码完 —— 于是「启动 → 先用主题里写死的占位灰 → 取完色再整体重绘」， 肉眼看就是先黑一下、颜色还偏灰。把上次的取色结果记下来，Go 侧就能在 页面首屏之前把它写进 <html>，首帧直接就是对的颜色（见 early_theme.go）。

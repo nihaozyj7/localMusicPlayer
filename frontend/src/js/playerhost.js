@@ -42,7 +42,7 @@ import {
 /**
  * 播放详情页滑入 / 滑出，等的是 playerview.css 里的 --pv-slide-dur
  * （= --dur × 1.3）。以前写死 260ms，但「过渡速度」变成用户可调之后，
- * 写死就会在 0.35s / 0.5s 档把滑出的尾巴切掉。
+ * 写死就会在 0.5s / 0.75s 档把滑出的尾巴切掉。
  */
 function openCloseMs() {
   return Math.round(animationMs() * 1.3);

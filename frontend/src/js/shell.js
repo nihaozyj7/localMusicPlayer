@@ -103,7 +103,9 @@ export function refreshSettingsLayer() {
    -------------------------------------------------------------------------- */
 export async function doRescan({ manual = false } = {}) {
   if (state.scanning) return;
-  state.scanning = true;
+  // scanning 的置位由 store.rescan 负责（它在返回前会复位）。
+  // 这里**不能**先设成 true：rescan 开头有「已有扫描在跑就直接返回」的并发守卫，
+  // 先置位会让守卫命中、扫描根本不会启动 —— 这就是「手动扫描没反应」的原因。
   state.scanText = "正在扫描音乐文件夹…";
   commit();
   try {

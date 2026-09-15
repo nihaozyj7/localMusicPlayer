@@ -17,6 +17,7 @@ import {
   currentContext,
   isLiked,
   playContext,
+  playSong,
   playlistById,
   removeFromQueue,
   removeSongsFromPlaylist,
@@ -40,8 +41,10 @@ export const SORT_LABELS = {
 /* --------------------------------------------------------------------------
    单击 / 双击行为
    --------------------------------------------------------------------------
-   需求：点击歌曲默认「添加到下一首播放」，而不是「播放全部」；
-   用户可以在设置里改回「立即播放」或「加到末尾」。
+   单击有三种模式（与 Go 侧 bootstrap.RowClickActions 一一对应）：
+     play       播放        —— 播这一首，并把它加进播放列表（不动现有列表）
+     play-list  播放该歌单  —— 播这一首，并用当前列表替换播放列表
+     next       添加为一首播放 —— 插到当前歌曲后面，下一次「下一曲」就播它（默认）
 
    双击始终是「立即播放并从这一首开始」—— 这是各地播放器的通用约定，
    不受设置影响（否则把设置改成 next 之后就没有「马上听这首」的入口了）。
@@ -52,20 +55,20 @@ export function activateRow(row, { silent = false } = {}) {
   const action = state.config.rowClickAction || "next";
 
   if (action === "play") {
+    // playSong 保证这首歌一定在播放列表里（不在就追加到末尾），但不会清掉现有列表
+    playSong(songId);
+    return;
+  }
+
+  if (action === "play-list") {
     const ids = state.visibleSongs.map((s) => s.id);
     playContext(ids, Number(row.dataset.index), currentContext());
     return;
   }
 
-  if (action === "append") {
-    appendToQueue([songId]);
-    if (!silent) toast("已加入播放列表末尾", { tone: "success", duration: 1500 });
-    return;
-  }
-
-  // next（默认）
+  // 添加为一首播放（默认）
   addNextInQueue(songId);
-  if (!silent) toast("已设为下一首播放", { tone: "success", duration: 1500 });
+  if (!silent) toast("已添加为下一首播放", { tone: "success", duration: 1500 });
 }
 
 /* --------------------------------------------------------------------------

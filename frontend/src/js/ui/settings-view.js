@@ -174,6 +174,7 @@ class MpSettingsLayer extends MpElement {
     super();
     this._activeSection = SECTIONS[0].id;
     this._navPausedUntil = 0;
+    this._navResumeTimer = null;
     this._sliders = new WeakMap();
   }
 
@@ -216,6 +217,23 @@ class MpSettingsLayer extends MpElement {
     }, animationMs() + 40);
   }
 
+  onConnected() {
+    // 滚动事件（scroll）的 bubbles 为 false，挂在 <section> 上的 @scroll 收不到
+    // .settings-layer__body 发出的滚动事件 —— 这正是「导航高亮不跟随滚动」的原因。
+    // 捕获阶段与 bubbles 无关，后代元素的事件一定会经过宿主，所以在这里监听。
+    this._onScrollCapture = (e) => this.onScroll(e);
+    this.addEventListener("scroll", this._onScrollCapture, true);
+  }
+
+  onDisconnected() {
+    if (this._onScrollCapture) {
+      this.removeEventListener("scroll", this._onScrollCapture, true);
+      this._onScrollCapture = null;
+    }
+    if (this._navResumeTimer) clearTimeout(this._navResumeTimer);
+    this._navResumeTimer = null;
+  }
+
   disconnectedCallback() {
     if (this._closeTimer) clearTimeout(this._closeTimer);
     this._closeTimer = null;
@@ -234,7 +252,6 @@ class MpSettingsLayer extends MpElement {
         @click=${(e) => this.onClick(e)}
         @change=${(e) => this.onChange(e)}
         @input=${(e) => this.onInput(e)}
-        @scroll=${(e) => this.onScroll(e)}
       >
         <div class="settings-layer__panel" role="dialog" aria-modal="true" aria-label="设置">
           <div class="settings-layer__head">
@@ -506,7 +523,7 @@ class MpSettingsLayer extends MpElement {
           })}
           ${settingRow({
             label: "过渡速度",
-            hint: "弹出层、菜单、面板的进出动画时长；默认快速 0.2 秒",
+            hint: "弹出层、菜单、面板的进出动画时长；默认快速 0.25 秒",
             control: segmented("animationsSpeed", ANIMATION_SPEEDS, state.config.animationsSpeed || "fast"),
           })}
           ${settingRow({
@@ -684,7 +701,9 @@ class MpSettingsLayer extends MpElement {
           })}
           ${settingRow({
             label: "单击歌曲时的行为",
-            hint: "双击始终是「立即播放这一首」；这个设置只影响单击",
+            hint:
+              "双击始终是「立即播放这一首」；这个设置只影响单击：" +
+              "播放＝播放它并把它加进播放列表；播放该歌单＝播放它并用当前列表替换播放列表；添加为一首播放＝插到当前歌曲后面，点了「下一曲」就播它",
             control: segmented("rowClickAction", ROW_CLICK_ACTIONS, state.config.rowClickAction || "next"),
           })}
         </div>
@@ -765,8 +784,8 @@ class MpSettingsLayer extends MpElement {
           <p class="card__desc">
             按 EBU R128 测量整合响度（LUFS），回放时按目标响度做增益补偿，
             让不同来源的歌曲音量听起来一致。<br />
-            <b>不需要预先扫描</b>：播到哪首就测哪首，算好的补偿会缓存下来，
-            之后播放零延迟。改了目标响度后旧补偿会自动失效并按新标准重算。
+            <b>只在播放时按需测量</b>：播到哪首就测哪首，算好的补偿会缓存下来，
+            之后播放零延迟；没有手动预热的入口。改了目标响度后旧补偿会自动失效并按新标准重算。
           </p>
         </div>
 
@@ -808,14 +827,7 @@ class MpSettingsLayer extends MpElement {
         </div>
 
         <div class="setting setting--stack">
-          <div class="progress-line" id="loudness-progress" ?hidden=${!ls.running}>
-            <div class="progress-line__text" data-role="text">准备测量…</div>
-            <div class="progress-line__track"><div class="progress-line__bar" data-role="bar" data-value=${String(ls.total ? Math.round(((ls.done || 0) / ls.total) * 100) : 0)}></div></div>
-          </div>
-
           <div class="card__actions">
-            <button class="btn btn--sm btn--primary" type="button" data-act="loudness-measure-all">${icon("bolt")}<span>预先把全部歌曲算好</span></button>
-            <button class="btn btn--sm" type="button" data-act="loudness-cancel">${icon("close")}<span>停止</span></button>
             <button class="btn btn--sm" type="button" data-act="loudness-refresh">${icon("refresh")}<span>重新拉取补偿</span></button>
             <button class="btn btn--sm btn--danger" type="button" data-act="loudness-clear">${icon("trash")}<span>清除测量数据</span></button>
           </div>
@@ -1095,12 +1107,22 @@ class MpSettingsLayer extends MpElement {
   onScroll(e) {
     const scroll = e.target;
     if (!scroll.classList?.contains("settings-layer__body")) return;
-    if (Date.now() < this._navPausedUntil) return;
+    if (this._navPausedUntil) {
+      // 程序化滚动（点导航条）期间不跟随：滚动还在继续就不断续期，
+      // 直到它真正停下来再把跟随交还回去 —— 平滑滚动的尾帧不会改写刚点中的高亮。
+      this.deferNavResume();
+      return;
+    }
     const top = scroll.getBoundingClientRect().top + 80;
     let current = SECTIONS[0].id;
     for (const s of SECTIONS) {
       const node = this.querySelector(`[data-section="${s.id}"]`);
       if (node && node.getBoundingClientRect().top <= top) current = s.id;
+    }
+    // 滚到底时最后一张卡片可能还没顶到阈值线（卡片比一屏矮），不改的话高亮会一直
+    // 停在倒数第二个分区。真的能滚时才兜底选中最后一个分区。
+    if (scroll.scrollHeight > scroll.clientHeight + 2 && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2) {
+      current = SECTIONS[SECTIONS.length - 1].id;
     }
     if (current !== this._activeSection) {
       this._activeSection = current;
@@ -1114,13 +1136,34 @@ class MpSettingsLayer extends MpElement {
     }
   }
 
+  /** 程序化滚动结束后恢复「跟随」：滚动事件每来一次就推迟 140ms */
+  deferNavResume() {
+    clearTimeout(this._navResumeTimer);
+    this._navResumeTimer = setTimeout(() => {
+      this._navResumeTimer = null;
+      this._navPausedUntil = 0;
+    }, 140);
+  }
+
   scrollToSection(id) {
     const node = this.querySelector(`[data-section="${id}"]`);
-    if (!node) return;
+    const body = this.querySelector(".settings-layer__body");
+    if (!node || !body) return;
     this._activeSection = id;
     this.paintNav();
-    this._navPausedUntil = Date.now() + 600;
-    node.scrollIntoView({ behavior: "smooth", block: "start" });
+    this._navPausedUntil = 1;
+    // 已经在目标位置（不会再产生滚动事件）时也要能解锁
+    this.deferNavResume();
+    // 自己算目标位置而不是 scrollIntoView：
+    //   · 导航条是 sticky 的，卡片顶部必须落在它下面，否则会被挡住；
+    //   · scrollIntoView 有时会停在离底部差几像素的地方，滚到底时
+    //     滚动跟随（onScroll）算出来的分区就会和点中的不一致。
+    // 目标位置夹在 [0, max] 内，滚到底时由 onScroll 的「到底」兜底选中最后一个分区。
+    const nav = this.querySelector(".settings__nav");
+    const navH = nav ? nav.offsetHeight : 0;
+    const offset = node.getBoundingClientRect().top - body.getBoundingClientRect().top;
+    const target = Math.max(0, body.scrollTop + offset - navH - 8);
+    body.scrollTo({ top: target, behavior: "smooth" });
   }
 
   /* ------------------------------------------------------------------------

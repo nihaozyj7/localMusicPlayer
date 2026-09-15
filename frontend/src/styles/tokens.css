@@ -156,10 +156,10 @@
      开关唯一的动作就是把 --dur 归零（见 settings.js / handleSettingControl），
      派生出来的 --dur-fast / --dur-slow / --pv-slide-dur 会跟着一起归零。
      以前它们是各自写死的毫秒数，所以关掉动画后面板、菜单仍然在滑。 */
-  --dur: 200ms;
-  --dur-fast: calc(var(--dur) * 0.6); /* 120ms：悬停 / 按下 / 菜单，需要「跟手」 */
-  --dur-slow: calc(var(--dur) * 2.1); /* 420ms：大范围位移、整页级变化 */
-  --pv-slide-dur: calc(var(--dur) * 1.3); /* 260ms：播放详情页整页滑入 / 滑出 */
+  --dur: 250ms;
+  --dur-fast: calc(var(--dur) * 0.6); /* 150ms：悬停 / 按下 / 菜单，需要「跟手」 */
+  --dur-slow: calc(var(--dur) * 2.1); /* 525ms：大范围位移、整页级变化 */
+  --pv-slide-dur: calc(var(--dur) * 1.3); /* 325ms：播放详情页整页滑入 / 滑出 */
 
   /* 缓动只保留三种语义：通用属性过渡 / 进场 / 位移。
      进场的 --ease-out 是「快出慢收」，收尾时几乎停住，符合「东西推到位」的直觉。 */

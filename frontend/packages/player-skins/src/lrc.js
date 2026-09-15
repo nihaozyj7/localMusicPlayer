@@ -235,7 +235,10 @@ export function mergeDraftTimes(prev, next) {
         used[a] = true;
         break;
       }
-      if (b >= 0 && !used[b] && old[b].text === next[i].text) {
+      // b 必须同时落在 old 的范围内：used 数组只有 old.length 项，
+      // 而 i 可能远大于 old.length（把短草稿换成整首歌词），
+      // 少了 b < old.length 会读到 old[b] === undefined 直接抛异常。
+      if (b >= 0 && b < old.length && !used[b] && old[b].text === next[i].text) {
         kept[i] = old[b].time;
         used[b] = true;
         break;

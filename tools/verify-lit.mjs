@@ -228,13 +228,43 @@ const settings = await evaluate(`(async () => {
   layer.querySelector('[data-segment="listDensity"] [data-value="cozy"]').click();
   layer.querySelector('[data-toggle="animations"]').click();
   await new Promise(r => setTimeout(r, 200));
-  // 导航跳转
+  // 导航跳转（等程序化平滑滚动 + 免打扰窗口结束后再读，避免读到过渡中间态）
   layer.querySelector('[data-goto="about"]').click();
-  await new Promise(r => setTimeout(r, 700));
+  await new Promise(r => setTimeout(r, 1100));
   const activeNav = layer.querySelector('.settings__nav-item[aria-selected="true"]')?.textContent.trim();
-  return { cards, beforeChecked, afterChecked, scrollBefore: before, scrollAfter: after, density, activeNav };
+  const comp = document.querySelector("mp-settings-layer");
+  const diag = {
+    activeSection: comp?._activeSection,
+    pausedUntil: comp?._navPausedUntil,
+    scrollTop: Math.round(scrollBody.scrollTop),
+    scrollMax: Math.round(scrollBody.scrollHeight - scrollBody.clientHeight),
+  };
+  const rowClickLabels = [...layer.querySelectorAll('[data-segment="rowClickAction"] .segmented__btn')].map((b) => b.textContent.trim());
+  const loudnessManual = Boolean(layer.querySelector('[data-act="loudness-measure-all"]'));
+  return { cards, beforeChecked, afterChecked, scrollBefore: before, scrollAfter: after, density, activeNav, diag, rowClickLabels, loudnessManual };
 })()`);
 check("settings", settings);
+
+/* ---- 3.5 设置导航条跟随滚动 + 过渡速度档位 ---- */
+const settingsNav = await evaluate(`(async () => {
+  const layer = document.querySelector("#settings-layer");
+  const body = layer.querySelector(".settings-layer__body");
+  const active = () => layer.querySelector('.settings__nav-item[aria-selected="true"]')?.dataset.goto;
+  // 等「点导航条」留下的程序化滚动免打扰结束，否则这次滚动会被当成程序化滚动忽略
+  const comp = document.querySelector("mp-settings-layer");
+  for (let i = 0; i < 20 && comp && comp._navPausedUntil; i += 1) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  body.scrollTop = body.scrollHeight;
+  await new Promise(r => setTimeout(r, 150));
+  const atBottom = active();
+  body.scrollTop = 0;
+  await new Promise(r => setTimeout(r, 150));
+  const atTop = active();
+  const labels = [...layer.querySelectorAll('[data-segment="animationsSpeed"] .segmented__btn')].map(b => b.textContent.trim());
+  return { atBottom, atTop, labels };
+})()`);
+check("settings-nav-scroll", settingsNav);
 
 /* ---- 4. 关闭设置 + 底栏播放列表浮层 ---- */
 const panels = await evaluate(`(async () => {
@@ -306,16 +336,34 @@ const lyrics = await evaluate(`(async () => {
   const p = document.querySelector("#lyrics-panel");
   const open = !p.hidden;
   const tabs = p.querySelectorAll(".lyricspanel__tab").length;
+  // 在线搜索框应当自动填上当前歌曲的「歌名 歌手」
+  const songTitle = p.querySelector("[data-song-title]").textContent.trim();
+  const songArtist = p.querySelector("[data-song-artist]").textContent.trim();
+  const onlineKeyword = p.querySelector("[data-online-input]").value.trim();
+  const expectKeyword = [songTitle, songArtist].filter(Boolean).join(" ");
+  const prefillOk = Boolean(expectKeyword) && onlineKeyword === expectKeyword;
   p.querySelector('[data-tab="nudge"]').click();
   await new Promise(r => setTimeout(r, 400));
   const nudgeVisible = !p.querySelector('[data-pane="nudge"]').hidden;
   p.querySelector('[data-tab="edit"]').click();
   await new Promise(r => setTimeout(r, 500));
   const editVisible = !p.querySelector('[data-pane="edit"]').hidden;
+  // 手动编辑：灌 100 行，点最后一行 —— 列表必须自己滚下去
+  const ta = p.querySelector("[data-editor-text]");
+  ta.value = Array.from({ length: 100 }, (_, i) => "第" + (i + 1) + "句歌词").join("\\n");
+  ta.dispatchEvent(new Event("input", { bubbles: true }));
+  await new Promise(r => setTimeout(r, 800));
   const rows = p.querySelectorAll(".drow").length;
+  const list = p.querySelector("[data-editor-list]");
+  list.scrollTop = 0;
+  await new Promise(r => setTimeout(r, 150));
+  const all = p.querySelectorAll(".drow");
+  if (all.length) all[all.length - 1].click();
+  await new Promise(r => setTimeout(r, 800));
+  const editorScrolled = list.scrollTop > 0;
   p.querySelector("[data-act='close']").click();
   await new Promise(r => setTimeout(r, 300));
-  return { open, tabs, nudgeVisible, editVisible, rows, closed: p.hidden };
+  return { open, tabs, nudgeVisible, editVisible, rows, prefillOk, onlineKeyword, editorScrolled, closed: p.hidden };
 })()`);
 check("lyrics", lyrics);
 

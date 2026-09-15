@@ -91,6 +91,6 @@
   --r-md: 14px;
   --r-lg: 20px;
   --r-xl: 28px;
-  --dur: 200ms;
+  --dur: 250ms;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
