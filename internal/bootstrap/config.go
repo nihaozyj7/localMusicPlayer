@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"localmusicplayer/internal/atomicfile"
 	"localmusicplayer/internal/lyrics"
 )
 
@@ -480,6 +482,15 @@ func (c Config) EffectiveFolders() []Folder {
 	downloadDir := cleanAbsPath(c.DownloadDir)
 	downloadCovered := false
 	for _, f := range c.Folders {
+		// 下载目录是**派生**出来的，不该出现在用户配置里。早期版本把
+		// EffectiveFolders() 的结果整体写回了 config.Folders，于是留下了
+		// 形如 {"id":"auto_downloads","path":"<旧下载目录>"} 的残留：
+		// 改过下载位置之后旧目录会永远是扫描根，而且可能同时存在两条同 id
+		// 不同 path 的记录（folderStatuses 是 map[id]，状态会互相覆盖）。
+		// 这里直接忽略这种残留，下面按当前 DownloadDir 重新合成一条。
+		if f.ID == DownloadFolderID {
+			continue
+		}
 		path := cleanAbsPath(f.Path)
 		if path == "" {
 			continue
@@ -624,6 +635,96 @@ func migrateLegacyDataDir(newDir string) {
 	log.Printf("[config] 已把数据目录从 %s 迁移到 %s", legacy, newDir)
 }
 
+// repairLegacyCacheDir 把「改名之前遗留的绝对 cacheDir」修正回新数据目录，并把旧内容补过来。
+//
+// # 为什么必须有这一步（实测到的「缓存莫名消失」）
+//
+// cacheDir 在 config.json 里是**绝对路径**。0.1.0 之前数据目录叫
+// %APPDATA%MusicPlayer，那时的配置记的就是 %APPDATA%MusicPlayercache。
+// 改名时 migrateLegacyDataDir 把整个数据目录 rename 成了 LocalMusicPlayer，
+// 但配置里那条绝对路径不会跟着改 —— 于是程序下一次启动又按老路径
+// **新建了一个空的** MusicPlayercache，之后匹配到的封面与歌词全部写进那里；
+// 而用户之前匹配好的封面/歌词仍然躺在 LocalMusicPlayercache 里，
+// 界面上却一张都读不到（封面 404、歌词「没了」）。
+//
+// 真实数据可以证明这条链：metadata-cache.json 引用了 41 张内嵌封面，
+// 其中 40 张在 LocalMusicPlayercachecovers、只有 1 张在 MusicPlayercachecovers，
+// 而当时的 cacheDir 正指着后者 —— 40 张封面全部 404。
+//
+// 处理策略：只要 cacheDir 落在旧数据目录**之内**，就按同样的相对位置映射到
+// 新数据目录，并把旧目录里缺失的文件补过去。不覆盖新目录里已有的文件
+// （那里的才是当前正在用的），旧目录一律保留 —— 删用户的文件不是这里该做的事。
+// 判据刻意收得很窄（必须在旧数据目录之内），所以用户手动把缓存指到 D:cache
+// 这类合法配置不会被误伤。
+func repairLegacyCacheDir(cfg *Config) {
+	if cfg.CacheDir == "" || cfg.DataDir == "" {
+		return
+	}
+	legacy := legacyDataDir(cfg.DataDir)
+	if legacy == "" {
+		return
+	}
+	rel, err := filepath.Rel(legacy, cfg.CacheDir)
+	if err != nil || rel == "." || rel == ".." {
+		return
+	}
+	if strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return // 不在旧数据目录之内，是用户自己设的位置
+	}
+	target := filepath.Join(cfg.DataDir, rel)
+	if filepath.Clean(target) == filepath.Clean(cfg.CacheDir) {
+		return
+	}
+	moved, skipped, err := mergeTree(cfg.CacheDir, target)
+	switch {
+	case err != nil:
+		log.Printf("[config] 旧缓存目录搬运失败（继续使用新目录 %s）: %v", target, err)
+	case moved > 0:
+		log.Printf("[config] 缓存目录指向旧数据目录，已改用 %s 并补入 %d 个文件（跳过 %d 个已存在）", target, moved, skipped)
+	default:
+		log.Printf("[config] 缓存目录指向旧数据目录，已改用 %s（旧目录无可补内容）", target)
+	}
+	cfg.CacheDir = target
+}
+
+// mergeTree 把 src 下的文件**补**到 dst：只写 dst 里不存在（或为空）的文件，
+// 目录按需创建。返回补入 / 跳过的文件数；src 不存在时视为「没什么可搬」。
+//
+// 之所以不用 os.Rename 整体搬：目标目录很可能已经有一个正在用的 metadata
+// 索引（index.json），整体 rename 会把当前状态盖掉。
+func mergeTree(src, dst string) (moved, skipped int, err error) {
+	if st, statErr := os.Stat(src); statErr != nil || !st.IsDir() {
+		return 0, 0, nil
+	}
+	err = filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil // 单个文件读不了不该让整次搬运失败
+		}
+		rel, relErr := filepath.Rel(src, path)
+		if relErr != nil || rel == "." {
+			return nil
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		if st, statErr := os.Stat(target); statErr == nil && st.Size() > 0 {
+			skipped++
+			return nil
+		}
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+		if writeErr := atomicfile.Write(target, raw, 0o644); writeErr != nil {
+			return nil
+		}
+		moved++
+		return nil
+	})
+	return moved, skipped, err
+}
+
 /* --------------------------------------------------------------------------
    读写
    -------------------------------------------------------------------------- */
@@ -718,6 +819,9 @@ func normalize(cfg *Config) {
 	if cfg.CacheDir == "" {
 		cfg.CacheDir = filepath.Join(cfg.DataDir, "cache")
 	}
+	// 改名遗留的绝对路径要在这里修正：不清掉的话，封面/歌词会被写到一个
+	// 用户根本不知道的空目录里（见 repairLegacyCacheDir 的说明）。
+	repairLegacyCacheDir(cfg)
 	if strings.TrimSpace(cfg.DownloadDir) == "" {
 		cfg.DownloadDir = DefaultDownloadDir()
 	}

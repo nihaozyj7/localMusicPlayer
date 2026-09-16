@@ -23,13 +23,47 @@
   --fxl-accent: var(--accent);
   --fxl-glow: transparent;
   --fxl-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --fxl-fade: var(--bg-app, #08080a);
   position: relative;
   min-height: 0;
   height: 100%;
   overflow: hidden;
   container-type: size;
-  mask-image: linear-gradient(180deg, transparent 0, #000 15%, #000 85%, transparent 100%);
-  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 15%, #000 85%, transparent 100%);
+}
+
+/* 上下渐隐。
+   ★ 这里以前是给整个滚动区加 `mask-image`：一个覆盖全部歌词（实测 100+ 行、
+   4000+ 个字素 span）的遮罩，会让浏览器每帧为这一整层维护一份蒙版缓冲。
+   实测（真机 + CDP 注入对照，anime 样式）：
+     基线 85.9ms/帧 → 去掉这个 mask 后 66.2ms/帧，
+   单这一项就吃掉约 20ms/帧，是「特效样式卡」的最大单笔开销。
+   现在改成两条**固定高度的渐变覆盖层**（伪元素，只覆盖上下各 15%），
+   视觉几乎一致，代价低一个数量级。 */
+.fxl::before,
+.fxl::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 15%;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.fxl::before {
+  top: 0;
+  background: linear-gradient(180deg, var(--fxl-fade), transparent);
+}
+
+.fxl::after {
+  bottom: 0;
+  background: linear-gradient(0deg, var(--fxl-fade), transparent);
+}
+
+/* 皮肤想让渐隐层透明（例如整窗背景已经足够暗）时把 --fxl-fade 设成 transparent */
+.fxl[data-fade="off"]::before,
+.fxl[data-fade="off"]::after {
+  display: none;
 }
 
 .fxl__scroll {
@@ -115,7 +149,6 @@
   white-space: nowrap;
   overflow: hidden;
   color: var(--fxl-accent);
-  filter: blur(7px);
   opacity: 0;
   animation: fxl-echo calc(var(--dur-slow) * 1.6) var(--fxl-ease) both;
 }
@@ -155,37 +188,37 @@
   text-align: center;
 }
 
+/* ★ 入场动画**不用 filter: blur()**。
+   一行几十个字素同时做模糊滤镜 = 几十个离屏光栅化，实测（真机 CDP 对照，
+   在去掉上面的 mask 之后）还要再吃掉约 15~23ms/帧。
+   模糊只贡献「入墨」的观感，用「缩放 + 位移 + 透明度」就能表达，
+   而且这三样都走合成器。 */
 @keyframes fxl-in {
   0% {
     opacity: 0;
     transform: translate3d(0, 0.44em, 0) scale(0.62, 0.44) rotate(-4deg);
-    filter: blur(7px);
   }
 
   56% {
     opacity: 1;
     transform: translate3d(0, -0.07em, 0) scale(1.07, 1.05) rotate(1.2deg);
-    filter: blur(0);
   }
 
   100% {
     opacity: 1;
     transform: translate3d(0, 0, 0) scale(1, 1) rotate(0deg);
-    filter: blur(0);
   }
 }
 
 @keyframes fxl-echo {
   0% {
-    opacity: 0.5;
+    opacity: 0.45;
     transform: translate3d(-1.6%, 0.1em, 0) scale(1.02);
-    filter: blur(9px);
   }
 
   100% {
     opacity: 0;
     transform: translate3d(2.4%, -0.08em, 0) scale(0.99);
-    filter: blur(13px);
   }
 }
 
@@ -197,6 +230,5 @@
 
 [data-anim="off"] .fxl__u {
   opacity: 1;
-  filter: none;
   transform: none;
 }

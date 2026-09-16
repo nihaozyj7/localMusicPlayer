@@ -66,6 +66,43 @@ export function setCoverImage(img, src, fallback) {
   };
 }
 
+/**
+ * 歌词区空态文案。
+ *
+ * 以前每个内置样式各自写了一份 `if (source === 'online') return '在线匹配没有结果'`，
+ * 结果是「是不是在匹配中」这件事在样式里无法表达：宿主正在联网匹配时，
+ * 屏幕上显示的仍然是「暂无歌词」——用户以为这首没歌词，其实只是还没回来。
+ *
+ * 现在宿主在 lyrics 快照里带上 `status` / `statusText`：
+ *   · status = "loading"  → 「歌词匹配中…」（本地读取 + 在线匹配期间）
+ *   · status = "failed"   → 「歌词匹配失败」
+ *   · status = "none"     → 「暂无歌词」（真的没有，或在线匹配被关掉）
+ *   · status = "ok"       → 有歌词，不会走到这里
+ * 样式只需要拿 statusText 显示；宿主没给（第三方老宿主 / 桌面背景窗口的旧快照）
+ * 时退回这套默认映射，保证任何情况下都不会出现空白。
+ *
+ * @param {{status?: string, source?: string, statusText?: string}|null|undefined} lyrics
+ * @returns {string}
+ */
+export function lyricsEmptyText(lyrics) {
+  const custom = typeof lyrics?.statusText === "string" ? lyrics.statusText.trim() : "";
+  if (custom) return custom;
+  switch (lyrics?.status) {
+    case "loading":
+    case "matching":
+      return "歌词匹配中…";
+    case "failed":
+      return "歌词匹配失败";
+    case "none":
+      return "暂无歌词";
+    default:
+      break;
+  }
+  // 没有 status 的老路径：保留原来的判断（在线匹配过但结果为空）
+  if (lyrics?.source === "online") return "在线匹配失败";
+  return "暂无歌词";
+}
+
 /** 曲目副标题：歌手 · 专辑（专辑为空时不留下多余的分隔点） */
 export function subtitleOf(artist, album) {
   const a = String(artist ?? "").trim();

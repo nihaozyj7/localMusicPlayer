@@ -6,7 +6,7 @@
    这个包里面提供播放详情界面的背景渲染和交互（歌词的渲染也包含在内）」）：
      · 定义**皮肤接口**（contract.js）；
      · 提供歌词渲染器与整窗背景层的可复用实现；
-     · 内置六种样式：经典 / 沉浸 / 简约 / 二次元手绘 / 游戏风 / 魔法阵；
+     · 内置七种样式：经典 / 沉浸 / 简约 / 二次元手绘 / 舞台 / 游戏风 / 魔法阵；
      · 提供一个注册表：宿主用它列样式、按 id 取样式，第三方皮肤也能注册进来。
 
    扩展方式（两条路，接口完全一样）：
@@ -20,6 +20,7 @@ import classic from "./skins/classic.js";
 import immersive from "./skins/immersive.js";
 import minimal from "./skins/minimal.js";
 import anime from "./skins/anime.js";
+import stage from "./skins/stage.js";
 import arcade from "./skins/arcade.js";
 import magia from "./skins/magia.js";
 import "./lyrics.css";
@@ -29,7 +30,7 @@ import "./background-layer.css";
 import "./fx-lyrics.css";
 
 /** 内置样式（顺序即按钮组顺序的默认依据） */
-export const BUILTIN_SKINS = [classic, immersive, minimal, anime, arcade, magia];
+export const BUILTIN_SKINS = [classic, immersive, minimal, anime, stage, arcade, magia];
 
 /** 兜底样式：配置里写的 id 不认识时用它 */
 export const DEFAULT_SKIN_ID = "classic";
@@ -48,7 +49,7 @@ export {
 } from "./lrc.js";
 export { createLyricsView } from "./lyrics-view.js";
 export { createBackgroundLayer } from "./background-layer.js";
-export { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf } from "./html.js";
+export { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf, lyricsEmptyText } from "./html.js";
 
 /* --------------------------------------------------------------------------
    注册表
@@ -176,6 +177,23 @@ export async function loadExternalSkin(info) {
   if (!verdict.ok) throw new Error(`皮肤 ${info.id} 不合法：${verdict.reason}`);
 
   const skin = verdict.skin;
+
+  // ★ 内置样式优先：第三方样式**不允许**占用内置样式的 id。
+  //
+  // 这条规则来自一次真实事故：`magia` 原本是第三方样式，后来并入了内置，
+  // 但用户数据目录里那份旧副本（<数据目录>/player-skins/magia/skin.js）还留着。
+  // 注册表是按 id 覆盖的，于是「内置 magia 永远被磁盘上那份旧代码顶掉」——
+  // 界面上看到的一直是旧版，修在内置里的问题一个都不会生效
+  // （实测：给内置 magia 修的每帧同步布局，在真机上一个字都没跑到，
+  //   CDP profile 里热点仍然停在 /skins/magia/skin.js）。
+  // 与其静默顶替，不如明确报错：设置界面会把这条原因列在「样式加载失败」里。
+  if (BUILTIN_SKINS.some((s) => s.id === skin.id)) {
+    throw new Error(
+      `样式 id「${skin.id}」与内置样式同名，已忽略这个目录。` +
+        `请把目录改名并同步改掉模块里声明的 id（内置样式不会再被磁盘上的副本顶替）。`
+    );
+  }
+
   // 清单里的 name / styles 优先于模块内声明（清单是运维侧信息，模块是代码侧信息）
   if (info.name) skin.name = info.name;
   skin.builtin = false;

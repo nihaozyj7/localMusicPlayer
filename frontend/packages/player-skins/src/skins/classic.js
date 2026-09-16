@@ -11,7 +11,7 @@
 
 import { defineSkin } from "../contract.js";
 import { createLyricsView } from "../lyrics-view.js";
-import { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf } from "../html.js";
+import { EMPTY_TRACK, escapeHtml, lyricsEmptyText, setCoverImage, subtitleOf } from "../html.js";
 import "./classic.css";
 
 /** 当前挂载实例（同一时刻只会有一个 classic 实例） */
@@ -126,10 +126,9 @@ const skin = defineSkin({
   },
 });
 
-/** 空态文案带上歌词来源，用户能一眼看出「是没找到」还是「还没联网匹配」 */
+/** 空态文案统一走共享实现（html.js#lyricsEmptyText）：宿主会给出「匹配中 / 匹配失败」 */
 function emptyTextFor(lyrics) {
-  if (lyrics?.source === "online") return "在线匹配没有结果";
-  return "暂无歌词";
+  return lyricsEmptyText(lyrics);
 }
 
 export default skin;

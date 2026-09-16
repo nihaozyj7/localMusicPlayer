@@ -84,6 +84,10 @@ type Manager struct {
 	// metaReads 实际读取文件元数据的次数（命中缓存不计），用于测试与诊断
 	metaReads int64
 
+	// cacheUsable 表示磁盘上的元数据缓存**或者**「它不存在」这件事实已经确认过。
+	// 读失败 / JSON 解析失败时为 false —— 此时内存里的表是空的，但它不是真相。
+	cacheUsable bool
+
 	// 依赖
 	store *bootstrap.Store
 	// covers 是内嵌封面的内容寻址缓存（hash 命名，专用目录）
@@ -233,24 +237,67 @@ func scanCancelledErr(ctx context.Context) error {
 	return context.Canceled
 }
 
+// loadCache 读磁盘上的元数据缓存。
+//
+// ★ 关键约定：**读失败时必须把 cacheUsable 留成 false**。
+//
+// 以前这里四条件都是「静默 return」，于是「磁盘上的缓存读不动」与
+// 「这台机器从来没有缓存」在内存里长得一模一样（都是空表）。而 SaveCache
+// 最后会把这个空表整份写回 metadata-cache.json、pruneCoverCache 又会拿它当
+// 「没有任何封面仍被引用」的依据去回收 —— 一次瞬时读失败（杀软扫描占住文件、
+// 并发写、跨机器拷贝中）就足以让用户的整份元数据缓存**与全部内嵌封面文件**
+// 一起消失。这与用户报的「缓存数据莫名消失」是同一类事故，必须有硬保护。
 func (m *Manager) loadCache() {
 	raw, err := os.ReadFile(m.cachePath())
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// 首次运行：空表确实就是真相
+			m.cacheMu.Lock()
+			m.cacheUsable = true
+			m.cacheMu.Unlock()
+			return
+		}
+		m.markCacheUnusable("读取", err)
 		return
 	}
 	var cf cacheFile
 	if err := json.Unmarshal(raw, &cf); err != nil {
+		m.markCacheUnusable("解析", err)
 		return
 	}
 	if cf.Version != cacheVersion || cf.Entries == nil {
+		m.markCacheUnusable("版本/结构不符", nil)
 		return
 	}
 	m.cacheMu.Lock()
 	m.cache = cf.Entries
+	m.cacheUsable = true
 	m.cacheMu.Unlock()
 
 	// v1 → v2：把 base64 封面搬进内容寻址的封面缓存目录
 	m.migrateLegacyCovers()
+}
+
+// markCacheUnusable 记录「这份缓存这次没能用起来」，并把坏文件留一份现场。
+//
+// 只备份不改写：备份文件是排查用的，绝不覆盖原文件（下一次启动可能就读得动了）。
+func (m *Manager) markCacheUnusable(action string, cause error) {
+	m.cacheMu.Lock()
+	m.cacheUsable = false
+	m.cacheMu.Unlock()
+	log.Printf("[library] 元数据缓存%s失败，本次运行只读不写（不会覆盖磁盘上的缓存）: %v", action, cause)
+	if action == "解析" {
+		if raw, err := os.ReadFile(m.cachePath()); err == nil {
+			_ = os.WriteFile(m.cachePath()+".broken", raw, 0o644)
+		}
+	}
+}
+
+// cacheIsUsable 当前内存里的元数据缓存是否可以作为「磁盘真相」写回去。
+func (m *Manager) cacheIsUsable() bool {
+	m.cacheMu.RLock()
+	defer m.cacheMu.RUnlock()
+	return m.cacheUsable
 }
 
 // migrateLegacyCovers 把 v1 元数据缓存里的 base64 封面搬进封面缓存目录。
@@ -342,6 +389,11 @@ func (m *Manager) SaveCache() error {
 	// 保存前必须已经读过磁盘上的旧缓存：缓存现在是懒加载的，
 	// 少了这一步就会把上一次的全部条目直接覆盖成「只有本次扫描碰过的那些」。
 	m.ensureCacheLoaded()
+	// 载入失败时直接放弃本次保存：内存里的空表不是真相，
+	// 写回去就等于把用户的元数据缓存（以及它引用的封面）整份抹掉。
+	if !m.cacheIsUsable() {
+		return fmt.Errorf("元数据缓存未能载入，已跳过本次保存以免覆盖磁盘上的缓存")
+	}
 	// 与 loudness.Save 同样的理由：map 是引用类型，必须在锁内复制 ——
 	// 否则下面 json.Marshal 会无锁遍历 m.cache，而扫描 worker 仍在写它。
 	// 目前靠 beginScan/endScan 串行化侥幸不触发，但那是隐式约定，不该依赖。
@@ -374,6 +426,10 @@ func (m *Manager) SaveCache() error {
 // 1 小时的年龄门槛是给「刚写完还没登记进元数据缓存」的文件留的窗口 ——
 // 那种文件此刻必然不在 keep 里，不该被当成孤儿删掉。
 func (m *Manager) pruneCoverCache() {
+	// 载入失败时内存里的表是空的，用它当 keep 会把**所有**封面都判成孤儿删掉。
+	if !m.cacheIsUsable() {
+		return
+	}
 	m.cacheMu.RLock()
 	keep := make(map[string]struct{}, len(m.cache))
 	for _, entry := range m.cache {
@@ -558,7 +614,16 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 		}
 		m.folders[i].TrackCount = count
 	}
-	foldersCopy := append([]bootstrap.Folder(nil), m.folders...)
+	// 写回配置时**必须滤掉合成出来的下载目录**：它是从 DownloadDir 派生的，
+	// 一旦落进 config.Folders 就变成了「用户手动添加的文件夹」，改下载位置之后
+	// 旧目录会永远留在扫描根里，还会出现两条同 id 的记录。
+	foldersCopy := make([]bootstrap.Folder, 0, len(m.folders))
+	for _, f := range m.folders {
+		if f.ID == bootstrap.DownloadFolderID {
+			continue
+		}
+		foldersCopy = append(foldersCopy, f)
+	}
 	m.mu.Unlock()
 
 	_ = m.store.Update(func(c *bootstrap.Config) { c.Folders = foldersCopy })
@@ -752,12 +817,18 @@ func (m *Manager) songFromCandidate(c candidate, force bool) bootstrap.Song {
 		ModTime: c.mod,
 	}
 
-	// 命中缓存则直接复用（同一文件重扫几乎零成本）
+	// 命中缓存则直接复用（同一文件重扫几乎零成本）。
+	//
+	// 复用前要确认「缓存里记的那张封面文件还在」：封面是内容寻址的独立文件，
+	// 换过缓存目录、清理过缓存、或者把数据目录拷到另一台机器之后，索引还在
+	// 但文件已经没了 —— 此时若照旧复用，coverUrl 会指向一个 404 的名字，
+	// 用户看到的就是「这首歌有内嵌封面却只显示默认图」。封面缺失时退回完整
+	// 读取一次（标签解析很便宜，封面会被重新 Put 回当前目录，自动自愈）。
 	if !force {
 		m.cacheMu.RLock()
 		entry, ok := m.cache[c.path]
 		m.cacheMu.RUnlock()
-		if ok && entry.Size == c.size && entry.ModTime == c.mod {
+		if ok && entry.Size == c.size && entry.ModTime == c.mod && m.coverAvailable(entry.CoverFile) {
 			song.Title = entry.Title
 			song.Artist = entry.Artist
 			song.Album = entry.Album
@@ -806,6 +877,15 @@ func (m *Manager) songFromCandidate(c candidate, force bool) bootstrap.Song {
 	m.cacheMu.Unlock()
 	atomic.AddInt64(&m.metaReads, 1)
 	return song
+}
+
+// coverAvailable 判断元数据缓存里记的封面文件名是否仍然可用。
+// 空文件名 = 「这首歌本来就没有内嵌封面」，属于可用（不需要重新解析）。
+func (m *Manager) coverAvailable(name string) bool {
+	if name == "" {
+		return true
+	}
+	return m.covers.Exists(name)
 }
 
 // fillFallback 元数据缺失时的兜底：用文件名当标题，未知歌手/专辑

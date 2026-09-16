@@ -27,15 +27,98 @@ const NODE_MODULES = path.resolve(__dirname, "..", "node_modules");
 const BARE_SPECIFIERS = [
   ["@localmusicplayer/player-skins/contract", "/packages/player-skins/src/contract.js"],
   ["@localmusicplayer/player-skins", "/packages/player-skins/src/index.js"],
-  // 第三方包（拖拽排序 SortableJS）：浏览器不认裸包名，映射到同源的
-  // /vendor/* 路径。正式构建由 Vite 打包，这条映射只服务于零依赖预览。
-  ["sortablejs", "/vendor/sortablejs.js"],
+  // 第三方包（拖拽排序 SortableJS）：它的入口在 package.json 的 "module" 里，
+  // 不在默认的目录解析路径上，所以单独写一条。
+  // 其余第三方包由下面的 applyVendor 统一改写成 /vendor/<包名>/<子路径>。
+  ["sortablejs", "/vendor/sortablejs/modular/sortable.esm.js"],
 ];
 
-/** /vendor/* → node_modules 里的具体文件（固定白名单，不接受任意路径） */
-const VENDOR_FILES = {
-  "/vendor/sortablejs.js": path.join(NODE_MODULES, "sortablejs", "modular", "sortable.esm.js"),
-};
+/**
+ * 允许从 /vendor/ 读取的 npm 包（固定白名单，不接受任意路径）。
+ *
+ * ★ 这里曾经只有一条写死的 sortablejs → /vendor/sortablejs.js 映射，
+ * 所以**迁移到 Lit 之后零依赖静态预览整个坏掉了**：页面里
+ * `import { LitElement } from "lit"` 解析不了，模块图直接挂掉、界面全白，
+ * 而 README 与 docs/19 还写着「跑自检脚本请用静态预览」（于是 10 多个
+ * headless 自检脚本全部失效，却没人发现 —— 因为它们各自只看退出码）。
+ *
+ * 现在改成「按包名白名单从 node_modules 直接取」：`lit` / `lit/directives/repeat.js`
+ * 这类子路径都能落到真实文件上，加新依赖时只需要往白名单里补一个顶层包名。
+ */
+const VENDOR_PACKAGES = ["lit", "lit-html", "lit-element", "@lit/reactive-element", "sortablejs"];
+
+/** 该裸包名是否在白名单里（@scope/name 取两段，其余取一段） */
+function vendorAllowed(spec) {
+  const parts = String(spec).split("/");
+  const top = spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+  return VENDOR_PACKAGES.includes(top);
+}
+
+/**
+ * 把 /vendor/<pkgpath> 解析成 node_modules 里的真实文件；解析不到返回 null。
+ *
+ * 需要处理三种情况：直接是文件、是目录（补 index.js）、少了 .js 后缀
+ * （lit 的 exports 会把 "lit/directives/repeat.js" 映射到同名文件，
+ * 但有些包写成 "pkg/foo" 而磁盘上是 foo.js）。
+ */
+function resolveVendor(pkgPath) {
+  if (!vendorAllowed(pkgPath)) return null;
+  const rel = pkgPath.replace(/^([/\\])+/, "");
+  const base = path.join(NODE_MODULES, rel);
+  if (!base.startsWith(NODE_MODULES)) return null;
+  const isFile = (p) => {
+    try {
+      return fs.existsSync(p) && fs.statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  };
+  for (const c of [base, base + ".js", base + ".mjs", path.join(base, "index.js")]) {
+    if (isFile(c)) return c;
+  }
+  // 包根（形如 /vendor/lit-html）：入口不在 index.js 上，必须看 package.json。
+  // lit-html 的入口是 lit-html.js、@lit/reactive-element 是 reactive-element.js ——
+  // 只猜 index.js 会让这两个包永远 404，进而让整个模块图挂掉。
+  const pkgFile = path.join(base, "package.json");
+  if (!isFile(pkgFile)) return null;
+  let pkg;
+  try {
+    pkg = JSON.parse(fs.readFileSync(pkgFile, "utf8"));
+  } catch {
+    return null;
+  }
+  const entry = pickPackageEntry(pkg);
+  if (!entry) return null;
+  const full = path.join(base, entry);
+  if (isFile(full)) return full;
+  if (isFile(full + ".js")) return full + ".js";
+  return null;
+}
+
+/**
+ * 从 package.json 里挑出「浏览器直接可用的 ESM 入口」。
+ *
+ * 顺序刻意是 exports["."] → module → main：exports 是新包的权威声明，
+ * module 是打包器约定，main 是最后的兜底（可能是 CJS）。
+ * 递归时优先 default / import，避开 node / development 这类条件分支。
+ */
+function pickPackageEntry(pkg) {
+  const pick = (e) => {
+    if (!e) return "";
+    if (typeof e === "string") return e;
+    for (const key of ["browser", "import", "module", "default"]) {
+      const v = e[key];
+      if (typeof v === "string") return v;
+      if (v && typeof v === "object") {
+        const inner = pick(v);
+        if (inner) return inner;
+      }
+    }
+    return "";
+  };
+  const root = pkg.exports && (pkg.exports["."] || (typeof pkg.exports === "string" ? pkg.exports : null));
+  return pick(root) || pkg.module || pkg.main || "";
+}
 
 /**
  * 让源码能被「浏览器原生 ESM」直接跑起来 —— 这个服务器没有打包器，两件事必须自己做：
@@ -55,9 +138,33 @@ function rewriteForBrowser(source) {
     for (const [bare, target] of BARE_SPECIFIERS) {
       next = next.split(`"${bare}"`).join(`"${target}"`).split(`'${bare}'`).join(`"${target}"`);
     }
-    out.push(next);
+    out.push(applyVendor(next));
   }
   return out.join("\n");
+}
+
+/**
+ * 把第三方裸包名改写成 /vendor/ 同源路径。
+ *
+ * 覆盖三种写法：`from "lit"`、`import("lit")`、`import "lit";`。
+ * 只处理白名单里的包，其它裸名（工作区包在上面已经换过）原样留着 ——
+ * 这样一旦有新依赖忘了进白名单，浏览器会报「Failed to resolve module
+ * specifier」，比静默换成 404 好排查。
+ */
+function applyVendor(line) {
+  const toVendor = (spec) => {
+    const top = spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
+    return vendorAllowed(top) ? `/vendor/${spec}` : spec;
+  };
+  // 一条正则覆盖全部写法：`from "lit"` / `export * from "lit"` / `import "lit"` /
+  // `import("lit")`。注意 npm 上 lit 的入口是**压缩过**的
+  // `import"@lit/reactive-element";import"lit-html";` —— 引号前可能一个空格都没有，
+  // 所以这里不能要求 \s+（早期写成 \s+ 时这两个包名一直解析不了）。
+  return line.replace(/(\bfrom|\bimport)\s*\(?\s*(["'])([^"']+)\2/g, (m, pre, q, spec) => {
+    const next = toVendor(spec);
+    if (next === spec) return m;
+    return `${pre}${m.slice(pre.length).replace(spec, next)}`;
+  });
 }
 
 /** 工作区包里所有的 CSS（被摘掉的 import 要用 <link> 补回来） */
@@ -189,9 +296,26 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 第三方依赖（零依赖预览用，固定白名单）
-  if (VENDOR_FILES[rel]) {
-    serveFile(res, VENDOR_FILES[rel], rel);
+  // 第三方依赖（零依赖预览用，按包名白名单从 node_modules 取）
+  if (rel.startsWith("/vendor/")) {
+    const file = resolveVendor(rel.slice("/vendor/".length));
+    if (!file) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end(`404 Not Found: ${rel}`);
+      return;
+    }
+    // ★ 必须重定向到**真实文件**的 URL，不能直接把内容当作 `/vendor/<包名>` 返回。
+    // 浏览器是用「模块 URL 所在目录」去解析相对 import 的：
+    //   @lit/reactive-element 的入口是 reactive-element.js，里面有
+    //   `import "./css-tag.js"`；若模块 URL 停在 /vendor/@lit/reactive-element，
+    //   相对路径会被解析成 /vendor/@lit/css-tag.js（少了一层），404、
+    //   整个模块图挂掉、界面全白。重定向之后 URL 就是真实路径，相对解析自然正确。
+    const urlPath = path.relative(NODE_MODULES, file).split(path.sep).join("/");
+    const canonical = `/vendor/${urlPath}`;
+    if (canonical !== rel) {
+      res.writeHead(302, { Location: canonical, "Cache-Control": "no-store" }).end();
+      return;
+    }
+    serveFile(res, file, rel);
     return;
   }
 

@@ -145,6 +145,18 @@ func (s *Store) Path(name string) (string, bool) {
 	return full, true
 }
 
+// Exists 判断文件名对应的文件是否真的在缓存目录里。
+//
+// 为什么需要它：URL() 是纯字符串拼接、**刻意不碰磁盘**（它会在列表里每首歌上
+// 被调用，不该有 IO）。代价是缓存目录换了、缓存被清理、或者数据目录被拷到
+// 另一台机器之后，URL() 仍然会生成一个指向不存在文件的地址，浏览器拿到的
+// 是 404 —— 界面上的表现是「这首歌明明有内嵌封面，却只显示默认图」。
+// 调用方在**需要确认**的地方（例如复用元数据缓存的封面前）用本方法显式检查。
+func (s *Store) Exists(name string) bool {
+	_, ok := s.Path(name)
+	return ok
+}
+
 // URL 返回同源可访问地址（形如 /cover/<name>?t=<token>）。
 //
 // 相对地址就够了：这条路由挂在 asset server 上，与页面同源，所以主窗口、

@@ -166,6 +166,7 @@ const last = {
   songId: "\u0000",
   cover: "\u0000",
   lyricsText: "\u0000",
+  lyricsStatus: "\u0000",
   options: "",
   playing: null,
   volume: null,
@@ -254,8 +255,12 @@ function collectWallpaperPatches() {
       });
     }
     // —— ④ 歌词装载完成（在线匹配回来的、或者换歌之后异步补上的）——
-    if (media.lyrics.text !== last.lyricsText) {
+    // 状态也要参与去重：自动匹配期间文本一直是空的，只看文本的话
+    // 「歌词匹配中… → 歌词匹配失败」这次变化传不过去，桌面背景歌词
+    // 会永远停在「匹配中…」。
+    if (media.lyrics.text !== last.lyricsText || media.lyrics.status !== last.lyricsStatus) {
       last.lyricsText = media.lyrics.text;
+      last.lyricsStatus = media.lyrics.status;
       last.lyricIndex = media.lyrics.index;
       patches.push({ type: "lyrics", lyrics: media.lyrics });
     }

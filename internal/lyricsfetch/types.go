@@ -190,6 +190,10 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]Candidate
 		}
 		return order[all[i].Provider] < order[all[j].Provider]
 	})
+	// 时长优先：原唱 / 伴奏 / Live / 翻唱常常标题、歌手一模一样，只有时长
+	// 差几十秒。纯按分数排会选中错误的那一版，歌词整首对不上。
+	// 这一步只重排「分数已经接近」的候选，且没有任何时长对得上时原样返回。
+	all = orderByDuration(all, req.Duration)
 	if req.Limit > 0 && len(all) > req.Limit {
 		all = all[:req.Limit]
 	}
@@ -408,6 +412,101 @@ func scoreCandidate(req SearchRequest, c Candidate) int {
 		score = 100
 	}
 	return score
+}
+
+/* --------------------------------------------------------------------------
+   时长优先
+   -------------------------------------------------------------------------- */
+
+const (
+	// durationRankTolerance 「时长算相同」的容差（毫秒）。
+	//
+	// 不卡到 0：各来源报的时长与本地文件本来就有 1~2 秒的正常误差
+	// （前奏静音、编码 padding、不同发行版、抓取时的截断），卡死会把
+	// 正确答案一起筛掉，用户看到的就是「明明有完全一样的歌词却匹配不上」。
+	durationRankTolerance = 2000
+
+	// durationRankWindow 允许参与「时长优先」重排的最大分差。
+	//
+	// 只把分数已经接近的候选拿来比时长：一个「标题只沾边、时长刚好一样」
+	// 的结果不该被顶到第一位 —— 错的歌词比没有歌词更糟。
+	// 取 18 是因为时长在同一档最多贡献 15 分，再加一点余量。
+	durationRankWindow = 18
+)
+
+// orderByDuration 稳定地把「时长与目标一致」的候选提到前面。
+//
+// 需求：自动匹配歌词时应当**优先匹配时长相同的版本**，没有对得上的再回退。
+//
+// 为什么不是「把时长权重调大」：分数还要兼顾标题与歌手的相似度，
+// 加权后的结果仍然可能出现「标题更接近但版本不对」压过「版本正确」的情况。
+// 这里改成先按分数排出前几名，再在其中挑时长对得上的 —— 语义是
+// 「在同样可信的候选里，选时长对得上的那一版」，与需求的措辞一致。
+//
+// 返回值可能是重排后的副本；确实没有时长对得上的候选时**原样返回**入参。
+func orderByDuration(cands []Candidate, want int64) []Candidate {
+	if want <= 0 || len(cands) < 2 {
+		return cands
+	}
+	best := cands[0].Score
+	hasExact := false
+	for _, c := range cands {
+		if c.Duration <= 0 || c.Score < best-durationRankWindow {
+			continue
+		}
+		if absDuration(want, c.Duration) <= durationRankTolerance {
+			hasExact = true
+			break
+		}
+	}
+	if !hasExact {
+		return cands
+	}
+
+	// band=0 表示「分数够格、可以参与时长比较」，band=1 的排在后面。
+	// diff 是时长差的绝对值；来源没给时长时用一个大值，排在给得出来的后面。
+	const noDuration = int64(1) << 62
+	type key struct {
+		band  int
+		exact int
+		diff  int64
+	}
+	keyOf := func(c Candidate) key {
+		k := key{diff: noDuration}
+		if c.Score < best-durationRankWindow {
+			k.band = 1
+		}
+		if c.Duration > 0 {
+			k.diff = absDuration(want, c.Duration)
+			if k.diff <= durationRankTolerance {
+				k.exact = 1
+			}
+		}
+		return k
+	}
+
+	out := append([]Candidate(nil), cands...)
+	sort.SliceStable(out, func(i, j int) bool {
+		ki, kj := keyOf(out[i]), keyOf(out[j])
+		if ki.band != kj.band {
+			return ki.band < kj.band
+		}
+		if ki.exact != kj.exact {
+			return ki.exact > kj.exact
+		}
+		if ki.diff != kj.diff {
+			return ki.diff < kj.diff
+		}
+		return false
+	})
+	return out
+}
+
+func absDuration(a, b int64) int64 {
+	if a >= b {
+		return a - b
+	}
+	return b - a
 }
 
 // normalize 去掉常见括号内容、标点与大小写差异，便于比较。

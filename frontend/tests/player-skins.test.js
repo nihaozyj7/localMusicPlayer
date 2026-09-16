@@ -26,7 +26,59 @@ import {
   resolveSkin,
   unregisterSkin,
   escapeHtml,
+  lyricsEmptyText,
+  loadExternalSkin,
 } from "@localmusicplayer/player-skins";
+
+/* --------------------------------------------------------------------------
+   歌词空态文案（「匹配中 / 匹配失败」不能显示成「暂无歌词」）
+   -------------------------------------------------------------------------- */
+
+test("外部样式不能占用内置 id（否则内置样式会被磁盘上的旧副本永久顶替）", async () => {
+  // 真实事故：magia 从第三方样式并入内置之后，用户数据目录里那份旧副本仍然存在，
+  // 注册表按 id 覆盖 → 内置 magia 的修复永远跑不到。
+  const mod =
+    "data:text/javascript," +
+    encodeURIComponent("export default { id: 'magia', name: '旧副本', mount() {} };");
+  await assert.rejects(
+    () => loadExternalSkin({ id: "magia", module: mod }),
+    /与内置样式同名/
+  );
+  // 内置样式仍然在，且没有被改过
+  assert.equal(getSkin("magia")?.name, "魔法阵 · 手绘次元");
+});
+
+test("外部样式用不冲突的 id 时能正常注册，注销后消失", async () => {
+  const mod =
+    "data:text/javascript," +
+    encodeURIComponent("export default { id: 'tmp-external', name: '临时样式', mount() {} };");
+  const skin = await loadExternalSkin({ id: "tmp-external", name: "临时样式", module: mod });
+  assert.equal(getSkin("tmp-external")?.name, "临时样式");
+  assert.equal(skin.builtin, false);
+  assert.equal(unregisterSkin("tmp-external"), true);
+  assert.equal(getSkin("tmp-external"), null);
+});
+
+test("lyricsEmptyText：宿主给了 statusText 就用它", () => {
+  assert.equal(lyricsEmptyText({ status: "matching", statusText: "歌词匹配中…" }), "歌词匹配中…");
+  assert.equal(lyricsEmptyText({ status: "failed", statusText: "歌词匹配失败" }), "歌词匹配失败");
+});
+
+test("lyricsEmptyText：没有 statusText 时按 status 映射", () => {
+  assert.equal(lyricsEmptyText({ status: "loading" }), "歌词匹配中…");
+  assert.equal(lyricsEmptyText({ status: "matching" }), "歌词匹配中…");
+  assert.equal(lyricsEmptyText({ status: "failed" }), "歌词匹配失败");
+  assert.equal(lyricsEmptyText({ status: "none" }), "暂无歌词");
+});
+
+test("lyricsEmptyText：老宿主（没有 status）退回原来的来源判断，不出现空白", () => {
+  assert.equal(lyricsEmptyText({ source: "online" }), "在线匹配失败");
+  assert.equal(lyricsEmptyText({ source: "embedded" }), "暂无歌词");
+  assert.equal(lyricsEmptyText(null), "暂无歌词");
+  assert.equal(lyricsEmptyText(undefined), "暂无歌词");
+  // 全是空白的 statusText 等于没给
+  assert.equal(lyricsEmptyText({ status: "failed", statusText: "   " }), "歌词匹配失败");
+});
 
 /* --------------------------------------------------------------------------
    LRC
@@ -117,16 +169,16 @@ test("inspectSkinModule：分别识别 default / skin 导出与缺失", () => {
    注册表
    -------------------------------------------------------------------------- */
 
-test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸 → 简约 → 两个特效 → 游戏风 → 魔法阵）", () => {
+test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸 → 简约 → 二次元 → 舞台 → 游戏风 → 魔法阵）", () => {
   // 内置样式是「产品的一部分」：这个清单变了就必须有人显式改这里，
   // 免得新增样式时漏注册、或者顺序被无意打乱。
   assert.deepEqual(
     listSkins().map((s) => s.id),
-    ["classic", "immersive", "minimal", "anime", "arcade", "magia"]
+    ["classic", "immersive", "minimal", "anime", "stage", "arcade", "magia"]
   );
   assert.deepEqual(
     BUILTIN_SKINS.map((s) => s.id),
-    ["classic", "immersive", "minimal", "anime", "arcade", "magia"]
+    ["classic", "immersive", "minimal", "anime", "stage", "arcade", "magia"]
   );
   for (const skin of BUILTIN_SKINS) {
     assert.equal(typeof skin.mount, "function", `${skin.id} 缺 mount`);
@@ -139,7 +191,7 @@ test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸 → �
 
 test("需要整窗背景层的内置样式（沉浸 / 特效类）都声明了 background", () => {
   const withBg = BUILTIN_SKINS.filter((s) => s.background).map((s) => s.id);
-  assert.deepEqual(withBg, ["immersive", "anime", "arcade", "magia"]);
+  assert.deepEqual(withBg, ["immersive", "anime", "stage", "arcade", "magia"]);
   // 经典与简约是「不铺满整窗」的两种：一个左唱片右歌词，一个只留文字
   assert.deepEqual(
     BUILTIN_SKINS.filter((s) => !s.background).map((s) => s.id),

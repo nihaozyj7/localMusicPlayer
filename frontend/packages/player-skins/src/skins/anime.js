@@ -18,7 +18,7 @@
 import { defineSkin } from "../contract.js";
 import { createFxLyrics } from "../fx-lyrics.js";
 import { createCamera } from "../fx-camera.js";
-import { EMPTY_TRACK, setCoverImage, subtitleOf } from "../html.js";
+import { EMPTY_TRACK, lyricsEmptyText, setCoverImage, subtitleOf } from "../html.js";
 import "./anime.css";
 
 let inst = null;
@@ -382,8 +382,7 @@ const skin = defineSkin({
 });
 
 function emptyTextFor(lyrics) {
-  if (lyrics?.source === "online") return "在线匹配没有结果";
-  return "暂无歌词";
+  return lyricsEmptyText(lyrics);
 }
 
 export default skin;

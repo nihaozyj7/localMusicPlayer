@@ -20,6 +20,7 @@
    ========================================================================== */
 
 import { defineSkin } from "../contract.js";
+import { lyricsEmptyText } from "../html.js";
 import "./magia.css";
 
 const ID = "magia";
@@ -779,6 +780,8 @@ function createLyrics(host, handlers) {
   let target = 0;
   let needMeasure = false;
   let isEmpty = false;
+  // 上一次「请求滚到的位置」（见 follow：只在目标变化时才碰 scroll）
+  let lastScrollTarget = -1;
 
   const markUser = () => {
     userUntil = Date.now() + 1400;
@@ -968,18 +971,29 @@ function createLyrics(host, handlers) {
     target = clamp(top, 0, max);
   }
 
-  /** 每帧推进：用户正在翻歌词时让位，停手 1.4 秒后自动接管 */
+  /**
+   * 把当前行滚到垂直中央（用户正在翻歌词时让位，停手 1.4 秒后自动接管）。
+   *
+   * ★ 这里曾经是「每帧做一次 0.15 的指数趋近」：先读 `scroll.scrollTop`、
+   *   再写回去。这一读一写会让浏览器**每帧强制一次同步布局**，而这个滚动区里
+   *   有 100 多行、每行几十个字素 span（4000+ 元素，还叠着滤镜与混合模式）——
+   *   实测单次 follow 就要 60~100ms，magia 的 rAF 因此被压到每秒 12~16 次。
+   *   用 CDP 给 requestAnimationFrame 打桩计数可以复现：
+   *   classic 0 次/秒（它压根没有帧循环）、magia 12~16 次/秒；
+   *   CPU profile 里 48% 的采样落在本函数（强制布局算在它的账上）。
+   *
+   *   修法与 lyrics-view / fx-lyrics 对齐：**只在目标位置真的变化时**
+   *   调一次 `scrollTo({ behavior: 'smooth' })`，滚动动画交给浏览器合成器，
+   *   JS 侧不再每帧读写 scrollTop。代价是「近似居中」而非像素级居中，
+   *   收益是歌词跟随几乎不占主线程。
+   */
   function follow() {
     if (isEmpty || !rows.length) return;
     if (needMeasure) measure();
     if (Date.now() < userUntil) return;
-    const cur = scroll.scrollTop;
-    const diff = target - cur;
-    if (Math.abs(diff) < 0.5) {
-      if (diff !== 0) scroll.scrollTop = target;
-      return;
-    }
-    scroll.scrollTop = cur + diff * 0.15;
+    if (Math.abs(target - lastScrollTarget) < 4) return;
+    lastScrollTarget = target;
+    scroll.scrollTo({ top: target, behavior: "smooth" });
   }
 
   function destroy() {
@@ -1132,10 +1146,8 @@ function stepBeat(s) {
 }
 
 function emptyTextFor(lyrics) {
-  const source = lyrics && lyrics.source;
-  if (source === "online") return "在线匹配没有结果";
-  if (source === "none" || !source) return "这首歌还没有歌词";
-  return "暂无歌词";
+  // 统一走共享实现：宿主在「匹配中 / 匹配失败」时会给出 statusText
+  return lyricsEmptyText(lyrics);
 }
 
 let inst = null;

@@ -170,7 +170,11 @@ class MpLyricsPanel extends MpElement {
                 data-song-source
                 data-src=${info.source}
               >
-                ${lyricsSourceLabel(info.source)}
+                ${info.status === "matching" || info.status === "loading"
+                  ? "歌词匹配中…"
+                  : info.status === "failed"
+                    ? "歌词匹配失败"
+                    : lyricsSourceLabel(info.source)}
               </span>
               <span class="lyricspanel__artist" data-song-artist>${song ? song.artist || "" : ""}</span>
             </div>

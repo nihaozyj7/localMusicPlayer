@@ -67,10 +67,36 @@ const SKINS_PREFIX = "/skins/";
    匹配到的结果会写进后端缓存 —— 下次再听同一首就不用再联网了。
    ========================================================================== */
 
-let lyricsCache = new Map(); // songId -> { lines, text, source }
+/* 歌词装载状态：样式据此显示「匹配中 / 匹配失败」而不是一律「暂无歌词」。
+   idle/ok 有内容时不显示文案，只有空态才会用到 statusText。 */
+const LYRICS_STATUS_TEXT = {
+  loading: "歌词匹配中…",
+  matching: "歌词匹配中…",
+  failed: "歌词匹配失败",
+  none: "暂无歌词",
+};
+
+let lyricsCache = new Map(); // songId -> { lines, text, source, status }
 /** 已经做过在线匹配的歌曲（避免同一首歌反复联网） */
 const autoMatched = new Set();
 const lyricsPending = new Set();
+
+/**
+ * 更新某首歌的歌词装载状态，并在它正好是当前曲目时立刻推给皮肤。
+ *
+ * 为什么需要这一步：宿主先前只把「歌词文本」推给样式，而自动匹配期间文本
+ * 一直是空的 —— 样式只能显示「暂无歌词」，用户以为这首歌没有歌词，
+ * 实际上联网匹配还在跑（AI 清洗元数据时可能要十几秒）。
+ * 现在文本变了**或者状态变了**都会推。
+ */
+function setLyricsStatus(song, status) {
+  if (!song?.id) return;
+  const cur = lyricsCache.get(song.id) || { lines: [], text: "", source: "none" };
+  if (cur.status === status) return;
+  lyricsCache.set(song.id, { ...cur, status });
+  lastPushed.lyricsStatus = null; // 让下一次同步一定会带上新状态
+  if (currentSong()?.id === song.id) push({ type: "lyrics", ...mediaSnapshot() });
+}
 
 function currentSong() {
   return songById(state.currentId);
@@ -84,11 +110,15 @@ function onlineLyricsEnabled() {
 }
 
 async function getLyrics(song) {
-  if (!song) return { lines: [], text: "", source: "none" };
+  if (!song) return { lines: [], text: "", source: "none", status: "none" };
   if (lyricsCache.has(song.id)) return lyricsCache.get(song.id);
 
   let text = "";
   let source = "none";
+  // 先给出「正在装载」的空快照：本地三级读完之前界面不该是空的，
+  // 更重要的是下面联网匹配可能要十几秒（AI 清洗元数据），
+  // 那段时间里样式显示「歌词匹配中…」而不是「暂无歌词」。
+  lyricsCache.set(song.id, { lines: [], text: "", source: "none", status: "loading" });
 
   if (isWails()) {
     // 1) 本地三级：内嵌 → .lrc → 缓存（后端一次做完）
@@ -101,8 +131,9 @@ async function getLyrics(song) {
       source = "backend";
     }
 
-    // 2) 本地都没有 → 在线自动匹配
+    // 2) 本地都没有 → 在线自动匹配（期间状态 = matching）
     if (!text && onlineLyricsEnabled()) {
+      setLyricsStatus(song, "matching");
       text = await tryAutoMatch(song);
       if (text) source = "online";
     }
@@ -110,8 +141,11 @@ async function getLyrics(song) {
 
   if (!text) {
     if (isWails()) {
-      // 后端可用但没有歌词：不要编造假歌词，直接显示空态
-      const payload = { lines: [], text: "", source: "none" };
+      // 后端可用但没有歌词：不要编造假歌词，直接显示空态。
+      // status 区分「联网匹配过且失败」与「本来就没有 / 联网被关掉」，
+      // 前者文案是「歌词匹配失败」，后者才是「暂无歌词」。
+      const status = onlineLyricsEnabled() ? "failed" : "none";
+      const payload = { lines: [], text: "", source: "none", status };
       lyricsCache.set(song.id, payload);
       return payload;
     }
@@ -121,7 +155,7 @@ async function getLyrics(song) {
     source = "preview";
   }
 
-  const payload = { lines: parseLrc(text), text, source };
+  const payload = { lines: parseLrc(text), text, source, status: "ok" };
   lyricsCache.set(song.id, payload);
   return payload;
 }
@@ -175,6 +209,7 @@ export function invalidateLyrics(songId) {
     lyricsOffsets.clear();
   }
   lastPushed.lyricsText = null;
+  lastPushed.lyricsStatus = null;
 }
 
 /* --------------------------------------------------------------------------
@@ -248,6 +283,8 @@ export function currentLyricsInfo(songId) {
     songId: song?.id || "",
     text: cached?.text || "",
     source: cached?.source || "none",
+    // 装载状态：歌词工作台与详情页都要能说出「正在匹配」而不是「暂无」
+    status: cached?.status || (cached?.lines?.length ? "ok" : "none"),
     lines: cached?.lines || [],
   };
 }
@@ -325,9 +362,10 @@ export function currentLyricWindow() {
  */
 export async function applyOnlineLyrics(songId, text, source = "online", options = {}) {
   if (!songId || !text) return false;
-  lyricsCache.set(songId, { lines: parseLrc(text), text, source });
+  lyricsCache.set(songId, { lines: parseLrc(text), text, source, status: "ok" });
   autoMatched.add(songId);
   lastPushed.lyricsText = null;
+  lastPushed.lyricsStatus = null;
 
   // 后端保存结果（含 note：说明「已缓存」/「已写入歌曲文件」/「该格式不支持」）。
   // 调用方（歌词工作台）需要它来告诉用户这次保存到底有没有真正生效 ——
@@ -343,8 +381,9 @@ export async function applyOnlineLyrics(songId, text, source = "online", options
       // 否则界面与桌面歌词会一直显示 <00:12.00> 这类逐字标记。
       const saved = typeof res?.lrc === "string" && res.lrc ? res.lrc : text;
       if (saved !== text) {
-        lyricsCache.set(songId, { lines: parseLrc(saved), text: saved, source });
+        lyricsCache.set(songId, { lines: parseLrc(saved), text: saved, source, status: "ok" });
         lastPushed.lyricsText = null;
+        lastPushed.lyricsStatus = null;
       }
     } catch (err) {
       console.warn("[lyrics] 写入缓存失败", err);
@@ -509,6 +548,9 @@ const lastPushed = {
   songId: null,
   cover: null,
   lyricsText: null,
+  // 歌词状态也要参与「变了才推」的判断：自动匹配期间文本一直是空的，
+  // 只看文本的话状态从 matching → failed 时界面不会更新。
+  lyricsStatus: null,
   options: null,
   playing: null,
   themeId: null,
@@ -542,10 +584,15 @@ function lyricsSnapshot(song) {
   // lines 是**应用了待应用偏移**的行（见 linesForSong）：皮肤拿它配
   // ctx.playback().position 自己算行号，也是对的
   const lines = linesForSong(song);
+  // status：ok / loading（本地读取中）/ matching（联网匹配中）/ failed（匹配失败）/ none
+  // 只有空态才会用到 statusText，有歌词时它是空串。
+  const status = cached?.status || (lines.length ? "ok" : "none");
   return {
     lines,
     text: cached?.text || "",
     source: cached?.source || "none",
+    status,
+    statusText: lines.length ? "" : LYRICS_STATUS_TEXT[status] || "暂无歌词",
     index: findLyricIndex(lines, state.position),
   };
 }
@@ -943,6 +990,7 @@ export async function renderPlayerView() {
     const lyrics = await getLyrics(song);
     if ((currentSong()?.id ?? null) !== pending) return; // 等待期间又换歌了
     lastPushed.lyricsText = lyrics.text;
+    lastPushed.lyricsStatus = lyrics.status || "";
     pushMedia({ type: "lyrics" });
     pushOptions();
     return;
@@ -951,10 +999,11 @@ export async function renderPlayerView() {
   // 封面变化（封面面板应用/切换、轮播到下一张）
   pushMedia();
 
-  // 歌词变化（手动匹配、在线匹配回来）
+  // 歌词变化（手动匹配、在线匹配回来、状态从 matching → failed）
   const lyrics = lyricsSnapshot(song);
-  if (lyrics.text !== lastPushed.lyricsText) {
+  if (lyrics.text !== lastPushed.lyricsText || lyrics.status !== lastPushed.lyricsStatus) {
     lastPushed.lyricsText = lyrics.text;
+    lastPushed.lyricsStatus = lyrics.status;
     push({ type: "lyrics", ...mediaSnapshot() });
   }
 
@@ -966,6 +1015,7 @@ function resetPushed() {
   lastPushed.songId = null;
   lastPushed.cover = null;
   lastPushed.lyricsText = null;
+  lastPushed.lyricsStatus = null;
   lastPushed.options = null;
   lastPushed.playing = null;
 }

@@ -5,7 +5,7 @@
 
 import { defineSkin } from "../contract.js";
 import { createLyricsView } from "../lyrics-view.js";
-import { EMPTY_TRACK } from "../html.js";
+import { EMPTY_TRACK, lyricsEmptyText } from "../html.js";
 import "./minimal.css";
 
 let inst = null;
@@ -85,8 +85,7 @@ const skin = defineSkin({
 });
 
 function emptyTextFor(lyrics) {
-  if (lyrics?.source === "online") return "在线匹配没有结果";
-  return "暂无歌词";
+  return lyricsEmptyText(lyrics);
 }
 
 export default skin;
