@@ -13,7 +13,11 @@
 //   - 常数为 -0.691（把 997Hz 满量程正弦标定到 -3.01 LKFS）。
 package loudness
 
-import "math"
+import (
+	"math"
+	"sort"
+	"sync"
+)
 
 /* --------------------------------------------------------------------------
    K 加权滤波器
@@ -34,8 +38,14 @@ var bs1770_48k = [2]biquad{
 		a1: -1.99004745483398, a2: 0.99007225036621},
 }
 
-// coefficientCache 按采样率缓存推导出的系数
-var coefficientCache = map[int][2]biquad{}
+// coefficientCache 按采样率缓存推导出的系数。
+//
+// 用 sync.Map 而不是普通 map：IntegratedLUFS / IntegratedLRA / TruePeakDBTP
+// 都是导出函数，任何并发调用都会在普通 map 上产生数据竞争，而在 Go 里
+// 「并发 map 读写」是 fatal error（不可 recover）。目前生产路径走 ffmpeg，
+// 没有并发调用者，但这是对外导出 API 的潜在崩溃点，代价只有一行。
+// 采样率种类极少（44.1k / 48k / 96k…），不存在无界增长。
+var coefficientCache sync.Map // int -> [2]biquad
 
 // coefficientFor 取得某采样率下的 K 加权系数。
 //
@@ -44,11 +54,11 @@ var coefficientCache = map[int][2]biquad{}
 // 与 libebur128 相同的做法 —— 先用 48kHz 系数反推模拟域参数，
 // 再按目标采样率做双线性变换。
 func coefficientFor(rate int) [2]biquad {
-	if c, ok := coefficientCache[rate]; ok {
-		return c
+	if c, ok := coefficientCache.Load(rate); ok {
+		return c.([2]biquad)
 	}
 	if rate == 48000 {
-		coefficientCache[rate] = bs1770_48k
+		coefficientCache.Store(rate, bs1770_48k)
 		return bs1770_48k
 	}
 
@@ -59,7 +69,9 @@ func coefficientFor(rate int) [2]biquad {
 	for i, st := range bs1770_48k {
 		out[i] = resampleBiquad(st, 48000, rate)
 	}
-	coefficientCache[rate] = out
+	// 并发调用时可能有两个 goroutine 同时算出同一个 rate 的值 —— 结果相同，
+	// 覆盖是幂等的，不需要 double-check 锁。
+	coefficientCache.Store(rate, out)
 	return out
 }
 
@@ -382,16 +394,13 @@ func percentile(sorted []float64, p float64) float64 {
 }
 
 func sortFloats(a []float64) {
-	// 小切片，插入排序足够；避免为一次测量引入额外依赖
-	for i := 1; i < len(a); i++ {
-		v := a[i]
-		j := i - 1
-		for j >= 0 && a[j] > v {
-			a[j+1] = a[j]
-			j--
-		}
-		a[j+1] = v
-	}
+	// 用标准库的 pdqsort，不要手写插入排序。
+	//
+	// 这里以前是插入排序，注释的理由是「小切片」—— 但那个假设不成立：
+	// 切片装的是全部通过门限的 400ms 块，而块步进是 100ms（stepSeconds），
+	// 也就是约 10 × 时长（秒）个元素：3 分钟的歌约 1800 个，1 小时的
+	// DJ set 约 36000 个，O(k²) 就是 3 亿次比较。sort 本来就在标准库里。
+	sort.Float64s(a)
 }
 
 /* --------------------------------------------------------------------------

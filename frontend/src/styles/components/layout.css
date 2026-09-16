@@ -133,7 +133,9 @@
   transform: translateY(38px);
   transition: opacity var(--pv-slide-dur) var(--ease-out),
     transform var(--pv-slide-dur) var(--ease-slide);
-  will-change: transform, opacity;
+  /* 刻意不写 will-change：这是整窗图层，常驻提升会一直占着一层显存，
+     而 Chromium 在动画期间本来就会自动提升、结束自动回收。
+     皮肤包在 fx-lyrics.css:130-132 已经把这条策略写明了。 */
 }
 
 .playerview[data-state="opened"] {

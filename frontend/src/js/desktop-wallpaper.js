@@ -269,11 +269,7 @@ function collectWallpaperPatches() {
   }
 
   // —— ⑥ 播放状态 ——
-  if (
-    playback.playing !== last.playing ||
-    playback.volume !== last.volume ||
-    playback.muted !== last.muted
-  ) {
+  if (playback.playing !== last.playing || playback.volume !== last.volume || playback.muted !== last.muted) {
     last.playing = playback.playing;
     last.volume = playback.volume;
     last.muted = playback.muted;

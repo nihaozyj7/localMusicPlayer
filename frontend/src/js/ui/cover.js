@@ -56,13 +56,17 @@ class MpCoverLayer extends MpPanel {
             <svg class="cover-layer__icon" aria-hidden="true"><use href="#i-image"></use></svg>
             <span class="cover-layer__title">封面管理</span>
             <span class="u-spacer"></span>
-            <button class="cover-layer__close" type="button" data-cover-close aria-label="关闭封面管理" @click=${() => closeCoverPanel()}>
+            <button
+              class="cover-layer__close"
+              type="button"
+              data-cover-close
+              aria-label="关闭封面管理"
+              @click=${() => closeCoverPanel()}
+            >
               ${icon("close")}
             </button>
           </div>
-          <div class="cover-layer__body" id="cover-layer-body">
-            ${song && this.open ? this.panel(song) : nothing}
-          </div>
+          <div class="cover-layer__body" id="cover-layer-body">${song && this.open ? this.panel(song) : nothing}</div>
         </div>
       </div>
     `;
@@ -80,9 +84,11 @@ class MpCoverLayer extends MpPanel {
       <div class="cover-panel">
         <div class="cover-panel__current">
           <div class="cover-panel__frame" id="cover-current-frame">
-            ${raw
-              ? html`<img src=${raw} alt=${song.title} 原始封面 />`
-              : html`<span class="cover-panel__none">${icon("music")}</span>`}
+            ${
+              raw
+                ? html`<img src=${raw} alt=${song.title} 原始封面 />`
+                : html`<span class="cover-panel__none">${icon("music")}</span>`
+            }
           </div>
           <div class="cover-panel__meta">
             <div class="cover-panel__title">${song.title}</div>
@@ -104,11 +110,15 @@ class MpCoverLayer extends MpPanel {
               data-cover-act="embed"
               id="cover-embed-btn"
               aria-pressed=${String(state.config.embedMeta === true)}
-              data-tip=${state.config.embedMeta
-                ? "关闭后封面只存在缓存目录里"
-                : "打开后封面会写进歌曲文件本身（会修改音乐文件）"}
+              data-tip=${
+                state.config.embedMeta
+                  ? "关闭后封面只存在缓存目录里"
+                  : "打开后封面会写进歌曲文件本身（会修改音乐文件）"
+              }
               @click=${() => this.toggleEmbed()}
-            >${icon("tag")}<span>写入歌曲文件</span></button>
+            >
+              ${icon("tag")}<span>写入歌曲文件</span>
+            </button>
             <button
               class="btn btn--sm"
               type="button"
@@ -116,7 +126,9 @@ class MpCoverLayer extends MpPanel {
               id="cover-carousel-btn"
               aria-pressed=${String(state.config.coverCarousel === true)}
               @click=${() => this.toggleCarousel()}
-            >${icon("slideshow")}<span>轮播</span></button>
+            >
+              ${icon("slideshow")}<span>轮播</span>
+            </button>
           </div>
           <div class="cover-set" id="cover-set">${this.setItems()}</div>
         </div>
@@ -136,7 +148,13 @@ class MpCoverLayer extends MpPanel {
                 coverPanelState.keyword = e.target.value;
               }}
             />
-            <button class="btn btn--primary btn--sm" type="button" data-cover-act="search" ?disabled=${s.busy} @click=${() => this.runSearch()}>
+            <button
+              class="btn btn--primary btn--sm"
+              type="button"
+              data-cover-act="search"
+              ?disabled=${s.busy}
+              @click=${() => this.runSearch()}
+            >
               ${icon("search")}<span>联网搜索</span>
             </button>
             <button class="btn btn--sm" type="button" data-cover-act="local" @click=${() => this.pickLocal()}>
@@ -146,8 +164,7 @@ class MpCoverLayer extends MpPanel {
           <div class="cover-panel__hint">
             下载来的文件常常没有标签，标题是从文件名推出来的，直接搜不容易命中；
             在这里填一个更准确的关键词会准很多。也可以直接选一张本地图片 ——
-            两种结果都会出现在下面：联网搜索默认不勾选，本地图片默认已勾选，
-            确认后点「应用」。
+            两种结果都会出现在下面：联网搜索默认不勾选，本地图片默认已勾选， 确认后点「应用」。
           </div>
         </div>
 
@@ -158,7 +175,12 @@ class MpCoverLayer extends MpPanel {
         </div>
 
         <div class="cover-panel__foot">
-          <button class="btn btn--sm" type="button" data-cover-act="open-cache" @click=${() => backend.coverOpenCacheDir("covers")}>
+          <button
+            class="btn btn--sm"
+            type="button"
+            data-cover-act="open-cache"
+            @click=${() => backend.coverOpenCacheDir("covers")}
+          >
             ${icon("folder")}<span>打开缓存目录</span>
           </button>
         </div>
@@ -398,7 +420,9 @@ class MpCoverLayer extends MpPanel {
       setCoverStatus("先勾选至少一张封面");
       return;
     }
-    await this.writeCovers(() => backend.coverAddMany(coverPanelState.songId, previews, state.config.embedMeta === true));
+    await this.writeCovers(() =>
+      backend.coverAddMany(coverPanelState.songId, previews, state.config.embedMeta === true)
+    );
   }
 
   /** 把已有的某张设为当前生效 */
@@ -467,12 +491,9 @@ class MpCoverLayer extends MpPanel {
     state.config.embedMeta = !state.config.embedMeta;
     // 立刻落盘：这个开关决定了「这次应用会不会改写音乐文件」，不能停在防抖里
     commit();
-    toast(
-      state.config.embedMeta
-        ? "之后的封面会写进歌曲文件本身"
-        : "封面只保存在缓存目录（不改动音乐文件）",
-      { duration: 2200 }
-    );
+    toast(state.config.embedMeta ? "之后的封面会写进歌曲文件本身" : "封面只保存在缓存目录（不改动音乐文件）", {
+      duration: 2200,
+    });
   }
 
   async refreshSet() {

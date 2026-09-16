@@ -131,7 +131,12 @@
   background:
     radial-gradient(120% 90% at 74% 8%, var(--mg-glow) 0, transparent 58%),
     radial-gradient(90% 70% at 6% 96%, var(--mg-glow-2) 0, transparent 62%),
-    linear-gradient(180deg, color-mix(in oklab, var(--bg-app) 88%, var(--mg-a2)) 0, var(--bg-app) 62%, color-mix(in oklab, var(--bg-app) 86%, var(--text-1)) 100%);
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--bg-app) 88%, var(--mg-a2)) 0,
+      var(--bg-app) 62%,
+      color-mix(in oklab, var(--bg-app) 86%, var(--text-1)) 100%
+    );
   opacity: 0.9;
 }
 
@@ -178,11 +183,7 @@
 
 /* 放射光：repeating-conic-gradient 做的「魔法光束」 */
 .app[data-mode="magia"] .mg-bg__rays {
-  background: repeating-conic-gradient(
-    from 0deg at 50% 50%,
-    var(--mg-glow) 0deg 1.6deg,
-    transparent 1.6deg 11deg
-  );
+  background: repeating-conic-gradient(from 0deg at 50% 50%, var(--mg-glow) 0deg 1.6deg, transparent 1.6deg 11deg);
   mask-image: radial-gradient(closest-side, transparent 12%, #000 42%, transparent 78%);
   -webkit-mask-image: radial-gradient(closest-side, transparent 12%, #000 42%, transparent 78%);
   animation: mg-spin calc(var(--mg-anim) * 64s) linear infinite;
@@ -214,11 +215,7 @@
 
 /* 斜向速度线：纯 CSS，永不停歇的「动效底噪」 */
 .app[data-mode="magia"] .mg-bg__streaks {
-  background-image: repeating-linear-gradient(
-    74deg,
-    var(--mg-line-2) 0 1px,
-    transparent 1px 42px
-  );
+  background-image: repeating-linear-gradient(74deg, var(--mg-line-2) 0 1px, transparent 1px 42px);
   mask-image: linear-gradient(150deg, #000 0, transparent 42%, transparent 62%, #000 100%);
   -webkit-mask-image: linear-gradient(150deg, #000 0, transparent 42%, transparent 62%, #000 100%);
   animation: mg-streak-run calc(var(--mg-anim) * 12s) linear infinite;
@@ -514,11 +511,7 @@
 
 .playerview[data-skin="magia"] .mg-hud__rail {
   position: absolute;
-  background-image: repeating-linear-gradient(
-    180deg,
-    var(--mg-line-2) 0 1px,
-    transparent 1px 14px
-  );
+  background-image: repeating-linear-gradient(180deg, var(--mg-line-2) 0 1px, transparent 1px 14px);
   width: 1px;
   top: 14%;
   bottom: 14%;
@@ -538,11 +531,7 @@
   height: 1px;
   left: 18%;
   right: 18%;
-  background-image: repeating-linear-gradient(
-    90deg,
-    var(--mg-line) 0 2px,
-    transparent 2px 10px
-  );
+  background-image: repeating-linear-gradient(90deg, var(--mg-line) 0 2px, transparent 2px 10px);
   opacity: calc(0.5 + var(--mg-beat) * 0.5);
 }
 
@@ -654,10 +643,8 @@
   position: relative;
   display: grid;
   place-items: center;
-  transform:
-    translate3d(calc(var(--mg-cam-x) * 1px), calc(var(--mg-cam-y) * 1px), 0)
-    rotate(calc(var(--mg-cam-r) * 1deg))
-    scale(var(--mg-cam-z));
+  transform: translate3d(calc(var(--mg-cam-x) * 1px), calc(var(--mg-cam-y) * 1px), 0)
+    rotate(calc(var(--mg-cam-r) * 1deg)) scale(var(--mg-cam-z));
   transform-origin: 50% 56%;
   will-change: transform;
 }
@@ -751,7 +738,9 @@
   height: 9%;
   border-radius: 50%;
   background: color-mix(in oklab, var(--bg-app) 82%, var(--accent));
-  box-shadow: 0 0 0 1px var(--mg-line), 0 0 14px var(--mg-glow);
+  box-shadow:
+    0 0 0 1px var(--mg-line),
+    0 0 14px var(--mg-glow);
 }
 
 /* 鼠标悬停 / 按下不再做任何缩放动效：唱片保持静止，只有光标形状提示可点。
@@ -942,10 +931,10 @@
   opacity: 0.34;
   cursor: pointer;
   transform-origin: 0 50%;
+  /* 同 lyrics.css：不把 filter 放进过渡（每行常驻模糊，过渡它等于逐行滤镜重算） */
   transition:
     opacity var(--dur) var(--ease),
     color var(--dur) var(--ease),
-    filter var(--dur) var(--ease),
     transform var(--dur) var(--ease);
   filter: blur(0.6px);
 }
@@ -983,12 +972,16 @@
      每个字都在自己被唱到之前就已经落位，不会出现「上一句结束还有字没渲染」 */
   animation: mg-pop calc(var(--mg-anim) * 420ms) cubic-bezier(0.16, 1, 0.3, 1) both;
   animation-delay: calc(var(--mg-anim) * var(--mg-d, 0) * 1ms);
-  will-change: transform, opacity;
+  /* 不写 will-change：当前行有 10~40 个字，而 magia.js 每换一行都会剥掉旧行、
+     重建新行 —— 常驻提升等于每句都翻一次图层集合，与 fx-lyrics.css:130-132
+     写明的策略相反。 */
 }
 
 .playerview[data-skin="magia"] .mg-unit[data-hold="now"] {
   color: var(--mg-a1);
-  text-shadow: 0 0 22px var(--mg-glow), 0 0 44px var(--mg-glow-2);
+  text-shadow:
+    0 0 22px var(--mg-glow),
+    0 0 44px var(--mg-glow-2);
 }
 
 .playerview[data-skin="magia"] .mg-unit[data-hold="done"] {
@@ -1090,11 +1083,15 @@
 
 @keyframes mg-grid-run {
   from {
-    background-position: 0 0, 0 0;
+    background-position:
+      0 0,
+      0 0;
   }
 
   to {
-    background-position: 0 68px, 68px 0;
+    background-position:
+      0 68px,
+      68px 0;
   }
 }
 
@@ -1211,8 +1208,7 @@
 }
 
 .playerview[data-skin="magia"][data-lyrics="off"] .mg-camera {
-  transform:
-    translate3d(calc(var(--mg-cam-x) * 1px), calc(var(--mg-cam-y) * 1px), 0)
+  transform: translate3d(calc(var(--mg-cam-x) * 1px), calc(var(--mg-cam-y) * 1px), 0)
     scale(calc(var(--mg-cam-z) * 1.14));
 }
 

@@ -19,16 +19,7 @@ import { animationMs } from "../runtime-tokens.js";
 import { createSlider } from "../slider.js";
 import { applyGlassAlpha, resolvedGlassAlpha, resolvedGlassBlur } from "../theme.js";
 import { setRuntimeToken } from "../runtime-tokens.js";
-import {
-  commit,
-  coverVersion,
-  isLiked,
-  playSong,
-  removeFromQueue,
-  reorderQueue,
-  songById,
-  state,
-} from "../store.js";
+import { commit, coverVersion, isLiked, playSong, removeFromQueue, reorderQueue, songById, state } from "../store.js";
 import { coverOf } from "../utils.js";
 import { markDragEnd, shouldIgnoreRowClick } from "../tracks.js";
 import { clearQueue } from "../store.js";
@@ -42,7 +33,13 @@ import {
   toggleQueuePanel,
   toggleSleepPanel,
 } from "../playerbar.js";
-import { downloadsSnapshot, closeDownloadPanel, clearFinishedDownloads, openDownloadDir, openDownloadLocation } from "../downloads.js";
+import {
+  downloadsSnapshot,
+  closeDownloadPanel,
+  clearFinishedDownloads,
+  openDownloadDir,
+  openDownloadLocation,
+} from "../downloads.js";
 import { locateCurrentQueueItem } from "../tracks.js";
 
 /* ==========================================================================
@@ -188,7 +185,14 @@ class MpQueuePanel extends MpPanel {
           <span class="queue-panel__title">播放列表</span>
           <span class="u-spacer"></span>
           <span class="queue-panel__count" id="queue-panel-count">${list.length} 首</span>
-          <button class="queue-panel__btn" id="queue-locate" type="button" data-tip="定位到当前播放" aria-label="定位到当前播放" @click=${() => locateCurrentQueueItem()}>
+          <button
+            class="queue-panel__btn"
+            id="queue-locate"
+            type="button"
+            data-tip="定位到当前播放"
+            aria-label="定位到当前播放"
+            @click=${() => locateCurrentQueueItem()}
+          >
             ${icon("disc")}
           </button>
           <button
@@ -201,8 +205,17 @@ class MpQueuePanel extends MpPanel {
               clearQueue();
               toast("播放列表已清空");
             }}
-          >${icon("trash")}</button>
-          <button class="queue-panel__btn" id="queue-close" type="button" data-tip="关闭" aria-label="关闭播放列表" @click=${() => this.close()}>
+          >
+            ${icon("trash")}
+          </button>
+          <button
+            class="queue-panel__btn"
+            id="queue-close"
+            type="button"
+            data-tip="关闭"
+            aria-label="关闭播放列表"
+            @click=${() => this.close()}
+          >
             ${icon("close")}
           </button>
         </div>
@@ -212,13 +225,15 @@ class MpQueuePanel extends MpPanel {
           @click=${(e) => this.onClick(e)}
           @keydown=${(e) => this.onKey(e)}
         >
-          ${list.length
-            ? repeat(
-                list,
-                (song) => song.id,
-                (song) => this.item(song)
-              )
-            : html`<div class="queue-panel__empty">播放列表是空的<br />从曲库把歌曲加进来吧</div>`}
+          ${
+            list.length
+              ? repeat(
+                  list,
+                  (song) => song.id,
+                  (song) => this.item(song)
+                )
+              : html`<div class="queue-panel__empty">播放列表是空的<br />从曲库把歌曲加进来吧</div>`
+          }
         </div>
       </section>
     `;
@@ -248,7 +263,9 @@ class MpQueuePanel extends MpPanel {
           data-queue-del=${song.id}
           data-tip="从列表移除"
           aria-label="从列表移除"
-        >${icon("close")}</button>
+        >
+          ${icon("close")}
+        </button>
       </div>
     `;
   }
@@ -363,7 +380,14 @@ class MpOptionsPanel extends MpPanel {
         <div class="options-panel__head">
           <span class="options-panel__title">播放选项</span>
           <span class="u-spacer"></span>
-          <button class="options-panel__btn" id="options-close" type="button" data-tip="关闭" aria-label="关闭选项" @click=${() => this.close()}>
+          <button
+            class="options-panel__btn"
+            id="options-close"
+            type="button"
+            data-tip="关闭"
+            aria-label="关闭选项"
+            @click=${() => this.close()}
+          >
             ${icon("close")}
           </button>
         </div>
@@ -517,7 +541,14 @@ class MpSleepPanel extends MpPanel {
           <svg class="sleep-panel__icon" aria-hidden="true"><use href="#i-clock"></use></svg>
           <span class="sleep-panel__title">定时停止</span>
           <span class="u-spacer"></span>
-          <button class="options-panel__btn" id="sleep-close" type="button" data-tip="关闭" aria-label="关闭定时停止" @click=${() => this.close()}>
+          <button
+            class="options-panel__btn"
+            id="sleep-close"
+            type="button"
+            data-tip="关闭"
+            aria-label="关闭定时停止"
+            @click=${() => this.close()}
+          >
             ${icon("close")}
           </button>
         </div>
@@ -559,13 +590,18 @@ class MpSleepPanel extends MpPanel {
             ></button>
           </div>
           <div class="sleep-panel__row">
-            <button class="btn btn--sm" type="button" data-sleep-act="off" @click=${() => clearSleepTimer("已取消定时停止")}>
+            <button
+              class="btn btn--sm"
+              type="button"
+              data-sleep-act="off"
+              @click=${() => clearSleepTimer("已取消定时停止")}
+            >
               ${icon("close")}<span>取消定时</span>
             </button>
           </div>
           <div class="sleep-panel__hint">
-            「歌曲播放完成后停止」打开时，倒计时到点如果这首还没播完，会等它播完再停
-            （不会在副歌中间掐掉）。拖到 0 分钟即取消定时；设置从松手那一刻开始倒计时。
+            「歌曲播放完成后停止」打开时，倒计时到点如果这首还没播完，会等它播完再停 （不会在副歌中间掐掉）。拖到 0
+            分钟即取消定时；设置从松手那一刻开始倒计时。
           </div>
         </div>
       </section>
@@ -640,7 +676,14 @@ class MpDownloadPanel extends MpPanel {
           <span class="download-panel__count" id="download-panel-count">
             ${running ? `${running} 个下载中` : `共 ${tasks.length} 个`}
           </span>
-          <button class="download-panel__btn" id="download-open-dir" type="button" data-tip="打开下载目录" aria-label="打开下载目录" @click=${() => openDownloadDir()}>
+          <button
+            class="download-panel__btn"
+            id="download-open-dir"
+            type="button"
+            data-tip="打开下载目录"
+            aria-label="打开下载目录"
+            @click=${() => openDownloadDir()}
+          >
             ${icon("folder")}
           </button>
           <button
@@ -651,19 +694,30 @@ class MpDownloadPanel extends MpPanel {
             aria-label="清除已完成"
             ?disabled=${!hasFinished}
             @click=${() => clearFinishedDownloads()}
-          >${icon("trash")}</button>
-          <button class="download-panel__btn" id="download-close" type="button" data-tip="关闭" aria-label="关闭下载任务面板" @click=${() => this.close()}>
+          >
+            ${icon("trash")}
+          </button>
+          <button
+            class="download-panel__btn"
+            id="download-close"
+            type="button"
+            data-tip="关闭"
+            aria-label="关闭下载任务面板"
+            @click=${() => this.close()}
+          >
             ${icon("close")}
           </button>
         </div>
         <div class="download-panel__body" id="download-panel-body">
-          ${tasks.length
-            ? repeat(
-                tasks,
-                (t) => t.id,
-                (t) => this.item(t)
-              )
-            : html`<div class="download-panel__empty">还没有下载任务</div>`}
+          ${
+            tasks.length
+              ? repeat(
+                  tasks,
+                  (t) => t.id,
+                  (t) => this.item(t)
+                )
+              : html`<div class="download-panel__empty">还没有下载任务</div>`
+          }
         </div>
       </section>
     `;

@@ -63,7 +63,7 @@ func TestRealMusicFolder(t *testing.T) {
 			break
 		}
 		t.Logf("  [%d] %s | %s | %s | %dms | %dHz | cover=%v",
-			i, s.Title, s.Artist, s.Album, s.Duration, s.SampleRate, len(s.Cover) > 0)
+			i, s.Title, s.Artist, s.Album, s.Duration, s.SampleRate, s.CoverURL != "")
 	}
 
 	// 元数据解析质量统计
@@ -72,7 +72,8 @@ func TestRealMusicFolder(t *testing.T) {
 		if s.Duration == 0 {
 			noDuration++
 		}
-		if s.Cover == "" {
+		// 封面现在以内容寻址的同源地址给出（CoverURL），不再走 Cover 里的 base64
+		if s.CoverURL == "" {
 			noCover++
 		}
 		if s.Title == "" {

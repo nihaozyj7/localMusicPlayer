@@ -15,6 +15,7 @@ import (
 
 	"musicplayer/internal/bilibili"
 	"musicplayer/internal/bootstrap"
+	"musicplayer/internal/covercache"
 	"musicplayer/internal/coverfetch"
 	"musicplayer/internal/ffmpeg"
 	"musicplayer/internal/library"
@@ -182,6 +183,10 @@ func main() {
 			Middleware: func(next http.Handler) http.Handler {
 				audio := mediaSrv.Handler()
 				online := onlineSvc.Handler()
+				// 内嵌封面缓存（内容寻址的图片文件）。列表接口只下发
+				// /cover/<hash>?t=… 的地址，图片由浏览器按需取并永久缓存 ——
+				// 于是 IPC 载荷里不再需要几百 MB 的 base64（见 internal/covercache）。
+				covers := lib.CoversHandler()
 				// 自定义皮肤是用户数据目录里的文件，必须由我们自己按只读规则
 				// 托管（asset server 只认打包进二进制的 frontend/dist）。
 				var skinsHandler http.Handler
@@ -220,6 +225,10 @@ func main() {
 					}
 					if strings.HasPrefix(r.URL.Path, media.AudioPrefix) {
 						audio.ServeHTTP(w, r)
+						return
+					}
+					if strings.HasPrefix(r.URL.Path, covercache.Prefix) {
+						covers.ServeHTTP(w, r)
 						return
 					}
 					if strings.HasPrefix(r.URL.Path, skins.Prefix) {

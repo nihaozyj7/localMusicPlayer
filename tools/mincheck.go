@@ -2,11 +2,13 @@
 
 // mincheck.go —— 用精简版 ffmpeg 验证应用的三条真实调用路径：
 //
-//	1) 响度测量（loudnorm）
-//	2) 转码播放（解码 → wav，媒体服务用）
-//	3) 元数据兜底探测（Probe / SoundDurationMS）
+//  1. 响度测量（loudnorm）
 //
-//	go run tools/mincheck.go "C:\path\to\sample.wma"
+//  2. 转码播放（解码 → wav，媒体服务用）
+//
+//  3. 元数据兜底探测（Probe / SoundDurationMS）
+//
+//     go run tools/mincheck.go "C:\path\to\sample.wma"
 package main
 
 import (

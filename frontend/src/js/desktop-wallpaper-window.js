@@ -276,9 +276,7 @@ async function loadExternalSkins() {
         id: info.id,
         name: info.name,
         module: base + String(info.module).replace(/^\/+/, ""),
-        styles: (Array.isArray(info.styles) ? info.styles : []).map((s) =>
-          base + String(s).replace(/^\/+/, "")
-        ),
+        styles: (Array.isArray(info.styles) ? info.styles : []).map((s) => base + String(s).replace(/^\/+/, "")),
       });
     } catch (err) {
       console.warn(`[desktop-wallpaper] 样式「${info.id}」加载失败：`, err);
@@ -466,5 +464,3 @@ async function boot() {
 }
 
 boot();
-
-

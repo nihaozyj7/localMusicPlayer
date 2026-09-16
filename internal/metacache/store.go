@@ -36,12 +36,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"musicplayer/internal/atomicfile"
 )
 
 // Kind 缓存类别。
@@ -357,14 +360,9 @@ func (s *Store) AddCover(songID, mime string, data []byte, source string, width,
 		return CoverFile{}, fmt.Errorf("这首歌的封面数量已达上限（%d 张）", maxCoverCount)
 	}
 
-	// 先写临时文件再改名：避免读到写了一半的图片
-	tmp := full + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	// 唯一临时名 + fsync + 改名：避免读到写了一半的图片，也让并发落盘不互撞
+	if err := atomicfile.Write(full, data, 0o644); err != nil {
 		return CoverFile{}, fmt.Errorf("写入封面缓存失败: %w", err)
-	}
-	if err := os.Rename(tmp, full); err != nil {
-		_ = os.Remove(tmp)
-		return CoverFile{}, fmt.Errorf("保存封面缓存失败: %w", err)
 	}
 
 	item := CoverFile{File: name, MIME: mime, Source: source, Width: width, Height: height, Hash: hash, At: at}
@@ -435,15 +433,25 @@ func (s *Store) CoverDataURLAt(songID string, idx int) (string, bool) {
 // CoverDataURLs 返回这首歌全部封面的 data URL（按 items 顺序）。
 func (s *Store) CoverDataURLs(songID string) []string {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.ensureLoadedLocked()
 	entry, ok := s.coversLocked(songID)
 	if !ok {
+		s.mu.Unlock()
 		return nil
 	}
-	out := make([]string, 0, len(entry.Items))
-	for i := range entry.Items {
-		if data, mime, ok := s.readItemLocked(entry.Items[i]); ok {
+	// 只把「要读哪些文件」拷出来，读盘与 base64 编码全部放到锁外。
+	//
+	// 以前是持着 s.mu 逐个 os.ReadFile + base64：一首歌最多 12 张封面、
+	// 单张上限 6MB，一次调用可能持锁读 72MB 并生成约 96MB 字符串，
+	// 期间所有封面/歌词读接口（CoverIDs / CoverPath / LyricsPath…）都被堵住。
+	items := make([]CoverFile, len(entry.Items))
+	copy(items, entry.Items)
+	dir := s.dir
+	s.mu.Unlock()
+
+	out := make([]string, 0, len(items))
+	for i := range items {
+		if data, mime, ok := readItem(dir, items[i]); ok {
 			out = append(out, "data:"+mime+";base64,"+base64Encode(data))
 		}
 	}
@@ -471,9 +479,16 @@ func (s *Store) CoverBytesAt(songID string, idx int) ([]byte, string, bool) {
 	return s.readItemLocked(entry.Items[idx])
 }
 
-// readItemLocked 读一张封面文件的字节，并补齐 MIME（索引里没有就按魔数嗅探）。
+// readItemLocked 读一张封面文件的字节（持锁版，留给仍在锁内的调用方）。
 func (s *Store) readItemLocked(item CoverFile) ([]byte, string, bool) {
-	data, err := os.ReadFile(filepath.Join(s.dir, string(KindCover), item.File))
+	return readItem(s.dir, item)
+}
+
+// readItem 读一张封面文件的字节，并补齐 MIME（索引里没有就按魔数嗅探）。
+//
+// 不碰 s.mu，因此可以安全地在锁外调用（见 CoverDataURLs）。
+func readItem(dir string, item CoverFile) ([]byte, string, bool) {
+	data, err := os.ReadFile(filepath.Join(dir, string(KindCover), item.File))
 	if err != nil || len(data) == 0 {
 		return nil, "", false
 	}
@@ -629,13 +644,8 @@ func (s *Store) SaveLyrics(songID, text, source string) (string, error) {
 	}
 	name := safeFileID(songID) + ".lrc"
 	full := filepath.Join(dir, name)
-	tmp := full + ".tmp"
-	if err := os.WriteFile(tmp, []byte(text), 0o644); err != nil {
+	if err := atomicfile.Write(full, []byte(text), 0o644); err != nil {
 		return "", fmt.Errorf("写入歌词缓存失败: %w", err)
-	}
-	if err := os.Rename(tmp, full); err != nil {
-		_ = os.Remove(tmp)
-		return "", fmt.Errorf("保存歌词缓存失败: %w", err)
 	}
 
 	s.mu.Lock()
@@ -755,14 +765,46 @@ func (s *Store) ensureLoadedLocked() {
 	if s.loaded {
 		return
 	}
+	// loaded 在处理完两个索引之后才置位（而不是之前）：置位只表示「这次运行
+	// 已经尝试过」，避免每个读接口都重试一遍读盘。
 	s.loaded = true
-	_ = s.loadIndexLocked(KindCover)
-	_ = s.loadIndexLocked(KindLyrics)
+	for _, kind := range []Kind{KindCover, KindLyrics} {
+		if err := s.loadIndexLocked(kind); err != nil {
+			s.quarantineIndexLocked(kind, err)
+		}
+	}
+}
+
+// quarantineIndexLocked 处理无法解析的索引：改名备份，并以空索引继续。
+//
+// 为什么不能像以前那样把加载错误直接丢掉：索引是所有封面/歌词文件的**唯一目录表**。
+// 解析失败后内存里是空表，而 saveIndexLocked 会把这张空表当权威写回磁盘 ——
+// 磁盘上的图片/歌词文件都还在，但再也没人引用，用户看到的是「缓存全没了」。
+// 这与 saveIndexLocked 里「先写临时文件再改名」的原子写初衷相矛盾（那只防了
+// 写到一半崩溃，没防读到坏数据后覆盖）。
+//
+// 注意目录是只读用途时的取舍：即使改名失败也继续以空表运行，但一定留下日志，
+// 不让问题完全静默。
+func (s *Store) quarantineIndexLocked(kind Kind, cause error) {
+	path := s.indexPath(kind)
+	backup := fmt.Sprintf("%s.corrupt-%d", path, time.Now().UnixMilli())
+	if err := os.Rename(path, backup); err != nil {
+		log.Printf("[metacache] %s 索引无法解析（%v），且备份失败（%v）；"+
+			"将以空索引继续，下次保存会覆盖它", kind, cause, err)
+		return
+	}
+	log.Printf("[metacache] %s 索引无法解析（%v），已备份到 %s 并以空索引继续；"+
+		"磁盘上的封面/歌词文件未被删除", kind, cause, backup)
 }
 
 func (s *Store) loadIndexLocked(kind Kind) error {
 	raw, err := os.ReadFile(s.indexPath(kind))
 	if err != nil {
+		// 文件不存在是正常情况（首次运行 / 该类别还没有条目），必须与
+		// 「文件存在但读不出来/解析不了」区分开 —— 后者是要备份的损坏。
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
 	switch kind {
@@ -831,27 +873,15 @@ func (s *Store) saveIndexLocked(kind Kind) error {
 	default:
 		return fmt.Errorf("未知缓存类别: %s", kind)
 	}
-	raw, err := json.MarshalIndent(payload, "", "  ")
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Join(s.dir, string(kind)), 0o755); err != nil {
-		return err
-	}
-	// 先写临时文件再改名：索引是所有封面/歌词的**唯一目录表**，直接覆盖时
-	// 崩溃/断电会留下被截断的 JSON，下次启动解析失败就把索引当成空的 ——
-	// 磁盘上的图片还在，但没人引用，用户看到的是「缓存全没了」。
-	// 同包的图片与歌词文件本来就是这么写的，这里补上一致性。
-	target := s.indexPath(kind)
-	tmp := target + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, target); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	// 索引是所有封面/歌词的**唯一目录表**，直接覆盖时崩溃/断电会留下被截断的
+	// JSON，下次启动解析失败就把索引当成空的 —— 磁盘上的图片还在，但没人引用，
+	// 用户看到的是「缓存全没了」。所以走唯一临时名 + fsync + 改名。
+	// 目录由 atomicfile.Write 负责创建。
+	return atomicfile.Write(s.indexPath(kind), raw, 0o644)
 }
 
 /* --------------------------------------------------------------------------

@@ -61,35 +61,43 @@ class MpAddSongs extends MpElement {
       />
       <div class="addsongs__head">
         <span id="addsongs-count">
-          ${this._query.trim()
-            ? `匹配 ${fmtCount(songs.length)} 首`
-            : `共 ${fmtCount(state.songs.length)} 首 · 其中 ${fmtCount(free)} 首尚未加入`}
+          ${
+            this._query.trim()
+              ? `匹配 ${fmtCount(songs.length)} 首`
+              : `共 ${fmtCount(state.songs.length)} 首 · 其中 ${fmtCount(free)} 首尚未加入`
+          }
         </span>
         <span class="addsongs__actions">
-          <button class="btn btn--sm" type="button" data-addsongs="none" @click=${() => this.setAll(false)}>清空选择</button>
-          <button class="btn btn--sm" type="button" data-addsongs="all" @click=${() => this.setAll(true)}>全选</button>
+          <button class="btn btn--sm" type="button" data-addsongs="none" @click=${() => this.setAll(false)}>
+            清空选择
+          </button>
+          <button class="btn btn--sm" type="button" data-addsongs="all" @click=${() => this.setAll(true)}>
+            全选
+          </button>
         </span>
       </div>
       <div class="addsongs" id="addsongs-list">
-        ${songs.length
-          ? repeat(
-              songs,
-              (s) => s.id,
-              (s) => {
-                const inList = already.has(s.id);
-                return html`
-                  <label class="addsongs__row">
-                    <input type="checkbox" data-song-check=${s.id} ?checked=${inList} ?disabled=${inList} />
-                    <span class="addsongs__text">
-                      <span class="addsongs__title u-ellipsis">${s.title}</span>
-                      <span class="addsongs__sub u-ellipsis">${s.artist}${s.album ? ` · ${s.album}` : ""}</span>
-                    </span>
-                    ${inList ? html`<span class="addsongs__tag">已在歌单</span>` : nothing}
-                  </label>
-                `;
-              }
-            )
-          : html`<div class="addsongs__empty">没有匹配的歌曲</div>`}
+        ${
+          songs.length
+            ? repeat(
+                songs,
+                (s) => s.id,
+                (s) => {
+                  const inList = already.has(s.id);
+                  return html`
+                    <label class="addsongs__row">
+                      <input type="checkbox" data-song-check=${s.id} ?checked=${inList} ?disabled=${inList} />
+                      <span class="addsongs__text">
+                        <span class="addsongs__title u-ellipsis">${s.title}</span>
+                        <span class="addsongs__sub u-ellipsis">${s.artist}${s.album ? ` · ${s.album}` : ""}</span>
+                      </span>
+                      ${inList ? html`<span class="addsongs__tag">已在歌单</span>` : nothing}
+                    </label>
+                  `;
+                }
+              )
+            : html`<div class="addsongs__empty">没有匹配的歌曲</div>`
+        }
       </div>
     `;
   }

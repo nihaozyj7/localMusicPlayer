@@ -26,9 +26,12 @@ export function createSlider(root, opts = {}) {
 
   function paint() {
     const pct = max === min ? 0 : ((value - min) / (max - min)) * 100;
-    // 用具体属性（width/left）而不是自定义属性：CSP style-src 'self' 会拦截
+    // 填充用 transform: scaleX()（可合成），不用 width（布局属性 + 会重启过渡，
+    // 而进度条每个 store tick 都重画一次）。缩略图仍用 left：它是百分比定位，
+    // 要换算成 transform 得先量父元素宽度，那恰好就是我们要避免的那次布局。
+    // 用具体属性而不是自定义属性：CSP style-src 'self' 会拦截
     // el.style.setProperty("--x", …) 这种 CSSOM 写自定义属性的写法。
-    if (fillEl) fillEl.style.width = `${pct}%`;
+    if (fillEl) fillEl.style.transform = `scaleX(${pct / 100})`;
     if (thumbEl) thumbEl.style.left = `${pct}%`;
     if (bubbleEl && opts.format) bubbleEl.textContent = opts.format(value);
     root.setAttribute("aria-valuenow", String(Math.round(pct)));
@@ -134,7 +137,7 @@ export function createSlider(root, opts = {}) {
       root.dataset.disabled = disabled ? "true" : "false";
     },
     setBuffer(pct) {
-      if (bufferEl) bufferEl.style.width = `${clamp(pct, 0, 100)}%`;
+      if (bufferEl) bufferEl.style.transform = `scaleX(${clamp(pct, 0, 100) / 100})`;
     },
     /** 该值对应的展示文本（与气泡里的一致，供外部标签复用） */
     text(next = value) {

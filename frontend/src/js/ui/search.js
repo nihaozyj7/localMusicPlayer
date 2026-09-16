@@ -163,7 +163,9 @@ class MpSearchOverlay extends MpElement {
                 aria-label="清空搜索"
                 ?hidden=${!hasText}
                 @click=${() => this.clearSearch({ focus: true })}
-              >${icon("close")}</button>
+              >
+                ${icon("close")}
+              </button>
             </div>
             <button
               class="search-overlay__close"
@@ -172,34 +174,54 @@ class MpSearchOverlay extends MpElement {
               data-tip="关闭（结果会保留）"
               aria-label="关闭搜索"
               @click=${() => closeOverlay()}
-            >${icon("close")}</button>
+            >
+              ${icon("close")}
+            </button>
           </div>
 
           <div class="search-overlay__history" id="search-history" ?hidden=${hasText || !history.length}>
-            ${!hasText && history.length
-              ? html`
-                  <div class="search-overlay__history-title">
-                    <span>搜索历史</span>
-                    <button type="button" class="search-overlay__history-clear" data-history-act="clear" @click=${() => this.clearHistory()}>清空</button>
-                  </div>
-                  <div class="search-overlay__history-list">
-                    ${history.map(
-                      (k) => html`
-                        <span class="search-overlay__history-chip" data-history-keyword=${k}>
-                          <button type="button" class="search-overlay__history-key" data-history-act="use" @click=${() => this.useHistory(k)}>${k}</button>
-                          <button
-                            type="button"
-                            class="search-overlay__history-del"
-                            data-history-act="del"
-                            aria-label="删除「${k}」"
-                            @click=${() => this.removeHistory(k)}
-                          >${icon("close")}</button>
-                        </span>
-                      `
-                    )}
-                  </div>
-                `
-              : nothing}
+            ${
+              !hasText && history.length
+                ? html`
+                    <div class="search-overlay__history-title">
+                      <span>搜索历史</span>
+                      <button
+                        type="button"
+                        class="search-overlay__history-clear"
+                        data-history-act="clear"
+                        @click=${() => this.clearHistory()}
+                      >
+                        清空
+                      </button>
+                    </div>
+                    <div class="search-overlay__history-list">
+                      ${history.map(
+                        (k) => html`
+                          <span class="search-overlay__history-chip" data-history-keyword=${k}>
+                            <button
+                              type="button"
+                              class="search-overlay__history-key"
+                              data-history-act="use"
+                              @click=${() => this.useHistory(k)}
+                            >
+                              ${k}
+                            </button>
+                            <button
+                              type="button"
+                              class="search-overlay__history-del"
+                              data-history-act="del"
+                              aria-label="删除「${k}」"
+                              @click=${() => this.removeHistory(k)}
+                            >
+                              ${icon("close")}
+                            </button>
+                          </span>
+                        `
+                      )}
+                    </div>
+                  `
+                : nothing
+            }
           </div>
 
           <div class="search-overlay__head">
@@ -220,7 +242,9 @@ class MpSearchOverlay extends MpElement {
   bodyContent() {
     const s = searchState;
     if (s.loading) {
-      return html`<div class="search-overlay__loading"><span class="search-overlay__spinner"></span>正在搜索「${s.keyword.trim()}」…</div>`;
+      return html`<div class="search-overlay__loading">
+        <span class="search-overlay__spinner"></span>正在搜索「${s.keyword.trim()}」…
+      </div>`;
     }
     if (s.message) return this.empty(s.message);
     if (!s.results.length) {
@@ -239,9 +263,11 @@ class MpSearchOverlay extends MpElement {
           @click=${() => previewOnline(song.id)}
         >
           <span class="search-row__cover">
-            ${song.coverUrl
-              ? html`<img src=${song.coverUrl} alt="" loading="lazy" />`
-              : html`<span class="search-row__cover-fallback">${icon("music")}</span>`}
+            ${
+              song.coverUrl
+                ? html`<img src=${song.coverUrl} alt="" loading="lazy" />`
+                : html`<span class="search-row__cover-fallback">${icon("music")}</span>`
+            }
           </span>
           <span class="search-row__main">
             <span class="search-row__title">${song.title || "未命名"}</span>
@@ -257,7 +283,9 @@ class MpSearchOverlay extends MpElement {
                 e.stopPropagation();
                 previewOnline(song.id);
               }}
-            >${icon("play")}<span>试听</span></button>
+            >
+              ${icon("play")}<span>试听</span>
+            </button>
             <button
               class="btn btn--sm"
               type="button"
@@ -267,7 +295,9 @@ class MpSearchOverlay extends MpElement {
                 e.stopPropagation();
                 downloadOnline(song);
               }}
-            >${icon("file")}<span>下载</span></button>
+            >
+              ${icon("file")}<span>下载</span>
+            </button>
           </span>
         </div>
       `

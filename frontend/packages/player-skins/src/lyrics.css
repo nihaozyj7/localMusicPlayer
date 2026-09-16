@@ -86,12 +86,17 @@
   color: var(--text-1);
   opacity: var(--lyric-dim);
   transform-origin: center;
+  /* 刻意**不**过渡 font-size 与 filter：
+     · font-size 是文本度量，动它会让整个滚动区重排、每一行在 250ms 里持续
+       重新栅格化 —— 而它只是用来做「当前行更醒目」；
+     · 每行本来就常驻一个 filter: blur(0.3px)，把它放进过渡等于给每一行都排一次
+       滤镜重算。
+     现在强调瞬时生效（.lyric[aria-current] 仍直接给值），把「每行一次的重排 +
+     重栅格化」降成「每句一次」。 */
   transition:
     opacity var(--dur) var(--ease),
     transform var(--dur) var(--ease),
-    font-size var(--dur) var(--ease),
-    color var(--dur) var(--ease),
-    filter var(--dur) var(--ease);
+    color var(--dur) var(--ease);
   cursor: pointer;
   filter: blur(0.3px);
   user-select: text;

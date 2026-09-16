@@ -178,7 +178,9 @@ await shot("08-search");
 await evaluate(`document.querySelector(".search-overlay__close").click()`);
 await sleep(400);
 
-await evaluate(`document.querySelectorAll(".track")[2].dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,clientX:260,clientY:280}))`);
+await evaluate(
+  `document.querySelectorAll(".track")[2].dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,clientX:260,clientY:280}))`
+);
 await sleep(500);
 await shot("09-context-menu");
 

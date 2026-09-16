@@ -232,7 +232,7 @@ async function run() {
   // 播放确实在推进（不然测到的「0 变动」只是暂停时的静止）
   const posAfter = await evalJs("Math.round(window.__app.state.position)");
   cpu.advancedMs = posAfter - (ensurePlaying.position || 0);
-  cpu.playing = Boolean((await evalJs("window.__app.state.playing")));
+  cpu.playing = Boolean(await evalJs("window.__app.state.playing"));
   await evalJs("window.__app.state.playing && document.querySelector('#btn-play').click()");
   await settle();
 
@@ -378,13 +378,27 @@ async function run() {
     };
   })()`);
 
-  const totalLong = await evalJs("({ count: window.__longTasks.length, ms: window.__longTasks.reduce((a,b)=>a+b,0) })");
+  const totalLong = await evalJs(
+    "({ count: window.__longTasks.length, ms: window.__longTasks.reduce((a,b)=>a+b,0) })"
+  );
 
   return {
     label: LABEL,
     dist: DIST.replace(root, ""),
-    boot, idle, playing, cpu, switchSong, openSettings, toggleSwitch, density,
-    switchView, openLyrics, openQueue, clickRow, bigLibrary, totalLong,
+    boot,
+    idle,
+    playing,
+    cpu,
+    switchSong,
+    openSettings,
+    toggleSwitch,
+    density,
+    switchView,
+    openLyrics,
+    openQueue,
+    clickRow,
+    bigLibrary,
+    totalLong,
   };
 }
 

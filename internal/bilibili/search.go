@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // Track 是在线音乐搜索结果中的一首歌曲。
@@ -247,18 +246,4 @@ type ViewInfo struct {
 	Artist   string
 	Cover    string
 	Duration int64 // 毫秒
-}
-
-// Result 是 Search 的单曲便捷入口（用于需要立即获取元数据的调用者）。
-func (t Track) Result() Track { return t }
-
-// FormatDuration 输出 mm:ss，主要给日志/调试使用。
-func FormatDuration(ms int64) string {
-	if ms <= 0 {
-		return "00:00"
-	}
-	d := time.Duration(ms) * time.Millisecond
-	m := int(d.Minutes())
-	s := int(d.Seconds()) % 60
-	return fmt.Sprintf("%02d:%02d", m, s)
 }

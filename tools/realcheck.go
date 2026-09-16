@@ -72,7 +72,8 @@ func main() {
 		if s.SampleRate <= 0 {
 			noRate++
 		}
-		if s.Cover == "" {
+		// 封面现在以内容寻址的同源地址给出（CoverURL），不再走 Cover 里的 base64
+		if s.CoverURL == "" {
 			noCover++
 		}
 		if s.Title == "" {

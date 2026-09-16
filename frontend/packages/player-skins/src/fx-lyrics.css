@@ -72,10 +72,10 @@
   text-align: left;
   opacity: var(--fxl-dim);
   transform-origin: 0 50%;
+  /* 同 lyrics.css：不过渡 font-size（文本度量变化 = 整段重排 + 重新栅格化） */
   transition:
     opacity var(--dur) var(--ease),
     color var(--dur) var(--ease),
-    font-size var(--dur) var(--ease),
     transform var(--dur) var(--ease);
 }
 

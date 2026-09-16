@@ -37,8 +37,6 @@ type LibraryService struct {
 	store *bootstrap.Store
 	app   *application.App
 
-	scanMu sync.Mutex
-
 	// OnScanFinished 每次后台扫描结束时调用（仅用于测试同步，生产环境为 nil）
 	OnScanFinished func()
 }

@@ -147,9 +147,38 @@ func AllowedImageURL(raw string) bool {
 	return false
 }
 
+// imageClient 与 client 的唯一区别：跟随重定向时**重新校验**图床白名单。
+//
+// 为什么必须单独一个客户端：Download 只校验了初始 URL。白名单里多家域名
+// （y.qq.com / deezer.com / archive.org / discogs.com / kugou.com…）都存在开放
+// 重定向，最多 6 跳就能把请求导到 127.0.0.1 或内网地址，而响应体还会被原样
+// 回给前端 —— 而封面地址来自在线搜索结果的元数据，属于「外部输入 → 本机请求」。
+//
+// 不把这条 CheckRedirect 加到上面那个 client 上，是因为 getJSON 打的是各家 API
+// 域名，重定向到 CDN 是正常行为，不能套同一份图床白名单。
+// Transport 复用 http.DefaultTransport，连接池与 client 相同。
+var imageClient = &http.Client{
+	Timeout:   15 * time.Second,
+	Transport: http.DefaultTransport,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 6 {
+			return fmt.Errorf("重定向次数过多")
+		}
+		if !AllowedImageURL(req.URL.String()) {
+			return fmt.Errorf("重定向目标不在允许的图床列表内: %s", req.URL.Hostname())
+		}
+		if len(via) > 0 {
+			req.Header.Set("User-Agent", UserAgent)
+			req.Header.Set("Referer", via[0].URL.Scheme+"://"+via[0].URL.Host+"/")
+		}
+		return nil
+	},
+}
+
 // Download 下载一张封面。
 //
 // 会先做域名白名单校验：不允许的地址直接拒绝，不发出请求。
+// 重定向链上的每一跳也会重新校验（见 imageClient）。
 func Download(ctx context.Context, rawURL string) (ImageData, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
@@ -175,7 +204,7 @@ func Download(ctx context.Context, rawURL string) (ImageData, error) {
 	// 把 jpeg/png/gif 放在前面、通配符权重压到 0.1，图床就会回可解码的 JPEG。
 	req.Header.Set("Accept", "image/jpeg,image/png,image/gif,image/*;q=0.1")
 
-	resp, err := client.Do(req)
+	resp, err := imageClient.Do(req)
 	if err != nil {
 		return ImageData{}, err
 	}

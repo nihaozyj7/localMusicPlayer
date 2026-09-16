@@ -78,22 +78,21 @@ export function openMenu({ x, y, items, anchor, onPick, align = "left" }) {
       if (it.kind === "sep") return html`<div class="menu__sep"></div>`;
       if (it.kind === "label") return html`<div class="menu__label">${it.label}</div>`;
       const check = it.checked !== undefined ? icon("check", "menu__check") : null;
-      return html`
-        <button
-          class=${it.danger ? "menu__item menu__item--danger" : "menu__item"}
-          type="button"
-          role="menuitem"
-          data-id=${it.id}
-          ?disabled=${Boolean(it.disabled)}
-          aria-checked=${it.checked !== undefined ? String(it.checked) : nothing}
-          @click=${() => {
-            if (it.disabled) return;
-            onPickItem(it.id);
-          }}
-        >
-          ${it.icon ? icon(it.icon) : nothing}<span>${it.label}</span>
-          ${check || (it.hint ? html`<span class="u-num u-dim">${it.hint}</span>` : nothing)}
-        </button>`;
+      return html` <button
+        class=${it.danger ? "menu__item menu__item--danger" : "menu__item"}
+        type="button"
+        role="menuitem"
+        data-id=${it.id}
+        ?disabled=${Boolean(it.disabled)}
+        aria-checked=${it.checked !== undefined ? String(it.checked) : nothing}
+        @click=${() => {
+          if (it.disabled) return;
+          onPickItem(it.id);
+        }}
+      >
+        ${it.icon ? icon(it.icon) : nothing}<span>${it.label}</span>
+        ${check || (it.hint ? html`<span class="u-num u-dim">${it.hint}</span>` : nothing)}
+      </button>`;
     }),
     m
   );
@@ -287,8 +286,8 @@ let toastItems = [];
 function paintToasts() {
   render(
     toastItems.map(
-      (t) => html`
-        <div class="toast ${t.leaving ? "is-leaving" : ""}" data-tone=${t.tone}>
+      (t) =>
+        html` <div class="toast ${t.leaving ? "is-leaving" : ""}" data-tone=${t.tone}>
           <span class="toast__dot"></span>
           ${t.icon ? icon(t.icon) : nothing}
           <span>${t.message}</span>
@@ -357,11 +356,7 @@ export function on(root, event, selector, handler) {
  * 用「当前 src 是不是已经是默认封面」做判据，避免默认封面本身失败时无限递归。
  */
 function isDefaultCoverSrc(img) {
-  return (
-    img.currentSrc === DEFAULT_COVER ||
-    img.src === DEFAULT_COVER ||
-    img.getAttribute("src") === DEFAULT_COVER
-  );
+  return img.currentSrc === DEFAULT_COVER || img.src === DEFAULT_COVER || img.getAttribute("src") === DEFAULT_COVER;
 }
 
 export function bindCoverFallback(img) {

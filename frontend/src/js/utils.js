@@ -46,7 +46,9 @@ export function fmtSize(bytes) {
 
 /** 数字千分位 */
 export function fmtCount(n) {
-  return new Intl.NumberFormat("zh-CN").format(n || 0);
+  // 提升到模块级：fmtCount 在列表/提示里被频繁调用，每次 new 一个
+  // Intl.NumberFormat 会重复构造 ICU 实例（同文件的 Collator 已经是这个写法）。
+  return countFormatter.format(n || 0);
 }
 
 /** 生成稳定 id */
@@ -105,6 +107,9 @@ export function groupBy(arr, keyFn) {
 
 /** 自然排序（含中文数字感知） */
 const collator = new Intl.Collator("zh-Hans-CN", { numeric: true, sensitivity: "base" });
+
+/** 千分位格式化器（模块级复用，见 fmtCount） */
+const countFormatter = new Intl.NumberFormat("zh-CN");
 export function naturalCompare(a, b) {
   return collator.compare(a ?? "", b ?? "");
 }
@@ -155,13 +160,17 @@ export function moveItem(arr, from, to) {
 
 /** HTML 转义（渲染用户文本时必须调用） */
 export function esc(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[c]);
+  return String(s ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[c]
+  );
 }
 
 /**
@@ -239,8 +248,10 @@ export const DEFAULT_COVER = `data:image/svg+xml;charset=UTF-8,${encodeURICompon
  * 歌曲封面地址。
  *
  * 优先级：
- *   1. coverUrl —— 在线歌曲的同源封面代理地址（后端联网抓到的专辑封面）；
- *   2. cover —— 本地文件的内嵌封面（data URL）；
+ *   1. coverUrl —— 同源封面地址。本地歌曲指封面缓存目录里内容寻址的那张图
+ *      （后端给出的 /cover/<hash>?t=…，平均 143KB 的图不再随列表接口一起传输）；
+ *      在线歌曲指后端联网抓到的封面代理地址。
+ *   2. cover —— 仍以 data URL 给出封面的场景（在线曲目、封面面板读到的内嵌封面）；
  *   3. 默认占位封面。
  *
  * 绝不在线歌曲退回默认封面之前先试 cover（在线搜索结果里的视频封面是外链，

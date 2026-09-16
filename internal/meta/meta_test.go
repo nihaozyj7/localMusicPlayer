@@ -73,9 +73,9 @@ func buildM4A(timescale uint32, duration uint32, asc []byte) []byte {
 	sample := make([]byte, 0, 64)
 	sample = append(sample, 0, 0, 0, 0, 0, 0, 0, 1) // reserved + dataReferenceIndex
 	sample = append(sample, 0, 0, 0, 0, 0, 0, 0, 0) // version/revision/vendor
-	sample = append(sample, 0, 2, 0, 16)             // channels + sampleSize
-	sample = append(sample, 0, 0, 0, 0)              // pre_defined + reserved
-	sample = append(sample, 0, 0, 0, 0)              // samplerate = 0（故意的）
+	sample = append(sample, 0, 2, 0, 16)            // channels + sampleSize
+	sample = append(sample, 0, 0, 0, 0)             // pre_defined + reserved
+	sample = append(sample, 0, 0, 0, 0)             // samplerate = 0（故意的）
 	sample = append(sample, box("esds", esds)...)
 	stsd := append([]byte{0, 0, 0, 0, 0, 0, 0, 1}, box("mp4a", sample)...)
 

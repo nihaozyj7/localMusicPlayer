@@ -35,7 +35,8 @@
   transition:
     opacity var(--pv-slide-dur) var(--ease-out),
     transform var(--pv-slide-dur) var(--ease-slide);
-  will-change: opacity, transform;
+  /* 与 .playerview 一致：整窗图层不写常驻 will-change
+     （策略见 fx-lyrics.css:130-132）。 */
 }
 
 .skin-bg[data-state="opened"] {

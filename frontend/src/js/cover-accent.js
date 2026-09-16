@@ -71,9 +71,7 @@ function extractSeed(src) {
     // 底栏封面还没画好 / 已经不是这张了：用一个独立 Image 加载，
     // 不依赖底栏节点，也不怕它被重建替换。
     const probe = sameOriginSafeImage();
-    probe.addEventListener("load", () =>
-      finish(seedSourceUsable(src) ? normalizeSeed(extractCoverSeed(probe)) : "")
-    );
+    probe.addEventListener("load", () => finish(seedSourceUsable(src) ? normalizeSeed(extractCoverSeed(probe)) : ""));
     probe.addEventListener("error", () => finish(""));
     probe.src = src;
   });

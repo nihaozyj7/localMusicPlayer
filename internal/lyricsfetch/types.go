@@ -282,11 +282,21 @@ func (a *Aggregator) provider(name string) Provider {
 	return nil
 }
 
+// cacheTTL 缓存有效期；maxCacheEntries 条数上限。
+//
+// 上限是必须的：每个 key 一条记录，而每条都含完整 LRC 文本与解析后的行数组。
+// 以前只判过期、从不删除，条目会随试听/切歌一直累积到进程结束
+// （coverfetch 的同类缓存早就有 512 的上限）。
+const (
+	cacheTTL        = 24 * time.Hour
+	maxCacheEntries = 512
+)
+
 func (a *Aggregator) getCache(key string) (Result, bool) {
 	a.mu.RLock()
 	v, ok := a.cache[key]
 	a.mu.RUnlock()
-	if !ok || time.Since(v.at) > 24*time.Hour {
+	if !ok || time.Since(v.at) > cacheTTL {
 		return Result{}, false
 	}
 	return v.res, true
@@ -294,8 +304,23 @@ func (a *Aggregator) getCache(key string) (Result, bool) {
 
 func (a *Aggregator) setCache(key string, res Result) {
 	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.cache) >= maxCacheEntries {
+		a.evictExpiredLocked()
+	}
 	a.cache[key] = cachedResult{res: res, at: time.Now()}
-	a.mu.Unlock()
+}
+
+// evictExpiredLocked 先清过期条目；清完仍超限就整体清空（调用方持锁）。
+func (a *Aggregator) evictExpiredLocked() {
+	for k, v := range a.cache {
+		if time.Since(v.at) > cacheTTL {
+			delete(a.cache, k)
+		}
+	}
+	if len(a.cache) >= maxCacheEntries {
+		a.cache = map[string]cachedResult{}
+	}
 }
 
 func prepareRequest(req SearchRequest) SearchRequest {

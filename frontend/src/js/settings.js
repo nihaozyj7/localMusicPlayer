@@ -2,26 +2,20 @@
    settings.js — 设置界面（音乐文件夹 / 过滤规则 / 外观 / 播放 / 歌词 / 关于）
    ========================================================================== */
 
-import { openModal, toast } from "./dom.js"
-import { html, nothing } from "./ui/base.js"
-import { requestAppUpdate } from "./ui/base.js"
-import { state } from "./store.js"
-import { backend, isWails, on } from "./bridge.js"
-import { fmtCount, uid } from "./utils.js"
-import { aiVendorHint, aiVendorLabel } from "./ai-vendors.js"
-import { applyResolvedTheme, discoverThemes, listThemes, removeTheme } from "./theme.js"
-import { BACKDROP_MODES, backdropLabel } from "./backdrop.js"
-import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js"
-import { animationDurationValue, setRuntimeToken, replaceStyleRules } from "./runtime-tokens.js"
-import { applyDesktopMode } from "./desktop-mode.js"
+import { openModal, toast } from "./dom.js";
+import { html, nothing } from "./ui/base.js";
+import { requestAppUpdate } from "./ui/base.js";
+import { state } from "./store.js";
+import { backend, isWails, on } from "./bridge.js";
+import { fmtCount, uid } from "./utils.js";
+import { aiVendorHint, aiVendorLabel } from "./ai-vendors.js";
+import { applyResolvedTheme, discoverThemes, listThemes, removeTheme } from "./theme.js";
+import { BACKDROP_MODES, backdropLabel } from "./backdrop.js";
+import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
+import { animationDurationValue, setRuntimeToken, replaceStyleRules } from "./runtime-tokens.js";
+import { applyDesktopMode } from "./desktop-mode.js";
 
-import {
-  availableSkins,
-  reloadSkins,
-  removeSkin,
-  setPlayerViewMode,
-  skinLoadFailures,
-} from "./playerhost.js"
+import { availableSkins, reloadSkins, removeSkin, setPlayerViewMode, skinLoadFailures } from "./playerhost.js";
 
 /* --------------------------------------------------------------------------
    各分区
@@ -41,7 +35,7 @@ export const ROW_CLICK_ACTIONS = [
   { value: "play", label: "播放" },
   { value: "play-list", label: "播放该歌单" },
   { value: "next", label: "添加为一首播放" },
-]
+];
 
 /**
  * 主窗口圆角（与 Go 侧 bootstrap.WindowCornerModes 一致）。
@@ -53,14 +47,14 @@ export const WINDOW_CORNERS = [
   { value: "round", label: "标准" },
   { value: "small", label: "小圆角" },
   { value: "square", label: "直角" },
-]
+];
 
 /** 列表密度（与 Go 侧 bootstrap.ListDensities 一致） */
 export const LIST_DENSITIES = [
   { value: "compact", label: "紧凑" },
   { value: "cozy", label: "标准" },
   { value: "roomy", label: "宽松" },
-]
+];
 
 /**
  * 过渡速度（与 Go 侧 bootstrap.AnimationsSpeeds 一致）。
@@ -70,7 +64,7 @@ export const ANIMATION_SPEEDS = [
   { value: "fast", label: "快速 0.25s" },
   { value: "medium", label: "适中 0.5s" },
   { value: "slow", label: "缓慢 0.75s" },
-]
+];
 
 /** 歌词来源的中文名（与 Go 侧 internal/lyrics 的来源常量一一对应） */
 export const LYRICS_SOURCE_LABELS = {
@@ -78,12 +72,12 @@ export const LYRICS_SOURCE_LABELS = {
   "lrc-file": "同目录 .lrc",
   cache: "歌词缓存",
   online: "在线自动匹配",
-}
+};
 
 export function lyricsSourceLabels() {
-  const list = Array.isArray(state.config.lyricsSources) ? state.config.lyricsSources : []
-  const names = list.map((s) => LYRICS_SOURCE_LABELS[s] || s)
-  return names.length ? names.join(" → ") : "（未配置）"
+  const list = Array.isArray(state.config.lyricsSources) ? state.config.lyricsSources : [];
+  const names = list.map((s) => LYRICS_SOURCE_LABELS[s] || s);
+  return names.length ? names.join(" → ") : "（未配置）";
 }
 
 /* --------------------------------------------------------------------------
@@ -91,27 +85,27 @@ export function lyricsSourceLabels() {
    -------------------------------------------------------------------------- */
 /** 缓存目录概况（数量 + 占用），数据由 CoverService.CacheStats 异步补齐 */
 export function cacheSummary() {
-  const c = state.coverCache
-  if (!c) return "正在读取…"
-  const mb = ((c.bytes || 0) / 1024 / 1024).toFixed(1)
-  return `已缓存 ${fmtCount(c.covers || 0)} 张封面、${fmtCount(c.lyrics || 0)} 份歌词，共 ${mb} MB`
+  const c = state.coverCache;
+  if (!c) return "正在读取…";
+  const mb = ((c.bytes || 0) / 1024 / 1024).toFixed(1);
+  return `已缓存 ${fmtCount(c.covers || 0)} 张封面、${fmtCount(c.lyrics || 0)} 份歌词，共 ${mb} MB`;
 }
 
 /** 缓存里有多少份可写的内容（0 表示还没抓过任何封面/歌词） */
 export function cachedMetaCount() {
-  const c = state.coverCache || {}
-  return (Number(c.covers) || 0) + (Number(c.lyrics) || 0)
+  const c = state.coverCache || {};
+  return (Number(c.covers) || 0) + (Number(c.lyrics) || 0);
 }
 
 /** 「把封面/歌词写进歌曲文件」这一行的说明文字 */
 export function embedHintText() {
   const base =
     "默认关闭：封面与歌词都只放在缓存目录里。开启后下载 / 更换封面时会把它们写进文件标签，" +
-    "这样把文件拷到别的播放器上也能看到封面与歌词（m4a / flac 支持，mp3 等格式会明确跳过）"
-  const c = state.coverCache
-  if (!c) return base
-  if (cachedMetaCount() === 0) return `${base}。当前缓存里还没有封面或歌词可写`
-  return `${base}。缓存里已经有 ${cacheSummary()}`
+    "这样把文件拷到别的播放器上也能看到封面与歌词（m4a / flac 支持，mp3 等格式会明确跳过）";
+  const c = state.coverCache;
+  if (!c) return base;
+  if (cachedMetaCount() === 0) return `${base}。当前缓存里还没有封面或歌词可写`;
+  return `${base}。缓存里已经有 ${cacheSummary()}`;
 }
 
 /** 「把已有缓存补写进文件」按钮的说明文字 */
@@ -119,7 +113,7 @@ export function embedWriteHint() {
   return (
     "上面那个开关只对「之后」下载 / 更换的封面生效。缓存里已经存着的封面与歌词" +
     `（${cacheSummary()}）可以用这个按钮一次性写进歌曲文件；mp3 / wav 等暂不支持写标签的格式会被跳过，不会动你的文件。`
-  )
+  );
 }
 
 /* --------------------------------------------------------------------------
@@ -131,15 +125,15 @@ export function embedWriteHint() {
  * 不用 <style>.textContent，也不用 blob: 样式表。
  */
 export function ensureSwatchStyles() {
-  const themes = listThemes()
-  const colors = []
+  const themes = listThemes();
+  const colors = [];
   for (const t of themes) {
-    for (const c of t.swatch || []) if (!colors.includes(c)) colors.push(c)
+    for (const c of t.swatch || []) if (!colors.includes(c)) colors.push(c);
   }
-  const css = colors.map((c, i) => `[data-swatch="${i}"]{background:${c}}`).join("\n")
-  replaceStyleRules("swatch-styles", css)
+  const css = colors.map((c, i) => `[data-swatch="${i}"]{background:${c}}`).join("\n");
+  replaceStyleRules("swatch-styles", css);
 
-  return (t) => (t.swatch || []).map((c) => colors.indexOf(c))
+  return (t) => (t.swatch || []).map((c) => colors.indexOf(c));
 }
 
 /* --------------------------------------------------------------------------
@@ -190,38 +184,38 @@ function skinReferenceSection(ref) {
 1. 接口唯一定义（含 JSDoc 类型）：frontend/packages/player-skins/src/contract.js
 2. 内置三款实现（结构可参考）：frontend/packages/player-skins/src/skins/classic.js、immersive.js、minimal.js
 3. 可直接复制改名的最小示例包：数据目录下的 player-skins/_template/（skin.js / skin.css / skin.json）
-4. 说明文档：frontend/packages/player-skins/README.md`
+4. 说明文档：frontend/packages/player-skins/README.md`;
   }
   const lines = [
     "本机真实路径如下。如果你能读文件，请先打开它们当范例；如果读不到（例如纯聊天环境），请让使用者把下面第 2 条的文件内容贴给你，再开始写。",
     `1. 样式（皮肤）目录 —— 第三方样式包都放在这里，扫描只认它下面的一层子目录：${ref.dir}`,
-  ]
+  ];
   if (ref.example) {
     lines.push(
       `2. 示例样式包（完整可运行的 skin.js / skin.css / skin.json，复制改名就是一份新样式）：${ref.example}`
-    )
+    );
   } else {
-    lines.push("2. 示例样式包：本机没有找到 _template 目录，请只按本规格的接口定义写。")
+    lines.push("2. 示例样式包：本机没有找到 _template 目录，请只按本规格的接口定义写。");
   }
   if (ref.current) {
-    lines.push(`3. 当前正在使用的样式包（最贴近现状的参考）：${ref.current}`)
+    lines.push(`3. 当前正在使用的样式包（最贴近现状的参考）：${ref.current}`);
   } else {
     lines.push(
       `3. 当前正在使用的是内置样式（${ref.currentId || "classic / immersive / minimal"}）：它的源码打包在程序里，磁盘上没有对应目录，请以第 2 条的示例包为准。`
-    )
+    );
   }
-  const packs = Array.isArray(ref.packs) ? ref.packs : []
+  const packs = Array.isArray(ref.packs) ? ref.packs : [];
   if (packs.length) {
-    lines.push("4. 该目录里已有的第三方样式包（可以直接读它们的入口与样式）：")
+    lines.push("4. 该目录里已有的第三方样式包（可以直接读它们的入口与样式）：");
     for (const pack of packs) {
-      const files = [pack.module, ...(Array.isArray(pack.styles) ? pack.styles : [])].filter(Boolean)
-      lines.push(`   · ${pack.name || pack.id}（id: ${pack.id}）：${files.join("、") || pack.dir}`)
+      const files = [pack.module, ...(Array.isArray(pack.styles) ? pack.styles : [])].filter(Boolean);
+      lines.push(`   · ${pack.name || pack.id}（id: ${pack.id}）：${files.join("、") || pack.dir}`);
     }
   } else {
-    lines.push("4. 该目录里目前还没有第三方样式包 —— 你写的这个会是第一个。")
+    lines.push("4. 该目录里目前还没有第三方样式包 —— 你写的这个会是第一个。");
   }
-  lines.push("5. 宿主只加载 apiVersion 为 1 的样式，本程序用的就是这个版本。")
-  return lines.join("\n")
+  lines.push("5. 宿主只加载 apiVersion 为 1 的样式，本程序用的就是这个版本。");
+  return lines.join("\n");
 }
 
 /** 外观主题提示词的参考资料一节，规则同 skinReferenceSection */
@@ -230,31 +224,31 @@ function themeReferenceSection(ref) {
     return `（浏览器预览模式读不到本机目录，以下是源码仓库里的参考文件）
 1. 令牌默认值与注释：frontend/src/styles/tokens.css、frontend/src/styles/themes/_template.css
 2. 内置主题（可直接对照写法）：frontend/src/styles/themes/dark-minimal.css、light-minimal.css、cover-dark.css
-3. 扫描与指令解析实现：internal/theme/theme.go`
+3. 扫描与指令解析实现：internal/theme/theme.go`;
   }
   const lines = [
     "本机真实路径如下。如果你能读文件，请先打开它们当范例；如果读不到（例如纯聊天环境），请让使用者把下面第 2 条的文件内容贴给你，再开始写。",
     `1. 主题目录 —— 用户主题都放在这里，只扫一层、不递归；文件名默认就是主题 id，显示名由 @theme-name 决定：${ref.dir}`,
-  ]
+  ];
   if (ref.currentFile) {
     lines.push(
       `2. 当前正在使用的主题：${ref.currentName || ref.currentId}（id: ${ref.currentId}）→ 文件：${ref.currentFile}`
-    )
+    );
   } else {
-    lines.push("2. 当前主题的文件没找到，请以第 3 条列出的文件为准。")
+    lines.push("2. 当前主题的文件没找到，请以第 3 条列出的文件为准。");
   }
-  const files = Array.isArray(ref.files) ? ref.files : []
+  const files = Array.isArray(ref.files) ? ref.files : [];
   if (files.length) {
-    lines.push("3. 主题目录里已有的主题文件（都是合法示例，可直接对照写法）：")
+    lines.push("3. 主题目录里已有的主题文件（都是合法示例，可直接对照写法）：");
     for (const item of files) {
       lines.push(
         `   · ${item.file}（${item.name || item.id}，id: ${item.id}，模式 ${item.mode}，${item.builtin ? "内置" : "用户导入"}）`
-      )
+      );
     }
   } else {
-    lines.push("3. 主题目录里暂时没有 .css 文件。")
+    lines.push("3. 主题目录里暂时没有 .css 文件。");
   }
-  return lines.join("\n")
+  return lines.join("\n");
 }
 
 function skinAiPrompt(ref = null) {
@@ -357,7 +351,7 @@ ${skinReferenceSection(ref)}
 请以使用者随附的风格说明为准；若使用者没有给出，先向使用者确认，不要自行假设。
 
 【风格要求 · 由使用者自行填写（本行只是占位，本提示词不提供任何风格建议）】
-`
+`;
 }
 
 function themeAiPrompt(ref = null) {
@@ -433,16 +427,19 @@ ${themeReferenceSection(ref)}
 请以使用者随附的风格说明为准；若使用者没有给出，先向使用者确认，不要自行假设。
 
 【风格要求 · 由使用者自行填写（本行只是占位，本提示词不提供任何风格建议）】
-`
+`;
 }
 
 /** 引导弹层底部的两个按钮：复制提示词 + 导入（不再展示提示词原文） */
 function promptActions({ copyKey, importKind, importLabel }) {
-  return html`
-    <div class="card__actions">
-      <button class="btn btn--sm btn--primary" type="button" data-copy-prompt=${copyKey}><svg aria-hidden="true"><use href="#i-file"></use></svg><span>复制提示词</span></button>
-      <button class="btn btn--sm" type="button" data-import=${importKind}><svg aria-hidden="true"><use href="#i-folder"></use></svg><span>${importLabel}</span></button>
-    </div>`
+  return html` <div class="card__actions">
+    <button class="btn btn--sm btn--primary" type="button" data-copy-prompt=${copyKey}>
+      <svg aria-hidden="true"><use href="#i-file"></use></svg><span>复制提示词</span>
+    </button>
+    <button class="btn btn--sm" type="button" data-import=${importKind}>
+      <svg aria-hidden="true"><use href="#i-folder"></use></svg><span>${importLabel}</span>
+    </button>
+  </div>`;
 }
 
 /**
@@ -452,56 +449,56 @@ function promptActions({ copyKey, importKind, importLabel }) {
  * 而不是编一条不存在的本机路径 —— 参考路径写错比没有参考更糟。
  */
 async function themeReference() {
-  if (!isWails()) return null
+  if (!isWails()) return null;
   try {
-    const currentId = document.documentElement.dataset.theme || state.config.theme || ""
-    return (await backend.themeReference(currentId)) || null
+    const currentId = document.documentElement.dataset.theme || state.config.theme || "";
+    return (await backend.themeReference(currentId)) || null;
   } catch (err) {
-    console.warn("[settings] 读取主题参考资料失败", err)
-    return null
+    console.warn("[settings] 读取主题参考资料失败", err);
+    return null;
   }
 }
 
 async function skinReference() {
-  if (!isWails()) return null
+  if (!isWails()) return null;
   try {
-    const currentId = state.pvMode || state.config.playerViewMode || ""
-    return (await backend.skinReference(currentId)) || null
+    const currentId = state.pvMode || state.config.playerViewMode || "";
+    return (await backend.skinReference(currentId)) || null;
   } catch (err) {
-    console.warn("[settings] 读取样式参考资料失败", err)
-    return null
+    console.warn("[settings] 读取样式参考资料失败", err);
+    return null;
   }
 }
 
 /** 把提示词写进剪贴板；剪贴板 API 不可用时退化到「隐藏文本框 + execCommand」 */
 export async function copyPrompt(key) {
-  const isTheme = key === "theme"
+  const isTheme = key === "theme";
   // 先取本机参考路径再生成提示词：AI 拿到的参考资料必须是真实存在的目录/文件
-  const text = isTheme ? themeAiPrompt(await themeReference()) : skinAiPrompt(await skinReference())
+  const text = isTheme ? themeAiPrompt(await themeReference()) : skinAiPrompt(await skinReference());
   try {
-    await navigator.clipboard.writeText(text)
-    toast("提示词已复制，粘贴给 AI 即可", { tone: "success", duration: 2000 })
-    return
+    await navigator.clipboard.writeText(text);
+    toast("提示词已复制，粘贴给 AI 即可", { tone: "success", duration: 2000 });
+    return;
   } catch {
     /* 某些 WebView / 非安全上下文没有 clipboard，走下面的兜底 */
   }
-  const area = document.createElement("textarea")
-  area.value = text
-  area.setAttribute("readonly", "")
-  area.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0;"
-  document.body.appendChild(area)
-  area.select()
-  let ok = false
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0;";
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
   try {
-    ok = document.execCommand("copy")
+    ok = document.execCommand("copy");
   } catch {
-    ok = false
+    ok = false;
   }
-  area.remove()
+  area.remove();
   toast(ok ? "提示词已复制，粘贴给 AI 即可" : "复制失败，请手动复制", {
     tone: ok ? "success" : "warning",
     duration: 2600,
-  })
+  });
 }
 
 /**
@@ -512,32 +509,26 @@ export async function copyPrompt(key) {
  * 所以这里既报成功数，也把跳过的原因列出来。
  */
 export async function importPack(kind, ctx = {}) {
-  const isTheme = kind === "theme"
+  const isTheme = kind === "theme";
   if (!isWails()) {
-    toast("浏览器预览模式无法导入，请手动把文件放进目录", { tone: "warning", duration: 3600 })
-    return
+    toast("浏览器预览模式无法导入，请手动把文件放进目录", { tone: "warning", duration: 3600 });
+    return;
   }
-  const progress = toast(isTheme ? "正在导入主题…" : "正在导入样式包…", { duration: 0 })
+  const progress = toast(isTheme ? "正在导入主题…" : "正在导入样式包…", { duration: 0 });
   try {
-    const res = isTheme ? await backend.importTheme() : await backend.importSkin()
-    progress.close()
-    if (res?.cancelled) return
-    const imported = isTheme
-      ? Array.isArray(res?.imported)
-        ? res.imported
-        : []
-      : res?.id
-        ? [res.id]
-        : []
-    const skipped = Array.isArray(res?.skipped) ? res.skipped : []
+    const res = isTheme ? await backend.importTheme() : await backend.importSkin();
+    progress.close();
+    if (res?.cancelled) return;
+    const imported = isTheme ? (Array.isArray(res?.imported) ? res.imported : []) : res?.id ? [res.id] : [];
+    const skipped = Array.isArray(res?.skipped) ? res.skipped : [];
 
     if (isTheme) {
-      await discoverThemes()
-      ctx.commit?.()
-      ctx.render?.()
+      await discoverThemes();
+      ctx.commit?.();
+      ctx.render?.();
     } else {
-      await reloadSkins()
-      ctx.render?.()
+      await reloadSkins();
+      ctx.render?.();
     }
 
     let text = isTheme
@@ -546,12 +537,12 @@ export async function importPack(kind, ctx = {}) {
         : "没有导入任何主题"
       : imported.length
         ? `已导入样式「${imported[0]}」`
-        : "没有导入任何样式"
-    if (skipped.length) text += `；另有 ${skipped.length} 个文件被跳过`
+        : "没有导入任何样式";
+    if (skipped.length) text += `；另有 ${skipped.length} 个文件被跳过`;
     toast(text, {
       tone: imported.length ? (skipped.length ? "warning" : "success") : "warning",
       duration: 4600,
-    })
+    });
     if (skipped.length) {
       openModal({
         title: "部分文件没有导入",
@@ -561,38 +552,42 @@ export async function importPack(kind, ctx = {}) {
         okText: "知道了",
         cancelText: "关闭",
         onOk: () => true,
-      })
+      });
     }
   } catch (err) {
-    progress.close()
-    toast(`导入失败：${err?.message ?? err}`, { tone: "error", duration: 6000 })
+    progress.close();
+    toast(`导入失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
   }
 }
 
 /** 给引导弹层绑定「复制提示词 / 导入」两个动作 */
 function bindPromptActions(root, ctx = {}) {
   root.addEventListener("click", (e) => {
-    const copyBtn = e.target.closest("[data-copy-prompt]")
+    const copyBtn = e.target.closest("[data-copy-prompt]");
     if (copyBtn) {
-      copyPrompt(copyBtn.dataset.copyPrompt)
-      return
+      copyPrompt(copyBtn.dataset.copyPrompt);
+      return;
     }
-    const importBtn = e.target.closest("[data-import]")
-    if (importBtn) importPack(importBtn.dataset.import, ctx)
-  })
+    const importBtn = e.target.closest("[data-import]");
+    if (importBtn) importPack(importBtn.dataset.import, ctx);
+  });
 }
 
 /** 打开「用 AI 创建播放界面样式（皮肤）」的引导弹层 */
 export function openSkinHelp(ctx = {}) {
-  const body = html`
-    <div class="setting__hint setting__hint--steps">
-      · 点「复制提示词」把它粘贴给 AI：提示词里只有产物的目录结构、接口契约与硬性规则，不含任何风格建议，风格请在末尾那条「风格要求」里自己补一句，它会直接产出一个样式包目录；<br />
-      · 提示词里的「参考资料」会自动带上本机的真实路径（样式目录、示例包 _template、当前样式包），AI 能读文件就会直接照着写；<br />
+  const body = html` <div class="setting__hint setting__hint--steps">
+      · 点「复制提示词」把它粘贴给
+      AI：提示词里只有产物的目录结构、接口契约与硬性规则，不含任何风格建议，风格请在末尾那条「风格要求」里自己补一句，它会直接产出一个样式包目录；<br />
+      · 提示词里的「参考资料」会自动带上本机的真实路径（样式目录、示例包 _template、当前样式包），AI
+      能读文件就会直接照着写；<br />
       · 生成好后回到这里点「导入样式包」，选中那个目录即可（目录里必须有 skin.js）；<br />
       · 也可以手动放进「样式目录/&lt;样式id&gt;/」，回来点「重新扫描样式」。
     </div>
     ${promptActions({ copyKey: "skin", importKind: "skin", importLabel: "导入样式包…" })}
-    <div class="setting__hint">接口的唯一定义在 frontend/packages/player-skins/src/contract.js；样式目录里也有现成的 _template 示例可以直接复制改名。</div>`
+    <div class="setting__hint">
+      接口的唯一定义在 frontend/packages/player-skins/src/contract.js；样式目录里也有现成的 _template
+      示例可以直接复制改名。
+    </div>`;
 
   const { root } = openModal({
     title: "用 AI 创建播放界面样式",
@@ -600,16 +595,18 @@ export function openSkinHelp(ctx = {}) {
     okText: "知道了",
     cancelText: "关闭",
     onOk: () => true,
-  })
-  bindPromptActions(root, ctx)
+  });
+  bindPromptActions(root, ctx);
 }
 
 /** 打开「添加自定义主题」的引导弹层 */
 export function openThemeHelp(ctx = {}) {
-  const body = html`
-    <div class="setting__hint setting__hint--steps">
-      · 点「复制提示词」把它粘贴给 AI：提示词里只有文件格式、令牌清单与校验规则，不含任何配色建议，风格请在末尾那条「风格要求」里自己补一句，它会产出一个主题 CSS；<br />
-      · 提示词里的「参考资料」会自动带上本机的真实路径（主题目录、当前主题文件、目录里已有的主题 CSS），AI 能读文件就会直接照着写；<br />
+  const body = html` <div class="setting__hint setting__hint--steps">
+      · 点「复制提示词」把它粘贴给
+      AI：提示词里只有文件格式、令牌清单与校验规则，不含任何配色建议，风格请在末尾那条「风格要求」里自己补一句，它会产出一个主题
+      CSS；<br />
+      · 提示词里的「参考资料」会自动带上本机的真实路径（主题目录、当前主题文件、目录里已有的主题 CSS），AI
+      能读文件就会直接照着写；<br />
       · 生成好后回到这里点「导入主题」，选中放着那个 CSS 的文件夹即可；<br />
       · 也可以手动放进主题文件夹（上面有「打开主题文件夹」按钮），回来点「重新扫描主题」。
     </div>
@@ -619,7 +616,7 @@ export function openThemeHelp(ctx = {}) {
       · 选择器写 <b>:root[data-theme="你的文件名"]</b>，与文件名一致最省事；<br />
       · 只改你关心的令牌，例如 <b>--glass-bg</b> / <b>--accent</b> / <b>--text-1</b>；<br />
       · 未声明的令牌会自动回退到默认主题，缺失也不会写坏布局。
-    </div>`
+    </div>`;
 
   const { root } = openModal({
     title: "添加自定义主题",
@@ -627,8 +624,8 @@ export function openThemeHelp(ctx = {}) {
     okText: "知道了",
     cancelText: "关闭",
     onOk: () => true,
-  })
-  bindPromptActions(root, ctx)
+  });
+  bindPromptActions(root, ctx);
 }
 
 /* --------------------------------------------------------------------------
@@ -645,79 +642,79 @@ export function openThemeHelp(ctx = {}) {
 
 async function runThemeRemove(id, name, ctx) {
   if (!isWails()) {
-    toast("浏览器预览模式下不能移除，请手动删除主题文件", { tone: "warning", duration: 3600 })
-    return
+    toast("浏览器预览模式下不能移除，请手动删除主题文件", { tone: "warning", duration: 3600 });
+    return;
   }
-  const progress = toast("正在移除主题…", { duration: 0 })
+  const progress = toast("正在移除主题…", { duration: 0 });
   try {
-    const res = await removeTheme(id)
-    progress.close()
+    const res = await removeTheme(id);
+    progress.close();
     if (!res.removed) {
-      toast(`没有移除「${name}」`, { tone: "warning" })
-      return
+      toast(`没有移除「${name}」`, { tone: "warning" });
+      return;
     }
     // 删掉的可能正是当前主题：重新解析一次，自动回退到仍然存在的主题
-    await applyResolvedTheme(state.config)
-    ctx.commit?.()
-    ctx.render?.()
-    toast(`已移除主题「${name}」`, { tone: "success" })
+    await applyResolvedTheme(state.config);
+    ctx.commit?.();
+    ctx.render?.();
+    toast(`已移除主题「${name}」`, { tone: "success" });
   } catch (err) {
-    progress.close()
+    progress.close();
     // 内置主题会被后端挡下来（每次启动都会重新生成），这里如实说出原因
-    toast(`移除失败：${err?.message ?? err}`, { tone: "error", duration: 6000 })
+    toast(`移除失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
   }
 }
 
 function confirmThemeRemove(actEl, ctx) {
-  const id = actEl.dataset.id
-  const name = actEl.dataset.name || id
+  const id = actEl.dataset.id;
+  const name = actEl.dataset.name || id;
   openModal({
     title: `移除主题「${name}」？`,
     desc: "会删掉主题目录里对应的那个 CSS 文件。内置主题由程序在每次启动时重新生成，所以不提供移除。",
     okText: "移除",
     danger: true,
     onOk: async () => {
-      await runThemeRemove(id, name, ctx)
-      return true
+      await runThemeRemove(id, name, ctx);
+      return true;
     },
-  })
+  });
 }
 
 async function runSkinRemove(id, name, ctx) {
   if (!isWails()) {
-    toast("浏览器预览模式下不能移除，请手动删除样式目录", { tone: "warning", duration: 3600 })
-    return
+    toast("浏览器预览模式下不能移除，请手动删除样式目录", { tone: "warning", duration: 3600 });
+    return;
   }
-  const progress = toast("正在移除样式…", { duration: 0 })
+  const progress = toast("正在移除样式…", { duration: 0 });
   try {
-    const res = await removeSkin(id)
-    progress.close()
+    const res = await removeSkin(id);
+    progress.close();
     if (!res.removed) {
-      toast(`没有移除「${name}」`, { tone: "warning" })
-      return
+      toast(`没有移除「${name}」`, { tone: "warning" });
+      return;
     }
-    ctx.commit?.()
-    ctx.render?.()
-    toast(`已移除样式「${name}」`, { tone: "success" })
+    ctx.commit?.();
+    ctx.render?.();
+    toast(`已移除样式「${name}」`, { tone: "success" });
   } catch (err) {
-    progress.close()
-    toast(`移除失败：${err?.message ?? err}`, { tone: "error", duration: 6000 })
+    progress.close();
+    toast(`移除失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
   }
 }
 
 function confirmSkinRemove(actEl, ctx) {
-  const id = actEl.dataset.id
-  const name = actEl.dataset.name || id
+  const id = actEl.dataset.id;
+  const name = actEl.dataset.name || id;
   openModal({
     title: `移除样式「${name}」？`,
     desc: "会把样式目录里对应的整个文件夹删掉（里面只有这个样式的文件，不含歌曲）。",
     okText: "移除",
     danger: true,
     onOk: async () => {
-      await runSkinRemove(id, name, ctx)
-      return true
+      await runSkinRemove(id, name, ctx);
+      return true;
     },
-  })
+  });
 }
 
 /* --------------------------------------------------------------------------
@@ -727,84 +724,84 @@ function confirmSkinRemove(actEl, ctx) {
    交互绑定（在 shell.js 中一次性绑定到内容容器上）
    -------------------------------------------------------------------------- */
 export async function handleSettingsAction(actEl, ctx = {}) {
-  const act = actEl.dataset.act
-  const id = actEl.dataset.id
+  const act = actEl.dataset.act;
+  const id = actEl.dataset.id;
 
   switch (act) {
     /* 桌面歌词位置记忆的出口：换显示器/改分辨率后存档可能落在别扭的地方，
        给用户一个「回到默认」的按钮，而不是让他去删配置文件。 */
     case "reset-desktop-lyrics-pos": {
       if (!isWails()) {
-        toast("浏览器预览模式下没有独立歌词窗口", { duration: 2200 })
-        return
+        toast("浏览器预览模式下没有独立歌词窗口", { duration: 2200 });
+        return;
       }
       try {
-        const res = await backend.resetDesktopLyricsPosition()
+        const res = await backend.desktopLyricsResetPos();
         if (res && res.applied === false) {
-          toast("已清掉位置记忆；下次打开桌面歌词会用默认位置", { tone: "success", duration: 2600 })
+          toast("已清掉位置记忆；下次打开桌面歌词会用默认位置", { tone: "success", duration: 2600 });
         } else {
-          toast("桌面歌词已移回默认位置", { tone: "success", duration: 2000 })
+          toast("桌面歌词已移回默认位置", { tone: "success", duration: 2000 });
         }
       } catch (err) {
-        toast(`重置失败：${err?.message ?? err}`, { tone: "error", duration: 5000 })
+        toast(`重置失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
       }
-      return
+      return;
     }
 
     /* AI 配置文本框（change 事件触发，即失焦时写入） */
     case "ai-field": {
-      const key = actEl.dataset.key
-      if (!key) return
-      state.config[key] = actEl.value
-      ctx.commit?.()
-      return
+      const key = actEl.dataset.key;
+      if (!key) return;
+      state.config[key] = actEl.value;
+      ctx.commit?.();
+      return;
     }
 
     /* 文件夹 */
     case "add-folder": {
       // 后端模式：由 Go 弹出系统目录选择器，选完直接写配置并开始扫描
       if (isWails()) {
-        let res = null
+        let res = null;
         try {
-          res = await backend.addFolder("")
+          res = await backend.addFolder("");
         } catch (err) {
           // 系统选择器打不开时（少见，但确实发生过）退化为手动输入，
           // 否则用户只会看到「点了没反应」。
-          toast(`系统目录选择器不可用：${err?.message ?? err}`, { tone: "warning", duration: 5000 })
-          res = null
+          toast(`系统目录选择器不可用：${err?.message ?? err}`, { tone: "warning", duration: 5000 });
+          res = null;
         }
 
         if (res === null) {
-          const manual = await promptPath({ manual: true })
-          if (!manual) return
+          const manual = await promptPath({ manual: true });
+          if (!manual) return;
           try {
-            res = await backend.addFolder(manual)
+            res = await backend.addFolder(manual);
           } catch (err) {
-            toast(`添加失败：${err?.message ?? err}`, { tone: "error", duration: 6000 })
-            return
+            toast(`添加失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
+            return;
           }
         }
 
-        if (res?.cancelled) return
+        if (res?.cancelled) return;
         if (res?.duplicated) {
-          toast(`该文件夹已在曲库中：${res.path}`, { tone: "warning" })
-          return
+          toast(`该文件夹已在曲库中：${res.path}`, { tone: "warning" });
+          return;
         }
         if (res?.folder) {
-          state.folders = [...state.folders.filter((f) => f.id !== res.folder.id), res.folder]
-          ctx.commit?.()
-          toast(`已添加并开始扫描：${res.folder.path}`, { tone: "success" })
+          state.folders = [...state.folders.filter((f) => f.id !== res.folder.id), res.folder];
+          ctx.commit?.();
+          toast(`已添加并开始扫描：${res.folder.path}`, { tone: "success" });
           // 扫描结果由后端 scan:done 事件推回来，这里不再重复触发 rescan，
           // 避免出现两次并发扫描（曲库会排队，但没必要让用户多等一轮）
         } else {
-          toast("添加文件夹失败：后端没有返回结果", { tone: "error", duration: 6000 })
+          toast("添加文件夹失败：后端没有返回结果", { tone: "error", duration: 6000 });
         }
-        return
+        return;
       }
 
       // 预览模式：手动输入路径（无后端可用）
-      const manual = await promptPath()
-      if (!manual) return
+      const manual = await promptPath();
+      if (!manual) return;
       state.folders.push({
         id: uid("folder"),
         path: manual,
@@ -812,38 +809,38 @@ export async function handleSettingsAction(actEl, ctx = {}) {
         status: "ok",
         watching: state.config.watchFolders,
         addedAt: Date.now(),
-      })
-      ctx.commit?.()
-      toast(`已添加文件夹：${manual}`, { tone: "success" })
-      ctx.rescan?.()
-      break
+      });
+      ctx.commit?.();
+      toast(`已添加文件夹：${manual}`, { tone: "success" });
+      ctx.rescan?.();
+      break;
     }
     case "remove-folder": {
-      const folder = state.folders.find((f) => f.id === id)
-      if (!folder) return
+      const folder = state.folders.find((f) => f.id === id);
+      if (!folder) return;
       openModal({
         title: "移除音乐文件夹？",
         desc: `${folder.path}\n仅从曲库中移除，不会删除任何本地文件。`,
         okText: "移除",
         danger: true,
         onOk: async () => {
-          if (isWails()) await backend.removeFolder(id)
-          state.folders = state.folders.filter((f) => f.id !== id)
-          ctx.commit?.()
-          toast("已移除文件夹")
-          ctx.rescan?.({ manual: false })
-          return true
+          if (isWails()) await backend.removeFolder(id);
+          state.folders = state.folders.filter((f) => f.id !== id);
+          ctx.commit?.();
+          toast("已移除文件夹");
+          ctx.rescan?.({ manual: false });
+          return true;
         },
-      })
-      break
+      });
+      break;
     }
     case "scan-now":
-      ctx.rescan?.({ manual: true })
-      break
+      ctx.rescan?.({ manual: true });
+      break;
     case "rescan-folder":
-      toast("正在重新扫描该文件夹…")
-      ctx.rescan?.({ manual: true })
-      break
+      toast("正在重新扫描该文件夹…");
+      ctx.rescan?.({ manual: true });
+      break;
 
     /* 规则 */
     case "rule-add":
@@ -854,27 +851,27 @@ export async function handleSettingsAction(actEl, ctx = {}) {
         value: "",
         scope: "exclude",
         enabled: true,
-      })
-      ctx.commit?.()
-      break
+      });
+      ctx.commit?.();
+      break;
     case "rule-del":
-      state.filterRules = state.filterRules.filter((r) => r.id !== id)
-      ctx.commit?.()
-      ctx.refreshRules?.()
-      break
+      state.filterRules = state.filterRules.filter((r) => r.id !== id);
+      ctx.commit?.();
+      ctx.refreshRules?.();
+      break;
     case "rule-toggle": {
-      const rule = state.filterRules.find((r) => r.id === id)
-      if (rule) rule.enabled = !rule.enabled
-      ctx.commit?.()
-      ctx.refreshRules?.()
-      break
+      const rule = state.filterRules.find((r) => r.id === id);
+      if (rule) rule.enabled = !rule.enabled;
+      ctx.commit?.();
+      ctx.refreshRules?.();
+      break;
     }
     case "rule-scope": {
-      const rule = state.filterRules.find((r) => r.id === id)
-      if (rule) rule.scope = actEl.dataset.scope
-      ctx.commit?.()
-      ctx.refreshRules?.()
-      break
+      const rule = state.filterRules.find((r) => r.id === id);
+      if (rule) rule.scope = actEl.dataset.scope;
+      ctx.commit?.();
+      ctx.refreshRules?.();
+      break;
     }
     case "preset-small":
       state.filterRules.push({
@@ -885,11 +882,11 @@ export async function handleSettingsAction(actEl, ctx = {}) {
         unit: "B",
         scope: "exclude",
         enabled: true,
-      })
-      ctx.commit?.()
-      ctx.refreshRules?.()
-      toast("已添加：排除小于 10KB 的文件", { tone: "success" })
-      break
+      });
+      ctx.commit?.();
+      ctx.refreshRules?.();
+      toast("已添加：排除小于 10KB 的文件", { tone: "success" });
+      break;
     case "preset-mp4":
       state.filterRules.push({
         id: uid("rule"),
@@ -898,271 +895,268 @@ export async function handleSettingsAction(actEl, ctx = {}) {
         value: "\\.mp4$",
         scope: "exclude",
         enabled: true,
-      })
-      ctx.commit?.()
-      ctx.refreshRules?.()
-      toast("已添加：排除 .mp4 文件", { tone: "success" })
-      break
+      });
+      ctx.commit?.();
+      ctx.refreshRules?.();
+      toast("已添加：排除 .mp4 文件", { tone: "success" });
+      break;
 
     /* 外观 */
     case "theme-pick": {
-      const themes = listThemes()
-      const t = themes.find((x) => x.id === id)
-      if (!t) return
-      state.config.theme = t.id
-      state.config.themeMode = t.mode
-      await applyResolvedTheme(state.config)
-      ctx.commit?.()
+      const themes = listThemes();
+      const t = themes.find((x) => x.id === id);
+      if (!t) return;
+      state.config.theme = t.id;
+      state.config.themeMode = t.mode;
+      await applyResolvedTheme(state.config);
+      ctx.commit?.();
       // 选中态（卡片描边 + aria-pressed）是**渲染时**写进 DOM 的，只 commit
       // 不会重建设置层，用户看到的就是「点了没反应，关掉再开才生效」。
-      ctx.render?.()
-      toast(`已切换到主题「${t.name}」`, { tone: "success", duration: 1600 })
-      break
+      ctx.render?.();
+      toast(`已切换到主题「${t.name}」`, { tone: "success", duration: 1600 });
+      break;
     }
     case "open-theme-dir": {
       if (!isWails()) {
-        toast("主题目录：frontend/src/styles/themes/", { duration: 3200 })
-        break
+        toast("主题目录：frontend/src/styles/themes/", { duration: 3200 });
+        break;
       }
       // 打开失败时必须说出来：以前不管成没成都会弹「已打开」，
       // 用户看到的就是「提示成功、实际没反应」。
       try {
-        const dir = await backend.themeDir()
-        await backend.revealThemeDir()
-        toast(dir ? `已打开主题目录：${dir}` : "已打开主题目录", { duration: 3200 })
+        const dir = await backend.themeDir();
+        await backend.revealThemeDir();
+        toast(dir ? `已打开主题目录：${dir}` : "已打开主题目录", { duration: 3200 });
       } catch (err) {
-        toast(`打开主题目录失败：${err?.message ?? err}`, { tone: "error", duration: 5000 })
+        toast(`打开主题目录失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
       }
-      break
+      break;
     }
     case "theme-help":
-      openThemeHelp(ctx)
-      break
+      openThemeHelp(ctx);
+      break;
     case "theme-remove":
-      confirmThemeRemove(actEl, ctx)
-      break
+      confirmThemeRemove(actEl, ctx);
+      break;
     case "reload-themes":
       if (isWails()) {
-        const list = await backend.reloadThemes()
-        await discoverThemes()
+        const list = await backend.reloadThemes();
+        await discoverThemes();
         // 当前主题的文件可能已经被删掉了：重解析一次，回退到仍然存在的主题
-        await applyResolvedTheme(state.config)
-        ctx.commit?.()
-        toast(`已重新扫描到 ${list?.length ?? 0} 个主题`, { tone: "success" })
+        await applyResolvedTheme(state.config);
+        ctx.commit?.();
+        toast(`已重新扫描到 ${list?.length ?? 0} 个主题`, { tone: "success" });
       } else {
-        toast("浏览器预览模式下仅内置主题可用", { tone: "warning" })
+        toast("浏览器预览模式下仅内置主题可用", { tone: "warning" });
       }
-      break
+      break;
     case "clear-cache":
-      toast("缓存清理需在后端实现（当前仅保存元数据缓存文件）", { tone: "warning" })
-      break
+      toast("缓存清理需在后端实现（当前仅保存元数据缓存文件）", { tone: "warning" });
+      break;
 
     /* 播放界面样式（皮肤包） */
     case "skin-pick": {
-      const picked = availableSkins().find((x) => x.id === id)
-      if (!picked) return
-      setPlayerViewMode(picked.id)
-      ctx.commit?.()
+      const picked = availableSkins().find((x) => x.id === id);
+      if (!picked) return;
+      setPlayerViewMode(picked.id);
+      ctx.commit?.();
       // 同 theme-pick：卡片的选中态只存在于渲染结果里，必须重绘设置层
-      ctx.render?.()
-      toast(`播放界面已切换到「${picked.name}」`, { tone: "success", duration: 1600 })
-      break
+      ctx.render?.();
+      toast(`播放界面已切换到「${picked.name}」`, { tone: "success", duration: 1600 });
+      break;
     }
     case "open-skin-dir": {
       if (!isWails()) {
-        toast("样式目录：frontend/packages/player-skins/", { duration: 3200 })
-        break
+        toast("样式目录：frontend/packages/player-skins/", { duration: 3200 });
+        break;
       }
       try {
-        const dir = await backend.skinDir()
-        await backend.revealSkinDir()
-        toast(dir ? `已打开样式目录：${dir}` : "已打开样式目录", { duration: 3200 })
+        const dir = await backend.skinDir();
+        await backend.revealSkinDir();
+        toast(dir ? `已打开样式目录：${dir}` : "已打开样式目录", { duration: 3200 });
       } catch (err) {
-        toast(`打开样式目录失败：${err?.message ?? err}`, { tone: "error", duration: 5000 })
+        toast(`打开样式目录失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
       }
-      break
+      break;
     }
     case "reload-skins":
       try {
-        if (isWails()) await backend.reloadSkins()
-        await reloadSkins()
+        if (isWails()) await backend.reloadSkins();
+        await reloadSkins();
         // 正在用的样式可能已经被删掉了：统一解析一次，回退到仍然存在的样式
-        setPlayerViewMode(state.pvMode || state.config.playerViewMode || "")
-        ctx.render?.()
-        const n = availableSkins().length
-        const bad = skinLoadFailures()
-        toast(
-          bad.length ? `已扫描到 ${n} 个样式，${bad.length} 个加载失败` : `已扫描到 ${n} 个样式`,
-          { tone: bad.length ? "warning" : "success" }
-        )
+        setPlayerViewMode(state.pvMode || state.config.playerViewMode || "");
+        ctx.render?.();
+        const n = availableSkins().length;
+        const bad = skinLoadFailures();
+        toast(bad.length ? `已扫描到 ${n} 个样式，${bad.length} 个加载失败` : `已扫描到 ${n} 个样式`, {
+          tone: bad.length ? "warning" : "success",
+        });
       } catch (err) {
-        toast(`重新扫描失败：${err?.message ?? err}`, { tone: "error" })
+        toast(`重新扫描失败：${err?.message ?? err}`, { tone: "error" });
       }
-      break
+      break;
 
     /* 自定义样式：AI 引导弹层（需求：播放器样式后面的「自定义」按钮） */
     case "skin-help":
-      openSkinHelp(ctx)
-      break
+      openSkinHelp(ctx);
+      break;
 
     /* 移除第三方样式（内置三款打包在程序里，所以卡片上不出现移除按钮） */
     case "skin-remove":
-      confirmSkinRemove(actEl, ctx)
-      break
+      confirmSkinRemove(actEl, ctx);
+      break;
 
     /* AI 模型类型（决定思考开关的请求体字段） */
     case "ai-vendor": {
-      const vendor = String(actEl.value || "auto")
-      if (vendor === (state.config.aiVendor || "auto")) break
-      state.config.aiVendor = vendor
-      ctx.commit?.()
-      ctx.render?.()
-      const hint = aiVendorHint(vendor)
-      toast(`模型类型已设为「${aiVendorLabel(vendor)}」${hint ? "：" + hint : ""}`, { duration: 3600 })
-      break
+      const vendor = String(actEl.value || "auto");
+      if (vendor === (state.config.aiVendor || "auto")) break;
+      state.config.aiVendor = vendor;
+      ctx.commit?.();
+      ctx.render?.();
+      const hint = aiVendorHint(vendor);
+      toast(`模型类型已设为「${aiVendorLabel(vendor)}」${hint ? "：" + hint : ""}`, { duration: 3600 });
+      break;
     }
 
     /* 窗口原生材质（Mica / Acrylic） */
     case "backdrop-mode": {
-      const mode = BACKDROP_MODES.includes(actEl.value) ? actEl.value : "off"
-      if (mode === (state.config.nativeBackdrop || "off")) break
-      state.config.nativeBackdrop = mode
-      ctx.commit?.()
-      ctx.render?.()
+      const mode = BACKDROP_MODES.includes(actEl.value) ? actEl.value : "off";
+      if (mode === (state.config.nativeBackdrop || "off")) break;
+      state.config.nativeBackdrop = mode;
+      ctx.commit?.();
+      ctx.render?.();
       toast(
-        mode === "off"
-          ? "已关闭窗口原生材质，重启应用后生效"
-          : `已选择「${backdropLabel(mode)}」，重启应用后生效`,
+        mode === "off" ? "已关闭窗口原生材质，重启应用后生效" : `已选择「${backdropLabel(mode)}」，重启应用后生效`,
         { tone: "success", duration: 3200 }
-      )
-      break
+      );
+      break;
     }
     case "backdrop-restart": {
       if (!isWails()) {
-        toast("浏览器预览无法重启应用", { tone: "warning" })
-        break
+        toast("浏览器预览无法重启应用", { tone: "warning" });
+        break;
       }
-      toast("正在重启应用…", { duration: 2000 })
+      toast("正在重启应用…", { duration: 2000 });
       try {
-        await backend.restartApp()
+        await backend.restartApp();
       } catch (err) {
-        toast(`重启失败：${err?.message ?? err}`, { tone: "error", duration: 6000 })
+        toast(`重启失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
       }
-      break
+      break;
     }
 
     /* 响度均衡 */
     case "loudness-refresh": {
-      if (!isWails()) return
-      await refreshLoudnessGains()
-      const ls = await refreshLoudnessState()
-      ctx.commit?.()
-      toast(`已重新拉取补偿（已测量 ${ls?.measured ?? 0} 首）`, { tone: "success" })
-      break
+      if (!isWails()) return;
+      await refreshLoudnessGains();
+      const ls = await refreshLoudnessState();
+      ctx.commit?.();
+      toast(`已重新拉取补偿（已测量 ${ls?.measured ?? 0} 首）`, { tone: "success" });
+      break;
     }
     case "loudness-clear": {
-      if (!isWails()) return
+      if (!isWails()) return;
       openModal({
         title: "清除响度测量数据？",
         desc: "只会删除测量缓存，不会动你的音乐文件。清除后再次启用响度均衡会重新测量。",
         okText: "清除",
         danger: true,
         onOk: async () => {
-          await backend.loudnessClear()
-          state.loudnessGains = {}
-          await refreshLoudnessState()
-          ctx.commit?.()
-          ctx.render?.()
-          toast("已清除响度测量数据", { tone: "success" })
-          return true
+          await backend.loudnessClear();
+          state.loudnessGains = {};
+          await refreshLoudnessState();
+          ctx.commit?.();
+          ctx.render?.();
+          toast("已清除响度测量数据", { tone: "success" });
+          return true;
         },
-      })
-      break
+      });
+      break;
     }
 
     case "loudness-target": {
-      const v = Number(actEl.value)
-      const prev = state.config.loudnessTarget
-      if (v === prev) break
-      state.config.loudnessTarget = v
-      ctx.commit?.()
+      const v = Number(actEl.value);
+      const prev = state.config.loudnessTarget;
+      if (v === prev) break;
+      state.config.loudnessTarget = v;
+      ctx.commit?.();
       // 补偿标准变了 → 之前算好的补偿全部作废，按新标准重算
-      await invalidateLoudnessForTarget()
-      await refreshLoudnessState()
-      ctx.render?.()
-      toast(`目标响度已设为 ${v} LUFS，旧补偿已失效，将按新标准重算`, { tone: "success", duration: 3200 })
-      break
+      await invalidateLoudnessForTarget();
+      await refreshLoudnessState();
+      ctx.render?.();
+      toast(`目标响度已设为 ${v} LUFS，旧补偿已失效，将按新标准重算`, { tone: "success", duration: 3200 });
+      break;
     }
 
     /* 在线歌曲：下载位置与封面 */
     case "download-dir-pick": {
       if (!isWails()) {
-        toast("浏览器预览无法调用系统目录选择器", { tone: "warning" })
-        break
+        toast("浏览器预览无法调用系统目录选择器", { tone: "warning" });
+        break;
       }
       try {
-        const res = await backend.downloadPickDir()
-        if (res?.cancelled) break
-        await confirmDownloadDir(res, ctx)
+        const res = await backend.downloadPickDir();
+        if (res?.cancelled) break;
+        await confirmDownloadDir(res, ctx);
       } catch (err) {
-        toast(`无法更改下载位置：${err?.message ?? err}`, { tone: "error", duration: 6000 })
+        toast(`无法更改下载位置：${err?.message ?? err}`, { tone: "error", duration: 6000 });
       }
-      break
+      break;
     }
     case "download-dir-open": {
-      if (!isWails()) break
+      if (!isWails()) break;
       try {
-        await backend.downloadOpenDir(state.config.downloadDir || "")
+        await backend.downloadOpenDir(state.config.downloadDir || "");
       } catch (err) {
-        toast(`打开失败：${err?.message ?? err}`, { tone: "error", duration: 5000 })
+        toast(`打开失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
       }
-      break
+      break;
     }
     case "download-dir-reset": {
-      if (!isWails()) break
+      if (!isWails()) break;
       try {
-        const res = await backend.downloadSetDir("")
-        if (res?.cancelled) break
+        const res = await backend.downloadSetDir("");
+        if (res?.cancelled) break;
         // SetDir 现在只返回「提案」，真正生效要等用户确认是否迁移
-        const proposal = res?.next ? res : await backend.downloadSetDir("")
-        await confirmDownloadDir(proposal, ctx)
+        const proposal = res?.next ? res : await backend.downloadSetDir("");
+        await confirmDownloadDir(proposal, ctx);
       } catch (err) {
-        toast(`恢复默认失败：${err?.message ?? err}`, { tone: "error", duration: 6000 })
+        toast(`恢复默认失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
       }
-      break
+      break;
     }
     case "cache-open-covers":
     case "cache-open-lyrics": {
-      if (!isWails()) break
+      if (!isWails()) break;
       try {
-        await backend.coverOpenCacheDir(act === "cache-open-covers" ? "covers" : "lyrics")
+        await backend.coverOpenCacheDir(act === "cache-open-covers" ? "covers" : "lyrics");
       } catch (err) {
-        toast(`打开缓存目录失败：${err?.message ?? err}`, { tone: "error", duration: 5000 })
+        toast(`打开缓存目录失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
       }
-      break
+      break;
     }
     case "cover-refresh": {
-      if (!isWails()) break
+      if (!isWails()) break;
       try {
-        const stats = await backend.coverClearCache()
-        state.coverCache = await backend.coverCacheStats()
-        await refreshCoverProviders()
-        ctx.commit?.()
-        ctx.render?.()
-        toast(`已清空缓存（封面 ${stats?.covers ?? 0} 张、歌词 ${stats?.lyrics ?? 0} 份）`, { tone: "success" })
+        const stats = await backend.coverClearCache();
+        state.coverCache = await backend.coverCacheStats();
+        await refreshCoverProviders();
+        ctx.commit?.();
+        ctx.render?.();
+        toast(`已清空缓存（封面 ${stats?.covers ?? 0} 张、歌词 ${stats?.lyrics ?? 0} 份）`, { tone: "success" });
       } catch (err) {
-        toast(`清空失败：${err?.message ?? err}`, { tone: "error", duration: 5000 })
+        toast(`清空失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
       }
-      break
+      break;
     }
 
     /* 把缓存里已有的封面/歌词补写进歌曲文件 */
     case "embed-cache-write":
-      await promptEmbedExistingCache({ ctx, force: true })
-      break
+      await promptEmbedExistingCache({ ctx, force: true });
+      break;
 
     default:
-      break
+      break;
   }
 }
 
@@ -1187,18 +1181,18 @@ export async function handleSettingsAction(actEl, ctx = {}) {
 async function promptEmbedExistingCache({ ctx = {}, force = false } = {}) {
   if (!isWails()) {
     // 浏览器预览没有后端，也就没有可写的文件，别弹一个点了没反应的框
-    if (force) toast("写入歌曲文件需要后端支持，浏览器预览不可用", { tone: "warning" })
-    return
+    if (force) toast("写入歌曲文件需要后端支持，浏览器预览不可用", { tone: "warning" });
+    return;
   }
 
   // 缓存统计是异步回来的，先等一下；点按钮进来的话再主动补拉一次，
   // 免得因为「刚打开设置就点」而误报「没有可写的内容」。
   for (let i = 0; i < 20 && !state.coverCache; i++) {
-    await new Promise((r) => setTimeout(r, 100))
+    await new Promise((r) => setTimeout(r, 100));
   }
   if (!state.coverCache && force) {
     try {
-      state.coverCache = await backend.coverCacheStats()
+      state.coverCache = await backend.coverCacheStats();
     } catch {
       /* 拿不到就按「没有」处理，下面的提示会说明 */
     }
@@ -1206,25 +1200,23 @@ async function promptEmbedExistingCache({ ctx = {}, force = false } = {}) {
 
   if (cachedMetaCount() === 0) {
     if (force) {
-      toast(
-        state.coverCache ? "缓存里还没有封面或歌词，暂时没有可写入的内容" : "暂时读不到缓存统计，请稍后再试",
-        { duration: 3400 }
-      )
+      toast(state.coverCache ? "缓存里还没有封面或歌词，暂时没有可写入的内容" : "暂时读不到缓存统计，请稍后再试", {
+        duration: 3400,
+      });
     } else {
       // 打开开关时：缓存里没东西可写就别弹框，用一句提示说明「以后会自动写」
       if (state.coverCache) {
-        toast("已开启：以后下载 / 更换封面时会把封面与歌词写进歌曲文件", { duration: 3600 })
+        toast("已开启：以后下载 / 更换封面时会把封面与歌词写进歌曲文件", { duration: 3600 });
       }
     }
-    return
+    return;
   }
 
-  const covers = Number(state.coverCache?.covers) || 0
-  const lyrics = Number(state.coverCache?.lyrics) || 0
+  const covers = Number(state.coverCache?.covers) || 0;
+  const lyrics = Number(state.coverCache?.lyrics) || 0;
   openModal({
     title: "要把已有的缓存写进歌曲文件吗？",
-    body: html`
-      <div class="setting__hint">
+    body: html` <div class="setting__hint">
         缓存目录里已经有 <b>${fmtCount(covers)}</b> 张封面、<b>${fmtCount(lyrics)}</b> 份歌词。
         它们现在只放在缓存目录里；写进歌曲文件之后，把文件拷到别的播放器上也能看到。
       </div>
@@ -1235,47 +1227,47 @@ async function promptEmbedExistingCache({ ctx = {}, force = false } = {}) {
     okText: "写入文件",
     cancelText: "暂不写入",
     onOk: async () => {
-      await runEmbedCache(ctx)
-      return true
+      await runEmbedCache(ctx);
+      return true;
     },
-  })
+  });
 }
 
 async function runEmbedCache(ctx = {}) {
-  const progress = toast("正在把缓存写入歌曲文件…", { duration: 0 })
+  const progress = toast("正在把缓存写入歌曲文件…", { duration: 0 });
   // 批量写入可能要跑几十秒到几分钟。后端一直在发 meta:embed-progress，
   // 以前前端没人订阅，界面只有一句「正在进行」——用户分不清是在推进还是卡死。
   const offProgress = on("meta:embed-progress", (payload) => {
-    const done = Number(payload?.done) || 0
-    const total = Number(payload?.total) || 0
-    const title = payload?.title ? " · " + payload.title : ""
-    progress.update(total ? "正在写入歌曲文件 " + done + "/" + total + title : "正在把缓存写入歌曲文件…")
-  })
+    const done = Number(payload?.done) || 0;
+    const total = Number(payload?.total) || 0;
+    const title = payload?.title ? " · " + payload.title : "";
+    progress.update(total ? "正在写入歌曲文件 " + done + "/" + total + title : "正在把缓存写入歌曲文件…");
+  });
   try {
-    const res = await backend.coverWriteCacheToFiles()
-    const written = Number(res?.written) || 0
-    const skipped = Number(res?.skipped) || 0
-    const failed = Number(res?.failed) || 0
-    const total = Number(res?.total) || 0
+    const res = await backend.coverWriteCacheToFiles();
+    const written = Number(res?.written) || 0;
+    const skipped = Number(res?.skipped) || 0;
+    const failed = Number(res?.failed) || 0;
+    const total = Number(res?.total) || 0;
 
-    progress.close()
+    progress.close();
     if (!total) {
-      toast("缓存里还没有封面或歌词，暂时没有可写入的内容", { duration: 3200 })
-      return
+      toast("缓存里还没有封面或歌词，暂时没有可写入的内容", { duration: 3200 });
+      return;
     }
 
-    let text = `已写入 ${fmtCount(written)} 首`
-    if (res?.covers) text += `（封面 ${fmtCount(res.covers)}）`
-    if (res?.lyrics) text += `（歌词 ${fmtCount(res.lyrics)}）`
-    if (skipped) text += `，跳过 ${fmtCount(skipped)} 首`
-    if (failed) text += `，失败 ${fmtCount(failed)} 首`
+    let text = `已写入 ${fmtCount(written)} 首`;
+    if (res?.covers) text += `（封面 ${fmtCount(res.covers)}）`;
+    if (res?.lyrics) text += `（歌词 ${fmtCount(res.lyrics)}）`;
+    if (skipped) text += `，跳过 ${fmtCount(skipped)} 首`;
+    if (failed) text += `，失败 ${fmtCount(failed)} 首`;
     toast(text, {
       tone: failed ? "warning" : skipped ? "info" : "success",
       duration: 5200,
-    })
+    });
 
     // 跳过的原因值得让用户看到（多数是「这个格式不支持写标签」）
-    const reasons = Array.isArray(res?.reasons) ? res.reasons : []
+    const reasons = Array.isArray(res?.reasons) ? res.reasons : [];
     if (reasons.length) {
       openModal({
         title: failed ? "部分歌曲没能写入" : "部分歌曲已跳过",
@@ -1285,17 +1277,17 @@ async function runEmbedCache(ctx = {}) {
         okText: "知道了",
         cancelText: "关闭",
         onOk: () => true,
-      })
+      });
     }
 
-    state.coverCache = await backend.coverCacheStats()
-    ctx.commit?.()
-    ctx.render?.()
+    state.coverCache = await backend.coverCacheStats();
+    ctx.commit?.();
+    ctx.render?.();
   } catch (err) {
-    progress.close()
-    toast(`写入失败：${err?.message ?? err}`, { tone: "error", duration: 6000 })
+    progress.close();
+    toast(`写入失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
   } finally {
-    offProgress()
+    offProgress();
   }
 }
 
@@ -1307,29 +1299,27 @@ async function runEmbedCache(ctx = {}) {
    用户确认后才调 ApplyDir 真正生效 —— 这样「取消」不会留下改了一半的状态。
    -------------------------------------------------------------------------- */
 async function confirmDownloadDir(proposal, ctx) {
-  if (!proposal || proposal.cancelled) return
-  const next = proposal.next
-  if (!next) return
+  if (!proposal || proposal.cancelled) return;
+  const next = proposal.next;
+  if (!next) return;
 
   if (proposal.same) {
-    toast("这个位置就是当前的下载目录", { duration: 2200 })
-    return
+    toast("这个位置就是当前的下载目录", { duration: 2200 });
+    return;
   }
 
-  const count = Number(proposal.count) || 0
-  const sizeMB = ((Number(proposal.bytes) || 0) / 1024 / 1024).toFixed(1)
-  const nextCount = Number(proposal.nextCount) || 0
+  const count = Number(proposal.count) || 0;
+  const sizeMB = ((Number(proposal.bytes) || 0) / 1024 / 1024).toFixed(1);
+  const nextCount = Number(proposal.nextCount) || 0;
 
   // 旧目录没有歌曲 → 没什么可迁移的，直接改（少一次打扰）
   if (count === 0) {
-    await applyDownloadDir(next, false, ctx)
-    return
+    await applyDownloadDir(next, false, ctx);
+    return;
   }
 
-  const body = html`
-    <div class="setting__hint">
-      当前下载目录里有 <b>${fmtCount(count)}</b> 首歌曲（约 ${sizeMB} MB）。
-      要一并搬到新目录吗？
+  const body = html` <div class="setting__hint">
+      当前下载目录里有 <b>${fmtCount(count)}</b> 首歌曲（约 ${sizeMB} MB）。 要一并搬到新目录吗？
     </div>
     <div class="dir-compare">
       <div class="dir-compare__row">
@@ -1341,9 +1331,11 @@ async function confirmDownloadDir(proposal, ctx) {
         <span class="dir-compare__path u-selectable">${next}</span>
       </div>
     </div>
-    ${nextCount
-      ? html`<div class="setting__hint">新目录里已经有 ${fmtCount(nextCount)} 首歌曲，同名的不会被覆盖。</div>`
-      : nothing}
+    ${
+      nextCount
+        ? html`<div class="setting__hint">新目录里已经有 ${fmtCount(nextCount)} 首歌曲，同名的不会被覆盖。</div>`
+        : nothing
+    }
     <div class="setting__hint">不迁移的话，旧目录里的歌曲会留在原地；新目录会成为新的默认保存位置。</div>`;
 
   openModal({
@@ -1352,38 +1344,38 @@ async function confirmDownloadDir(proposal, ctx) {
     okText: "迁移并更改",
     cancelText: "不迁移，只更改位置",
     onOk: async () => {
-      await applyDownloadDir(next, true, ctx)
-      return true
+      await applyDownloadDir(next, true, ctx);
+      return true;
     },
     onCancel: async () => {
-      await applyDownloadDir(next, false, ctx)
+      await applyDownloadDir(next, false, ctx);
     },
-  })
+  });
 }
 
 async function applyDownloadDir(dir, migrate, ctx) {
   try {
-    const res = await backend.downloadApplyDir(dir, migrate)
-    if (res?.dir) state.config.downloadDir = res.dir
-    ctx.commit?.()
-    ctx.render?.()
+    const res = await backend.downloadApplyDir(dir, migrate);
+    if (res?.dir) state.config.downloadDir = res.dir;
+    ctx.commit?.();
+    ctx.render?.();
 
     if (!migrate) {
-      toast(`下载位置已改为：${res?.dir || dir}`, { tone: "success", duration: 3200 })
-      return
+      toast(`下载位置已改为：${res?.dir || dir}`, { tone: "success", duration: 3200 });
+      return;
     }
-    const moved = Number(res?.migrated) || 0
-    const skipped = Number(res?.skipped) || 0
-    const failed = Array.isArray(res?.failed) ? res.failed : []
-    let text = `已迁移 ${fmtCount(moved)} 首`
-    if (skipped) text += `，跳过 ${fmtCount(skipped)} 首（新目录已有同名文件）`
-    if (failed.length) text += `，${fmtCount(failed.length)} 首失败`
+    const moved = Number(res?.migrated) || 0;
+    const skipped = Number(res?.skipped) || 0;
+    const failed = Array.isArray(res?.failed) ? res.failed : [];
+    let text = `已迁移 ${fmtCount(moved)} 首`;
+    if (skipped) text += `，跳过 ${fmtCount(skipped)} 首（新目录已有同名文件）`;
+    if (failed.length) text += `，${fmtCount(failed.length)} 首失败`;
     toast(`${text}；新位置：${res?.dir || dir}`, {
       tone: failed.length ? "warning" : "success",
       duration: 4200,
-    })
+    });
   } catch (err) {
-    toast(`更改下载位置失败：${err?.message ?? err}`, { tone: "error", duration: 6000 })
+    toast(`更改下载位置失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
   }
 }
 
@@ -1399,46 +1391,46 @@ async function applyDownloadDir(dir, migrate, ctx) {
  */
 export async function refreshCoverProviders() {
   if (!isWails()) {
-    state.coverProviders = []
-    state.coverBreaker = {}
-    return null
+    state.coverProviders = [];
+    state.coverBreaker = {};
+    return null;
   }
   try {
-    const res = await backend.coverProviders()
-    state.coverProviders = Array.isArray(res?.providers) ? res.providers : []
-    state.coverBreaker = res?.breaker && typeof res.breaker === "object" ? res.breaker : {}
-    return res
+    const res = await backend.coverProviders();
+    state.coverProviders = Array.isArray(res?.providers) ? res.providers : [];
+    state.coverBreaker = res?.breaker && typeof res.breaker === "object" ? res.breaker : {};
+    return res;
   } catch {
-    state.coverProviders = []
-    state.coverBreaker = {}
-    return null
+    state.coverProviders = [];
+    state.coverBreaker = {};
+    return null;
   }
 }
 
 /** 只拉一次（打开设置页时触发），避免每次重绘都打后端 */
-let coverProvidersRequested = false
+let coverProvidersRequested = false;
 
 export function ensureCoverProviders() {
-  if (coverProvidersRequested) return
-  coverProvidersRequested = true
+  if (coverProvidersRequested) return;
+  coverProvidersRequested = true;
   // 缓存统计也一起拉：设置里的「缓存目录」「写入缓存到文件」都要用到它，
   // 拿不到就只能显示「正在读取…」，用户会觉得界面坏了。
   const stats = isWails()
     ? backend
-      .coverCacheStats()
-      .then((s) => {
-        state.coverCache = s
-        return s
-      })
-      .catch(() => null)
-    : Promise.resolve(null)
+        .coverCacheStats()
+        .then((s) => {
+          state.coverCache = s;
+          return s;
+        })
+        .catch(() => null)
+    : Promise.resolve(null);
 
   Promise.all([refreshCoverProviders(), stats]).then(() => {
     // 主题 / 来源 / 缓存概况都是 Lit 组件之外的数据：广播一次让设置层重新求值依赖。
     // 迁移前这里要手工找到那几处 DOM 就地改写（refreshOnlineCard / refreshCacheHints），
     // 现在由组件的依赖数组覆盖，不再需要「改哪一处文案」的隐性分工。
-    requestAppUpdate()
-  })
+    requestAppUpdate();
+  });
 }
 
 export function promptPath({ manual = false } = {}) {
@@ -1451,126 +1443,118 @@ export function promptPath({ manual = false } = {}) {
       body: html`<input class="input" data-field="path" type="text" placeholder="C:\\Users\\Example\\Music" />`,
       okText: "添加",
       onOk: (values) => {
-        const p = String(values.path || "").trim()
-        if (!p) return "请输入路径"
-        resolve(p)
-        return true
+        const p = String(values.path || "").trim();
+        if (!p) return "请输入路径";
+        resolve(p);
+        return true;
       },
-    })
-  })
+    });
+  });
 }
 
 /* --------------------------------------------------------------------------
    通用设置控件（开关 / 分段 / 滑杆）
    -------------------------------------------------------------------------- */
 export function handleSettingControl(actEl, ctx = {}) {
-  const toggleKey = actEl.dataset.toggle
+  const toggleKey = actEl.dataset.toggle;
   if (toggleKey) {
-    const next = actEl.getAttribute("aria-checked") !== "true"
+    const next = actEl.getAttribute("aria-checked") !== "true";
 
     // 桌面歌词 / 桌面背景歌词必须在**写 state.config 之前**处理：
     // applyDesktopMode 要靠「改动前是什么」判断这次该开哪个窗口，
     // 提前把值写掉它就会以为「没变化」而跳过开窗。
     // 两个开关是一组单选，所以走同一个入口（它会顺手把另一个关掉）。
     if (toggleKey === "showDesktopLyrics" || toggleKey === "showDesktopWallpaper") {
-      const mode =
-        toggleKey === "showDesktopLyrics"
-          ? next
-            ? "lyrics"
-            : "off"
-          : next
-            ? "wallpaper"
-            : "off"
+      const mode = toggleKey === "showDesktopLyrics" ? (next ? "lyrics" : "off") : next ? "wallpaper" : "off";
       applyDesktopMode(mode).then((res) => {
         // 按钮的选中态由 sync*Buttons 按配置写，这里只补「失败」的提示：
         // 桌面背景歌词依赖系统的桌面窗口结构，确实会开不起来，得说清原因
         if (res.ok === false) {
-          toast(`打不开：${res.reason || res.error || "未知原因"}`, { tone: "warning", duration: 3200 })
+          toast(`打不开：${res.reason || res.error || "未知原因"}`, { tone: "warning", duration: 3200 });
         }
-        ctx.commit?.()
-      })
-      ctx.commit?.()
-      return true
+        ctx.commit?.();
+      });
+      ctx.commit?.();
+      return true;
     }
 
-    actEl.setAttribute("aria-checked", String(next))
+    actEl.setAttribute("aria-checked", String(next));
     if (toggleKey in state.config) {
-      state.config[toggleKey] = next
+      state.config[toggleKey] = next;
       if (toggleKey === "animations") {
         // 重新按当前「过渡速度」算一遍 --dur：关掉是 0.001ms，打开则回到该档时长
-        setRuntimeToken("--dur", animationDurationValue(state.config))
+        setRuntimeToken("--dur", animationDurationValue(state.config));
       }
       if (toggleKey === "minimizeToTray") {
         // 除了写配置（commit 会推给后端），还要立刻让后端创建/销毁托盘图标，
         // 否则用户拨了开关要等下次启动才看到托盘
         if (isWails()) {
           backend.minimizeToTray(next).catch((err) => {
-            console.warn("[settings] 同步托盘开关失败", err)
-          })
+            console.warn("[settings] 同步托盘开关失败", err);
+          });
         }
       }
       if (toggleKey === "watchFolders") {
-        state.folders.forEach((f) => (f.watching = next))
+        state.folders.forEach((f) => (f.watching = next));
         // 必须通知后端：以前只改前端配置与徽标，fsnotify 的监听根在本次运行里
         // 完全不变 —— 表现是「开关拨了、界面变了、实际开关无效」。
         // 后端 SetWatchers 会写配置并刷新监听（含「启动时没有文件夹」的补启动）。
         if (isWails()) {
           backend.setWatchers(next).catch((err) => {
-            console.warn("[settings] 切换实时监听失败", err)
-          })
+            console.warn("[settings] 切换实时监听失败", err);
+          });
         }
       }
     }
-    ctx.commit?.()
+    ctx.commit?.();
     // 打开「把封面/歌词写进歌曲文件」时，缓存里往往已经有一批封面与歌词了。
     // 这里问一次要不要顺手补写进文件（需求原文），不写也不会做任何事。
     if (toggleKey === "embedMeta" && next) {
-      promptEmbedExistingCache()
+      promptEmbedExistingCache();
     }
-    return true
+    return true;
   }
 
-  const segKey = actEl.closest("[data-segment]")?.dataset.segment
+  const segKey = actEl.closest("[data-segment]")?.dataset.segment;
   if (segKey) {
-    const value = actEl.dataset.value
+    const value = actEl.dataset.value;
     actEl.parentElement.querySelectorAll(".segmented__btn").forEach((b) => {
-      b.setAttribute("aria-pressed", String(b === actEl))
-    })
+      b.setAttribute("aria-pressed", String(b === actEl));
+    });
     if (segKey === "themeMode") {
-      state.config.themeMode = value
-      const themes = listThemes()
-      const sysDark = window.matchMedia("(prefers-color-scheme: dark)").matches
-      const preferred = value === "system" ? (sysDark ? "dark" : "light") : value
-      const t = themes.find((x) => x.mode === preferred && x.id !== "cover-dark") || themes[0]
-      state.config.theme = t.id
-      applyResolvedTheme(state.config)
+      state.config.themeMode = value;
+      const themes = listThemes();
+      const sysDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const preferred = value === "system" ? (sysDark ? "dark" : "light") : value;
+      const t = themes.find((x) => x.mode === preferred && x.id !== "cover-dark") || themes[0];
+      state.config.theme = t.id;
+      applyResolvedTheme(state.config);
     } else if (segKey in state.config) {
-      const numeric = ["lyricsLines", "scanConcurrency"]
-      state.config[segKey] = numeric.includes(segKey) ? Number(value) : value
+      const numeric = ["lyricsLines", "scanConcurrency"];
+      state.config[segKey] = numeric.includes(segKey) ? Number(value) : value;
       if (segKey === "lyricsLines") {
-        setRuntimeToken("--lyric-pad", `${50 - Number(value) * 4}%`)
+        setRuntimeToken("--lyric-pad", `${50 - Number(value) * 4}%`);
       }
       if (segKey === "animationsSpeed") {
         // 立即生效、并且立刻看得见（弹出层本身就是这段动效的展示窗口）
-        setRuntimeToken("--dur", animationDurationValue(state.config))
+        setRuntimeToken("--dur", animationDurationValue(state.config));
       }
       if (segKey === "loudnessMode") {
         // 模式切换后需要重新拉取补偿增益表（off→on 或 track↔album）
-        refreshLoudnessGains()
+        refreshLoudnessGains();
       }
       if (segKey === "windowCorners") {
         // 圆角是运行期可写的 DWM 属性：立刻推给后端，点完就能看到（不用重启）
         if (isWails()) {
           backend.setWindowCorners(value).catch((err) => {
-            console.warn("[settings] 设置窗口圆角失败", err)
-          })
+            console.warn("[settings] 设置窗口圆角失败", err);
+          });
         }
       }
     }
-    ctx.commit?.()
-    return true
+    ctx.commit?.();
+    return true;
   }
 
-  return false
+  return false;
 }
-

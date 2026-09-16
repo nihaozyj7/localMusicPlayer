@@ -157,6 +157,13 @@
   align-items: center;
   gap: var(--sp-3);
   height: var(--row-h);
+  /* 跳过视口外行的布局与绘制。行高恒为 --row-h，所以 contain-intrinsic-size
+     能精确预估尺寸，不会让滚动条抖动。
+     注意这是**部分**缓解：Lit 仍然为每一首建了 DOM 节点（实测 5,000 首 =
+     136k 节点），content-visibility 只省掉它们的布局/绘制。真正的修法是
+     对 state.visibleSongs 做窗口化渲染。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--row-h);
   padding: 0 var(--sp-4);
   border-radius: var(--r-sm);
   cursor: default;

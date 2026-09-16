@@ -48,7 +48,16 @@ type Song struct {
 	AddedAt    int64  `json:"addedAt"`
 	PlayCount  int    `json:"playCount"`
 	Cover      string `json:"cover"` // data URL；无封面时为空字符串
-	ModTime    int64  `json:"-"`     // 仅用于元数据缓存判定
+	// CoverURL 是同源封面地址（形如 /cover/<内容hash>.jpg?t=…），指向封面缓存
+	// 目录里的内容寻址文件。
+	//
+	// 为什么本地歌曲走 URL 而不是 Cover 里的 base64：内嵌封面平均 143KB，
+	// base64 后还会膨胀 1/3 —— 整库塞进列表接口意味着 5,000 首约 484MB 的 IPC
+	// 载荷（每次 scan:done 都要重来一遍，含文件夹监听触发的增量重扫）。
+	// 给 URL 之后列表载荷只剩几十字节/首，图片由浏览器按 immutable 长缓存按需取，
+	// 同一张封面只下载一次。Cover 字段保留给仍需要内嵌 data URL 的场景（在线曲目）。
+	CoverURL string `json:"coverUrl,omitempty"`
+	ModTime  int64  `json:"-"` // 仅用于元数据缓存判定
 }
 
 // Playlist 歌单；「我喜欢」是受限歌单（Locked=true，不可删除）
@@ -775,7 +784,10 @@ func (s *Store) Save() error {
 }
 
 func (s *Store) saveLocked() error {
-	raw, err := json.MarshalIndent(s.cfg, "", "  ")
+	// 不用 MarshalIndent：配置文件里可能包含全部歌单的 songIds（大曲库下是
+	// 数万个字符串），缩进会明显放大序列化开销与文件体积，而这份文件是给程序
+	// 读写的（人类手改是次要场景，且 JSON 本身已经够可读）。
+	raw, err := json.Marshal(s.cfg)
 	if err != nil {
 		return fmt.Errorf("序列化配置失败: %w", err)
 	}

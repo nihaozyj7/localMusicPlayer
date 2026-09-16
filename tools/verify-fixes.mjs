@@ -168,13 +168,7 @@ function desktopLyricsWindowVisible() {
   return new Promise((resolve) => {
     const ps = spawn(
       "powershell",
-      [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        path.join(__dirname, "..", ".task", "enum-windows.ps1"),
-      ],
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(__dirname, "..", ".task", "enum-windows.ps1")],
       { stdio: ["ignore", "pipe", "ignore"] }
     );
     let out = "";
@@ -197,11 +191,7 @@ const early = await evaluate(`(async () => {
   const res = await fetch('/early-theme.js', { cache: 'no-store' });
   return { ok: res.ok, status: res.status, body: await res.text() };
 })()`);
-check(
-  "1a 首帧主题脚本可获取",
-  early?.ok && /data-theme/.test(early.body || ""),
-  `status=${early?.status}`
-);
+check("1a 首帧主题脚本可获取", early?.ok && /data-theme/.test(early.body || ""), `status=${early?.status}`);
 check(
   "1b 首帧主题带上保存的主题",
   /setAttribute\('data-theme',"cover-dark"\)/.test(early?.body || ""),
@@ -251,10 +241,10 @@ check(
   "2b 换封面后 --seed 与配置都跟着变（不再卡在第一张）",
   Boolean(
     accent &&
-      !accent.error &&
-      accent.after?.cfg &&
-      accent.after.cfg !== accent.initial?.cfg &&
-      accent.after.seed !== accent.initial?.seed
+    !accent.error &&
+    accent.after?.cfg &&
+    accent.after.cfg !== accent.initial?.cfg &&
+    accent.after.seed !== accent.initial?.seed
   ),
   accent?.error || `${accent?.initial?.cfg} → ${accent?.after?.cfg}`
 );

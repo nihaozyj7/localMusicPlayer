@@ -155,7 +155,11 @@ export default defineConfig({
     // background:transparent!important 会把主界面 body 的 --bg-window 打穿。
     cssCodeSplit: false,
     sourcemap: false,
-    reportCompressedSize: false,
-    chunkSizeWarningLimit: 900,
+    // 打开 gzip 体积统计，并把告警阈值降到实际目标之下。
+    // 原来是 reportCompressedSize:false + chunkSizeWarningLimit:900 ——
+    // 主 chunk 约 280KB，阈值 900 意味着 Rollup **永远不会**对最大的产物报警，
+    // 两份配置合起来正好压掉了它们本来要提供的信号。
+    reportCompressedSize: true,
+    chunkSizeWarningLimit: 320,
   },
 });

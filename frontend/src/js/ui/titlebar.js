@@ -21,13 +21,7 @@ class MpTitlebar extends MpElement {
     const t = getTheme(state.config.theme);
     const dark = t?.mode !== "light";
     const d = downloadsSnapshot();
-    return [
-      dark,
-      state.config.themeMode,
-      state.searchOpen,
-      d.visible,
-      d.badge,
-    ];
+    return [dark, state.config.themeMode, state.searchOpen, d.visible, d.badge];
   };
 
   render() {
@@ -87,13 +81,31 @@ class MpTitlebar extends MpElement {
           >
             ${icon("settings")}
           </button>
-          <button class="titlebar__btn" id="btn-win-min" type="button" aria-label="最小化" @click=${() => windowControl("min")}>
+          <button
+            class="titlebar__btn"
+            id="btn-win-min"
+            type="button"
+            aria-label="最小化"
+            @click=${() => windowControl("min")}
+          >
             ${icon("minimize")}
           </button>
-          <button class="titlebar__btn" id="btn-win-max" type="button" aria-label="最大化" @click=${() => windowControl("max")}>
+          <button
+            class="titlebar__btn"
+            id="btn-win-max"
+            type="button"
+            aria-label="最大化"
+            @click=${() => windowControl("max")}
+          >
             ${icon("maximize")}
           </button>
-          <button class="titlebar__btn titlebar__btn--close" id="btn-win-close" type="button" aria-label="关闭" @click=${() => windowControl("close")}>
+          <button
+            class="titlebar__btn titlebar__btn--close"
+            id="btn-win-close"
+            type="button"
+            aria-label="关闭"
+            @click=${() => windowControl("close")}
+          >
             ${icon("close")}
           </button>
         </div>

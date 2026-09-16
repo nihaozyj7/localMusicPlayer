@@ -8,8 +8,6 @@ package meta
 
 import (
 	"bytes"
-	"encoding/base64"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -26,7 +24,15 @@ type Info struct {
 	DurationMS int64
 	SampleRate int
 	Bitrate    int
-	CoverDataURL string
+
+	// CoverData / CoverMIME 是标签里的内嵌封面**原始字节**。
+	//
+	// 以前这里是现成的 base64 data URL（CoverDataURL），结果是 base64 一路流进
+	// library 的元数据缓存 —— 实测那份 5.59MB 的缓存里 99.6% 是它。
+	// 现在只给原始字节，由调用方决定怎么存：写进封面缓存目录拿内容 hash 文件名，
+	// 而不是塞进 JSON。
+	CoverData []byte
+	CoverMIME string
 }
 
 const maxCoverBytes = 4 << 20 // 单张封面最大 4MB，避免配置/内存被撑爆
@@ -48,7 +54,8 @@ func Read(path string) Info {
 				if mime == "" {
 					mime = "image/jpeg"
 				}
-				info.CoverDataURL = fmt.Sprintf("data:%s;base64,%s", mime, base64.StdEncoding.EncodeToString(pic.Data))
+				info.CoverData = pic.Data
+				info.CoverMIME = mime
 			}
 		}
 	}

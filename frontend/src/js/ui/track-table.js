@@ -22,13 +22,7 @@ import { MpElement, define, html, nothing, repeat, icon } from "./base.js";
 import { toast } from "./overlays.js";
 import { bindCoverFallback } from "./overlays.js";
 import { coverVersion, commit, isLiked, reorderQueue, state, toggleSelectedSong } from "../store.js";
-import {
-  activateRow,
-  markDragEnd,
-  openColumnMenu,
-  openTrackMenu,
-  shouldIgnoreRowClick,
-} from "../tracks.js";
+import { activateRow, markDragEnd, openColumnMenu, openTrackMenu, shouldIgnoreRowClick } from "../tracks.js";
 import { currentContext, playContext, toggleLike } from "../store.js";
 import { DEFAULT_COVER, coverOf, fmtTime } from "../utils.js";
 
@@ -193,7 +187,9 @@ export class MpTrackTable extends MpElement {
         type="button"
         data-sort=${key}
         data-dir=${state.sortKey === key ? state.sortDir : nothing}
-      >${label}${icon("chevron-down")}</button>`;
+      >
+        ${label}${icon("chevron-down")}
+      </button>`;
     };
 
     return html`
@@ -201,9 +197,7 @@ export class MpTrackTable extends MpElement {
         <div class="col-handle"></div>
         <div class="col-index">#</div>
         <div class="col-cover"></div>
-        ${cell("title", "标题")}
-        ${cell("album", "专辑", "col-album")}
-        ${cell("duration", "时长")}
+        ${cell("title", "标题")} ${cell("album", "专辑", "col-album")} ${cell("duration", "时长")}
         <div class="col-heart" title="我喜欢">${icon("heart")}</div>
         <div class="col-more"></div>
       </div>
@@ -228,9 +222,11 @@ export class MpTrackTable extends MpElement {
         aria-current=${String(isCurrent)}
         data-playing=${isCurrent && state.playing ? "true" : "false"}
       >
-        ${mode === "playlist"
-          ? html`<div class="track__handle" data-handle="1" title="拖动排序">${icon("grip")}</div>`
-          : html`<div class="col-handle"></div>`}
+        ${
+          mode === "playlist"
+            ? html`<div class="track__handle" data-handle="1" title="拖动排序">${icon("grip")}</div>`
+            : html`<div class="col-handle"></div>`
+        }
         <div class="track__index">${this.indexCell(song, index, selecting)}</div>
         <div class="track__cover">
           <img src=${coverSrc(coverOf(song))} alt="" loading="lazy" draggable="false" />
@@ -251,8 +247,12 @@ export class MpTrackTable extends MpElement {
           aria-pressed=${String(liked)}
           aria-label="加入我喜欢"
           data-tip=${liked ? "取消喜欢" : "加入我喜欢"}
-        >${icon("heart")}</button>
-        <button class="track__more" type="button" data-act="more" aria-label="更多操作" aria-expanded="false">${icon("more")}</button>
+        >
+          ${icon("heart")}
+        </button>
+        <button class="track__more" type="button" data-act="more" aria-label="更多操作" aria-expanded="false">
+          ${icon("more")}
+        </button>
       </div>
     `;
   }
@@ -266,7 +266,9 @@ export class MpTrackTable extends MpElement {
     return html`
       <span class="track__num u-num">${index + 1}</span>
       <div class="track__bars"><span></span><span></span><span></span><span></span></div>
-      <button class="track__play" type="button" data-act="play" aria-label="播放 ${song.title}">${icon("play")}</button>
+      <button class="track__play" type="button" data-act="play" aria-label="播放 ${song.title}">
+        ${icon("play")}
+      </button>
     `;
   }
 

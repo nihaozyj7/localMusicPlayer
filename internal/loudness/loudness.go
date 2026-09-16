@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"musicplayer/internal/atomicfile"
 	"musicplayer/internal/bootstrap"
 	"musicplayer/internal/executil"
 	"musicplayer/internal/ffmpeg"
@@ -215,22 +216,27 @@ func (m *Manager) Save() error {
 		m.mu.Unlock()
 		return nil
 	}
-	cf := cacheFile{Version: cacheVersion, Entries: m.items, Albums: m.albums}
+	// 必须在锁内**复制**这两张 map，不能把 m.items / m.albums 直接交给 cacheFile：
+	// map 是引用类型，那样 Unlock 之后 json.Marshal 仍在遍历同一个哈希表，而
+	// measureUncached / UpdateAlbum / InvalidateTarget 会在锁内写它。
+	// Go 里「并发 map 迭代 + 写入」是 fatal error，进程直接崩且无法 recover
+	//（不是可以被 -race 温和报告的普通数据竞争）。
+	entries := make(map[string]Measurement, len(m.items))
+	for k, v := range m.items {
+		entries[k] = v
+	}
+	albums := make(map[string]Album, len(m.albums))
+	for k, v := range m.albums {
+		albums[k] = v
+	}
 	m.dirty = false
 	m.mu.Unlock()
 
-	raw, err := json.Marshal(cf)
+	raw, err := json.Marshal(cacheFile{Version: cacheVersion, Entries: entries, Albums: albums})
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(m.dataDir, 0o755); err != nil {
-		return err
-	}
-	tmp := m.cachePath() + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, m.cachePath())
+	return atomicfile.Write(m.cachePath(), raw, 0o644)
 }
 
 /* --------------------------------------------------------------------------
@@ -476,8 +482,17 @@ func (m *Manager) MeasureAll(ctx context.Context, songs []bootstrap.Song, target
 		if ctx.Err() != nil {
 			break
 		}
+		// 用 select 而不是裸发送：上下文取消时必须能立刻退出，否则会卡在
+		// 信号量上等某个 worker 释放槽位（取消形同虚设）。
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			// 取消后不再启动新 worker；已占用的槽位随本函数返回一起丢弃
+			break
+		}
 		wg.Add(1)
-		sem <- struct{}{}
 		go func(s bootstrap.Song) {
 			defer wg.Done()
 			defer func() { <-sem }()
@@ -503,6 +518,16 @@ func (m *Manager) MeasureAll(ctx context.Context, songs []bootstrap.Song, target
 		}(song)
 	}
 	wg.Wait()
+
+	// 收尾进度必须在这里补发：取消时未提交的曲目没人处理，worker 里的
+	// done == total 永远不成立，于是 Finished 永远是 false —— 前端进度条
+	// 不会收敛（用户看到「测量中」永远不结束）。
+	if onProgress != nil {
+		mu.Lock()
+		d, f := done, failed
+		mu.Unlock()
+		onProgress(Progress{Done: d, Total: total, Failed: f, Finished: true})
+	}
 
 	if err := m.Save(); err != nil {
 		return done, failed, err

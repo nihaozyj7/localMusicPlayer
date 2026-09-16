@@ -78,7 +78,9 @@ class MpPlayerview extends MpElement {
               aria-label="更换封面"
               ?disabled=${coverDisabled}
               @click=${() => this.openCoverPanel(song)}
-            >${icon("image")}</button>
+            >
+              ${icon("image")}
+            </button>
             <button
               class="viewmode__btn"
               id="btn-cover-carousel"
@@ -88,7 +90,9 @@ class MpPlayerview extends MpElement {
               data-tip=${this.carouselTip(carouselUsable, carouselOn)}
               aria-label="封面轮播"
               @click=${() => this.toggleCarousel()}
-            >${icon("slideshow")}</button>
+            >
+              ${icon("slideshow")}
+            </button>
           </div>
           <div class="viewmode" id="playerview-mode" role="group" aria-label="播放界面样式">
             ${repeat(
@@ -104,7 +108,9 @@ class MpPlayerview extends MpElement {
                   data-tip=${skin.name || skin.id}
                   aria-label=${skin.name || skin.id}
                   @click=${() => setPlayerViewMode(skin.id)}
-                >${icon(skin.icon || "disc")}</button>
+                >
+                  ${icon(skin.icon || "disc")}
+                </button>
               `
             )}
           </div>

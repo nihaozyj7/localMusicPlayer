@@ -213,9 +213,10 @@ const skin = defineSkin({
       const bassBands = Math.min(4, data.length);
       for (let i = 0; i < bars.length; i += 1) {
         // 段数对不上时按比例取样（宿主一般照声明推，这里只是兜底）
-        const raw = data.length === bars.length
-          ? data[i]
-          : data[Math.min(data.length - 1, Math.floor((i / bars.length) * data.length))];
+        const raw =
+          data.length === bars.length
+            ? data[i]
+            : data[Math.min(data.length - 1, Math.floor((i / bars.length) * data.length))];
         const v = Math.max(0, Math.min(1, Number(raw) || 0));
         // 幂次略小于 1：小音量也看得出在跳，大音量不会一直顶满
         bars[i].style.setProperty("--h", (0.05 + Math.pow(v, 0.85) * 0.95).toFixed(3));

@@ -300,6 +300,7 @@ func TestRowClickAndDensityRejectGarbage(t *testing.T) {
 		t.Fatalf("非法密度应落回 cozy，实际 %q", got.ListDensity)
 	}
 }
+
 /* --------------------------------------------------------------------------
    下载任务面板
    --------------------------------------------------------------------------
@@ -426,4 +427,3 @@ func TestDownloadTasksTrimKeepsRunning(t *testing.T) {
 		t.Fatal("裁剪把正在下载的任务挤掉了")
 	}
 }
-

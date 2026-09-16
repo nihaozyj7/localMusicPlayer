@@ -110,6 +110,7 @@
  * @property {number} addedAt
  * @property {number} playCount
  * @property {string} cover - data URL；无封面时为空字符串
+ * @property {string} [coverUrl] - CoverURL 是同源封面地址（形如 /cover/<内容hash>.jpg?t=…），指向封面缓存 目录里的内容寻址文件。 为什么本地歌曲走 URL 而不是 Cover 里的 base64：内嵌封面平均 143KB， base64 后还会膨胀 1/3 —— 整库塞进列表接口意味着 5,000 首约 484MB 的 IPC 载荷（每次 scan:done 都要重来一遍，含文件夹监听触发的增量重扫）。 给 URL 之后列表载荷只剩几十字节/首，图片由浏览器按 immutable 长缓存按需取， 同一张封面只下载一次。Cover 字段保留给仍需要内嵌 data URL 的场景（在线曲目）。
  */
 
 // In interface mode, this file is likely to contain just comments.

@@ -36,13 +36,7 @@ import {
   startMockTicker,
 } from "./store.js";
 import { doRescan, navigate, settingsLayerOpen, refreshSettingsLayer } from "./shell.js";
-import {
-  applyVolume,
-  applyGainForSong,
-  refreshLoudnessGains,
-  refreshLoudnessState,
-  seekTo,
-} from "./audio.js";
+import { applyVolume, applyGainForSong, refreshLoudnessGains, refreshLoudnessState, seekTo } from "./audio.js";
 import { closePlayer, openPlayer, preloadSkins, setPlayerViewMode, togglePlayer } from "./playerhost.js";
 import { applyResolvedTheme, discoverThemes, getTheme } from "./theme.js";
 import { primeCoverAccent } from "./cover-accent.js";
@@ -262,13 +256,16 @@ function bindBackendEvents() {
       state.allSongsRaw = songs;
       const { kept, excluded } = applyRules(songs, state.filterRules);
       state.songs = kept;
+      const nowIds = new Set(kept.map((s) => s.id));
       state.lastScan = {
         at: Date.now(),
         found: songs.length,
         kept: kept.length,
         excluded,
         added: kept.filter((s) => !prev.has(s.id)).length,
-        removed: [...prev].filter((id) => !kept.some((s) => s.id === id)).length,
+        // 用 Set 而不是 kept.some(...)：后者是 O(prev × kept)，2 万首就是
+        // 4 亿次比较，全部发生在主线程上。store.js 的 rescan() 早就是正确写法。
+        removed: [...prev].filter((id) => !nowIds.has(id)).length,
       };
     }
     const folders = await backend.folders();
@@ -435,12 +432,17 @@ function applyPreviewParams() {
   const songs = Number(q.get("songs"));
   if (!isWails() && Number.isFinite(songs) && songs > state.songs.length) {
     const base = state.songs.slice();
-    while (state.songs.length < songs) {
-      const i = state.songs.length;
+    // 先建好新数组再**整体替换**，不要原地 push：
+    // 「state.songs 永远整体替换、从不原地改」是 recalcVisible 记忆化与
+    // visibleFingerprint 共同依赖的不变量（见 store.js）。
+    const grown = base.slice();
+    while (grown.length < songs) {
+      const i = grown.length;
       const t = base[i % base.length];
-      state.songs.push({ ...t, id: `bench_${i}`, path: `C:/bench/${i}.${t.ext || "mp3"}` });
+      grown.push({ ...t, id: `bench_${i}`, path: `C:/bench/${i}.${t.ext || "mp3"}` });
     }
-    state.allSongsRaw = state.songs.slice();
+    state.songs = grown;
+    state.allSongsRaw = grown.slice();
     // 可见列表是在 commit() 里由 recalcVisible() 派生的，改完曲库要主动跑一次
     commit();
   }

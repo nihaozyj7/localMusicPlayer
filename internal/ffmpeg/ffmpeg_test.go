@@ -94,9 +94,9 @@ func TestParseDuration(t *testing.T) {
 
 func TestParseStreamLine(t *testing.T) {
 	cases := []struct {
-		name                         string
-		in                           string
-		codec                        string
+		name                          string
+		in                            string
+		codec                         string
 		sampleRate, channels, bitrate int
 	}{
 		{

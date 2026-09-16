@@ -313,22 +313,30 @@
   transition: height var(--dur-fast) var(--ease);
 }
 
-/* 填充与滑块位置由 JS 写入具体属性（width / left），不用自定义属性，
-   因为 CSP style-src 'self' 会拦截 CSSOM 写自定义属性 */
+/* 填充用 transform: scaleX() 而不是 width。
+   width 是布局属性：进度条每个 store tick 都要重画一次（playerbar.js 的 deps 含
+   s.position），每次写入都让播放条那一行样式失效、并**重启动画**这条 80ms 过渡 ——
+   60Hz 下过渡永远无法收敛。scaleX 走合成器，不触发布局也不重排。
+   仍然由 JS 写具体属性而不是自定义属性：CSP style-src 'self' 会拦截
+   CSSOM 写自定义属性的写法（见 slider.js）。 */
 .slider__fill {
   position: absolute;
   inset: 0 auto 0 0;
-  width: 0;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
   border-radius: var(--r-full);
   background: var(--accent);
-  transition: width 80ms linear;
+  transition: transform 80ms linear;
 }
 
-/* 缓冲进度（可选，二者不冲突） */
+/* 缓冲进度（可选，二者不冲突）。与填充同理用 scaleX。 */
 .slider__buffer {
   position: absolute;
   inset: 0 auto 0 0;
-  width: 0;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
   border-radius: var(--r-full);
   background: var(--border-2);
 }

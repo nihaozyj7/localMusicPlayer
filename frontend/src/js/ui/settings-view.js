@@ -38,12 +38,7 @@ import {
 import { BACKDROP_MODES, backdropLabel } from "../backdrop.js";
 import { listThemes, resolvedGlassAlpha, resolvedGlassBlur } from "../theme.js";
 import { AI_VENDORS, aiVendorHint } from "../ai-vendors.js";
-import {
-  PLAYER_SKIN_API_VERSION,
-  availableSkins,
-  skinLoadFailures,
-  skinRegistryVersion,
-} from "../playerhost.js";
+import { PLAYER_SKIN_API_VERSION, availableSkins, skinLoadFailures, skinRegistryVersion } from "../playerhost.js";
 import { themeRegistryVersion } from "../theme.js";
 import { closeSettings, doRescan, settingsLayerOpen } from "../shell.js";
 import { applyGlassAlpha } from "../theme.js";
@@ -93,27 +88,40 @@ const LOUDNESS_MODES = [
    小组件
    -------------------------------------------------------------------------- */
 function settingRow({ label, hint, control }) {
-  return html`
-    <div class="setting">
-      <div class="setting__main">
-        <div class="setting__label">${label}</div>
-        ${hint ? html`<div class="setting__hint">${hint}</div>` : nothing}
-      </div>
-      <div class="setting__control">${control}</div>
-    </div>`;
+  return html` <div class="setting">
+    <div class="setting__main">
+      <div class="setting__label">${label}</div>
+      ${hint ? html`<div class="setting__hint">${hint}</div>` : nothing}
+    </div>
+    <div class="setting__control">${control}</div>
+  </div>`;
 }
 
 function switchControl(id, checked, label) {
-  return html`<button class="switch" type="button" role="switch" aria-checked=${String(Boolean(checked))} data-toggle=${id} aria-label=${label}></button>`;
+  return html`<button
+    class="switch"
+    type="button"
+    role="switch"
+    aria-checked=${String(Boolean(checked))}
+    data-toggle=${id}
+    aria-label=${label}
+  ></button>`;
 }
 
 function segmented(id, options, current) {
-  return html`
-    <div class="segmented" data-segment=${id}>
-      ${options.map(
-        (o) => html`<button class="segmented__btn" type="button" data-value=${o.value} aria-pressed=${String(String(o.value) === String(current))}>${o.label}</button>`
-      )}
-    </div>`;
+  return html` <div class="segmented" data-segment=${id}>
+    ${options.map(
+      (o) =>
+        html`<button
+          class="segmented__btn"
+          type="button"
+          data-value=${o.value}
+          aria-pressed=${String(String(o.value) === String(current))}
+        >
+          ${o.label}
+        </button>`
+    )}
+  </div>`;
 }
 
 /**
@@ -135,16 +143,15 @@ function aiThinkingHint(cfg) {
 
 /** 通用滑条（数值由组件自己创建并同步，见 bindSliders） */
 function rangeSlider(id, key, ariaLabel) {
-  return html`
-    <div class="rangeslider">
-      <div class="slider" id=${id} role="slider" tabindex="0" aria-label=${ariaLabel} data-slider=${key}>
-        <div class="slider__rail"><div class="slider__fill"></div></div>
-        <div class="slider__thumb"></div>
-        <div class="slider__bubble"></div>
-      </div>
-      <!-- 数值由滑杆自己写（见 sliderOptions 的 onChange）：同一个节点只允许一个写入方 -->
-      <span class="rangeslider__value"></span>
-    </div>`;
+  return html` <div class="rangeslider">
+    <div class="slider" id=${id} role="slider" tabindex="0" aria-label=${ariaLabel} data-slider=${key}>
+      <div class="slider__rail"><div class="slider__fill"></div></div>
+      <div class="slider__thumb"></div>
+      <div class="slider__bubble"></div>
+    </div>
+    <!-- 数值由滑杆自己写（见 sliderOptions 的 onChange）：同一个节点只允许一个写入方 -->
+    <span class="rangeslider__value"></span>
+  </div>`;
 }
 
 class MpSettingsLayer extends MpElement {
@@ -168,7 +175,10 @@ class MpSettingsLayer extends MpElement {
     s.loudnessState,
     s.ffmpegState,
     s.backdropState,
-    s.volume,
+    // ★ 刻意**不含** s.volume：音量滑条按 pointermove 触发（一次拖动几十上百次），
+    //   而 render() 会无条件重算三处随曲库规模线性增长的派生值
+    //   （见 foldersCard 的 startsWith 统计、filtersCard 的 applyRules、
+    //   aboutCard 的两个 reduce）。把它们挂在音量上等于「拖音量就全库扫一遍」。
   ];
 
   constructor() {
@@ -259,7 +269,13 @@ class MpSettingsLayer extends MpElement {
             <svg class="settings-layer__icon" aria-hidden="true"><use href="#i-settings"></use></svg>
             <span class="settings-layer__title">设置</span>
             <span class="u-spacer"></span>
-            <button class="settings-layer__close" type="button" data-settings-close aria-label="关闭设置" @click=${() => closeSettings()}>
+            <button
+              class="settings-layer__close"
+              type="button"
+              data-settings-close
+              aria-label="关闭设置"
+              @click=${() => closeSettings()}
+            >
               ${icon("close")}
             </button>
           </div>
@@ -267,18 +283,20 @@ class MpSettingsLayer extends MpElement {
             <div class="settings">
               <div class="settings__nav" role="tablist">
                 ${SECTIONS.map(
-                  (s) => html`<button class="settings__nav-item" type="button" role="tab" data-goto=${s.id} aria-selected=${String(s.id === this._activeSection)}>${s.label}</button>`
+                  (s) =>
+                    html`<button
+                      class="settings__nav-item"
+                      type="button"
+                      role="tab"
+                      data-goto=${s.id}
+                      aria-selected=${String(s.id === this._activeSection)}
+                    >
+                      ${s.label}
+                    </button>`
                 )}
               </div>
-              ${this.foldersCard()}
-              ${this.rulesCard()}
-              ${this.themeCard()}
-              ${this.playerCard()}
-              ${this.playbackCard()}
-              ${this.lyricsCard()}
-              ${this.loudnessCard()}
-              ${this.onlineCard()}
-              ${this.aiCard()}
+              ${this.foldersCard()} ${this.rulesCard()} ${this.themeCard()} ${this.playerCard()}
+              ${this.playbackCard()} ${this.lyricsCard()} ${this.loudnessCard()} ${this.onlineCard()} ${this.aiCard()}
               ${this.aboutCard()}
             </div>
           </div>
@@ -295,79 +313,101 @@ class MpSettingsLayer extends MpElement {
       ? state.folders.map((f) => {
           const chip =
             f.status === "ok"
-              ? html`<span class="chip chip--ok"><i class="chip__dot"></i>${f.watching ? "监听中" : "已停止监听"}</span>`
+              ? html`<span class="chip chip--ok"
+                  ><i class="chip__dot"></i>${f.watching ? "监听中" : "已停止监听"}</span
+                >`
               : f.status === "missing"
                 ? html`<span class="chip chip--error"><i class="chip__dot"></i>路径不存在</span>`
                 : html`<span class="chip chip--warn"><i class="chip__dot"></i>无访问权限</span>`;
           const count = state.songs.filter((s) => s.path.startsWith(f.path)).length;
-          return html`
-            <div class="pathrow" data-folder=${f.id}>
-              <svg class="pathrow__icon" aria-hidden="true"><use href="#i-folder"></use></svg>
-              <div class="pathrow__main">
-                <div class="pathrow__path u-selectable" title=${f.path}>${f.path}</div>
-                <div class="pathrow__meta">${chip}<span>${fmtCount(count)} 首</span></div>
-              </div>
-              <button class="btn btn--ghost btn--sm" type="button" data-act="rescan-folder" data-id=${f.id}>${icon("refresh")}<span>重扫</span></button>
-              <button class="btn btn--ghost btn--sm" type="button" data-act="remove-folder" data-id=${f.id} aria-label="移除文件夹">${icon("trash")}</button>
-            </div>`;
+          return html` <div class="pathrow" data-folder=${f.id}>
+            <svg class="pathrow__icon" aria-hidden="true"><use href="#i-folder"></use></svg>
+            <div class="pathrow__main">
+              <div class="pathrow__path u-selectable" title=${f.path}>${f.path}</div>
+              <div class="pathrow__meta">${chip}<span>${fmtCount(count)} 首</span></div>
+            </div>
+            <button class="btn btn--ghost btn--sm" type="button" data-act="rescan-folder" data-id=${f.id}>
+              ${icon("refresh")}<span>重扫</span>
+            </button>
+            <button
+              class="btn btn--ghost btn--sm"
+              type="button"
+              data-act="remove-folder"
+              data-id=${f.id}
+              aria-label="移除文件夹"
+            >
+              ${icon("trash")}
+            </button>
+          </div>`;
         })
       : html`<div class="setting__hint">还没有添加音乐文件夹。</div>`;
 
-    return html`
-      <section class="card" id="sec-folders" data-section="library">
-        <div class="card__head">
-          <div class="card__icon">${icon("folder")}</div>
-          <div class="card__titles">
-            <div class="card__title">音乐文件夹</div>
-            <div class="card__desc">添加本地音乐目录，程序会扫描并实时监听其中的变化</div>
+    return html` <section class="card" id="sec-folders" data-section="library">
+      <div class="card__head">
+        <div class="card__icon">${icon("folder")}</div>
+        <div class="card__titles">
+          <div class="card__title">音乐文件夹</div>
+          <div class="card__desc">添加本地音乐目录，程序会扫描并实时监听其中的变化</div>
+        </div>
+        <div class="card__actions">
+          <button class="btn" type="button" data-act="scan-now">${icon("refresh")}<span>立即重新扫描</span></button>
+          <button class="btn btn--primary" type="button" data-act="add-folder">
+            ${icon("folder-plus")}<span>添加文件夹</span>
+          </button>
+        </div>
+      </div>
+      <div class="card__body">
+        ${rows}
+        <div class="setting setting--group-start">
+          <div class="setting__main">
+            <div class="setting__label">启动时自动扫描</div>
+            <div class="setting__hint">应用启动后在后台增量扫描一次</div>
           </div>
-          <div class="card__actions">
-            <button class="btn" type="button" data-act="scan-now">${icon("refresh")}<span>立即重新扫描</span></button>
-            <button class="btn btn--primary" type="button" data-act="add-folder">${icon("folder-plus")}<span>添加文件夹</span></button>
+          <div class="setting__control">
+            ${switchControl("autoScanOnStart", state.config.autoScanOnStart, "启动时自动扫描")}
           </div>
         </div>
-        <div class="card__body">
-          ${rows}
-          <div class="setting setting--group-start">
-            <div class="setting__main">
-              <div class="setting__label">启动时自动扫描</div>
-              <div class="setting__hint">应用启动后在后台增量扫描一次</div>
-            </div>
-            <div class="setting__control">${switchControl("autoScanOnStart", state.config.autoScanOnStart, "启动时自动扫描")}</div>
-          </div>
-          ${settingRow({
-            label: "实时监听文件夹变化",
-            hint: "新增、删除、重命名文件后自动更新曲库（需要后端文件监听）",
-            control: switchControl("watchFolders", state.config.watchFolders, "实时监听"),
-          })}
-          ${settingRow({
-            label: "元数据并发读取",
-            hint: "同时解析的音频文件数量，机械硬盘建议调低",
-            control: segmented(
-              "scanConcurrency",
-              [2, 4, 8].map((v) => ({ value: String(v), label: `${v}` })),
-              String(state.config.scanConcurrency)
-            ),
-          })}
-        </div>
-        <div class="card__foot">
-          <span>支持格式：mp3 · flac · wav · m4a · ogg · aac（ape / wma 需转码）</span>
-          <span class="u-num">${fmtCount(state.folders.length)} 个文件夹</span>
-        </div>
-      </section>`;
+        ${settingRow({
+          label: "实时监听文件夹变化",
+          hint: "新增、删除、重命名文件后自动更新曲库（需要后端文件监听）",
+          control: switchControl("watchFolders", state.config.watchFolders, "实时监听"),
+        })}
+        ${settingRow({
+          label: "元数据并发读取",
+          hint: "同时解析的音频文件数量，机械硬盘建议调低",
+          control: segmented(
+            "scanConcurrency",
+            [2, 4, 8].map((v) => ({ value: String(v), label: `${v}` })),
+            String(state.config.scanConcurrency)
+          ),
+        })}
+      </div>
+      <div class="card__foot">
+        <span>支持格式：mp3 · flac · wav · m4a · ogg · aac（ape / wma 需转码）</span>
+        <span class="u-num">${fmtCount(state.folders.length)} 个文件夹</span>
+      </div>
+    </section>`;
   }
 
   ruleRow(rule) {
     const invalid = rule.type === "regex" && rule.value && !compileRegex(rule.value);
-    return html`
-      <div class="rule" data-rule=${rule.id} data-enabled=${String(rule.enabled)}>
-        <button class="switch" type="button" role="switch" aria-checked=${String(rule.enabled)} data-act="rule-toggle" data-id=${rule.id} aria-label="启用规则"></button>
-        <select class="rule__field" data-act="rule-type" data-id=${rule.id}>
-          <option value="size" ?selected=${rule.type === "size"}>按文件大小</option>
-          <option value="regex" ?selected=${rule.type === "regex"}>按正则表达式</option>
-        </select>
-        <select class="rule__op" data-act="rule-op" data-id=${rule.id}>
-          ${rule.type === "size"
+    return html` <div class="rule" data-rule=${rule.id} data-enabled=${String(rule.enabled)}>
+      <button
+        class="switch"
+        type="button"
+        role="switch"
+        aria-checked=${String(rule.enabled)}
+        data-act="rule-toggle"
+        data-id=${rule.id}
+        aria-label="启用规则"
+      ></button>
+      <select class="rule__field" data-act="rule-type" data-id=${rule.id}>
+        <option value="size" ?selected=${rule.type === "size"}>按文件大小</option>
+        <option value="regex" ?selected=${rule.type === "regex"}>按正则表达式</option>
+      </select>
+      <select class="rule__op" data-act="rule-op" data-id=${rule.id}>
+        ${
+          rule.type === "size"
             ? [
                 ["lt", "小于"],
                 ["lte", "小于等于"],
@@ -375,53 +415,82 @@ class MpSettingsLayer extends MpElement {
                 ["gte", "大于等于"],
                 ["eq", "等于"],
               ].map(([v, l]) => html`<option value=${v} ?selected=${rule.op === v}>${l}</option>`)
-            : html`<option value="match" ?selected=${rule.op === "match"}>匹配</option>`}
-        </select>
-        <input
-          class="rule__value${invalid ? " input--invalid" : ""}"
-          type="text"
-          data-act="rule-value"
+            : html`<option value="match" ?selected=${rule.op === "match"}>匹配</option>`
+        }
+      </select>
+      <input
+        class="rule__value${invalid ? " input--invalid" : ""}"
+        type="text"
+        data-act="rule-value"
+        data-id=${rule.id}
+        .value=${rule.value}
+        placeholder=${rule.type === "size" ? "例如 10240" : "例如 \\.mp4$"}
+      />
+      <div class="rule__scope">
+        <button
+          class="rule__scope-btn"
+          type="button"
+          data-act="rule-scope"
           data-id=${rule.id}
-          .value=${rule.value}
-          placeholder=${rule.type === "size" ? "例如 10240" : "例如 \\.mp4$"}
-        />
-        <div class="rule__scope">
-          <button class="rule__scope-btn" type="button" data-act="rule-scope" data-id=${rule.id} data-scope="exclude" aria-pressed=${String(rule.scope === "exclude")}>排除</button>
-          <button class="rule__scope-btn" type="button" data-act="rule-scope" data-id=${rule.id} data-scope="include" aria-pressed=${String(rule.scope === "include")}>仅包含</button>
-        </div>
-        <button class="rule__del" type="button" data-act="rule-del" data-id=${rule.id} aria-label="删除规则">${icon("trash")}</button>
-      </div>`;
+          data-scope="exclude"
+          aria-pressed=${String(rule.scope === "exclude")}
+        >
+          排除
+        </button>
+        <button
+          class="rule__scope-btn"
+          type="button"
+          data-act="rule-scope"
+          data-id=${rule.id}
+          data-scope="include"
+          aria-pressed=${String(rule.scope === "include")}
+        >
+          仅包含
+        </button>
+      </div>
+      <button class="rule__del" type="button" data-act="rule-del" data-id=${rule.id} aria-label="删除规则">
+        ${icon("trash")}
+      </button>
+    </div>`;
   }
 
   rulesCard() {
     const { kept, excluded, total } = applyRules(state.allSongsRaw, state.filterRules);
-    return html`
-      <section class="card" id="sec-filters" data-section="library">
-        <div class="card__head">
-          <div class="card__icon">${icon("filter")}</div>
-          <div class="card__titles">
-            <div class="card__title">过滤规则</div>
-            <div class="card__desc">按文件大小或正则表达式排除不需要的文件，规则可开关、可组合</div>
-          </div>
-          <div class="card__actions">
-            <button class="btn btn--sm" type="button" data-act="preset-small">${icon("plus")}<span>排除 &lt;10KB</span></button>
-            <button class="btn btn--sm" type="button" data-act="preset-mp4">${icon("plus")}<span>排除 *.mp4</span></button>
-            <button class="btn btn--primary btn--sm" type="button" data-act="rule-add">${icon("plus")}<span>新增规则</span></button>
-          </div>
+    return html` <section class="card" id="sec-filters" data-section="library">
+      <div class="card__head">
+        <div class="card__icon">${icon("filter")}</div>
+        <div class="card__titles">
+          <div class="card__title">过滤规则</div>
+          <div class="card__desc">按文件大小或正则表达式排除不需要的文件，规则可开关、可组合</div>
         </div>
-        <div class="card__body">
-          ${state.filterRules.length
+        <div class="card__actions">
+          <button class="btn btn--sm" type="button" data-act="preset-small">
+            ${icon("plus")}<span>排除 &lt;10KB</span>
+          </button>
+          <button class="btn btn--sm" type="button" data-act="preset-mp4">
+            ${icon("plus")}<span>排除 *.mp4</span>
+          </button>
+          <button class="btn btn--primary btn--sm" type="button" data-act="rule-add">
+            ${icon("plus")}<span>新增规则</span>
+          </button>
+        </div>
+      </div>
+      <div class="card__body">
+        ${
+          state.filterRules.length
             ? state.filterRules.map((r) => this.ruleRow(r))
-            : html`<div class="setting__hint">还没有规则。下面的预置规则可以一键添加。</div>`}
-          <div class="rule__preview">
-            当前规则下：共扫描 <b>${fmtCount(total)}</b> 个文件，保留 <b>${fmtCount(kept)}</b> 首，过滤掉 <b>${fmtCount(excluded)}</b> 个
-          </div>
+            : html`<div class="setting__hint">还没有规则。下面的预置规则可以一键添加。</div>`
+        }
+        <div class="rule__preview">
+          当前规则下：共扫描 <b>${fmtCount(total)}</b> 个文件，保留 <b>${fmtCount(kept)}</b> 首，过滤掉
+          <b>${fmtCount(excluded)}</b> 个
         </div>
-        <div class="card__foot">
-          <span>「排除」优先于「仅包含」；正则使用 JavaScript 语法（不区分大小写）</span>
-          <span>大小单位在数值后填写，默认字节</span>
-        </div>
-      </section>`;
+      </div>
+      <div class="card__foot">
+        <span>「排除」优先于「仅包含」；正则使用 JavaScript 语法（不区分大小写）</span>
+        <span>大小单位在数值后填写，默认字节</span>
+      </div>
+    </section>`;
   }
 
   /* ========================================================================
@@ -431,124 +500,140 @@ class MpSettingsLayer extends MpElement {
     const themes = listThemes();
     const swatchIndex = ensureSwatchStyles();
     const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    return html`
-      <section class="card" id="sec-appearance" data-section="appearance">
-        <div class="card__head">
-          <div class="card__icon">${icon("palette")}</div>
-          <div class="card__titles">
-            <div class="card__title">外观</div>
-            <div class="card__desc">主题以独立 CSS 文件存在，把文件放进主题目录即可自动出现</div>
-          </div>
-          <div class="card__actions">
-            <button class="btn btn--sm" type="button" data-act="reload-themes">${icon("refresh")}<span>重新扫描主题</span></button>
-            <button class="btn btn--sm" type="button" data-act="open-theme-dir">${icon("folder")}<span>打开主题文件夹</span></button>
-          </div>
+    return html` <section class="card" id="sec-appearance" data-section="appearance">
+      <div class="card__head">
+        <div class="card__icon">${icon("palette")}</div>
+        <div class="card__titles">
+          <div class="card__title">外观</div>
+          <div class="card__desc">主题以独立 CSS 文件存在，把文件放进主题目录即可自动出现</div>
         </div>
-        <div class="themes">
-          ${themes.map((t) => {
-            const active = state.config.theme === t.id;
-            return html`
-              <div class="themecard" data-active=${String(active)}>
-                <!-- 卡片本体是一个 button：点它换主题。
-                     删除按钮必须放在它**外面**（HTML 不允许 button 套 button）。 -->
-                <button
-                  class="themecard__pick"
-                  type="button"
-                  data-act="theme-pick"
-                  data-id=${t.id}
-                  aria-pressed=${String(active)}
-                  aria-label=${`使用主题 ${t.name}`}
-                >
-                  <span class="themecard__swatch">${swatchIndex(t).map((i) => html`<i data-swatch=${i}></i>`)}</span>
-                  <span class="themecard__name">${t.name}</span>
-                  <span class="themecard__id">${t.id}.css</span>
-                </button>
-                ${t.builtin
-                  ? html`<span class="themecard__badge">内置</span>`
-                  : html`<button class="carddel" type="button" data-act="theme-remove" data-id=${t.id} data-name=${t.name} data-tip="移除主题" aria-label=${`移除主题 ${t.name}`}>${icon("trash")}<span>移除</span></button>`}
-              </div>`;
-          })}
-          <button class="themes__add" type="button" data-act="theme-help">
-            ${icon("plus")}
-            <span>添加自定义主题</span>
-            <span class="u-num u-fs-xs">用 AI 写一个，或导入现成的 CSS</span>
+        <div class="card__actions">
+          <button class="btn btn--sm" type="button" data-act="reload-themes">
+            ${icon("refresh")}<span>重新扫描主题</span>
+          </button>
+          <button class="btn btn--sm" type="button" data-act="open-theme-dir">
+            ${icon("folder")}<span>打开主题文件夹</span>
           </button>
         </div>
-        <div class="card__body">
-          ${settingRow({
-            label: "深浅色模式",
-            hint: `当前系统偏好：${systemDark ? "深色" : "浅色"}`,
-            control: segmented(
-              "themeMode",
-              [
-                { value: "dark", label: "深色" },
-                { value: "light", label: "浅色" },
-                { value: "system", label: "跟随系统" },
-              ],
-              state.config.themeMode
-            ),
-          })}
-          ${settingRow({
-            label: "毛玻璃模糊强度",
-            hint: "对应主题令牌 --glass-blur",
-            control: rangeSlider("set-blur", "glassBlur", "模糊强度"),
-          })}
-          ${settingRow({
-            label: "面板不透明度",
-            hint: "对应主题令牌 --glass-bg 的透明度",
-            control: rangeSlider("set-alpha", "glassAlpha", "不透明度"),
-          })}
-          ${settingRow({
-            label: "窗口原生材质",
-            hint: "用系统原生的半透明材质当窗口底色（桌面壁纸会透出来）。仅 Windows 11 Build 22621+ 有完整效果，改动需重启应用",
-            control: html`
-              <div class="select">
-                <select class="select__field" data-act="backdrop-mode" aria-label="窗口原生材质">
-                  ${BACKDROP_MODES.map(
-                    (m) => html`<option value=${m} ?selected=${(state.config.nativeBackdrop || "off") === m}>${backdropLabel(m)}</option>`
-                  )}
-                </select>
-                <svg class="select__icon"><use href="#i-chevron-down"></use></svg>
-              </div>`,
-          })}
-          ${this.backdropNote()}
-          ${settingRow({
-            label: "窗口圆角",
-            hint: "主窗口四角的圆角幅度。圆角由系统绘制，只有这几档（仅 Windows 11 有效）",
-            control: segmented("windowCorners", WINDOW_CORNERS, state.config.windowCorners || "system"),
-          })}
-          ${settingRow({
-            label: "关闭时最小化到托盘",
-            hint: "打开后点关闭按钮只把窗口收进系统托盘（任务栏右下角），音乐照常播放；要真正退出请用托盘图标的右键菜单",
-            control: switchControl("minimizeToTray", state.config.minimizeToTray, "关闭时最小化到托盘"),
-          })}
-          ${settingRow({
-            label: "界面动画",
-            hint: "关闭后取消过渡与旋转动画，低性能设备更流畅",
-            control: switchControl("animations", state.config.animations, "界面动画"),
-          })}
-          ${settingRow({
-            label: "过渡速度",
-            hint: "弹出层、菜单、面板的进出动画时长；默认快速 0.25 秒",
-            control: segmented("animationsSpeed", ANIMATION_SPEEDS, state.config.animationsSpeed || "fast"),
-          })}
-          ${settingRow({
-            label: "主题色跟随封面",
-            hint: "从当前封面提取主色，写入 --seed 令牌（需主题支持）",
-            control: switchControl("accentFromCover", state.config.accentFromCover, "主题色跟随封面"),
-          })}
-          ${settingRow({
-            label: "显示专辑列",
-            hint: "窄窗口下会自动隐藏该列",
-            control: switchControl("showAlbumColumn", state.config.showAlbumColumn, "显示专辑列"),
-          })}
-          ${settingRow({
-            label: "列表密度",
-            hint: "对「本地歌曲」「播放列表」「歌单」三个列表同时生效",
-            control: segmented("listDensity", LIST_DENSITIES, state.config.listDensity || "cozy"),
-          })}
-        </div>
-      </section>`;
+      </div>
+      <div class="themes">
+        ${themes.map((t) => {
+          const active = state.config.theme === t.id;
+          return html` <div class="themecard" data-active=${String(active)}>
+            <!-- 卡片本体是一个 button：点它换主题。
+                     删除按钮必须放在它**外面**（HTML 不允许 button 套 button）。 -->
+            <button
+              class="themecard__pick"
+              type="button"
+              data-act="theme-pick"
+              data-id=${t.id}
+              aria-pressed=${String(active)}
+              aria-label=${`使用主题 ${t.name}`}
+            >
+              <span class="themecard__swatch">${swatchIndex(t).map((i) => html`<i data-swatch=${i}></i>`)}</span>
+              <span class="themecard__name">${t.name}</span>
+              <span class="themecard__id">${t.id}.css</span>
+            </button>
+            ${
+              t.builtin
+                ? html`<span class="themecard__badge">内置</span>`
+                : html`<button
+                    class="carddel"
+                    type="button"
+                    data-act="theme-remove"
+                    data-id=${t.id}
+                    data-name=${t.name}
+                    data-tip="移除主题"
+                    aria-label=${`移除主题 ${t.name}`}
+                  >
+                    ${icon("trash")}<span>移除</span>
+                  </button>`
+            }
+          </div>`;
+        })}
+        <button class="themes__add" type="button" data-act="theme-help">
+          ${icon("plus")}
+          <span>添加自定义主题</span>
+          <span class="u-num u-fs-xs">用 AI 写一个，或导入现成的 CSS</span>
+        </button>
+      </div>
+      <div class="card__body">
+        ${settingRow({
+          label: "深浅色模式",
+          hint: `当前系统偏好：${systemDark ? "深色" : "浅色"}`,
+          control: segmented(
+            "themeMode",
+            [
+              { value: "dark", label: "深色" },
+              { value: "light", label: "浅色" },
+              { value: "system", label: "跟随系统" },
+            ],
+            state.config.themeMode
+          ),
+        })}
+        ${settingRow({
+          label: "毛玻璃模糊强度",
+          hint: "对应主题令牌 --glass-blur",
+          control: rangeSlider("set-blur", "glassBlur", "模糊强度"),
+        })}
+        ${settingRow({
+          label: "面板不透明度",
+          hint: "对应主题令牌 --glass-bg 的透明度",
+          control: rangeSlider("set-alpha", "glassAlpha", "不透明度"),
+        })}
+        ${settingRow({
+          label: "窗口原生材质",
+          hint: "用系统原生的半透明材质当窗口底色（桌面壁纸会透出来）。仅 Windows 11 Build 22621+ 有完整效果，改动需重启应用",
+          control: html` <div class="select">
+            <select class="select__field" data-act="backdrop-mode" aria-label="窗口原生材质">
+              ${BACKDROP_MODES.map(
+                (m) =>
+                  html`<option value=${m} ?selected=${(state.config.nativeBackdrop || "off") === m}>
+                    ${backdropLabel(m)}
+                  </option>`
+              )}
+            </select>
+            <svg class="select__icon"><use href="#i-chevron-down"></use></svg>
+          </div>`,
+        })}
+        ${this.backdropNote()}
+        ${settingRow({
+          label: "窗口圆角",
+          hint: "主窗口四角的圆角幅度。圆角由系统绘制，只有这几档（仅 Windows 11 有效）",
+          control: segmented("windowCorners", WINDOW_CORNERS, state.config.windowCorners || "system"),
+        })}
+        ${settingRow({
+          label: "关闭时最小化到托盘",
+          hint: "打开后点关闭按钮只把窗口收进系统托盘（任务栏右下角），音乐照常播放；要真正退出请用托盘图标的右键菜单",
+          control: switchControl("minimizeToTray", state.config.minimizeToTray, "关闭时最小化到托盘"),
+        })}
+        ${settingRow({
+          label: "界面动画",
+          hint: "关闭后取消过渡与旋转动画，低性能设备更流畅",
+          control: switchControl("animations", state.config.animations, "界面动画"),
+        })}
+        ${settingRow({
+          label: "过渡速度",
+          hint: "弹出层、菜单、面板的进出动画时长；默认快速 0.25 秒",
+          control: segmented("animationsSpeed", ANIMATION_SPEEDS, state.config.animationsSpeed || "fast"),
+        })}
+        ${settingRow({
+          label: "主题色跟随封面",
+          hint: "从当前封面提取主色，写入 --seed 令牌（需主题支持）",
+          control: switchControl("accentFromCover", state.config.accentFromCover, "主题色跟随封面"),
+        })}
+        ${settingRow({
+          label: "显示专辑列",
+          hint: "窄窗口下会自动隐藏该列",
+          control: switchControl("showAlbumColumn", state.config.showAlbumColumn, "显示专辑列"),
+        })}
+        ${settingRow({
+          label: "列表密度",
+          hint: "对「本地歌曲」「播放列表」「歌单」三个列表同时生效",
+          control: segmented("listDensity", LIST_DENSITIES, state.config.listDensity || "cozy"),
+        })}
+      </div>
+    </section>`;
   }
 
   /**
@@ -577,15 +662,18 @@ class MpSettingsLayer extends MpElement {
       }
     }
 
-    return html`
-      <div class="setting setting--stack">
-        <div class="setting__hint">${notes.map((n, i) => html`${i ? html`<br />` : nothing}${n}`)}</div>
-        ${pending && !info.preview
+    return html` <div class="setting setting--stack">
+      <div class="setting__hint">${notes.map((n, i) => html`${i ? html`<br />` : nothing}${n}`)}</div>
+      ${
+        pending && !info.preview
           ? html`<div class="card__actions">
-              <button class="btn btn--sm" type="button" data-act="backdrop-restart">${icon("refresh")}<span>立即重启应用</span></button>
+              <button class="btn btn--sm" type="button" data-act="backdrop-restart">
+                ${icon("refresh")}<span>立即重启应用</span>
+              </button>
             </div>`
-          : nothing}
-      </div>`;
+          : nothing
+      }
+    </div>`;
   }
 
   /* ------------------------------------------------------------------------
@@ -598,46 +686,70 @@ class MpSettingsLayer extends MpElement {
   playerCard() {
     const skins = availableSkins();
     const failures = skinLoadFailures();
-    return html`
-      <section class="card" id="sec-player" data-section="appearance">
-        <div class="card__head">
-          <div class="card__icon">${icon("disc")}</div>
-          <div class="card__titles">
-            <div class="card__title">播放界面样式</div>
-            <div class="card__desc">内置样式来自独立包 player-skins（接口版本 ${PLAYER_SKIN_API_VERSION}）；把第三方样式放进样式目录即可扩展</div>
-          </div>
-          <div class="card__actions">
-            <button class="btn btn--sm" type="button" data-act="reload-skins">${icon("refresh")}<span>重新扫描样式</span></button>
-            <button class="btn btn--sm" type="button" data-act="open-skin-dir">${icon("folder")}<span>打开样式目录</span></button>
+    return html` <section class="card" id="sec-player" data-section="appearance">
+      <div class="card__head">
+        <div class="card__icon">${icon("disc")}</div>
+        <div class="card__titles">
+          <div class="card__title">播放界面样式</div>
+          <div class="card__desc">
+            内置样式来自独立包 player-skins（接口版本 ${PLAYER_SKIN_API_VERSION}）；把第三方样式放进样式目录即可扩展
           </div>
         </div>
-        <div class="themes">
-          ${skins.map((s) => {
-            const active = state.config.playerViewMode === s.id;
-            return html`
-              <div class="skincard" data-active=${String(active)}>
-                <button class="skincard__pick" type="button" data-act="skin-pick" data-id=${s.id} aria-pressed=${String(active)} aria-label=${`使用样式 ${s.name}`}>
-                  <span class="skincard__icon">${icon(s.icon || "disc")}</span>
-                  <span class="skincard__name">${s.name}</span>
-                  <span class="skincard__id">${s.id}</span>
-                </button>
-                ${s.builtin
-                  ? nothing
-                  : html`<span class="skincard__badge">第三方</span>
-                    <button class="carddel" type="button" data-act="skin-remove" data-id=${s.id} data-name=${s.name} data-tip="移除样式" aria-label=${`移除样式 ${s.name}`}>${icon("trash")}<span>移除</span></button>`}
-              </div>`;
-          })}
-          <button class="themes__add" type="button" data-act="skin-help">
-            ${icon("plus")}
-            <span>自定义样式</span>
-            <span class="u-num u-fs-xs">用 AI 帮你写一个</span>
+        <div class="card__actions">
+          <button class="btn btn--sm" type="button" data-act="reload-skins">
+            ${icon("refresh")}<span>重新扫描样式</span>
+          </button>
+          <button class="btn btn--sm" type="button" data-act="open-skin-dir">
+            ${icon("folder")}<span>打开样式目录</span>
           </button>
         </div>
-        ${failures.length
+      </div>
+      <div class="themes">
+        ${skins.map((s) => {
+          const active = state.config.playerViewMode === s.id;
+          return html` <div class="skincard" data-active=${String(active)}>
+            <button
+              class="skincard__pick"
+              type="button"
+              data-act="skin-pick"
+              data-id=${s.id}
+              aria-pressed=${String(active)}
+              aria-label=${`使用样式 ${s.name}`}
+            >
+              <span class="skincard__icon">${icon(s.icon || "disc")}</span>
+              <span class="skincard__name">${s.name}</span>
+              <span class="skincard__id">${s.id}</span>
+            </button>
+            ${
+              s.builtin
+                ? nothing
+                : html`<span class="skincard__badge">第三方</span>
+                    <button
+                      class="carddel"
+                      type="button"
+                      data-act="skin-remove"
+                      data-id=${s.id}
+                      data-name=${s.name}
+                      data-tip="移除样式"
+                      aria-label=${`移除样式 ${s.name}`}
+                    >
+                      ${icon("trash")}<span>移除</span>
+                    </button>`
+            }
+          </div>`;
+        })}
+        <button class="themes__add" type="button" data-act="skin-help">
+          ${icon("plus")}
+          <span>自定义样式</span>
+          <span class="u-num u-fs-xs">用 AI 帮你写一个</span>
+        </button>
+      </div>
+      ${
+        failures.length
           ? html`<div class="card__body">
               ${failures.map(
-                (f) => html`
-                  <div class="setting">
+                (f) =>
+                  html` <div class="setting">
                     <div class="setting__main">
                       <div class="setting__label">样式「${f.id}」加载失败</div>
                       <div class="setting__hint">${f.reason}</div>
@@ -645,129 +757,134 @@ class MpSettingsLayer extends MpElement {
                   </div>`
               )}
             </div>`
-          : nothing}
-        <div class="card__body">
-          ${settingRow({
-            label: "封面轮播",
-            hint: "一首歌有多张封面时，播放详情页按下面的间隔轮换显示（不影响列表缩略图）",
-            control: switchControl("coverCarousel", state.config.coverCarousel === true, "封面轮播"),
-          })}
-          ${settingRow({
-            label: "轮播间隔",
-            hint: "对应设置项 coverCarouselInterval（秒）",
-            control: rangeSlider("set-carousel", "coverCarouselInterval", "轮播间隔"),
-          })}
-        </div>
-      </section>`;
+          : nothing
+      }
+      <div class="card__body">
+        ${settingRow({
+          label: "封面轮播",
+          hint: "一首歌有多张封面时，播放详情页按下面的间隔轮换显示（不影响列表缩略图）",
+          control: switchControl("coverCarousel", state.config.coverCarousel === true, "封面轮播"),
+        })}
+        ${settingRow({
+          label: "轮播间隔",
+          hint: "对应设置项 coverCarouselInterval（秒）",
+          control: rangeSlider("set-carousel", "coverCarouselInterval", "轮播间隔"),
+        })}
+      </div>
+    </section>`;
   }
 
   /* ========================================================================
      播放
      ======================================================================== */
   playbackCard() {
-    return html`
-      <section class="card" id="sec-playback" data-section="playback">
-        <div class="card__head">
-          <div class="card__icon">${icon("headphones")}</div>
-          <div class="card__titles">
-            <div class="card__title">播放</div>
-            <div class="card__desc">播放模式、随机方式与单击行为（界面相关的设置都在「外观」里）</div>
-          </div>
+    return html` <section class="card" id="sec-playback" data-section="playback">
+      <div class="card__head">
+        <div class="card__icon">${icon("headphones")}</div>
+        <div class="card__titles">
+          <div class="card__title">播放</div>
+          <div class="card__desc">播放模式、随机方式与单击行为（界面相关的设置都在「外观」里）</div>
         </div>
-        <div class="card__body">
-          ${settingRow({
-            label: "默认播放模式",
-            hint: "点击底栏循环按钮可随时切换",
-            control: segmented(
-              "playMode",
-              [
-                { value: "sequence", label: "列表循环" },
-                { value: "loop-one", label: "单曲循环" },
-                { value: "shuffle", label: "随机" },
-              ],
-              state.config.playMode === "loop-all" ? "sequence" : state.config.playMode
-            ),
-          })}
-          ${settingRow({
-            label: "随机播放方式",
-            hint: "随机播放会先打乱当前播放列表，再按打乱后的顺序播放",
-            control: segmented(
-              "shuffleMode",
-              [
-                { value: "reshuffle", label: "播完重新打乱" },
-                { value: "once", label: "只打乱一次" },
-              ],
-              state.config.shuffleMode || "reshuffle"
-            ),
-          })}
-          ${settingRow({
-            label: "记忆音量",
-            hint: `当前音量 ${Math.round(state.volume * 100)}%`,
-            control: switchControl("rememberVolume", true, "记忆音量"),
-          })}
-          ${settingRow({
-            label: "单击歌曲时的行为",
-            hint:
-              "双击始终是「立即播放这一首」；这个设置只影响单击：" +
-              "播放＝播放它并把它加进播放列表；播放该歌单＝播放它并用当前列表替换播放列表；添加为一首播放＝插到当前歌曲后面，点了「下一曲」就播它",
-            control: segmented("rowClickAction", ROW_CLICK_ACTIONS, state.config.rowClickAction || "next"),
-          })}
-        </div>
-      </section>`;
+      </div>
+      <div class="card__body">
+        ${settingRow({
+          label: "默认播放模式",
+          hint: "点击底栏循环按钮可随时切换",
+          control: segmented(
+            "playMode",
+            [
+              { value: "sequence", label: "列表循环" },
+              { value: "loop-one", label: "单曲循环" },
+              { value: "shuffle", label: "随机" },
+            ],
+            state.config.playMode === "loop-all" ? "sequence" : state.config.playMode
+          ),
+        })}
+        ${settingRow({
+          label: "随机播放方式",
+          hint: "随机播放会先打乱当前播放列表，再按打乱后的顺序播放",
+          control: segmented(
+            "shuffleMode",
+            [
+              { value: "reshuffle", label: "播完重新打乱" },
+              { value: "once", label: "只打乱一次" },
+            ],
+            state.config.shuffleMode || "reshuffle"
+          ),
+        })}
+        ${settingRow({
+          label: "记忆音量",
+          hint: `当前音量 ${Math.round(state.volume * 100)}%`,
+          control: switchControl("rememberVolume", true, "记忆音量"),
+        })}
+        ${settingRow({
+          label: "单击歌曲时的行为",
+          hint:
+            "双击始终是「立即播放这一首」；这个设置只影响单击：" +
+            "播放＝播放它并把它加进播放列表；播放该歌单＝播放它并用当前列表替换播放列表；添加为一首播放＝插到当前歌曲后面，点了「下一曲」就播它",
+          control: segmented("rowClickAction", ROW_CLICK_ACTIONS, state.config.rowClickAction || "next"),
+        })}
+      </div>
+    </section>`;
   }
 
   /* ========================================================================
      歌词
      ======================================================================== */
   lyricsCard() {
-    return html`
-      <section class="card" id="sec-lyrics" data-section="lyrics">
-        <div class="card__head">
-          <div class="card__icon">${icon("lyrics")}</div>
-          <div class="card__titles">
-            <div class="card__title">歌词</div>
-            <div class="card__desc">歌词来源优先级与显示效果</div>
-          </div>
+    return html` <section class="card" id="sec-lyrics" data-section="lyrics">
+      <div class="card__head">
+        <div class="card__icon">${icon("lyrics")}</div>
+        <div class="card__titles">
+          <div class="card__title">歌词</div>
+          <div class="card__desc">歌词来源优先级与显示效果</div>
         </div>
-        <div class="card__body">
-          ${settingRow({
-            label: "歌词来源优先级",
-            hint: "内嵌歌词 → 同目录 .lrc → 歌词缓存 → 在线自动匹配；本地读不到时会自动联网匹配并存入缓存",
-            control: html`<span class="chip"><i class="chip__dot"></i>${lyricsSourceLabels()}</span>`,
-          })}
-          ${settingRow({
-            label: "显示歌词",
-            hint: "关闭后播放界面只显示封面",
-            control: switchControl("showLyrics", state.config.showLyrics, "显示歌词"),
-          })}
-          ${settingRow({
-            label: "桌面歌词",
-            hint: "在桌面上显示一行置顶歌词（独立透明窗口，可拖动；底栏「桌面歌词」按钮同效）。位置会被记住，换显示器后跑丢了可以在这里重置",
-            control: html`
-              ${switchControl("showDesktopLyrics", state.config.showDesktopLyrics, "桌面歌词")}
-              <button class="btn btn--ghost btn--sm" type="button" data-act="reset-desktop-lyrics-pos" data-tip="把桌面歌词窗口移回默认位置并清掉记忆">重置位置</button>`,
-          })}
-          ${settingRow({
-            label: "桌面背景歌词",
-            hint: "把播放界面的背景铺满桌面、垫在桌面图标之下，歌词跟着画在上面（与「桌面歌词」二选一；仅 Windows）",
-            control: switchControl("showDesktopWallpaper", state.config.showDesktopWallpaper, "桌面背景歌词"),
-          })}
-          ${settingRow({
-            label: "歌词字号",
-            hint: "对应 --lyric-size，当前行会额外放大",
-            control: rangeSlider("set-lyric-size", "lyricsFontSize", "歌词字号"),
-          })}
-          ${settingRow({
-            label: "居中高亮行数",
-            hint: "当前行上下各显示的行数",
-            control: segmented(
-              "lyricsLines",
-              [3, 5, 7, 9].map((v) => ({ value: String(v), label: String(v) })),
-              String(state.config.lyricsLines)
-            ),
-          })}
-        </div>
-      </section>`;
+      </div>
+      <div class="card__body">
+        ${settingRow({
+          label: "歌词来源优先级",
+          hint: "内嵌歌词 → 同目录 .lrc → 歌词缓存 → 在线自动匹配；本地读不到时会自动联网匹配并存入缓存",
+          control: html`<span class="chip"><i class="chip__dot"></i>${lyricsSourceLabels()}</span>`,
+        })}
+        ${settingRow({
+          label: "显示歌词",
+          hint: "关闭后播放界面只显示封面",
+          control: switchControl("showLyrics", state.config.showLyrics, "显示歌词"),
+        })}
+        ${settingRow({
+          label: "桌面歌词",
+          hint: "在桌面上显示一行置顶歌词（独立透明窗口，可拖动；底栏「桌面歌词」按钮同效）。位置会被记住，换显示器后跑丢了可以在这里重置",
+          control: html` ${switchControl("showDesktopLyrics", state.config.showDesktopLyrics, "桌面歌词")}
+            <button
+              class="btn btn--ghost btn--sm"
+              type="button"
+              data-act="reset-desktop-lyrics-pos"
+              data-tip="把桌面歌词窗口移回默认位置并清掉记忆"
+            >
+              重置位置
+            </button>`,
+        })}
+        ${settingRow({
+          label: "桌面背景歌词",
+          hint: "把播放界面的背景铺满桌面、垫在桌面图标之下，歌词跟着画在上面（与「桌面歌词」二选一；仅 Windows）",
+          control: switchControl("showDesktopWallpaper", state.config.showDesktopWallpaper, "桌面背景歌词"),
+        })}
+        ${settingRow({
+          label: "歌词字号",
+          hint: "对应 --lyric-size，当前行会额外放大",
+          control: rangeSlider("set-lyric-size", "lyricsFontSize", "歌词字号"),
+        })}
+        ${settingRow({
+          label: "居中高亮行数",
+          hint: "当前行上下各显示的行数",
+          control: segmented(
+            "lyricsLines",
+            [3, 5, 7, 9].map((v) => ({ value: String(v), label: String(v) })),
+            String(state.config.lyricsLines)
+          ),
+        })}
+      </div>
+    </section>`;
   }
 
   /* ========================================================================
@@ -783,68 +900,82 @@ class MpSettingsLayer extends MpElement {
     const tools = state.ffmpegState || {};
     const sourceText = tools.describe || ls.describe || "检测中…";
 
-    return html`
-      <section class="card" id="sec-loudness" data-section="loudness">
-        <div class="card__head">
-          <h2 class="card__title">${icon("scale")}<span>响度均衡</span></h2>
-          <p class="card__desc">
-            按 EBU R128 测量整合响度（LUFS），回放时按目标响度做增益补偿，
-            让不同来源的歌曲音量听起来一致。<br />
-            <b>只在播放时按需测量</b>：播到哪首就测哪首，算好的补偿会缓存下来，
-            之后播放零延迟；没有手动预热的入口。改了目标响度后旧补偿会自动失效并按新标准重算。
-          </p>
-        </div>
+    return html` <section class="card" id="sec-loudness" data-section="loudness">
+      <div class="card__head">
+        <h2 class="card__title">${icon("scale")}<span>响度均衡</span></h2>
+        <p class="card__desc">
+          按 EBU R128 测量整合响度（LUFS），回放时按目标响度做增益补偿， 让不同来源的歌曲音量听起来一致。<br />
+          <b>只在播放时按需测量</b>：播到哪首就测哪首，算好的补偿会缓存下来，
+          之后播放零延迟；没有手动预热的入口。改了目标响度后旧补偿会自动失效并按新标准重算。
+        </p>
+      </div>
 
-        <div class="setting">
-          <div class="setting__label">
-            <span>均衡模式</span>
-            <small class="u-fs-xs u-dim">逐曲：每首歌都拉到目标响度；同专辑：整张专辑用同一个增益，保留专辑内部的强弱对比</small>
-          </div>
-          <div class="setting__control">${segmented("loudnessMode", LOUDNESS_MODES, cfg.loudnessMode || "off")}</div>
+      <div class="setting">
+        <div class="setting__label">
+          <span>均衡模式</span>
+          <small class="u-fs-xs u-dim"
+            >逐曲：每首歌都拉到目标响度；同专辑：整张专辑用同一个增益，保留专辑内部的强弱对比</small
+          >
         </div>
+        <div class="setting__control">${segmented("loudnessMode", LOUDNESS_MODES, cfg.loudnessMode || "off")}</div>
+      </div>
 
-        <div class="setting">
-          <div class="setting__label">
-            <span>目标响度</span>
-            <small class="u-fs-xs u-dim">数字越小整体越轻。推荐 -16 LUFS。改动后已缓存的补偿会失效并重算</small>
-          </div>
-          <div class="setting__control">
-            <div class="select">
-              <select class="select__field" data-act="loudness-target" aria-label="目标响度">
-                ${LOUDNESS_TARGETS.map(
-                  (t) => html`<option value=${t.value} ?selected=${Number(cfg.loudnessTarget) === t.value}>${t.label}</option>`
-                )}
-              </select>
-              ${icon("chevron-down", "select__icon")}
-            </div>
-          </div>
+      <div class="setting">
+        <div class="setting__label">
+          <span>目标响度</span>
+          <small class="u-fs-xs u-dim">数字越小整体越轻。推荐 -16 LUFS。改动后已缓存的补偿会失效并重算</small>
         </div>
-
-        <div class="setting">
-          <div class="setting__label">
-            <span>真峰值保护</span>
-            <small class="u-fs-xs u-dim">抬升音量时限制增益，避免超过 -1 dBTP 造成削波失真</small>
-          </div>
-          <div class="setting__control">
-            <button class="switch" type="button" role="switch" data-toggle="loudnessLimit" aria-checked=${String(Boolean(cfg.loudnessLimit))}>
-              <span class="switch__thumb"></span>
-            </button>
+        <div class="setting__control">
+          <div class="select">
+            <select class="select__field" data-act="loudness-target" aria-label="目标响度">
+              ${LOUDNESS_TARGETS.map(
+                (t) =>
+                  html`<option value=${t.value} ?selected=${Number(cfg.loudnessTarget) === t.value}>
+                    ${t.label}
+                  </option>`
+              )}
+            </select>
+            ${icon("chevron-down", "select__icon")}
           </div>
         </div>
+      </div>
 
-        <div class="setting setting--stack">
-          <div class="card__actions">
-            <button class="btn btn--sm" type="button" data-act="loudness-refresh">${icon("refresh")}<span>重新拉取补偿</span></button>
-            <button class="btn btn--sm btn--danger" type="button" data-act="loudness-clear">${icon("trash")}<span>清除测量数据</span></button>
-          </div>
-
-          <div class="setting__hint">
-            当前标准下已算好 <b>${measured}</b> / ${total} 首${missing ? html`，其余 <b>${fmtCount(missing)}</b> 首会在播放时按需计算` : "（全部已算好）"}<br />
-            缓存文件里另有 ${ls.cached ?? 0} 条记录（含其他标准下的旧结果，不会生效）<br />
-            响度来源：<b>${available ? sourceText : "不可用"}</b>${available ? "" : " —— 转码与响度测量不可用"}
-          </div>
+      <div class="setting">
+        <div class="setting__label">
+          <span>真峰值保护</span>
+          <small class="u-fs-xs u-dim">抬升音量时限制增益，避免超过 -1 dBTP 造成削波失真</small>
         </div>
-      </section>`;
+        <div class="setting__control">
+          <button
+            class="switch"
+            type="button"
+            role="switch"
+            data-toggle="loudnessLimit"
+            aria-checked=${String(Boolean(cfg.loudnessLimit))}
+          >
+            <span class="switch__thumb"></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="setting setting--stack">
+        <div class="card__actions">
+          <button class="btn btn--sm" type="button" data-act="loudness-refresh">
+            ${icon("refresh")}<span>重新拉取补偿</span>
+          </button>
+          <button class="btn btn--sm btn--danger" type="button" data-act="loudness-clear">
+            ${icon("trash")}<span>清除测量数据</span>
+          </button>
+        </div>
+
+        <div class="setting__hint">
+          当前标准下已算好 <b>${measured}</b> / ${total}
+          首${missing ? html`，其余 <b>${fmtCount(missing)}</b> 首会在播放时按需计算` : "（全部已算好）"}<br />
+          缓存文件里另有 ${ls.cached ?? 0} 条记录（含其他标准下的旧结果，不会生效）<br />
+          响度来源：<b>${available ? sourceText : "不可用"}</b>${available ? "" : " —— 转码与响度测量不可用"}
+        </div>
+      </div>
+    </section>`;
   }
 
   /* ========================================================================
@@ -858,79 +989,95 @@ class MpSettingsLayer extends MpElement {
       ? providers.map((p) => (breaker[p] ? `${p}（暂时不可用）` : p)).join(" · ")
       : "尚未连接后端";
 
-    return html`
-      <section class="card" id="sec-online" data-section="online">
-        <div class="card__head">
-          <div class="card__icon">${icon("music")}</div>
-          <div class="card__titles">
-            <div class="card__title">在线歌曲</div>
-            <div class="card__desc">下载位置、封面来源与缓存。试听只加入播放列表，不会混进本地曲库</div>
+    return html` <section class="card" id="sec-online" data-section="online">
+      <div class="card__head">
+        <div class="card__icon">${icon("music")}</div>
+        <div class="card__titles">
+          <div class="card__title">在线歌曲</div>
+          <div class="card__desc">下载位置、封面来源与缓存。试听只加入播放列表，不会混进本地曲库</div>
+        </div>
+      </div>
+      <div class="card__body">
+        <div class="setting setting--stack">
+          <div class="setting__main">
+            <div class="setting__label">下载保存位置</div>
+            <div class="setting__hint">
+              这个目录会作为曲库的扫描根自动生效，下载完的歌直接出现在「本地歌曲」里， 不需要手动添加文件夹
+            </div>
+          </div>
+          <div class="pathrow">
+            <svg class="pathrow__icon" aria-hidden="true"><use href="#i-folder"></use></svg>
+            <div class="pathrow__main">
+              <div class="pathrow__path u-selectable" title=${dir}>${dir}</div>
+            </div>
+            <button class="btn btn--sm" type="button" data-act="download-dir-pick">
+              ${icon("folder")}<span>更改</span>
+            </button>
+            <button class="btn btn--ghost btn--sm" type="button" data-act="download-dir-open">
+              ${icon("expand")}<span>打开</span>
+            </button>
+            <button
+              class="btn btn--ghost btn--sm"
+              type="button"
+              data-act="download-dir-reset"
+              data-tip="恢复默认（系统音乐目录 / downloads）"
+            >
+              ${icon("refresh")}
+            </button>
           </div>
         </div>
-        <div class="card__body">
-          <div class="setting setting--stack">
-            <div class="setting__main">
-              <div class="setting__label">下载保存位置</div>
-              <div class="setting__hint">
-                这个目录会作为曲库的扫描根自动生效，下载完的歌直接出现在「本地歌曲」里，
-                不需要手动添加文件夹
-              </div>
-            </div>
-            <div class="pathrow">
-              <svg class="pathrow__icon" aria-hidden="true"><use href="#i-folder"></use></svg>
-              <div class="pathrow__main">
-                <div class="pathrow__path u-selectable" title=${dir}>${dir}</div>
-              </div>
-              <button class="btn btn--sm" type="button" data-act="download-dir-pick">${icon("folder")}<span>更改</span></button>
-              <button class="btn btn--ghost btn--sm" type="button" data-act="download-dir-open">${icon("expand")}<span>打开</span></button>
-              <button class="btn btn--ghost btn--sm" type="button" data-act="download-dir-reset" data-tip="恢复默认（系统音乐目录 / downloads）">${icon("refresh")}</button>
-            </div>
+
+        ${settingRow({
+          label: "联网获取封面",
+          hint: `在线搜索到的歌曲会自动去公开曲库匹配封面：${providerText}`,
+          control: switchControl("onlineCover", state.config.onlineCover !== false, "联网获取封面"),
+        })}
+        ${settingRow({
+          label: "把封面/歌词写进歌曲文件",
+          hint: embedHintText(),
+          control: switchControl("embedMeta", state.config.embedMeta === true, "写进歌曲文件"),
+        })}
+
+        <div class="setting setting--stack">
+          <div class="setting__main">
+            <div class="setting__label">把已有缓存补写进文件</div>
+            <div class="setting__hint">${embedWriteHint()}</div>
           </div>
-
-          ${settingRow({
-            label: "联网获取封面",
-            hint: `在线搜索到的歌曲会自动去公开曲库匹配封面：${providerText}`,
-            control: switchControl("onlineCover", state.config.onlineCover !== false, "联网获取封面"),
-          })}
-
-          ${settingRow({
-            label: "把封面/歌词写进歌曲文件",
-            hint: embedHintText(),
-            control: switchControl("embedMeta", state.config.embedMeta === true, "写进歌曲文件"),
-          })}
-
-          <div class="setting setting--stack">
-            <div class="setting__main">
-              <div class="setting__label">把已有缓存补写进文件</div>
-              <div class="setting__hint">${embedWriteHint()}</div>
-            </div>
-            <div class="card__actions">
-              <button class="btn btn--sm" type="button" data-act="embed-cache-write">${icon("tag")}<span>写入缓存到文件</span></button>
-            </div>
-          </div>
-
-          <div class="setting setting--stack">
-            <div class="setting__main">
-              <div class="setting__label">缓存目录</div>
-              <div class="setting__hint">
-                封面与歌词的缓存位置；${cacheSummary()}
-              </div>
-            </div>
-            <div class="pathrow">
-              <svg class="pathrow__icon" aria-hidden="true"><use href="#i-folder"></use></svg>
-              <div class="pathrow__main">
-                <div class="pathrow__path u-selectable" data-role="cache-dir" title=${state.coverCache?.dir || ""}>${state.coverCache?.dir || "（连接后显示）"}</div>
-              </div>
-              <button class="btn btn--sm" type="button" data-act="cache-open-covers">${icon("image")}<span>封面</span></button>
-              <button class="btn btn--ghost btn--sm" type="button" data-act="cache-open-lyrics">${icon("lyrics")}<span>歌词</span></button>
-            </div>
+          <div class="card__actions">
+            <button class="btn btn--sm" type="button" data-act="embed-cache-write">
+              ${icon("tag")}<span>写入缓存到文件</span>
+            </button>
           </div>
         </div>
-        <div class="card__foot">
-          <span>封面来自第三方公开接口（iTunes / 网易云 / Deezer / MusicBrainz），匹配不保证 100% 准确</span>
-          <button class="btn btn--sm" type="button" data-act="cover-refresh">${icon("refresh")}<span>清空封面缓存</span></button>
+
+        <div class="setting setting--stack">
+          <div class="setting__main">
+            <div class="setting__label">缓存目录</div>
+            <div class="setting__hint">封面与歌词的缓存位置；${cacheSummary()}</div>
+          </div>
+          <div class="pathrow">
+            <svg class="pathrow__icon" aria-hidden="true"><use href="#i-folder"></use></svg>
+            <div class="pathrow__main">
+              <div class="pathrow__path u-selectable" data-role="cache-dir" title=${state.coverCache?.dir || ""}>
+                ${state.coverCache?.dir || "（连接后显示）"}
+              </div>
+            </div>
+            <button class="btn btn--sm" type="button" data-act="cache-open-covers">
+              ${icon("image")}<span>封面</span>
+            </button>
+            <button class="btn btn--ghost btn--sm" type="button" data-act="cache-open-lyrics">
+              ${icon("lyrics")}<span>歌词</span>
+            </button>
+          </div>
         </div>
-      </section>`;
+      </div>
+      <div class="card__foot">
+        <span>封面来自第三方公开接口（iTunes / 网易云 / Deezer / MusicBrainz），匹配不保证 100% 准确</span>
+        <button class="btn btn--sm" type="button" data-act="cover-refresh">
+          ${icon("refresh")}<span>清空封面缓存</span>
+        </button>
+      </div>
+    </section>`;
   }
 
   /* ========================================================================
@@ -939,8 +1086,8 @@ class MpSettingsLayer extends MpElement {
   aiCard() {
     const cfg = state.config || {};
     const configured = Boolean(String(cfg.aiBaseUrl || "").trim() && String(cfg.aiApiKey || "").trim());
-    const field = (label, hint, key, placeholder, type = "text") => html`
-      <div class="setting setting--stack">
+    const field = (label, hint, key, placeholder, type = "text") =>
+      html` <div class="setting setting--stack">
         <div class="setting__main">
           <div class="setting__label">${label}</div>
           <div class="setting__hint">${hint}</div>
@@ -957,44 +1104,48 @@ class MpSettingsLayer extends MpElement {
         />
       </div>`;
 
-    return html`
-      <section class="card" id="sec-ai" data-section="ai">
-        <div class="card__head">
-          <div class="card__icon">${icon("settings")}</div>
-          <div class="card__titles">
-            <div class="card__title">AI 相关</div>
-            <div class="card__desc">自动匹配歌词 / 封面时，用 AI 从脏文件名里提取真实元数据</div>
-          </div>
+    return html` <section class="card" id="sec-ai" data-section="ai">
+      <div class="card__head">
+        <div class="card__icon">${icon("settings")}</div>
+        <div class="card__titles">
+          <div class="card__title">AI 相关</div>
+          <div class="card__desc">自动匹配歌词 / 封面时，用 AI 从脏文件名里提取真实元数据</div>
         </div>
-        <div class="card__body">
-          ${field("接口地址（Base URL）", "OpenAI 兼容接口，例如 https://api.openai.com/v1", "aiBaseUrl", "https://api.openai.com/v1")}
-          ${field("API Key", "只写入本地配置，不会发往该接口以外的任何地方", "aiApiKey", "sk-...", "password")}
-          ${field("模型 ID", "例如 gpt-4o-mini、deepseek-chat；留空默认 gpt-4o-mini", "aiModelId", "gpt-4o-mini")}
-          ${settingRow({
-            label: "模型类型",
-            hint: "思考模式的开关参数各家不同，必须选对厂商才会发出正确的请求体；选「自动识别」会按接口地址与模型名判断",
-            control: html`
-              <select class="select__field" data-act="ai-vendor" aria-label="模型类型">
-                ${AI_VENDORS.map((v) => html`<option value=${v.id} ?selected=${v.id === (cfg.aiVendor || "auto")}>${v.label}</option>`)}
-              </select>`,
-          })}
-          ${settingRow({
-            label: "启用思考模式",
-            hint: aiThinkingHint(cfg),
-            control: switchControl("aiThinking", Boolean(cfg.aiThinking), "启用思考模式"),
-          })}
-          ${settingRow({
-            label: "自动匹配歌词时使用 AI 清洗元数据",
-            hint: "自动匹配歌词前先用 AI 从文件名里还原真实的标题/歌手。AI 一次调用可能要十几秒，关掉后只做本地整形：匹配更快，但脏文件名的命中率会低一些",
-            control: switchControl("aiLyricsClean", state.config.aiLyricsClean !== false, "自动匹配歌词时使用 AI 清洗元数据"),
-          })}
-          <div class="setting__hint">
-            ${configured
+      </div>
+      <div class="card__body">
+        ${field("接口地址（Base URL）", "OpenAI 兼容接口，例如 https://api.openai.com/v1", "aiBaseUrl", "https://api.openai.com/v1")}
+        ${field("API Key", "只写入本地配置，不会发往该接口以外的任何地方", "aiApiKey", "sk-...", "password")}
+        ${field("模型 ID", "例如 gpt-4o-mini、deepseek-chat；留空默认 gpt-4o-mini", "aiModelId", "gpt-4o-mini")}
+        ${settingRow({
+          label: "模型类型",
+          hint: "思考模式的开关参数各家不同，必须选对厂商才会发出正确的请求体；选「自动识别」会按接口地址与模型名判断",
+          control: html` <select class="select__field" data-act="ai-vendor" aria-label="模型类型">
+            ${AI_VENDORS.map((v) => html`<option value=${v.id} ?selected=${v.id === (cfg.aiVendor || "auto")}>${v.label}</option>`)}
+          </select>`,
+        })}
+        ${settingRow({
+          label: "启用思考模式",
+          hint: aiThinkingHint(cfg),
+          control: switchControl("aiThinking", Boolean(cfg.aiThinking), "启用思考模式"),
+        })}
+        ${settingRow({
+          label: "自动匹配歌词时使用 AI 清洗元数据",
+          hint: "自动匹配歌词前先用 AI 从文件名里还原真实的标题/歌手。AI 一次调用可能要十几秒，关掉后只做本地整形：匹配更快，但脏文件名的命中率会低一些",
+          control: switchControl(
+            "aiLyricsClean",
+            state.config.aiLyricsClean !== false,
+            "自动匹配歌词时使用 AI 清洗元数据"
+          ),
+        })}
+        <div class="setting__hint">
+          ${
+            configured
               ? "已配置：自动匹配封面时，会先把文件名与现有元数据交给 AI 清洗，再去匹配。"
-              : "尚未配置：填入 Base URL 与 API Key 后自动启用。"}
-          </div>
+              : "尚未配置：填入 Base URL 与 API Key 后自动启用。"
+          }
         </div>
-      </section>`;
+      </div>
+    </section>`;
   }
 
   /* ========================================================================
@@ -1004,30 +1155,39 @@ class MpSettingsLayer extends MpElement {
     const s = state.lastScan;
     const total = state.songs.reduce((sum, x) => sum + x.duration, 0);
     const bytes = state.songs.reduce((sum, x) => sum + x.size, 0);
-    return html`
-      <section class="card" id="sec-about" data-section="about">
-        <div class="card__head">
-          <div class="card__icon">${icon("info")}</div>
-          <div class="card__titles">
-            <div class="card__title">关于与数据</div>
-            <div class="card__desc">曲库统计与缓存位置</div>
-          </div>
+    return html` <section class="card" id="sec-about" data-section="about">
+      <div class="card__head">
+        <div class="card__icon">${icon("info")}</div>
+        <div class="card__titles">
+          <div class="card__title">关于与数据</div>
+          <div class="card__desc">曲库统计与缓存位置</div>
         </div>
-        <div class="kv">
-          <div class="kv__k">曲库文件</div><div class="kv__v">${fmtCount(state.allSongsRaw.length)} 个</div>
-          <div class="kv__k">过滤后歌曲</div><div class="kv__v">${fmtCount(state.songs.length)} 首</div>
-          <div class="kv__k">被规则过滤</div><div class="kv__v">${fmtCount(s?.excluded ?? 0)} 个</div>
-          <div class="kv__k">总时长</div><div class="kv__v">${Math.floor(total / 3600000)} 小时 ${Math.floor((total % 3600000) / 60000)} 分</div>
-          <div class="kv__k">占用空间</div><div class="kv__v">${fmtSize(bytes)}</div>
-          <div class="kv__k">上次扫描</div><div class="kv__v">${s ? new Date(s.at).toLocaleString("zh-CN") : "—"}</div>
-          <div class="kv__k">缓存目录</div><div class="kv__v">${state.config.cacheDir}</div>
-          <div class="kv__k">版本</div><div class="kv__v">0.1.0（Go + Wails3 · Lit 前端）</div>
-        </div>
-        <div class="card__foot">
-          <span>清空缓存不会删除任何本地音乐文件</span>
-          <button class="btn btn--danger btn--sm" type="button" data-act="clear-cache">${icon("trash")}<span>清空缓存</span></button>
-        </div>
-      </section>`;
+      </div>
+      <div class="kv">
+        <div class="kv__k">曲库文件</div>
+        <div class="kv__v">${fmtCount(state.allSongsRaw.length)} 个</div>
+        <div class="kv__k">过滤后歌曲</div>
+        <div class="kv__v">${fmtCount(state.songs.length)} 首</div>
+        <div class="kv__k">被规则过滤</div>
+        <div class="kv__v">${fmtCount(s?.excluded ?? 0)} 个</div>
+        <div class="kv__k">总时长</div>
+        <div class="kv__v">${Math.floor(total / 3600000)} 小时 ${Math.floor((total % 3600000) / 60000)} 分</div>
+        <div class="kv__k">占用空间</div>
+        <div class="kv__v">${fmtSize(bytes)}</div>
+        <div class="kv__k">上次扫描</div>
+        <div class="kv__v">${s ? new Date(s.at).toLocaleString("zh-CN") : "—"}</div>
+        <div class="kv__k">缓存目录</div>
+        <div class="kv__v">${state.config.cacheDir}</div>
+        <div class="kv__k">版本</div>
+        <div class="kv__v">0.1.0（Go + Wails3 · Lit 前端）</div>
+      </div>
+      <div class="card__foot">
+        <span>清空缓存不会删除任何本地音乐文件</span>
+        <button class="btn btn--danger btn--sm" type="button" data-act="clear-cache">
+          ${icon("trash")}<span>清空缓存</span>
+        </button>
+      </div>
+    </section>`;
   }
 
   /* ========================================================================
@@ -1127,7 +1287,10 @@ class MpSettingsLayer extends MpElement {
     }
     // 滚到底时最后一张卡片可能还没顶到阈值线（卡片比一屏矮），不改的话高亮会一直
     // 停在倒数第二个分区。真的能滚时才兜底选中最后一个分区。
-    if (scroll.scrollHeight > scroll.clientHeight + 2 && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2) {
+    if (
+      scroll.scrollHeight > scroll.clientHeight + 2 &&
+      scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 2
+    ) {
       current = SECTIONS[SECTIONS.length - 1].id;
     }
     if (current !== this._activeSection) {

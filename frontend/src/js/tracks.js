@@ -230,8 +230,8 @@ function openAddToPlaylist(songId) {
       <div class="setting__hint">点击歌单即可把这首歌加进去。</div>
       <div class="u-row u-wrap">
         ${playlists.map(
-          (p) => html`
-            <button class="btn btn--sm" type="button" data-pl=${p.id}>
+          (p) =>
+            html` <button class="btn btn--sm" type="button" data-pl=${p.id}>
               <svg aria-hidden="true"><use href="#i-${p.id === LIKED_ID ? "heart" : "playlist"}"></use></svg>
               <span>${p.name}</span>
             </button>`

@@ -34,15 +34,7 @@
    ========================================================================== */
 
 import { execFileSync } from "node:child_process";
-import {
-  createReadStream,
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
@@ -61,8 +53,23 @@ const SOURCE_DIR = path.join(BUILD_DIR, `ffmpeg-${SOURCE_VERSION}`);
 const TARBALL = path.join(BUILD_DIR, `ffmpeg-${SOURCE_VERSION}.tar.xz`);
 const SOURCE_URL = `https://ffmpeg.org/releases/ffmpeg-${SOURCE_VERSION}.tar.xz`;
 
-const MINGW_BIN = process.env.MP_MINGW_BIN || "C:\\Users\\Example\\Application\\mingw64\\bin";
-const BASH = process.env.MP_BASH || "C:\\Users\\Example\\Application\\PortableGit\\usr\\bin\\bash.exe";
+/**
+ * 在 PATH 上找一个可执行文件所在目录；找不到返回 null。
+ * 用来避免把**某台机器**的绝对路径写成默认值 —— 那对任何其他人都只会报错。
+ */
+function whichDir(exe) {
+  try {
+    const out = execFileSync("where", [exe], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const first = String(out).split(/\r?\n/)[0].trim();
+    return first ? path.dirname(first) : null;
+  } catch {
+    return null;
+  }
+}
+
+// 依次尝试：环境变量 → PATH 推断 → 常见安装位置（MSYS2 默认路径，不是某个人家目录）
+const MINGW_BIN = process.env.MP_MINGW_BIN || whichDir("gcc") || "C:\\msys64\\mingw64\\bin";
+const BASH = process.env.MP_BASH || whichDir("bash") || "C:\\msys64\\usr\\bin\\bash.exe";
 
 const force = process.argv.includes("--force");
 const downloadOnly = process.argv.includes("--download");

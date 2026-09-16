@@ -83,4 +83,14 @@ tasks:
   test:
     summary: 运行后端测试
     cmds:
-      - go test ./...
+      # 显式列出要测试的包： "./..." 会把 node_modules 里 flatted 自带的 Go
+      # 源码（node_modules/flatted/golang/pkg/flatted）也算成本模块的一个包。
+      - go test . ./internal/... ./tools/...
+
+  check:go:
+    summary: 后端工程化检查（gofmt + go vet + 竞态测试）
+    cmds:
+      # gofmt 此前没有任何门禁（go vet 不检查格式），见 tools/check-gofmt.mjs
+      - node tools/check-gofmt.mjs
+      - go vet . ./internal/... ./tools/...
+      - go test -race . ./internal/... ./tools/...

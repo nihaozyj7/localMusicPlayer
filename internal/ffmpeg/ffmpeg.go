@@ -29,6 +29,7 @@ import (
 	"strings"
 	"sync"
 
+	"musicplayer/internal/atomicfile"
 	"musicplayer/internal/executil"
 )
 
@@ -195,17 +196,11 @@ func extractBundled() (string, error) {
 	return extraction.path, extraction.err
 }
 
-// writeCached 把解压后的二进制原子地写到 target。
+// writeCached 把解压后的二进制原子地写到 target（唯一临时名 + fsync + 改名）。
 func writeCached(target string, data []byte) (string, error) {
-	// 先写临时文件再改名，避免解包中断留下半个可执行文件
-	tmp := target + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o755); err != nil {
+	if err := atomicfile.Write(target, data, 0o755); err != nil {
 		// 磁盘满/被杀软拦截时给出可执行的降级信息
 		return "", fmt.Errorf("写入内置 ffmpeg 失败（%s）: %w", filepath.Dir(target), err)
-	}
-	if err := os.Rename(tmp, target); err != nil {
-		_ = os.Remove(tmp)
-		return "", fmt.Errorf("替换内置 ffmpeg 失败: %w", err)
 	}
 	log.Printf("[ffmpeg] 已解包内置 ffmpeg 到 %s（%d MB）", target, len(data)/(1<<20))
 	return target, nil
@@ -377,6 +372,10 @@ func Probe(ctx context.Context, ffmpegPath, path string) (ProbeInfo, error) {
 	cmd := executil.CommandContext(ctx, ffmpegPath,
 		"-hide_banner", "-nostdin",
 		"-i", path,
+		// -t 0：只读容器头、不解码音频。探测只需要 stderr 里的元信息，
+		// 少了这个参数就会把整首歌解码到 null —— 耗时与曲目长度成正比，
+		// 而批量扫描（library.enrichDurations）一次要探最多 48 个文件。
+		"-t", "0",
 		"-vn", "-map", "0:a",
 		"-c:a", "pcm_s16le",
 		"-f", "null", "-",

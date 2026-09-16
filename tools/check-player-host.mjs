@@ -134,8 +134,7 @@ async function main() {
   check(
     "样式按钮组按皮肤注册表渲染",
     // 内置六种（用户数据目录里的第三方样式会接在后面）
-    Array.isArray(skins) &&
-      skins.slice(0, 6).join(",") === "classic,immersive,minimal,anime,arcade,magia",
+    Array.isArray(skins) && skins.slice(0, 6).join(",") === "classic,immersive,minimal,anime,arcade,magia",
     JSON.stringify(skins)
   );
 
@@ -381,18 +380,14 @@ async function main() {
   };
   check(
     "关闭详情页：背景层与详情页同步向下滑出淡出（不是硬切）",
-    midFrames(anim?.closing?.pv) > 0 &&
-      midFrames(anim?.closing?.bg) > 0 &&
-      maxDrift(anim?.closing) < 0.05,
+    midFrames(anim?.closing?.pv) > 0 && midFrames(anim?.closing?.bg) > 0 && maxDrift(anim?.closing) < 0.05,
     `pv 中间帧=${midFrames(anim?.closing?.pv)} bg 中间帧=${midFrames(
       anim?.closing?.bg
     )} 最大偏差=${maxDrift(anim?.closing).toFixed(3)}`
   );
   check(
     "打开详情页：背景层与详情页同步向上滑入淡入（不是硬切）",
-    midFrames(anim?.opening?.pv) > 0 &&
-      midFrames(anim?.opening?.bg) > 0 &&
-      maxDrift(anim?.opening) < 0.05,
+    midFrames(anim?.opening?.pv) > 0 && midFrames(anim?.opening?.bg) > 0 && maxDrift(anim?.opening) < 0.05,
     `pv 中间帧=${midFrames(anim?.opening?.pv)} bg 中间帧=${midFrames(
       anim?.opening?.bg
     )} 最大偏差=${maxDrift(anim?.opening).toFixed(3)}`

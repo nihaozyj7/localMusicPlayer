@@ -416,9 +416,7 @@ async function discoverSkins() {
           id: info.id,
           name: info.name,
           module: base + String(info.module).replace(/^\/+/, ""),
-          styles: (Array.isArray(info.styles) ? info.styles : []).map(
-            (s) => base + String(s).replace(/^\/+/, "")
-          ),
+          styles: (Array.isArray(info.styles) ? info.styles : []).map((s) => base + String(s).replace(/^\/+/, "")),
         });
         externalSkinIds.add(info.id);
         found.add(info.id);

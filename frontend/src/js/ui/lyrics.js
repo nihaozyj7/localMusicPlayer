@@ -23,13 +23,7 @@ import {
   setLyricsOffset,
 } from "../playerhost.js";
 import { coverOf, fmtTime } from "../utils.js";
-import {
-  formatLrcTime,
-  mergeDraftTimes,
-  parseLyricDraft,
-  serializeLrc,
-  shiftLrc,
-} from "@musicplayer/player-skins";
+import { formatLrcTime, mergeDraftTimes, parseLyricDraft, serializeLrc, shiftLrc } from "@musicplayer/player-skins";
 
 /** 与 bridge.js 同理：绑定是按 URL 在运行时解析的，不能让打包器按文件路径解析 */
 const BINDINGS_ENTRY = "../bindings/musicplayer/index.js";
@@ -170,13 +164,25 @@ class MpLyricsPanel extends MpElement {
           <div class="lyricspanel__meta">
             <div class="lyricspanel__title" data-song-title>${song ? song.title || "未命名" : "未在播放"}</div>
             <div class="lyricspanel__sub">
-              <span class="lyricspanel__badge${info.text ? "" : " is-empty"}" data-song-source data-src=${info.source}>
+              <span
+                class="lyricspanel__badge${info.text ? "" : " is-empty"}"
+                data-song-source
+                data-src=${info.source}
+              >
                 ${lyricsSourceLabel(info.source)}
               </span>
               <span class="lyricspanel__artist" data-song-artist>${song ? song.artist || "" : ""}</span>
             </div>
           </div>
-          <button class="lyricspanel__close" type="button" data-act="close" aria-label="关闭" @click=${() => closePanel()}>${icon("close")}</button>
+          <button
+            class="lyricspanel__close"
+            type="button"
+            data-act="close"
+            aria-label="关闭"
+            @click=${() => closePanel()}
+          >
+            ${icon("close")}
+          </button>
         </header>
 
         <nav class="lyricspanel__tabs" role="tablist">
@@ -189,16 +195,16 @@ class MpLyricsPanel extends MpElement {
                 data-tab=${t}
                 aria-selected=${String(activeTab === t)}
                 @click=${() => setTab(t)}
-              >${t === "online" ? "在线匹配" : t === "nudge" ? "微调" : "手动编辑"}</button>
+              >
+                ${t === "online" ? "在线匹配" : t === "nudge" ? "微调" : "手动编辑"}
+              </button>
             `
           )}
         </nav>
 
         ${this.noticeTemplate(info)}
         <div class="lyricspanel__body">
-          ${this.open
-            ? html`${this.onlinePane()} ${this.nudgePane(info)} ${this.editPane()}`
-            : nothing}
+          ${this.open ? html`${this.onlinePane()} ${this.nudgePane(info)} ${this.editPane()}` : nothing}
         </div>
       </section>
     `;
@@ -222,16 +228,21 @@ class MpLyricsPanel extends MpElement {
     return html`
       <div class="lyricspanel__notice" data-notice>
         <div class="lyricspanel__notice-text" data-notice-text>
-          ${canEmbed
-            ? html`这首歌的歌词来自「${label}」，它的优先级高于程序缓存：只保存到缓存的话，下次打开仍会显示旧歌词。建议同时写入歌曲文件。`
-            : html`这首歌的歌词来自「${label}」，它的优先级高于程序缓存；而 ${ext ? "." + ext : "该格式"} 不支持写入歌词标签，所以本次改动只在<b>本次运行内</b>生效（重启后会变回旧歌词）。`}
+          ${
+            canEmbed
+              ? html`这首歌的歌词来自「${label}」，它的优先级高于程序缓存：只保存到缓存的话，下次打开仍会显示旧歌词。建议同时写入歌曲文件。`
+              : html`这首歌的歌词来自「${label}」，它的优先级高于程序缓存；而 ${ext ? "." + ext : "该格式"}
+                不支持写入歌词标签，所以本次改动只在<b>本次运行内</b>生效（重启后会变回旧歌词）。`
+          }
         </div>
-        ${canEmbed
-          ? html`<label class="lyricspanel__notice-opt" data-notice-opt>
-              <input type="checkbox" data-embed-toggle checked />
-              <span>同时写入歌曲文件（否则下次打开仍显示旧歌词）</span>
-            </label>`
-          : nothing}
+        ${
+          canEmbed
+            ? html`<label class="lyricspanel__notice-opt" data-notice-opt>
+                <input type="checkbox" data-embed-toggle checked />
+                <span>同时写入歌曲文件（否则下次打开仍显示旧歌词）</span>
+              </label>`
+            : nothing
+        }
       </div>
     `;
   }
@@ -252,31 +263,45 @@ class MpLyricsPanel extends MpElement {
               this._onlineKeyword = e.target.value;
             }}
           />
-          <button class="btn btn--primary" type="button" data-act="lyrics-search" @click=${() => this.searchLyrics()}>搜索</button>
+          <button class="btn btn--primary" type="button" data-act="lyrics-search" @click=${() => this.searchLyrics()}>
+            搜索
+          </button>
         </div>
         <div class="lyricspanel__hint" data-online-hint>${this._lastOnlineHint}</div>
         <div class="lyricspanel__list" data-online-results>
-          ${this._searching
-            ? "搜索中…"
-            : this._onlineMessage
-              ? this._onlineMessage
-              : this._candidates.length
-                ? repeat(
-                    this._candidates,
-                    (c, i) => `${c.provider || ""}-${c.id || i}`,
-                    (c, i) => html`
-                      <div class="candidate">
-                        <div class="candidate__main">
-                          <div class="candidate__title">${(c.title || "未命名") + " - " + (c.artist || "未知")}</div>
-                          <div class="candidate__sub">
-                            ${(c.provider || "") + " · score " + (c.score || 0) + " · " + fmtTime(c.duration)}
+          ${
+            this._searching
+              ? "搜索中…"
+              : this._onlineMessage
+                ? this._onlineMessage
+                : this._candidates.length
+                  ? repeat(
+                      this._candidates,
+                      (c, i) => `${c.provider || ""}-${c.id || i}`,
+                      (c, i) => html`
+                        <div class="candidate">
+                          <div class="candidate__main">
+                            <div class="candidate__title">
+                              ${(c.title || "未命名") + " - " + (c.artist || "未知")}
+                            </div>
+                            <div class="candidate__sub">
+                              ${(c.provider || "") + " · score " + (c.score || 0) + " · " + fmtTime(c.duration)}
+                            </div>
                           </div>
+                          <button
+                            class="btn btn--sm btn--primary"
+                            type="button"
+                            data-act="use-lyric"
+                            data-i=${i}
+                            @click=${() => this.applyCandidate(i)}
+                          >
+                            使用
+                          </button>
                         </div>
-                        <button class="btn btn--sm btn--primary" type="button" data-act="use-lyric" data-i=${i} @click=${() => this.applyCandidate(i)}>使用</button>
-                      </div>
-                    `
-                  )
-                : "搜索结果会显示在这里，点击「使用」应用歌词"}
+                      `
+                    )
+                  : "搜索结果会显示在这里，点击「使用」应用歌词"
+          }
         </div>
       </section>
     `;
@@ -314,7 +339,16 @@ class MpLyricsPanel extends MpElement {
           <div class="lyricspanel__hint">精细调整（50ms 一档）</div>
           <div class="nudge__steps">
             ${[-1000, -500, -100, 100, 500, 1000].map(
-              (d) => html`<button class="btn btn--sm" type="button" data-act="nudge-step" data-delta=${d} @click=${() => nudgeBy(d)}>${d > 0 ? "+" : "−"}${(Math.abs(d) / 1000).toFixed(1)}</button>`
+              (d) =>
+                html`<button
+                  class="btn btn--sm"
+                  type="button"
+                  data-act="nudge-step"
+                  data-delta=${d}
+                  @click=${() => nudgeBy(d)}
+                >
+                  ${d > 0 ? "+" : "−"}${(Math.abs(d) / 1000).toFixed(1)}
+                </button>`
             )}
           </div>
           <input
@@ -337,9 +371,13 @@ class MpLyricsPanel extends MpElement {
           </div>
         </div>
         <div class="lyricspanel__foot">
-          <button class="btn btn--sm" type="button" data-act="nudge-reset" @click=${() => resetNudge()}>${nothing}重置</button>
+          <button class="btn btn--sm" type="button" data-act="nudge-reset" @click=${() => resetNudge()}>
+            ${nothing}重置
+          </button>
           <span class="lyricspanel__hint">微调不会自动保存</span>
-          <button class="btn btn--primary" type="button" data-act="nudge-apply" @click=${() => this.applyNudge()}>应用到歌词</button>
+          <button class="btn btn--primary" type="button" data-act="nudge-apply" @click=${() => this.applyNudge()}>
+            应用到歌词
+          </button>
         </div>
       </section>
     `;
@@ -362,19 +400,17 @@ class MpLyricsPanel extends MpElement {
     for (let i = from; i < to; i += 1) {
       const line = lines[i];
       const t = Math.max(0, line.time + offset);
-      rows.push(
-        html`
-          <div
-            class="nudge__line${i === active ? " is-active" : ""}"
-            data-act="nudge-seek"
-            data-ms=${t}
-            @click=${() => seek(t)}
-          >
-            <span class="nudge__time">${formatLrcTime(line.time + offset).slice(1, -1)}</span>
-            <span class="nudge__text">${line.text}</span>
-          </div>
-        `
-      );
+      rows.push(html`
+        <div
+          class="nudge__line${i === active ? " is-active" : ""}"
+          data-act="nudge-seek"
+          data-ms=${t}
+          @click=${() => seek(t)}
+        >
+          <span class="nudge__time">${formatLrcTime(line.time + offset).slice(1, -1)}</span>
+          <span class="nudge__text">${line.text}</span>
+        </div>
+      `);
     }
     return rows;
   }
@@ -417,16 +453,28 @@ class MpLyricsPanel extends MpElement {
       : untimed > 0 && timed > 0
         ? `还有 ${untimed} 行没有时间`
         : "";
-    const tip = stale ? "已切歌，草稿仍属于上一首" : draft.kept > 0 ? `已沿用 ${draft.kept} 行原有时间` : draft.dirty ? "未保存" : "";
+    const tip = stale
+      ? "已切歌，草稿仍属于上一首"
+      : draft.kept > 0
+        ? `已沿用 ${draft.kept} 行原有时间`
+        : draft.dirty
+          ? "未保存"
+          : "";
     return html`
       <section class="lyricspanel__pane" data-pane="edit" ?hidden=${activeTab !== "edit"}>
         <div class="editor__source">
           <div class="lyricspanel__row lyricspanel__row--between">
             <span class="lyricspanel__hint">歌词文本：粘贴纯文本即可（带时间标签也能识别）</span>
             <span class="lyricspanel__row-actions">
-              <button class="btn btn--sm" type="button" data-act="editor-load" @click=${() => loadCurrentLyrics()}>载入当前歌词</button>
-              <button class="btn btn--sm" type="button" data-act="editor-clear-times" @click=${() => clearAllTimes()}>清空全部时间</button>
-              <button class="btn btn--sm" type="button" data-act="editor-clear" @click=${() => clearDraftText()}>清空文本</button>
+              <button class="btn btn--sm" type="button" data-act="editor-load" @click=${() => loadCurrentLyrics()}>
+                载入当前歌词
+              </button>
+              <button class="btn btn--sm" type="button" data-act="editor-clear-times" @click=${() => clearAllTimes()}>
+                清空全部时间
+              </button>
+              <button class="btn btn--sm" type="button" data-act="editor-clear" @click=${() => clearDraftText()}>
+                清空文本
+              </button>
             </span>
           </div>
           <textarea
@@ -439,11 +487,26 @@ class MpLyricsPanel extends MpElement {
         </div>
 
         <div class="editor__transport">
-          <button class="btn btn--icon" type="button" data-act="editor-play" data-tip="播放 / 暂停" @click=${() => togglePlayback()}>
+          <button
+            class="btn btn--icon"
+            type="button"
+            data-act="editor-play"
+            data-tip="播放 / 暂停"
+            @click=${() => togglePlayback()}
+          >
             ${icon(state.playing ? "pause" : "play")}
           </button>
-          <button class="btn btn--sm" type="button" data-act="editor-back" @click=${() => seek(Math.max(0, state.position - 5000))}>−5s</button>
-          <button class="btn btn--sm" type="button" data-act="editor-fwd" @click=${() => seek(state.position + 5000)}>+5s</button>
+          <button
+            class="btn btn--sm"
+            type="button"
+            data-act="editor-back"
+            @click=${() => seek(Math.max(0, state.position - 5000))}
+          >
+            −5s
+          </button>
+          <button class="btn btn--sm" type="button" data-act="editor-fwd" @click=${() => seek(state.position + 5000)}>
+            +5s
+          </button>
           <span class="editor__clock" data-editor-clock>${formatLrcTime(state.position).slice(1, -1)}</span>
           <span class="editor__spacer"></span>
           <span class="lyricspanel__hint" data-editor-progress>已打轴 ${timed} / ${draft.lines.length}</span>
@@ -456,19 +519,25 @@ class MpLyricsPanel extends MpElement {
 
         <div class="editor__tools">
           <button class="btn btn--sm" type="button" data-act="editor-undo" @click=${() => undoDraft()}>撤销</button>
-          <button class="btn btn--sm" type="button" data-act="editor-prev" @click=${() => moveCursor(-1)}>上一行</button>
-          <button class="btn btn--sm" type="button" data-act="editor-next" @click=${() => moveCursor(1)}>下一行</button>
+          <button class="btn btn--sm" type="button" data-act="editor-prev" @click=${() => moveCursor(-1)}>
+            上一行
+          </button>
+          <button class="btn btn--sm" type="button" data-act="editor-next" @click=${() => moveCursor(1)}>
+            下一行
+          </button>
           <span class="lyricspanel__hint" data-editor-tip>${tip}</span>
         </div>
 
-        <div class="editor__list" data-editor-list @scroll=${() => this.onFollowScroll()}>
-          ${this.draftList()}
-        </div>
+        <div class="editor__list" data-editor-list @scroll=${() => this.onFollowScroll()}>${this.draftList()}</div>
 
         <div class="lyricspanel__foot">
-          <button class="btn btn--sm" type="button" data-act="editor-copy" @click=${() => this.copyLrc()}>复制 LRC</button>
+          <button class="btn btn--sm" type="button" data-act="editor-copy" @click=${() => this.copyLrc()}>
+            复制 LRC
+          </button>
           <span class="lyricspanel__hint" data-editor-save-hint>${saveHint}</span>
-          <button class="btn btn--primary" type="button" data-act="editor-save" @click=${() => this.saveDraft()}>保存并应用</button>
+          <button class="btn btn--primary" type="button" data-act="editor-save" @click=${() => this.saveDraft()}>
+            保存并应用
+          </button>
         </div>
       </section>
     `;
@@ -490,7 +559,17 @@ class MpLyricsPanel extends MpElement {
         return html`
           <div class=${cls.join(" ")} data-act="editor-cursor" data-i=${i} @click=${() => setCursor(i)}>
             <span class="drow__no">${i + 1}</span>
-            <button class="drow__time" type="button" data-act="edit-seek" data-i=${i} data-tip="跳到这一句" @click=${(e) => { e.stopPropagation(); seekDraftLine(i); }}>
+            <button
+              class="drow__time"
+              type="button"
+              data-act="edit-seek"
+              data-i=${i}
+              data-tip="跳到这一句"
+              @click=${(e) => {
+                e.stopPropagation();
+                seekDraftLine(i);
+              }}
+            >
               ${isTimed ? formatLrcTime(line.time).slice(1, -1) : "未打轴"}
             </button>
             <span class="drow__text">${line.text}</span>
@@ -501,8 +580,13 @@ class MpLyricsPanel extends MpElement {
               data-i=${i}
               aria-label="清除这一行的时间"
               ?hidden=${!isTimed}
-              @click=${(e) => { e.stopPropagation(); clearLineTime(i); }}
-            >${icon("close")}</button>
+              @click=${(e) => {
+                e.stopPropagation();
+                clearLineTime(i);
+              }}
+            >
+              ${icon("close")}
+            </button>
           </div>
         `;
       }
@@ -584,10 +668,7 @@ class MpLyricsPanel extends MpElement {
     if (!force && Date.now() < this._followHold) return;
     const boxRect = box.getBoundingClientRect();
     const rowRect = row.getBoundingClientRect();
-    const next = Math.max(
-      0,
-      box.scrollTop + (rowRect.top - boxRect.top) - (box.clientHeight - rowRect.height) / 2
-    );
+    const next = Math.max(0, box.scrollTop + (rowRect.top - boxRect.top) - (box.clientHeight - rowRect.height) / 2);
     if (Math.abs(box.scrollTop - next) < 2) return;
     // 覆盖平滑滚动的整个时长，避免它的尾帧被误判成「用户自己在滚」
     this._followAutoUntil = Date.now() + 700;
@@ -808,9 +889,13 @@ class MpLyricsPanel extends MpElement {
     }
     if (untimed || unsorted) {
       const body = html`
-        ${untimed
-          ? html`<div class="lyricspanel__hint">还有 <b>${untimed}</b> 行没有时间：LRC 里没有时间标签的行会被忽略，保存后这些行不会显示。</div>`
-          : nothing}
+        ${
+          untimed
+            ? html`<div class="lyricspanel__hint">
+                还有 <b>${untimed}</b> 行没有时间：LRC 里没有时间标签的行会被忽略，保存后这些行不会显示。
+              </div>`
+            : nothing
+        }
         ${unsorted ? html`<div class="lyricspanel__hint">时间不是升序，播放时高亮可能会跳来跳去。</div>` : nothing}
       `;
       const ok = await confirmModal({
@@ -988,7 +1073,9 @@ function currentTarget() {
 
 /** 这首歌的扩展名（判断能不能写回歌词标签） */
 function songExt(song) {
-  return String(song?.ext || "").replace(/^\./, "").toLowerCase();
+  return String(song?.ext || "")
+    .replace(/^\./, "")
+    .toLowerCase();
 }
 
 /** 这次保存要不要同时写进歌曲文件 */
@@ -1078,9 +1165,7 @@ function undoDraft() {
 
 /** 草稿文本（撤销 / 打轴后回填文本框用） */
 function draftTextOf() {
-  return draft.lines
-    .map((l) => (typeof l.time === "number" ? formatLrcTime(l.time) + l.text : l.text))
-    .join("\n");
+  return draft.lines.map((l) => (typeof l.time === "number" ? formatLrcTime(l.time) + l.text : l.text)).join("\n");
 }
 
 function moveCursor(delta) {

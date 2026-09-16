@@ -135,7 +135,10 @@ ws.onmessage = (ev) => {
     logs.push({ type, text });
   }
   if (m.method === "Runtime.exceptionThrown") {
-    logs.push({ type: "exception", text: m.params.exceptionDetails?.exception?.description || m.params.exceptionDetails?.text });
+    logs.push({
+      type: "exception",
+      text: m.params.exceptionDetails?.exception?.description || m.params.exceptionDetails?.text,
+    });
   }
   if (m.method === "Log.entryAdded") {
     logs.push({ type: m.params.entry.level, text: m.params.entry.text, url: m.params.entry.url });
@@ -559,7 +562,9 @@ check("sort-filter", sortFilter);
 /* ---- 17. 内置界面自检（probe.js：?probe=1 会把布局体检报告打到控制台） ---- */
 await send("Page.navigate", { url: `http://127.0.0.1:${PORT}/index.html?probe=1` });
 await sleep(2600);
-const probeReport = await evaluate("window.__probeReport ? JSON.stringify(window.__probeReport).slice(0, 1500) : null");
+const probeReport = await evaluate(
+  "window.__probeReport ? JSON.stringify(window.__probeReport).slice(0, 1500) : null"
+);
 check("probe", probeReport || "（没有输出）");
 
 /* ---- 18. 控制台错误 ---- */

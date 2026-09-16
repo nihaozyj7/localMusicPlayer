@@ -115,13 +115,13 @@ repeat(songs, (song) => song.id, (song, i) => this.rowTemplate(song, i, mode))
 
 ## 4. 迁移中发现并修掉的真实 BUG
 
-| # | 问题 | 根因 | 修法 |
-| --- | --- | --- | --- |
-| 1 | 播放时约每 250ms 抛一次 `TypeError: Cannot set properties of null (setting 'data')` | `slider.js` 的 `paint()` 写 `.slider__bubble` 的 `textContent`，而气泡里同时挂着 Lit 的文本绑定 —— `textContent` 把 Lit 的标记节点一起清掉了 | 明确「一个节点只有一个写入方」：`.slider` 内部（轨道/滑块/气泡）由 `slider.js` 独占，模板里不再给它挂任何绑定；设置里的数值标签也改成由滑杆写 |
-| 2 | 进度条拖动时抛同类错误 | 拖动中直接写 `#time-current.textContent`（该节点是 Lit 文本绑定） | 改成只改 `state.position` + `requestUpdate()`，由模板渲染 |
-| 3 | 点表头排序没反应 | 事件委托挂在 `.tracks__body`，而排序按钮在 `.tracks__head`（body 之外） | 委托上移到 `.tracks`（含表头），行/表头右键按 `closest` 区分 |
-| 4 | 往队列加一首歌会顺带重绘隐藏的队列面板 | 面板内容无条件渲染，只靠 `hidden` 藏起来 | 关闭时不渲染列表内容（打开时 `queueOpen` 变化会触发重绘，内容依然齐） |
-| 5 | 设置里改开关后模板状态可能不跟随 | `state.config` 是原地修改的对象（引用不变），依赖数组抓不到字段变化 | 控制项自己知道改了东西，处理后显式 `requestUpdate()`（Lit 只更新变化的那几个 part） |
+| #   | 问题                                                                                | 根因                                                                                                                                         | 修法                                                                                                                                          |
+| --- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 播放时约每 250ms 抛一次 `TypeError: Cannot set properties of null (setting 'data')` | `slider.js` 的 `paint()` 写 `.slider__bubble` 的 `textContent`，而气泡里同时挂着 Lit 的文本绑定 —— `textContent` 把 Lit 的标记节点一起清掉了 | 明确「一个节点只有一个写入方」：`.slider` 内部（轨道/滑块/气泡）由 `slider.js` 独占，模板里不再给它挂任何绑定；设置里的数值标签也改成由滑杆写 |
+| 2   | 进度条拖动时抛同类错误                                                              | 拖动中直接写 `#time-current.textContent`（该节点是 Lit 文本绑定）                                                                            | 改成只改 `state.position` + `requestUpdate()`，由模板渲染                                                                                     |
+| 3   | 点表头排序没反应                                                                    | 事件委托挂在 `.tracks__body`，而排序按钮在 `.tracks__head`（body 之外）                                                                      | 委托上移到 `.tracks`（含表头），行/表头右键按 `closest` 区分                                                                                  |
+| 4   | 往队列加一首歌会顺带重绘隐藏的队列面板                                              | 面板内容无条件渲染，只靠 `hidden` 藏起来                                                                                                     | 关闭时不渲染列表内容（打开时 `queueOpen` 变化会触发重绘，内容依然齐）                                                                         |
+| 5   | 设置里改开关后模板状态可能不跟随                                                    | `state.config` 是原地修改的对象（引用不变），依赖数组抓不到字段变化                                                                          | 控制项自己知道改了东西，处理后显式 `requestUpdate()`（Lit 只更新变化的那几个 part）                                                           |
 
 第 1、2 条是「Lit 的标记节点被外部 `textContent` / `innerHTML` 冲掉」
 这一类问题的典型表现。迁移纪律因此写进注释：**同一节点只允许一个写入方**。
@@ -143,13 +143,13 @@ repeat(songs, (song) => song.id, (song, i) => this.rowTemplate(song, i, mode))
 
 ### 未迁移（按需求）
 
-| 范围 | 原因 |
-| --- | --- |
-| `frontend/packages/player-skins/**` | 播放界面样式插件，需求明确不重构 |
-| `frontend/src/styles/**` | 主题与组件样式；只新增了 `mp-*` 宿主的 `display:contents` 两条规则 |
-| `internal/theme/builtin/*` | 由构建脚本从 `styles/themes` 同步 |
+| 范围                                             | 原因                                                                                                   |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `frontend/packages/player-skins/**`              | 播放界面样式插件，需求明确不重构                                                                       |
+| `frontend/src/styles/**`                         | 主题与组件样式；只新增了 `mp-*` 宿主的 `display:contents` 两条规则                                     |
+| `internal/theme/builtin/*`                       | 由构建脚本从 `styles/themes` 同步                                                                      |
 | `desktop-wallpaper-window.js` / `wallpaper.html` | 桌面背景歌词窗口本体就是「皮肤渲染器」，属于插件域（其宿主逻辑 `desktop-wallpaper.js` 已改为状态驱动） |
-| Go 侧代码 | 无改动 |
+| Go 侧代码                                        | 无改动                                                                                                 |
 
 ---
 

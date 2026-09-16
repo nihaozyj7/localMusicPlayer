@@ -22,11 +22,7 @@ import {
   setSelectedSongs,
   state,
 } from "../store.js";
-import {
-  LIKED_ID,
-  currentContext,
-  playlistById as playlistOf,
-} from "../store.js";
+import { LIKED_ID, currentContext, playlistById as playlistOf } from "../store.js";
 import { clearLocalFilter, doRescan, navigate } from "../shell.js";
 import { handleSettingsAction } from "../settings.js";
 import { locateCurrentSong, playAllVisible } from "../tracks.js";
@@ -66,16 +62,19 @@ class MpContent extends MpElement {
     const pl = v === "playlist" ? playlistById(state.playlistId) : null;
     return html`
       <main class="main" id="main">
-        <div class="content-header" id="content-header" @click=${(e) => this.onHeaderClick(e)} @change=${(e) => this.onHeaderChange(e)}>
+        <div
+          class="content-header"
+          id="content-header"
+          @click=${(e) => this.onHeaderClick(e)}
+          @change=${(e) => this.onHeaderChange(e)}
+        >
           <div class="content-header__titles">
             <h1 class="content-header__title" id="content-title">
               ${v === "playlist" && pl ? pl.name : VIEW_TITLES[v] || "本地歌曲"}
             </h1>
-            <p
-              class="content-header__subtitle"
-              id="content-subtitle"
-              data-scanning=${String(state.scanning)}
-            >${this.subtitle(v, pl)}</p>
+            <p class="content-header__subtitle" id="content-subtitle" data-scanning=${String(state.scanning)}>
+              ${this.subtitle(v, pl)}
+            </p>
           </div>
           <div class="content-header__actions">
             <div class="content-filter" id="content-filter" ?hidden=${v !== "library"}>
@@ -111,7 +110,9 @@ class MpContent extends MpElement {
                     clearLocalFilter();
                     this.querySelector("#content-filter-input")?.focus();
                   }}
-                >${icon("close")}</button>
+                >
+                  ${icon("close")}
+                </button>
               </div>
               <span class="content-filter__count" id="content-filter-count">
                 ${state.query.trim() ? `匹配 ${fmtCount(state.visibleSongs.length)} 首` : ""}
@@ -155,9 +156,19 @@ class MpContent extends MpElement {
   toolbar() {
     const v = state.view;
     // 「播放全部」保留；随机播放按钮已移除（需求：那个随机播放按钮移除掉）。
-    const playAll = html`<button class="btn btn--primary" type="button" data-tool="play-all">${icon("play")}<span>播放全部</span></button>`;
+    const playAll = html`<button class="btn btn--primary" type="button" data-tool="play-all">
+      ${icon("play")}<span>播放全部</span>
+    </button>`;
     // 「定位到当前播放」：长列表里换歌之后列表不会自己滚动，用户找不到正在播的那一行。
-    const locate = html`<button class="btn btn--icon" type="button" data-tool="locate" data-tip="定位到当前播放" aria-label="定位到当前播放">${icon("disc")}</button>`;
+    const locate = html`<button
+      class="btn btn--icon"
+      type="button"
+      data-tool="locate"
+      data-tip="定位到当前播放"
+      aria-label="定位到当前播放"
+    >
+      ${icon("disc")}
+    </button>`;
     const sortSel = html`
       <div class="select">
         <select class="select__field" id="select-sort" aria-label="排序方式">
@@ -169,9 +180,7 @@ class MpContent extends MpElement {
             ["duration", "时长"],
             ["size", "文件大小"],
             ["playCount", "播放次数"],
-          ].map(
-            ([k, l]) => html`<option value=${k} ?selected=${state.sortKey === k}>${l}</option>`
-          )}
+          ].map(([k, l]) => html`<option value=${k} ?selected=${state.sortKey === k}>${l}</option>`)}
         </select>
         ${icon("chevron-down", "select__icon")}
       </div>
@@ -190,9 +199,15 @@ class MpContent extends MpElement {
         const all = state.visibleSongs.length > 0 && state.visibleSongs.every((s) => state.selectedIds.has(s.id));
         return html`
           <span class="toolbar__selinfo">已选 ${fmtCount(n)} 首</span>
-          <button class="btn btn--sm" type="button" data-tool="sel-all">${icon("check")}<span>${all ? "取消全选" : "全选"}</span></button>
-          <button class="btn btn--sm btn--danger" type="button" data-tool="sel-remove" ?disabled=${!n}>${icon("trash")}<span>移除所选</span></button>
-          <button class="btn btn--sm btn--primary" type="button" data-tool="pl-select">${icon("close")}<span>完成</span></button>
+          <button class="btn btn--sm" type="button" data-tool="sel-all">
+            ${icon("check")}<span>${all ? "取消全选" : "全选"}</span>
+          </button>
+          <button class="btn btn--sm btn--danger" type="button" data-tool="sel-remove" ?disabled=${!n}>
+            ${icon("trash")}<span>移除所选</span>
+          </button>
+          <button class="btn btn--sm btn--primary" type="button" data-tool="pl-select">
+            ${icon("close")}<span>完成</span>
+          </button>
         `;
       }
       return html`
@@ -221,10 +236,7 @@ class MpContent extends MpElement {
     }
     // .page 上挂着 fade-in 入场动画：只有「进入另一个列表」才该重建它。
     // keyed() 表达的正是这件事（key 变了才换节点）。
-    return keyed(
-      `${v}|${state.playlistId ?? ""}`,
-      html`<div class="page"><mp-track-table></mp-track-table></div>`
-    );
+    return keyed(`${v}|${state.playlistId ?? ""}`, html`<div class="page"><mp-track-table></mp-track-table></div>`);
   }
 
   empty(kind) {
@@ -264,9 +276,13 @@ class MpContent extends MpElement {
         <svg class="empty__art" aria-hidden="true"><use href="#i-${cfg.icon}"></use></svg>
         <div class="empty__title">${cfg.title}</div>
         ${cfg.desc ? html`<div class="empty__desc">${cfg.desc}</div>` : nothing}
-        ${cfg.ok
-          ? html`<div class="empty__actions"><button class="btn btn--primary" type="button" data-empty-act=${cfg.act}>${cfg.ok}</button></div>`
-          : nothing}
+        ${
+          cfg.ok
+            ? html`<div class="empty__actions">
+                <button class="btn btn--primary" type="button" data-empty-act=${cfg.act}>${cfg.ok}</button>
+              </div>`
+            : nothing
+        }
       </div>
     `;
   }

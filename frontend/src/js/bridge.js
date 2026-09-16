@@ -156,7 +156,20 @@ async function call(fn, ...args) {
   return fn(...args);
 }
 
-export const backend = {
+/* --------------------------------------------------------------------------
+   契约自检：漏接线要报得清楚，而不是变成一句 "is not a function"
+   --------------------------------------------------------------------------
+   绑定层的方法名由 `wails3 generate bindings` 生成，而下面这个映射是**手写的
+   字符串键** —— 两者之间没有任何编译期或测试期校验。漏一个键的后果不是构建
+   失败，而是用户点一下看到「XXX is not a function」，日志里也没有任何线索。
+
+   真实案例：WindowService.ResetDesktopLyricsPosition 在 Go 侧和绑定层都存在，
+   只有这里漏了对应的键，于是「重置桌面歌词位置」永远是失败的。
+
+   下面用 Proxy 兜住这个类别的错误：访问不存在的键时不再返回 undefined，
+   而是给出**可操作**的提示（并在控制台记一次）。
+   -------------------------------------------------------------------------- */
+const backendImpl = {
   /* ---- 曲库 ---- */
   scan: (folderIds = []) => call(bindings?.Library?.Scan, folderIds),
   songs: () => call(bindings?.Library?.Songs),
@@ -253,6 +266,11 @@ export const backend = {
   desktopLyricsState: () => call(bindings?.Window?.DesktopLyricsState),
   desktopLyricsReady: () => call(bindings?.Window?.MarkDesktopLyricsReady),
   updateDesktopLyrics: (payload) => call(bindings?.Window?.UpdateDesktopLyrics, payload),
+  // 把桌面歌词窗口移回默认位置并清掉位置记忆。
+  // ★ 这个键曾经漏掉过：Go 侧 WindowService.ResetDesktopLyricsPosition 与
+  //   绑定层 windowservice.js 都实现了它，只有这里没接线，于是设置里那个
+  //   「重置位置」按钮 100% 报「重置失败：... is not a function」。
+  desktopLyricsResetPos: () => call(bindings?.Window?.ResetDesktopLyricsPosition),
   // 桌面背景歌词：铺满桌面、垫在桌面图标之下的窗口（见 desktop_wallpaper.go）。
   // 与桌面歌词是单选 —— 互斥在后端由 SetDesktopLyrics / SetDesktopWallpaper
   // 共用同一个入口保证，前端 desktop-mode.js 也做一遍。
@@ -310,11 +328,9 @@ export const backend = {
   coverList: (songId) => call(bindings?.Cover?.List, songId),
   // 追加一张并设为当前生效；embed 显式传入「是否写回歌曲文件」
   // （设置是防抖同步的，靠后端读配置会有竞态：刚开开关就换封面时后端可能还没收到）
-  coverAdd: (songId, imageURL, preview, embed = null) =>
-    call(bindings?.Cover?.Add, songId, imageURL, preview, embed),
+  coverAdd: (songId, imageURL, preview, embed = null) => call(bindings?.Cover?.Add, songId, imageURL, preview, embed),
   // 多选后一次应用：逐个 data URL 追加（第一张成为当前生效封面）
-  coverAddMany: (songId, previews, embed = null) =>
-    call(bindings?.Cover?.AddMany, songId, previews, embed),
+  coverAddMany: (songId, previews, embed = null) => call(bindings?.Cover?.AddMany, songId, previews, embed),
   coverSetActive: (songId, index) => call(bindings?.Cover?.SetActive, songId, index),
   coverRemove: (songId, index) => call(bindings?.Cover?.Remove, songId, index),
   coverCurrent: (songId) => call(bindings?.Cover?.Current, songId),
@@ -327,6 +343,29 @@ export const backend = {
   // 一次性把缓存里已有的封面/歌词补写进歌曲文件（用户在设置里确认后才会调）
   coverWriteCacheToFiles: () => call(bindings?.Cover?.WriteCacheToFiles),
 };
+
+/** 这些是语言/工具自身的协议属性，不能当成「漏接线的方法」 */
+const NON_METHOD_PROPS = new Set(["then", "toJSON", "constructor", "valueOf", "toString", "inspect"]);
+
+/**
+ * backend 的对外形态：对未知方法给一个带排查提示的失败。
+ * 导出的是 Proxy（`backend`），实际映射是上面的 backendImpl。
+ */
+export const backend = new Proxy(backendImpl, {
+  get(target, prop, receiver) {
+    if (typeof prop === "string" && !(prop in target) && !NON_METHOD_PROPS.has(prop)) {
+      const msg =
+        `[bridge] backend.${prop} 未接线：bridge.js 里缺少这个键。` +
+        `若 Go 侧/绑定层存在同名方法（看 frontend/bindings/musicplayer/），` +
+        `在那个对象里补一行即可。`;
+      console.error(msg);
+      return () => {
+        throw new Error(msg);
+      };
+    }
+    return Reflect.get(target, prop, receiver);
+  },
+});
 
 /* --------------------------------------------------------------------------
    浏览器预览模式下的事件模拟

@@ -19,7 +19,8 @@ import { addSongsTo, promptNewPlaylist } from "../playlists.js";
 import { toggleLyricsPanel } from "../lyrics-panel.js";
 import { togglePlayer } from "../playerhost.js";
 import { locateCurrentQueueItem } from "../tracks.js";
-import { commit,
+import {
+  commit,
   currentSong,
   cyclePlayMode,
   isLiked,
@@ -211,7 +212,9 @@ class MpPlayerbar extends MpElement {
               data-tip=${liked ? "取消喜欢" : "加入我喜欢"}
               aria-label="加入我喜欢"
               @click=${() => this.onLike()}
-            >${icon("heart")}</button>
+            >
+              ${icon("heart")}
+            </button>
             <button
               class="playerbar__heart playerbar__add"
               id="bar-add"
@@ -220,12 +223,21 @@ class MpPlayerbar extends MpElement {
               aria-label="添加到歌单"
               ?disabled=${!song}
               @click=${(e) => this.openAddToPlaylistMenu(e.currentTarget)}
-            >${icon("playlist-plus")}</button>
+            >
+              ${icon("playlist-plus")}
+            </button>
           </div>
 
           <div class="playerbar__center">
             <div class="transport">
-              <button class="transport__btn" id="btn-prev" type="button" data-tip="上一曲" aria-label="上一曲" @click=${() => playPrev()}>
+              <button
+                class="transport__btn"
+                id="btn-prev"
+                type="button"
+                data-tip="上一曲"
+                aria-label="上一曲"
+                @click=${() => playPrev()}
+              >
                 ${icon("prev")}
               </button>
               <button
@@ -238,7 +250,14 @@ class MpPlayerbar extends MpElement {
               >
                 <svg id="icon-play"><use href="#i-${state.playing ? "pause" : "play"}"></use></svg>
               </button>
-              <button class="transport__btn" id="btn-next" type="button" data-tip="下一曲" aria-label="下一曲" @click=${() => playNext(false)}>
+              <button
+                class="transport__btn"
+                id="btn-next"
+                type="button"
+                data-tip="下一曲"
+                aria-label="下一曲"
+                @click=${() => playNext(false)}
+              >
                 ${icon("next")}
               </button>
             </div>
@@ -310,7 +329,9 @@ class MpPlayerbar extends MpElement {
               data-tip="桌面歌词"
               aria-label="桌面歌词"
               @click=${() => toggleDesktopLyrics()}
-            >${icon("desktop-lyrics")}</button>
+            >
+              ${icon("desktop-lyrics")}
+            </button>
             <button
               class="mode-btn"
               id="btn-desktop-wallpaper"
@@ -318,12 +339,16 @@ class MpPlayerbar extends MpElement {
               aria-pressed=${String(Boolean(state.config.showDesktopWallpaper))}
               ?disabled=${state.desktopWallpaperSupport?.supported === false}
               aria-disabled=${state.desktopWallpaperSupport?.supported === false ? "true" : nothing}
-              data-tip=${state.desktopWallpaperSupport?.supported === false
-                ? state.desktopWallpaperSupport.reason
-                : "桌面背景歌词"}
+              data-tip=${
+                state.desktopWallpaperSupport?.supported === false
+                  ? state.desktopWallpaperSupport.reason
+                  : "桌面背景歌词"
+              }
               aria-label="桌面背景歌词"
               @click=${() => toggleDesktopWallpaper()}
-            >${icon("desktop-wallpaper")}</button>
+            >
+              ${icon("desktop-wallpaper")}
+            </button>
             <button
               class="mode-btn"
               id="btn-sleep"
@@ -344,7 +369,9 @@ class MpPlayerbar extends MpElement {
               data-tip="选项"
               aria-label="选项"
               @click=${() => toggleOptionsPanel()}
-            >${icon("options")}</button>
+            >
+              ${icon("options")}
+            </button>
             <button
               class="mode-btn"
               id="btn-playlist"
@@ -357,7 +384,9 @@ class MpPlayerbar extends MpElement {
               }}
             >
               ${icon("playlist")}
-              <span class="mode-btn__badge" id="queue-count">${state.queue.length === 0 ? "" : state.queue.length > 99 ? "99+" : String(state.queue.length)}</span>
+              <span class="mode-btn__badge" id="queue-count"
+                >${state.queue.length === 0 ? "" : state.queue.length > 99 ? "99+" : String(state.queue.length)}</span
+              >
             </button>
           </div>
         </div>
@@ -366,7 +395,8 @@ class MpPlayerbar extends MpElement {
   }
 
   sleepTip(timer) {
-    if (timer?.type === "duration") return `定时停止 · 剩余 ${Math.max(0, Math.round((timer.until - Date.now()) / 1000))} 秒`;
+    if (timer?.type === "duration")
+      return `定时停止 · 剩余 ${Math.max(0, Math.round((timer.until - Date.now()) / 1000))} 秒`;
     if (timer?.type === "after-song") return "定时停止 · 播完当前歌曲";
     return "定时停止";
   }

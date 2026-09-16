@@ -60,7 +60,10 @@ function nearestScrollAncestor(el) {
 function parseColor(str) {
   const m = String(str).match(/rgba?\(([^)]+)\)/);
   if (!m) return null;
-  const parts = m[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+  const parts = m[1]
+    .split(/[,\s/]+/)
+    .filter(Boolean)
+    .map(Number);
   return { r: parts[0], g: parts[1], b: parts[2], a: parts[3] ?? 1 };
 }
 
@@ -127,7 +130,14 @@ export function runProbe() {
     const now = rect(".playerbar__now");
     const center = rect(".playerbar__center");
     const tools = rect(".playerbar__tools");
-    info.playerbar = { bar: { w: Math.round(barRect.width), h: Math.round(barRect.height) }, prog, row, now, center, tools };
+    info.playerbar = {
+      bar: { w: Math.round(barRect.width), h: Math.round(barRect.height) },
+      prog,
+      row,
+      now,
+      center,
+      tools,
+    };
     if (!prog || !row) {
       issues.push("底栏缺少进度条或控制行");
     } else {
@@ -142,7 +152,9 @@ export function runProbe() {
       ["控制行", row],
     ]) {
       if (r && (r.y < barRect.top - 1 || r.y + r.h > barRect.bottom + 1)) {
-        issues.push(`底栏${label}超出范围: y=${r.y} h=${r.h} bar=[${Math.round(barRect.top)},${Math.round(barRect.bottom)}]`);
+        issues.push(
+          `底栏${label}超出范围: y=${r.y} h=${r.h} bar=[${Math.round(barRect.top)},${Math.round(barRect.bottom)}]`
+        );
       }
     }
   }
@@ -261,9 +273,7 @@ export function runProbe() {
     info.gridColumns = { head: headCols, row: rowCols };
     if (headCols !== rowCols) {
       const n = (s) => s.split(/\s+/).filter(Boolean).length;
-      issues.push(
-        `表头与数据行网格列不一致（表头 ${n(headCols)} 列 / 行 ${n(rowCols)} 列），表头会错位`
-      );
+      issues.push(`表头与数据行网格列不一致（表头 ${n(headCols)} 列 / 行 ${n(rowCols)} 列），表头会错位`);
     }
   }
 
@@ -299,7 +309,10 @@ export function runProbe() {
      表头文字居中到那个高行里 —— 表现为文字整体下移约 1.5 行。 */
   if (headEl) {
     const rows = getComputedStyle(headEl).gridTemplateRows;
-    const rowPx = rows.split(/\s+/).map(parseFloat).filter((n) => !Number.isNaN(n));
+    const rowPx = rows
+      .split(/\s+/)
+      .map(parseFloat)
+      .filter((n) => !Number.isNaN(n));
     const maxRow = rowPx.length ? Math.max(...rowPx) : 0;
     info.headGrid = { height: headEl.getBoundingClientRect().height, rows, maxRow };
     if (maxRow > headEl.getBoundingClientRect().height + 1) {

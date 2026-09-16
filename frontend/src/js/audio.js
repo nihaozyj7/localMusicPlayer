@@ -262,7 +262,7 @@ function bindEvents(node) {
       const target = pendingSeek;
       pendingSeek = null;
       try {
-        node.currentTime = Math.max(0, Math.min(target, (state.duration || 0)) / 1000);
+        node.currentTime = Math.max(0, Math.min(target, state.duration || 0) / 1000);
       } catch {
         /* 转码流不支持精确定位时忽略 */
       }
@@ -540,10 +540,7 @@ export async function refreshLoudnessGains() {
   }
   const target = state.config.loudnessTarget ?? -16;
   try {
-    const map =
-      mode === "album"
-        ? await backend.loudnessAlbumGains(target)
-        : await backend.loudnessGainMap(target);
+    const map = mode === "album" ? await backend.loudnessAlbumGains(target) : await backend.loudnessGainMap(target);
     // 后端返回的是当前标准下有效的补偿；直接替换（不要 merge，
     // 否则换标准后旧的补偿会残留下来）
     state.loudnessGains = map || {};

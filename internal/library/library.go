@@ -3,10 +3,13 @@ package library
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,7 +18,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"musicplayer/internal/atomicfile"
 	"musicplayer/internal/bootstrap"
+	"musicplayer/internal/covercache"
 	"musicplayer/internal/ffmpeg"
 	"musicplayer/internal/filter"
 	"musicplayer/internal/meta"
@@ -45,9 +50,17 @@ type cacheEntry struct {
 	Duration int64  `json:"duration"`
 	Sample   int    `json:"sample"`
 	Bitrate  int    `json:"bitrate"`
-	Cover    string `json:"cover,omitempty"` // data URL，体积大，能省则省
-	ModTime  int64  `json:"modTime"`
-	Size     int64  `json:"size"`
+	// CoverFile 是封面缓存目录里的文件名（内容 hash 命名，见 internal/covercache）。
+	// 空字符串表示这首歌没有内嵌封面。
+	//
+	// ★ 这里以前是 Cover string（完整的 base64 data URL）—— 实测那份 5.59MB 的
+	// 元数据缓存里 99.6% 是它，而同一张专辑封面会被逐首重复存 N 份。
+	CoverFile string `json:"coverFile,omitempty"`
+	// Cover 是 v1 遗留字段，只用于**一次性迁移**（读进来解码成图片塞进封面缓存，
+	// 然后置空）；新写入的缓存永远是空的。见 migrateLegacyCovers。
+	Cover   string `json:"cover,omitempty"`
+	ModTime int64  `json:"modTime"`
+	Size    int64  `json:"size"`
 	// Probed 表示「已经用 ffmpeg 探测过且确实拿不到时长」。
 	// 没有这个标记的话，每次重扫都会对同一批无时长文件反复起 ffmpeg 进程。
 	Probed bool `json:"probed,omitempty"`
@@ -57,7 +70,6 @@ type cacheEntry struct {
 type Manager struct {
 	mu      sync.RWMutex
 	songs   map[string]bootstrap.Song // id -> song
-	raw     []bootstrap.Song          // 过滤前的全部文件
 	folders []bootstrap.Folder
 	cache   map[string]cacheEntry
 	cacheMu sync.RWMutex
@@ -74,24 +86,27 @@ type Manager struct {
 
 	// 依赖
 	store *bootstrap.Store
+	// covers 是内嵌封面的内容寻址缓存（hash 命名，专用目录）
+	covers *covercache.Store
 
 	// 回调
 	onProgress ProgressFunc
 	onChanged  func(ScanResult)
-
-	// 增量重建用的索引
-	pathIndex map[string]string // path -> song id
 }
 
 // NewManager 创建曲库管理器
 func NewManager(store *bootstrap.Store) *Manager {
 	m := &Manager{
-		songs:     map[string]bootstrap.Song{},
-		cache:     map[string]cacheEntry{},
-		pathIndex: map[string]string{},
-		store:     store,
+		songs: map[string]bootstrap.Song{},
+		cache: map[string]cacheEntry{},
+		store: store,
 	}
 	m.folders = store.Get().EffectiveFolders()
+	// 专用封面缓存目录：<cacheDir>/covers。
+	// 与 metacache 的 <cacheDir>/meta/covers 分开：那边是「用户管理过的封面」
+	// （联网抓取 / 手动换 / 写回文件），有自己的索引与删除语义；这里是「从文件
+	// 标签里解析出来的封面」，纯内容寻址、无索引、由扫描自动重建。
+	m.covers = covercache.New(filepath.Join(store.Get().CacheDir, "covers"))
 	// 元数据缓存**不在这里读**：它是 5.9MB 的 JSON（99% 是内嵌封面的 base64），
 	// 同步 json.Unmarshal 会发生在 main() 建窗口之前，是首屏里最贵的一段。
 	// 改成第一次真正用到缓存时再读（扫描 / 保存），见 ensureCacheLoaded。
@@ -233,26 +248,145 @@ func (m *Manager) loadCache() {
 	m.cacheMu.Lock()
 	m.cache = cf.Entries
 	m.cacheMu.Unlock()
+
+	// v1 → v2：把 base64 封面搬进内容寻址的封面缓存目录
+	m.migrateLegacyCovers()
 }
+
+// migrateLegacyCovers 把 v1 元数据缓存里的 base64 封面搬进封面缓存目录。
+//
+// 为什么必须**就地迁移**，而不是「直接丢掉 legacy 字段、等下次重扫」：缓存命中
+// 路径只要 ModTime/Size 没变就认为记录仍然有效，不会再打开文件去解析封面 ——
+// 于是老用户会在文件毫无变化的情况下**永久失去封面**。
+func (m *Manager) migrateLegacyCovers() {
+	type item struct {
+		path string
+		data []byte
+		mime string
+	}
+
+	var todo []item
+	m.cacheMu.Lock()
+	for path, entry := range m.cache {
+		if entry.Cover == "" {
+			continue
+		}
+		if entry.CoverFile != "" {
+			// 已经迁移过，只清掉体积大的遗留字段
+			entry.Cover = ""
+			m.cache[path] = entry
+			continue
+		}
+		data, mime, ok := decodeDataURL(entry.Cover)
+		if !ok {
+			// 坏数据：清掉字段，别让它继续占体积
+			entry.Cover = ""
+			m.cache[path] = entry
+			continue
+		}
+		todo = append(todo, item{path: path, data: data, mime: mime})
+	}
+	m.cacheMu.Unlock()
+
+	if len(todo) == 0 {
+		return
+	}
+	migrated := 0
+	for _, it := range todo {
+		name, err := m.covers.Put(it.data, it.mime)
+		if err != nil {
+			log.Printf("[library] 迁移封面失败（%s）: %v", it.path, err)
+			continue
+		}
+		m.cacheMu.Lock()
+		if entry, ok := m.cache[it.path]; ok {
+			entry.CoverFile = name
+			entry.Cover = ""
+			m.cache[it.path] = entry
+			migrated++
+		}
+		m.cacheMu.Unlock()
+	}
+	log.Printf("[library] 已把 %d 首的内嵌封面从 base64 迁移到内容寻址缓存（%s）", migrated, m.covers.Dir())
+}
+
+// decodeDataURL 解析 "data:image/jpeg;base64,xxxx"（只用于 v1 缓存迁移）。
+func decodeDataURL(s string) ([]byte, string, bool) {
+	comma := strings.IndexByte(s, ',')
+	if comma < 0 {
+		return nil, "", false
+	}
+	head := s[:comma]
+	if !strings.HasPrefix(head, "data:") || !strings.Contains(head, "base64") {
+		return nil, "", false
+	}
+	mime := strings.TrimSuffix(strings.TrimPrefix(head, "data:"), ";base64")
+	data, err := base64.StdEncoding.DecodeString(s[comma+1:])
+	if err != nil || len(data) == 0 {
+		return nil, "", false
+	}
+	return data, mime, true
+}
+
+// CoversDir 返回内嵌封面缓存目录（供设置界面显示）。
+func (m *Manager) CoversDir() string { return m.covers.Dir() }
+
+// CoversHandler 返回 /cover/ 前缀的处理器（main.go 的中间件把它挂到同源 asset server）。
+func (m *Manager) CoversHandler() http.Handler { return m.covers.Handler() }
+
+// CoversStats 返回内嵌封面缓存的文件数与总字节数。
+func (m *Manager) CoversStats() (int, int64) { return m.covers.Stats() }
 
 // SaveCache 把元数据缓存落盘（扫描结束后调用）
 func (m *Manager) SaveCache() error {
 	// 保存前必须已经读过磁盘上的旧缓存：缓存现在是懒加载的，
 	// 少了这一步就会把上一次的全部条目直接覆盖成「只有本次扫描碰过的那些」。
 	m.ensureCacheLoaded()
+	// 与 loudness.Save 同样的理由：map 是引用类型，必须在锁内复制 ——
+	// 否则下面 json.Marshal 会无锁遍历 m.cache，而扫描 worker 仍在写它。
+	// 目前靠 beginScan/endScan 串行化侥幸不触发，但那是隐式约定，不该依赖。
 	m.cacheMu.RLock()
-	cf := cacheFile{Version: cacheVersion, Entries: m.cache}
+	entries := make(map[string]cacheEntry, len(m.cache))
+	for k, v := range m.cache {
+		entries[k] = v
+	}
 	m.cacheMu.RUnlock()
 
-	raw, err := json.MarshalIndent(cf, "", "  ")
+	// 用 Marshal 而不是 MarshalIndent：这份文件里 99% 是内嵌封面的 base64，
+	// 缩进既不可读也白花 CPU（实测这份缓存 5.6MB）。
+	raw, err := json.Marshal(cacheFile{Version: cacheVersion, Entries: entries})
 	if err != nil {
 		return err
 	}
-	tmp := m.cachePath() + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+	if err := atomicfile.Write(m.cachePath(), raw, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, m.cachePath())
+	// 顺手回收不再被引用的封面文件（内容寻址的目录只增不减，必须有这一步）。
+	m.pruneCoverCache()
+	return nil
+}
+
+// pruneCoverCache 删掉不再被任何元数据条目引用的封面文件。
+//
+// 孤儿是怎么来的：用户在歌曲文件里换了内嵌封面、或删掉了歌 → 元数据条目的
+// CoverFile 换成新的（或整条消失），旧图就没人引用了。
+//
+// 1 小时的年龄门槛是给「刚写完还没登记进元数据缓存」的文件留的窗口 ——
+// 那种文件此刻必然不在 keep 里，不该被当成孤儿删掉。
+func (m *Manager) pruneCoverCache() {
+	m.cacheMu.RLock()
+	keep := make(map[string]struct{}, len(m.cache))
+	for _, entry := range m.cache {
+		if entry.CoverFile != "" {
+			keep[entry.CoverFile] = struct{}{}
+		}
+	}
+	m.cacheMu.RUnlock()
+
+	removed, freed := m.covers.Prune(keep, time.Hour)
+	if removed > 0 {
+		log.Printf("[library] 回收了 %d 个不再被引用的封面文件（%.1f KB）", removed, float64(freed)/1024)
+	}
 }
 
 /* --------------------------------------------------------------------------
@@ -394,10 +528,8 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 		prevIDs[id] = true
 	}
 	newSongs := make(map[string]bootstrap.Song, len(res.Kept))
-	newIndex := make(map[string]string, len(res.Kept))
 	for _, s := range res.Kept {
 		newSongs[s.ID] = s
-		newIndex[s.Path] = s.ID
 	}
 	added := 0
 	for id := range newSongs {
@@ -412,8 +544,6 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 		}
 	}
 	m.songs = newSongs
-	m.pathIndex = newIndex
-	m.raw = results
 
 	// 5) 更新文件夹状态与曲目数
 	for i := range m.folders {
@@ -506,9 +636,6 @@ func (m *Manager) RescanPaths(ctx context.Context, paths []string) (ScanResult, 
 	}
 	// 用新结果替换受影响目录下的旧条目
 	for id := range affectedBefore {
-		if s, ok := m.songs[id]; ok {
-			delete(m.pathIndex, s.Path)
-		}
 		delete(m.songs, id)
 	}
 	added := 0
@@ -517,7 +644,6 @@ func (m *Manager) RescanPaths(ctx context.Context, paths []string) (ScanResult, 
 			added++
 		}
 		m.songs[s.ID] = s
-		m.pathIndex[s.Path] = s.ID
 	}
 	for i := range m.folders {
 		if status, ok := statuses[m.folders[i].ID]; ok {
@@ -638,7 +764,7 @@ func (m *Manager) songFromCandidate(c candidate, force bool) bootstrap.Song {
 			song.Duration = entry.Duration
 			song.SampleRate = entry.Sample
 			song.Bitrate = entry.Bitrate
-			song.Cover = entry.Cover
+			song.CoverURL = m.covers.URL(entry.CoverFile)
 			song.AddedAt = c.mod
 			fillFallback(&song)
 			return song
@@ -652,21 +778,30 @@ func (m *Manager) songFromCandidate(c candidate, force bool) bootstrap.Song {
 	song.Duration = info.DurationMS
 	song.SampleRate = info.SampleRate
 	song.Bitrate = info.Bitrate
-	song.Cover = info.CoverDataURL
 	song.AddedAt = c.mod
 	fillFallback(&song)
 
+	// 封面字节写进内容寻址的封面缓存目录，元数据里只留文件名。
+	// 同内容（整张专辑共用一张封面）只写一次盘。
+	coverFile, err := m.covers.Put(info.CoverData, info.CoverMIME)
+	if err != nil {
+		// 封面存不下不该让整首歌的元数据也失败：降级成「无封面」并记一条日志
+		log.Printf("[library] 写入封面缓存失败（%s）: %v", c.path, err)
+	} else if coverFile != "" {
+		song.CoverURL = m.covers.URL(coverFile)
+	}
+
 	m.cacheMu.Lock()
 	m.cache[c.path] = cacheEntry{
-		Title:    song.Title,
-		Artist:   song.Artist,
-		Album:    song.Album,
-		Duration: song.Duration,
-		Sample:   song.SampleRate,
-		Bitrate:  song.Bitrate,
-		Cover:    song.Cover,
-		ModTime:  c.mod,
-		Size:     c.size,
+		Title:     song.Title,
+		Artist:    song.Artist,
+		Album:     song.Album,
+		Duration:  song.Duration,
+		Sample:    song.SampleRate,
+		Bitrate:   song.Bitrate,
+		CoverFile: coverFile,
+		ModTime:   c.mod,
+		Size:      c.size,
 	}
 	m.cacheMu.Unlock()
 	atomic.AddInt64(&m.metaReads, 1)
@@ -854,13 +989,35 @@ func walkFolder(root string) ([]candidate, string) {
 		if os.IsPermission(err) {
 			return out, "denied"
 		}
-		return out, "ok"
+		// 以前这里返回 "ok"：磁盘 I/O 错误 / 路径过长 / 网络盘断开都会被当成
+		// 「扫描成功」，曲库被静默截断而界面上没有任何提示，排查极其困难。
+		log.Printf("[library] 遍历 %s 失败: %v", root, err)
+		return out, "error"
 	}
 	return out, "ok"
 }
 
 // isUnder 判断 path 是否位于 root 之下（含 root 本身）
 func isUnder(path, root string) bool {
+	// 快速路径：root 是 path 的字符串前缀，且边界落在目录分隔符上。
+	//
+	// 为什么需要它：这个函数在 Scan / RescanPaths 里被调用 O(folders × songs) 次
+	//（20 个文件夹 × 10 万首 = 200 万次），且整段在写锁内完成。filepath.Rel 会做
+	// Clean/Abs 与字符串分配，是那条循环的主要成本。
+	//
+	// 快路径成立的前提在扫描路径上是硬保证的：song.Path 来自
+	// filepath.WalkDir(folder.Path)，必然以 folder.Path 的原文开头。
+	// 快路径不成立时（大小写不同、相对路径、含 . 或 ..）落到下面的慢路径，
+	// 语义与原实现完全一致。
+	if root != "" && strings.HasPrefix(path, root) {
+		if len(path) == len(root) {
+			return true
+		}
+		if isSep(root[len(root)-1]) || isSep(path[len(root)]) {
+			return true
+		}
+	}
+
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		return false
@@ -868,7 +1025,19 @@ func isUnder(path, root string) bool {
 	if rel == "." {
 		return true
 	}
-	return !strings.HasPrefix(rel, "..")
+	// 不能写成 !strings.HasPrefix(rel, "..")：filepath.Rel("C:/Music",
+	// "C:/Music/..hidden/a.mp3") 得到 "..hidden/a.mp3"，它同样以 ".." 开头，
+	// 于是**真实存在的子目录**会被判成「不在 root 之下」。
+	// 只有恰好等于 ".." 或以 ".." + 分隔符开头才是真的越界。
+	if rel == ".." {
+		return false
+	}
+	return !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// isSep 判目录分隔符（Windows 上两种都认，便于比较外部传入的路径字符串）
+func isSep(c byte) bool {
+	return c == filepath.Separator || c == '/' || c == '\\'
 }
 
 // CountInFolder 统计某目录下的曲目数（供文件夹新增后立即回显）

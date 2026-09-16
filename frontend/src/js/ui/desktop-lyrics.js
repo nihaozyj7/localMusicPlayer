@@ -125,7 +125,12 @@ class MpDesktopLyrics extends LitElement {
 
   render() {
     return html`
-      <div class="dl" id="dl" data-state=${this.text ? (this.playing ? "singing" : "paused") : "idle"} data-style=${this.styleId}>
+      <div
+        class="dl"
+        id="dl"
+        data-state=${this.text ? (this.playing ? "singing" : "paused") : "idle"}
+        data-style=${this.styleId}
+      >
         <!-- 悬浮控制栏：鼠标移入窗口时才出现（"常规窗口"形态）。
              不悬浮时整块（含窗口背景）完全透明，不会在桌面上留下半透明色块。 -->
         <div class="dl__bar" id="dl-bar">

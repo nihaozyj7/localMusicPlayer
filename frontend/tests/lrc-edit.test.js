@@ -84,7 +84,10 @@ test("mergeDraftTimes：插入一行，后面的时间整体跟着走", () => {
   ];
   const next = parseLyricDraft("A\n新插入\nB");
   const merged = mergeDraftTimes(prev, next);
-  assert.deepEqual(merged.map((l) => l.time), [10000, null, 20000]);
+  assert.deepEqual(
+    merged.map((l) => l.time),
+    [10000, null, 20000]
+  );
 });
 
 test("mergeDraftTimes：删除一行，剩下的时间各自归位", () => {
@@ -95,21 +98,25 @@ test("mergeDraftTimes：删除一行，剩下的时间各自归位", () => {
   ];
   const next = parseLyricDraft("A\nC");
   const merged = mergeDraftTimes(prev, next);
-  assert.deepEqual(merged.map((l) => l.time), [10000, 30000]);
+  assert.deepEqual(
+    merged.map((l) => l.time),
+    [10000, 30000]
+  );
 });
 
 test("mergeDraftTimes：重复行（副歌）不会两行抢同一个时间", () => {
   const prev = parseLyricDraft("[00:10.00]副歌\n[00:20.00]主歌\n[00:30.00]副歌");
   const next = parseLyricDraft("副歌\n主歌\n副歌");
   const merged = mergeDraftTimes(prev, next);
-  assert.deepEqual(merged.map((l) => l.time), [10000, 20000, 30000]);
+  assert.deepEqual(
+    merged.map((l) => l.time),
+    [10000, 20000, 30000]
+  );
 });
 
 test("mergeDraftTimes：新文本比旧草稿长很多时不崩（短→整首的情况）", () => {
   const prev = parseLyricDraft("[00:01.00]第一句\n[00:02.00]第二句");
-  const next = parseLyricDraft(
-    Array.from({ length: 100 }, (_, i) => "第" + (i + 1) + "句歌词").join("\n")
-  );
+  const next = parseLyricDraft(Array.from({ length: 100 }, (_, i) => "第" + (i + 1) + "句歌词").join("\n"));
   const merged = mergeDraftTimes(prev, next);
   assert.equal(merged.length, 100);
   assert.equal(merged[0].time, null, "文本对不上就不该沿用旧时间");

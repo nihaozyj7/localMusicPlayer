@@ -139,8 +139,7 @@ check(
   "真实应用里皮肤包加载正常（样式按钮组齐 + 沉浸舞台换掉了）",
   Array.isArray(skins?.buttons) &&
     // 内置样式清单：变了就必须显式改这里，免得新增样式时漏注册
-    skins.buttons.slice(0, 8).join(",") ===
-      "classic,immersive,minimal,anime,arcade,magia" &&
+    skins.buttons.slice(0, 8).join(",") === "classic,immersive,minimal,anime,arcade,magia" &&
     skins.skin === "immersive" &&
     skins.hasCard &&
     skins.bgExists,

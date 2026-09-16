@@ -163,14 +163,17 @@ func TestWriteCacheToFiles(t *testing.T) {
 	}
 }
 
-/* --------------------------------------------------------------------------
-   与真实曲库对接：缓存里的 songID 必须能和 library 扫描出来的 id 对上。
-   --------------------------------------------------------------------------
-   这是最容易出错的一段：缓存文件名用的是 bootstrap.StableID(路径)，
-   而曲库扫描后也是同一个函数。两边算法一旦漂移（比如前端 stableId 的
-   UTF-16 码元处理），「把缓存写进文件」就会全部落空 —— 界面只会显示
-   「已写入 0 首，跳过 N 首」，很难查。这里用真的 Manager 扫一遍来钉住它。
-   -------------------------------------------------------------------------- */
+/*
+--------------------------------------------------------------------------
+
+	与真实曲库对接：缓存里的 songID 必须能和 library 扫描出来的 id 对上。
+	--------------------------------------------------------------------------
+	这是最容易出错的一段：缓存文件名用的是 bootstrap.StableID(路径)，
+	而曲库扫描后也是同一个函数。两边算法一旦漂移（比如前端 stableId 的
+	UTF-16 码元处理），「把缓存写进文件」就会全部落空 —— 界面只会显示
+	「已写入 0 首，跳过 N 首」，很难查。这里用真的 Manager 扫一遍来钉住它。
+	--------------------------------------------------------------------------
+*/
 func TestWriteCacheToFilesMatchesLibraryIDs(t *testing.T) {
 	dir := t.TempDir()
 	musicDir := filepath.Join(dir, "music")
@@ -240,7 +243,8 @@ func TestWriteCacheToFilesMatchesLibraryIDs(t *testing.T) {
 	}
 }
 
-func TestWriteCacheToFilesEmpty(t *testing.T) {	dir := t.TempDir()
+func TestWriteCacheToFilesEmpty(t *testing.T) {
+	dir := t.TempDir()
 	t.Setenv("MUSICPLAYER_DATA_DIR", filepath.Join(dir, "data"))
 	store, err := bootstrap.NewStore()
 	if err != nil {

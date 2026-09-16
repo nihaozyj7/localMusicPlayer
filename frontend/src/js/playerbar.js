@@ -52,17 +52,17 @@ export function toggleSleepPanel(force) {
    桌面歌词 / 桌面背景歌词（一组单选按钮）
    -------------------------------------------------------------------------- */
 export function toggleDesktopLyrics() {
-  return toggleDesktopModeWithToast(
-    state.config.showDesktopLyrics ? DESKTOP_MODE.off : DESKTOP_MODE.lyrics,
-    { on: "已开启桌面歌词", off: "已关闭桌面歌词" }
-  );
+  return toggleDesktopModeWithToast(state.config.showDesktopLyrics ? DESKTOP_MODE.off : DESKTOP_MODE.lyrics, {
+    on: "已开启桌面歌词",
+    off: "已关闭桌面歌词",
+  });
 }
 
 export function toggleDesktopWallpaper() {
-  return toggleDesktopModeWithToast(
-    state.config.showDesktopWallpaper ? DESKTOP_MODE.off : DESKTOP_MODE.wallpaper,
-    { on: "已开启桌面背景歌词", off: "已关闭桌面背景歌词" }
-  );
+  return toggleDesktopModeWithToast(state.config.showDesktopWallpaper ? DESKTOP_MODE.off : DESKTOP_MODE.wallpaper, {
+    on: "已开启桌面背景歌词",
+    off: "已关闭桌面背景歌词",
+  });
 }
 
 /**
@@ -117,12 +117,9 @@ export function clearSleepTimer(message) {
 export function setSleepAfterSong(next) {
   state.config.sleepAfterSong = Boolean(next);
   commit();
-  toast(
-    state.config.sleepAfterSong
-      ? "已开启：倒计时结束后等当前歌曲播完再停"
-      : "已关闭：倒计时结束后立即停止",
-    { duration: 2200 }
-  );
+  toast(state.config.sleepAfterSong ? "已开启：倒计时结束后等当前歌曲播完再停" : "已关闭：倒计时结束后立即停止", {
+    duration: 2200,
+  });
 }
 
 /**

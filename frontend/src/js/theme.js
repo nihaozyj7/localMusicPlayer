@@ -320,6 +320,9 @@ export async function applyResolvedTheme(config) {
   seedTheme = seed && themeId === SEED_CONSUMER ? SEED_CONSUMER : null;
 
   forceStyleRefresh();
+  // 主题（以及由主题派生的 --seed / --glass-bg）刚变过，底色缓存必须丢掉。
+  // cover-accent.js 的换种子色也全部经由本函数，所以这里是唯一的失效点。
+  invalidateGlassBase();
   // 用户手动调过面板透明度时，换主题后按新主题的底色重新套一遍
   if (config.glassAlphaCustom) applyGlassAlpha(config.glassAlpha);
   return themeId;
@@ -369,8 +372,7 @@ let alphaProbe = null;
 function resolveThemeColor(expr) {
   if (!alphaProbe) {
     alphaProbe = document.createElement("div");
-    alphaProbe.style.cssText =
-      "position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;pointer-events:none;";
+    alphaProbe.style.cssText = "position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;pointer-events:none;";
     document.body.appendChild(alphaProbe);
   }
   alphaProbe.style.backgroundColor = expr;
@@ -409,18 +411,51 @@ export function resolvedGlassAlpha() {
   return Number.isFinite(a) ? Math.round(a * 100) : 62;
 }
 
+/** 缓存的「主题自己的」三档面板底色 */
+let glassBaseCache = null;
+
+/**
+ * 丢掉主题底色缓存。
+ *
+ * **套主题之后必须调用**：底色来自主题 CSS 与 --seed，换主题或换种子色之后
+ * 旧值就不再有效。cover-accent.js 换种子色也走 applyResolvedTheme，
+ * 所以那边不用单独调。
+ */
+export function invalidateGlassBase() {
+  glassBaseCache = null;
+}
+
+/**
+ * 解析当前主题的 --glass-bg / --glass-bg-strong / --glass-bg-weak 实际颜色。
+ *
+ * 为什么要缓存：applyGlassAlpha 挂在「面板透明度」滑条上，一次拖动会触发
+ * 几十上百次；而每次解析都要「先清掉上一轮覆盖 → 写探针 → getComputedStyle
+ * 强制样式重算」，是 4 次强制同步样式计算（即每次输入一次布局抖动）。
+ * 底色只在换主题/换种子色时变，用上面的失效点 + 这里的缓存即可。
+ *
+ * 注意：缓存的是**主题自己的**底色，不是上一次合成出来的 rgba —— 所以
+ * 连续拖动不会把透明度「套娃」叠加，这也比原来每次重读更正确。
+ */
+function resolveGlassBase() {
+  if (glassBaseCache) return glassBaseCache;
+  // 先清掉上一轮覆盖，才能读到「当前主题真实的」底色
+  setRuntimeTokens({ "--glass-bg": null, "--glass-bg-strong": null, "--glass-bg-weak": null });
+  glassBaseCache = {
+    bg: resolveThemeColor("var(--glass-bg)"),
+    strong: resolveThemeColor("var(--glass-bg-strong)"),
+    weak: resolveThemeColor("var(--glass-bg-weak)"),
+  };
+  return glassBaseCache;
+}
+
 /** 按百分比（0-100）设置面板背景的不透明度 */
 export function applyGlassAlpha(percent) {
   const a = Math.max(0, Math.min(1, (Number(percent) || 0) / 100));
-  // 先清掉上一轮覆盖，才能读到「当前主题真实的」底色
-  setRuntimeTokens({ "--glass-bg": null, "--glass-bg-strong": null, "--glass-bg-weak": null });
-  const bg = resolveThemeColor("var(--glass-bg)");
-  const strong = resolveThemeColor("var(--glass-bg-strong)");
-  const weak = resolveThemeColor("var(--glass-bg-weak)");
+  const base = resolveGlassBase();
   setRuntimeTokens({
-    "--glass-bg": rgbaWithAlpha(bg, a),
-    "--glass-bg-strong": rgbaWithAlpha(strong, Math.min(1, a + 0.18)),
-    "--glass-bg-weak": rgbaWithAlpha(weak, Math.max(0, a - 0.22)),
+    "--glass-bg": rgbaWithAlpha(base.bg, a),
+    "--glass-bg-strong": rgbaWithAlpha(base.strong, Math.min(1, a + 0.18)),
+    "--glass-bg-weak": rgbaWithAlpha(base.weak, Math.max(0, a - 0.22)),
   });
 }
 
@@ -461,7 +496,10 @@ export function normalizeSeed(value) {
   }
   const rgb = text.match(/rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i);
   if (rgb) {
-    const to = (n) => Math.max(0, Math.min(255, Math.round(Number(n)))).toString(16).padStart(2, "0");
+    const to = (n) =>
+      Math.max(0, Math.min(255, Math.round(Number(n))))
+        .toString(16)
+        .padStart(2, "0");
     return `#${to(rgb[1])}${to(rgb[2])}${to(rgb[3])}`;
   }
   return "";
@@ -597,11 +635,7 @@ export function extractCoverSeed(imgEl) {
       weight += w;
     }
 
-    const pick = weight > 0
-      ? [wr / weight, wg / weight, wb / weight]
-      : n > 0
-        ? [ar / n, ag / n, ab / n]
-        : null;
+    const pick = weight > 0 ? [wr / weight, wg / weight, wb / weight] : n > 0 ? [ar / n, ag / n, ab / n] : null;
     if (!pick) return null;
     return `rgb(${pick.map((v) => Math.round(Math.max(0, Math.min(255, v)))).join(", ")})`;
   } catch {

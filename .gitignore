@@ -26,6 +26,9 @@ bin/
 .task/
 .taskrc
 
+# wails3 generate bindings 的临时目录（构建脚本的中间产物，用完应清理）
+frontend/.bindings-tmp-*/
+
 # 前端构建产物：frontend/dist 由 tools/build-frontend.mjs 每次全量重建，
 # 体积很小（约 300KB）且 Go 的 go:embed 需要它存在，因此选择入库。
 # 想改成不入库的话，取消下面两行注释即可（那样克隆后需先跑一次构建脚本）。

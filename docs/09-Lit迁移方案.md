@@ -10,11 +10,11 @@
 
 ### 1.1 现状
 
-| 层 | 文件 | 说明 |
-| --- | --- | --- |
-| 数据/服务 | `store.js`(1446) `bridge.js` `audio.js` `theme.js` `utils.js` `mock.js` `probe.js` `runtime-tokens.js` `backdrop.js` `desktop-*.js` `ai-vendors.js` | 与框架无关，**保留** |
-| 皮肤宿主 | `playerhost.js`(1158) | 播放界面皮肤契约宿主，**保留**（插件域） |
-| 视图渲染 | `shell.js` `tracks.js` `playerbar.js` `settings.js` `lyrics-panel.js` `searchpanel.js` `coverpanel.js` `downloads.js` `playlists.js` `dom.js` | HTML 字符串 + innerHTML 全量替换为主 |
+| 层        | 文件                                                                                                                                                | 说明                                     |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| 数据/服务 | `store.js`(1446) `bridge.js` `audio.js` `theme.js` `utils.js` `mock.js` `probe.js` `runtime-tokens.js` `backdrop.js` `desktop-*.js` `ai-vendors.js` | 与框架无关，**保留**                     |
+| 皮肤宿主  | `playerhost.js`(1158)                                                                                                                               | 播放界面皮肤契约宿主，**保留**（插件域） |
+| 视图渲染  | `shell.js` `tracks.js` `playerbar.js` `settings.js` `lyrics-panel.js` `searchpanel.js` `coverpanel.js` `downloads.js` `playlists.js` `dom.js`       | HTML 字符串 + innerHTML 全量替换为主     |
 
 统计：主窗口 JS ≈ 13 400 行；`innerHTML =` 赋值 64 处；`main.js` 的
 `tick()` 每帧（订阅者回调）串行执行 **10 个 paint 函数**。
@@ -22,9 +22,9 @@
 ### 1.2 已存在的性能问题（实测定位）
 
 1. **单帧全量 paint 链**：`tick()` → `applyDensity / renderKey / renderShell /
-   paintTrackSelection / paintPlayerBar / syncCoverAccent / syncThemeBackdrop /
-   renderPlayerView / paintDesktopLyrics / paintDesktopWallpaper /
-   syncPlaybackState / syncAudio / applyGainForSong`。
+paintTrackSelection / paintPlayerBar / syncCoverAccent / syncThemeBackdrop /
+renderPlayerView / paintDesktopLyrics / paintDesktopWallpaper /
+syncPlaybackState / syncAudio / applyGainForSong`。
    其中 `paintPlayerBar()` **每帧 20+ 次 `querySelector`**，
    `syncCoverAccent/syncThemeBackdrop` 每帧再各查一次 DOM。
 2. **渲染键字符串拼接**：`renderKey()` 每帧 `join` 整个歌单表 +
@@ -116,6 +116,7 @@ class MpElement extends LitElement {
 ### 2.2 列表渲染
 
 用 `lit/directives/repeat.js`（keyed）替换手写 `reconcileRows`：
+
 - key = `song.id` → 换歌不再重建行、封面 <img> 不重新解码；
 - 行内变化由 Lit 的 part 级 diff 处理（只写变化的 text/attribute）；
 - `<img>` 的「先在游离 Image 上预加载再替换 src」仍保留
@@ -132,18 +133,18 @@ SortableJS 会直接移动 DOM 节点，而 Lit 的 `repeat` 内部维护自己�
 
 ## 3. 迁移步骤
 
-| 步骤 | 内容 | 验收 |
-| --- | --- | --- |
-| S1 | `ui/base.js` + `ui/overlays.js`；`dom.js` 变兼容层 | 菜单/弹窗/Toast 行为不变 |
-| S2 | `<mp-app>` + 标题栏 / 侧边栏 / 内容区骨架；`index.html` 只剩图标精灵 + `<mp-app>` | 首屏结构、`probe.js` 通过 |
-| S3 | `<mp-track-table>`（keyed repeat）+ 空态 | 1000 首滚动、排序、多选、右键菜单 |
-| S4 | `<mp-playerbar>` + `<mp-progress>` + 队列/选项/定时/下载面板 | 进度、音量、模式、面板拖拽 |
-| S5 | `<mp-playerview>` 外壳 + 样式按钮组；`playerhost.js` 保持契约 | 换样式、进入/退出动效、皮肤数据推送 |
-| S6 | `<mp-settings-layer>`（设置模板 Lit 化，动作逻辑复用 `settings.js`） | 全部设置项生效、滚动/分区不跳 |
-| S7 | 歌词工作台 / 搜索 / 封面 / 桌面歌词窗口 | 三 tab、在线搜索、封面管理 |
-| S8 | 删除 `main.js#tick` 与全部手写 diff/key 代码 | 无 `renderKey`/`lastKey`/`reconcileRows` |
-| S9 | 构建 + lint + tsc + 单测 + 无头 Edge CDP 功能与性能验证 | 全绿 |
-| S10 | 报告 | `docs/10-Lit迁移报告.md` `docs/11-性能对比报告.md` |
+| 步骤 | 内容                                                                              | 验收                                               |
+| ---- | --------------------------------------------------------------------------------- | -------------------------------------------------- |
+| S1   | `ui/base.js` + `ui/overlays.js`；`dom.js` 变兼容层                                | 菜单/弹窗/Toast 行为不变                           |
+| S2   | `<mp-app>` + 标题栏 / 侧边栏 / 内容区骨架；`index.html` 只剩图标精灵 + `<mp-app>` | 首屏结构、`probe.js` 通过                          |
+| S3   | `<mp-track-table>`（keyed repeat）+ 空态                                          | 1000 首滚动、排序、多选、右键菜单                  |
+| S4   | `<mp-playerbar>` + `<mp-progress>` + 队列/选项/定时/下载面板                      | 进度、音量、模式、面板拖拽                         |
+| S5   | `<mp-playerview>` 外壳 + 样式按钮组；`playerhost.js` 保持契约                     | 换样式、进入/退出动效、皮肤数据推送                |
+| S6   | `<mp-settings-layer>`（设置模板 Lit 化，动作逻辑复用 `settings.js`）              | 全部设置项生效、滚动/分区不跳                      |
+| S7   | 歌词工作台 / 搜索 / 封面 / 桌面歌词窗口                                           | 三 tab、在线搜索、封面管理                         |
+| S8   | 删除 `main.js#tick` 与全部手写 diff/key 代码                                      | 无 `renderKey`/`lastKey`/`reconcileRows`           |
+| S9   | 构建 + lint + tsc + 单测 + 无头 Edge CDP 功能与性能验证                           | 全绿                                               |
+| S10  | 报告                                                                              | `docs/10-Lit迁移报告.md` `docs/11-性能对比报告.md` |
 
 ---
 
@@ -166,14 +167,14 @@ SortableJS 会直接移动 DOM 节点，而 Lit 的 `repeat` 内部维护自己�
 
 ## 5. 风险与对策
 
-| 风险 | 对策 |
-| --- | --- |
+| 风险                                                 | 对策                                                                    |
+| ---------------------------------------------------- | ----------------------------------------------------------------------- |
 | light DOM 下自定义元素默认 `display:inline` 破坏布局 | 统一 `mp-* { display: contents }`（见 `utilities.css`），宿主不产生盒子 |
-| `repeat` 与 SortableJS 争抢 DOM | onEnd 先复位再交给 Lit（见 2.3） |
-| 面板动画依赖 `hidden` → `data-state` 两帧切换 | 组件内保留同一套 `data-state` 机，`updated()` 里翻转 |
-| 设置层输入框焦点丢失 | Lit 的 part 级 diff 不再重建 input，天然不丢焦点 |
-| 主题 / 皮肤 CSS 依赖结构 | 模板 1:1 保留 class 与层级 |
-| 皮肤包不能改 | `playerhost.js` 与包 API 保持；只换调用方 |
+| `repeat` 与 SortableJS 争抢 DOM                      | onEnd 先复位再交给 Lit（见 2.3）                                        |
+| 面板动画依赖 `hidden` → `data-state` 两帧切换        | 组件内保留同一套 `data-state` 机，`updated()` 里翻转                    |
+| 设置层输入框焦点丢失                                 | Lit 的 part 级 diff 不再重建 input，天然不丢焦点                        |
+| 主题 / 皮肤 CSS 依赖结构                             | 模板 1:1 保留 class 与层级                                              |
+| 皮肤包不能改                                         | `playerhost.js` 与包 API 保持；只换调用方                               |
 
 ---
 

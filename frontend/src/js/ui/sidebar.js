@@ -9,14 +9,7 @@
 import Sortable from "sortablejs";
 import { MpElement, define, html, repeat, icon } from "./base.js";
 import { toast } from "./overlays.js";
-import {
-  LIKED_ID,
-  clearQueue,
-  movePlaylist,
-  playlistById,
-  commit,
-  state,
-} from "../store.js";
+import { LIKED_ID, clearQueue, movePlaylist, playlistById, commit, state } from "../store.js";
 import { navigate } from "../shell.js";
 import { openPlaylistMenu, promptNewPlaylist } from "../playlists.js";
 import { fmtCount } from "../utils.js";
@@ -25,13 +18,7 @@ import { fmtCount } from "../utils.js";
 let lastPlaylistDragEndAt = 0;
 
 class MpSidebar extends MpElement {
-  static deps = (s) => [
-    s.view,
-    s.playlistId,
-    s.playlistVersion,
-    s.songs.length,
-    s.queue.length,
-  ];
+  static deps = (s) => [s.view, s.playlistId, s.playlistVersion, s.songs.length, s.queue.length];
 
   firstUpdated() {
     this.bindDrag();
@@ -106,7 +93,12 @@ class MpSidebar extends MpElement {
         <div class="sidebar__scroll">
           <nav class="sidebar__group" aria-label="曲库">
             <div class="sidebar__label">曲库</div>
-            <button class="navitem" type="button" data-nav="library" aria-selected=${String(state.view === "library")}>
+            <button
+              class="navitem"
+              type="button"
+              data-nav="library"
+              aria-selected=${String(state.view === "library")}
+            >
               ${icon("music", "navitem__icon")}
               <span class="navitem__text">本地歌曲</span>
               <span class="navitem__tail">
@@ -172,18 +164,13 @@ class MpSidebar extends MpElement {
         <span class="navitem__text">${pl.name}</span>
         <span class="navitem__tail">
           <span class="navitem__badge">${fmtCount(pl.songIds.length)}</span>
-          <span
-            class="navitem__more"
-            data-act="pl-more"
-            data-id=${pl.id}
-            role="button"
-            aria-label="${pl.name}操作"
-          >${icon("more")}</span>
+          <span class="navitem__more" data-act="pl-more" data-id=${pl.id} role="button" aria-label="${pl.name}操作"
+            >${icon("more")}</span
+          >
         </span>
       </button>
     `;
   }
-
 }
 
 define("mp-sidebar", MpSidebar);

@@ -13,7 +13,26 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
+
+// maxErrBody 错误信息里最多带多少字节的响应体。
+// body 上限是 16MB，整段塞进 error 会一路进日志和界面。
+const maxErrBody = 512
+
+// truncateBody 把响应体摘要成便于阅读的一小段（按 rune 边界截断，
+// 避免把 UTF-8 码点劈开而在错误信息里出现乱码）。
+func truncateBody(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	if len(s) <= maxErrBody {
+		return s
+	}
+	cut := maxErrBody
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
 
 const (
 	defaultBaseURL = "https://api.bilibili.com"
@@ -106,7 +125,7 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values
 		return fmt.Errorf("bilibili: 读取响应失败: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("bilibili: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("bilibili: HTTP %d: %s", resp.StatusCode, truncateBody(body))
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("bilibili: 解析 JSON 失败: %w", err)

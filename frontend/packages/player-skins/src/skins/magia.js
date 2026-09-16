@@ -247,7 +247,8 @@ function skyline(rnd, baseY, minH, maxH, withWindows) {
             const wy = baseY - h + 14 + (r * (h - 26)) / rows;
             const delay = (-rnd() * 5.4).toFixed(2);
             out += `<rect class="mg-art__win" x="${wx.toFixed(1)}" y="${wy.toFixed(1)}" width="${(
-              4 + rnd() * 5
+              4 +
+              rnd() * 5
             ).toFixed(1)}" height="${(5 + rnd() * 4).toFixed(1)}" rx="0.6" style="animation-delay:${delay}s"/>`;
           }
         }
@@ -334,10 +335,7 @@ function buildBackdrop(uid) {
     const pts = [];
     for (let x = -80; x <= W + 80; x += step) {
       const y =
-        baseY +
-        Math.sin(x * 0.0027) * amp +
-        Math.sin(x * 0.0071 + 1.7) * amp * 0.42 +
-        (rnd() * 2 - 1) * amp * 0.16;
+        baseY + Math.sin(x * 0.0027) * amp + Math.sin(x * 0.0071 + 1.7) * amp * 0.42 + (rnd() * 2 - 1) * amp * 0.16;
       pts.push([x, y]);
     }
     return `<path class="${cls}" d="${toPath(jitter(pts, rnd, 2.1))}L${W + 80} ${H + 40}L-80 ${H + 40}Z"/>`;
@@ -414,8 +412,22 @@ function buildBackdrop(uid) {
   /* —— 手绘外框 + 两道地平线 —— */
   out += `<path class="mg-art__frame" d="${rectRough(rnd, 46, 40, W - 92, H - 80, 5)}"/>`;
   out += `<path class="mg-art__frame2" d="${rectRough(rnd, 58, 52, W - 116, H - 104, 4)}"/>`;
-  out += `<path class="mg-art__band" d="${roughLine([[-40, 806], [W + 40, 792]], rnd, 2.4)}"/>`;
-  out += `<path class="mg-art__band" d="${roughLine([[-40, 832], [W + 40, 818]], rnd, 2.4)}"/>`;
+  out += `<path class="mg-art__band" d="${roughLine(
+    [
+      [-40, 806],
+      [W + 40, 792],
+    ],
+    rnd,
+    2.4
+  )}"/>`;
+  out += `<path class="mg-art__band" d="${roughLine(
+    [
+      [-40, 832],
+      [W + 40, 818],
+    ],
+    rnd,
+    2.4
+  )}"/>`;
 
   return `<svg class="mg-art" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">${defs}${out}</svg>`;
 }
@@ -689,7 +701,16 @@ function createParticles(canvas, host) {
     if (g && state.w >= 8 && state.h >= 8) g.clearRect(0, 0, state.w, state.h);
   }
 
-  return { setColors, resize, frame, burst, destroy, get ready() { return state.ready; } };
+  return {
+    setColors,
+    resize,
+    frame,
+    burst,
+    destroy,
+    get ready() {
+      return state.ready;
+    },
+  };
 }
 
 /* ==========================================================================
@@ -1167,12 +1188,7 @@ function step(now) {
   const camX = drift * (Math.sin(t * 0.23) * 14 + Math.sin(t * 0.071 + 1.2) * 22);
   const camY = drift * (Math.cos(t * 0.19) * 10 + Math.cos(t * 0.053 + 0.7) * 15);
   const camR = drift * (Math.sin(t * 0.11) * 0.6 + inst.cut * 2.4 + beat * 0.42);
-  const camZ =
-    1 +
-    drift * Math.sin(t * 0.13) * 0.014 +
-    inst.pulse * 0.035 +
-    inst.cut * 0.05 +
-    beat * 0.022;
+  const camZ = 1 + drift * Math.sin(t * 0.13) * 0.014 + inst.pulse * 0.035 + inst.cut * 0.05 + beat * 0.022;
 
   const vars = {
     "--mg-cam-x": camX.toFixed(2),

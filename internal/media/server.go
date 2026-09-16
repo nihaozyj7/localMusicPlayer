@@ -26,19 +26,10 @@ import (
 	"musicplayer/internal/ffmpeg"
 )
 
-// WAV 输出参数。
-//
-// 这些值必须与 ffmpeg 包里的 TranscodeToWAV 保持一致 —— 转码产物由
-// ffmpeg 包写头，本服务据此推算 PCM 偏移与 Content-Length。
-// 头长度是硬保证的 44 字节（我们自己写，不让 ffmpeg 的 wav 复用器插手，
-// 否则它会插 LIST/INFO 块把 data 挪到偏移 70，长度就全算错了）。
-const (
-	wavSampleRate  = ffmpeg.WAVSampleRate
-	wavChannels    = ffmpeg.WAVChannels
-	wavHeaderSize  = ffmpeg.WAVHeaderSize
-	wavFrameSize   = ffmpeg.WAVFrameSize
-	wavBytesPerSec = ffmpeg.WAVBytesPerSec
-)
+// WAV 输出参数（采样率 / 声道 / 头长度 / 帧长 / 字节率的约定）全部由
+// internal/ffmpeg 拥有并导出，见 ffmpeg.WAVHeaderSize 与 TranscodeToWAV。
+// 这里曾经把 5 个常量再别名一遍，但没有任何一处引用 —— 转码缓存是「转好落盘
+// 后按普通文件提供」，本服务并不需要自己推算 PCM 偏移或 Content-Length。
 
 // transcodeBudgetBytes 转码缓存的总预算。
 // 一首 4 分钟的曲子转成 WAV 约 42MB，因此这里按 MB 级别限制，
@@ -369,65 +360,68 @@ func (s *Server) ensureTranscoded(ctx context.Context, song bootstrap.Song) (str
 	key := cacheKey(song)
 	out := filepath.Join(dir, bootstrap.StableID(key, "tc")+".wav")
 
-	s.cacheMu.Lock()
-	if item, ok := s.cache[key]; ok {
-		if item.inflight {
-			done := item.done
-			s.cacheMu.Unlock()
-			select {
-			case <-done:
-				// 等前一个转码完成后再查一次
-				return s.ensureTranscoded(ctx, song)
-			case <-ctx.Done():
-				return "", ctx.Err()
-			}
-		}
-		if item.err == nil && item.size > 0 {
-			if st, err := os.Stat(item.path); err == nil && st.Size() == item.size {
-				item.usedAt = time.Now().UnixMilli()
+	// 用循环而不是递归重试：等别人转码完成后再查一次。
+	// 递归版本在「同一个文件反复失败 + 并发请求」下会持续加深调用栈。
+	for {
+		s.cacheMu.Lock()
+		if existing, ok := s.cache[key]; ok {
+			if existing.inflight {
+				done := existing.done
 				s.cacheMu.Unlock()
-				return item.path, nil
+				select {
+				case <-done:
+					continue // 等前一个转码完成后再查一次
+				case <-ctx.Done():
+					return "", ctx.Err()
+				}
+			}
+			if existing.err == nil && existing.size > 0 {
+				if st, err := os.Stat(existing.path); err == nil && st.Size() == existing.size {
+					existing.usedAt = time.Now().UnixMilli()
+					s.cacheMu.Unlock()
+					return existing.path, nil
+				}
+			}
+			// 记录失效，删除后重来
+			delete(s.cache, key)
+		}
+
+		item := &cacheItem{
+			path:     out,
+			inflight: true,
+			done:     make(chan struct{}),
+			usedAt:   time.Now().UnixMilli(),
+		}
+		s.cache[key] = item
+		s.cacheMu.Unlock()
+
+		// 真正转码（不持锁，避免阻塞其他歌曲）
+		err := s.transcode(ctx, song, out)
+		size := int64(0)
+		if err == nil {
+			if st, statErr := os.Stat(out); statErr == nil {
+				size = st.Size()
+			} else {
+				err = statErr
 			}
 		}
-		// 记录失效，删除后重来
-		delete(s.cache, key)
-	}
 
-	item := &cacheItem{
-		path:     out,
-		inflight: true,
-		done:     make(chan struct{}),
-		usedAt:   time.Now().UnixMilli(),
-	}
-	s.cache[key] = item
-	s.cacheMu.Unlock()
-
-	// 真正转码（不持锁，避免阻塞其他歌曲）
-	err := s.transcode(ctx, song, out)
-	size := int64(0)
-	if err == nil {
-		if st, statErr := os.Stat(out); statErr == nil {
-			size = st.Size()
-		} else {
-			err = statErr
+		s.cacheMu.Lock()
+		item.inflight = false
+		item.err = err
+		item.size = size
+		close(item.done)
+		if err != nil {
+			delete(s.cache, key)
 		}
-	}
+		s.cacheMu.Unlock()
 
-	s.cacheMu.Lock()
-	item.inflight = false
-	item.err = err
-	item.size = size
-	close(item.done)
-	if err != nil {
-		delete(s.cache, key)
+		if err != nil {
+			return "", err
+		}
+		s.evictIfNeeded()
+		return out, nil
 	}
-	s.cacheMu.Unlock()
-
-	if err != nil {
-		return "", err
-	}
-	s.evictIfNeeded()
-	return out, nil
 }
 
 // transcode 把不能原生播放的格式转成 16bit/44.1kHz/立体声 WAV。
@@ -498,11 +492,19 @@ func (s *Server) ClearCache() error {
 		}
 		return err
 	}
+	// 只删**我们自己生成的**转码产物：文件名是 StableID(key,"tc") + ".wav"，
+	// 即 "tc_<base36>.wav"。
+	//
+	// 为什么必须收窄：cacheDir 是用户可配置的（见 ToolsInfo 的 cacheDir），
+	// 设置界面里也会展示它。以前这里是「删掉目录下所有 *.wav」——用户一旦把
+	// 缓存目录指到音乐目录，「清空转码缓存」就会删掉无关的 WAV 文件，
+	// 属于不可恢复的数据丢失，而不只是性能问题。
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".wav") {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".wav") || !strings.HasPrefix(name, "tc_") {
 			continue
 		}
-		_ = os.Remove(filepath.Join(dir, e.Name()))
+		_ = os.Remove(filepath.Join(dir, name))
 	}
 	return nil
 }
@@ -539,13 +541,6 @@ func mimeForExt(ext string) string {
 	default:
 		return "application/octet-stream"
 	}
-}
-
-func orNone(s string) string {
-	if s == "" {
-		return "未找到"
-	}
-	return s
 }
 
 // ToolsInfo 返回当前解析到的 ffmpeg 信息（供设置界面显示）
