@@ -32,3 +32,15 @@ func desktopWallpaperSupport() (bool, string) {
 func attachDesktopWallpaperWindow(_ unsafe.Pointer) error {
 	return errors.New("桌面背景歌词目前只支持 Windows")
 }
+
+// armDesktopWallpaperOffscreen 同上：非 Windows 平台恒返回 false，
+// 于是 desktop_wallpaper.go 永远走「挂载之后显示」那条旧路径。
+// （反正 openDesktopWallpaperWindow 早在能力探测那一步就返回了。）
+func armDesktopWallpaperOffscreen(_ unsafe.Pointer) bool {
+	return false
+}
+
+// revealAndAttachDesktopWallpaper 同样只在 Windows 上会被调用。
+func revealAndAttachDesktopWallpaper(_ unsafe.Pointer) error {
+	return errors.New("桌面背景歌词目前只支持 Windows")
+}

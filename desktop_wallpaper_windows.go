@@ -59,16 +59,18 @@ const (
 	wsClipChildren = 0x02000000
 
 	// 扩展样式
-	wsExTopmost    = 0x00000008
-	wsExToolWindow = 0x00000080
-	wsExAppWindow  = 0x00040000
-	wsExLayered    = 0x00080000
-	wsExNoActivate = 0x08000000
+	wsExTopmost     = 0x00000008
+	wsExTransparent = 0x00000020
+	wsExToolWindow  = 0x00000080
+	wsExAppWindow   = 0x00040000
+	wsExLayered     = 0x00080000
+	wsExNoActivate  = 0x08000000
 
 	// SetWindowPos
 	// 刻意没有 SWP_SHOWWINDOW：挂载阶段只摆位置、不动可见性
 	//（见 attachDesktopWallpaperWindow 的说明）。
 	hwndBottom      = 1 // HWND_BOTTOM
+	swpNoZOrder     = 0x0004
 	swpNoActivate   = 0x0010
 	swpFrameChanged = 0x0020
 )
@@ -121,7 +123,133 @@ func desktopWallpaperSupport() (bool, string) {
    挂载 / 卸载
    -------------------------------------------------------------------------- */
 
-// attachDesktopWallpaperWindow 把窗口挂进桌面壁纸层，铺满并压到最底。
+// armDesktopWallpaperOffscreen 让背景歌词窗口在「用户看不见」的前提下开始渲染首帧。
+//
+// 这是「刚打开的时候黑一下」的正解，与主窗口是同一套（services.go#showPrepared）：
+// WebView2 的合成器要等窗口可见才出帧，所以「窗口显示出来」与「第一帧真的被合成
+// 出来」之间必然有一段空档，那段时间窗口里什么都没有，露出来的是窗口自己的底色。
+// DWM 的 cloak 只作用在显示层 —— 窗口照样 WS_VISIBLE、合成器照样出帧、
+// 页面的 rAF 照样派发，但屏幕上什么都没有，空档就藏在这里面。
+//
+// ★ 为什么必须在**挂进壁纸层之前**做：
+// DWM 只对顶层窗口负责 —— 实测一旦 SetParent 成 WS_CHILD，
+// DwmSetWindowAttribute(DWMWA_CLOAK) 就会返回 0x80070006(E_HANDLE)，
+// 遮罩再也摘不掉。所以顺序只能是「遮着当顶层窗口渲染」→（页面确认首帧已提交）→
+// 「摘遮罩 + 挂进壁纸层」（见 revealAndAttachDesktopWallpaper），
+// 而不是主窗口那种「遮住自己 → 就绪后摘掉」。
+//
+// 返回 false 表示本机做不到（找不到壁纸层 / 遮不住），调用方退回旧路径。
+func armDesktopWallpaperOffscreen(raw unsafe.Pointer) bool {
+	hwnd := uintptr(raw)
+	if hwnd == 0 || !isWindow(hwnd) {
+		return false
+	}
+	// 壁纸层现在就找：它同时用来定尺寸。此刻找不到就不该走这条路 ——
+	// 挂载要等到页面画好之后才做，那时已经没法把「开不了」告诉用户了
+	//（openDesktopWallpaperWindow 早就返回了）。
+	layer, _ := findWallpaperLayer()
+	if layer == 0 {
+		return false
+	}
+	// 遮不住就老老实实按旧路径来：宁可黑一下，也不要让用户看见一个提前
+	// 露出来的空窗口（那比原来还糟）。
+	if !cloakNativeWindow(raw, true) {
+		return false
+	}
+
+	// 阶段一它是个铺满屏幕的顶层窗口，这三件事得自己保证
+	//（挂载那一步还会再设一次，那一次是给 WS_CHILD 用的）：
+	//   · WS_EX_TOOLWINDOW   不进任务栏、不进 Alt+Tab；
+	//   · WS_EX_NOACTIVATE   永远不会把用户正在用的窗口踢到后台；
+	//   · WS_EX_TRANSPARENT  鼠标命中也穿透过去。
+	// 最后一条不是可选项：这段时间它盖住整块屏幕，而用户根本看不见它 ——
+	// DWM 的遮罩只作用于显示层，命中测试照样会命中它。
+	// 不穿透的话，从「点了开关」到「首帧画好」这几百毫秒里（启动时恢复这个模式
+	// 甚至有几秒）用户点什么都会落在一块看不见的窗口上，像卡住了一样。
+	// 挂载时会把这一位清掉，恢复成和以前完全一样的窗口样式。
+	exStyle := uint32(getWindowLong(hwnd, gwlExStyle))
+	exStyle &^= wsExTopmost | wsExAppWindow | wsExLayered
+	exStyle |= wsExToolWindow | wsExNoActivate | wsExTransparent
+	setWindowLong(hwnd, gwlExStyle, exStyle)
+
+	// 顺手把外框拆掉、改成一个没有非客户区的 WS_POPUP：
+	// 于是「窗口矩形 == 客户区矩形」，WebView2 从现在起就按**最终的**尺寸排版与渲染。
+	// 这一步很重要 —— 挂载时只改父子关系、尺寸一个像素都不动，
+	// 合成器因此不需要重建渲染表面，遮罩后面画好的那一帧可以直接被搬进桌面。
+	// 要是等到挂载时再从头排版，那一下又会露出没画好的一帧。
+	style := uint32(getWindowLong(hwnd, gwlStyle))
+	style &^= wsCaption | wsThickFrame | wsSysMenu | wsMinimizeBox | wsMaximizeBox
+	style |= wsPopup
+	setWindowLong(hwnd, gwlStyle, style)
+
+	// 摆到壁纸层一样大。刻意不动 WS_VISIBLE（窗口是隐藏创建的，本来就还没可见）：
+	// 显示由调用方紧接着的那次 Show() 负责，那是「遮罩 + 显示」的组合拳。
+	width, height := wallpaperLayerSize(layer)
+	procSetWindowPos.Call(hwnd, 0, 0, 0, uintptr(width), uintptr(height),
+		swpNoZOrder|swpNoActivate|swpFrameChanged)
+
+	log.Printf("[desktop-wallpaper] 已遮罩显示（后台渲染首帧，尺寸 %dx%d），待首帧就绪后挂进壁纸层",
+		width, height)
+	return true
+}
+
+// wallpaperLayerSize 返回壁纸层的客户区尺寸（物理像素），取不到时退回整屏尺寸。
+//
+// 取不到客户区是极少数 shell 组合，这时退回主屏物理尺寸 ——
+// 至少铺满一块，而不是退化成一个 0×0 的隐形窗口。
+func wallpaperLayerSize(layer uintptr) (int, int) {
+	var rc winRect
+	procGetClientRect.Call(layer, uintptr(unsafe.Pointer(&rc)))
+	width := int(rc.Right - rc.Left)
+	height := int(rc.Bottom - rc.Top)
+	if width <= 0 || height <= 0 {
+		width = int(getSystemMetrics(smCxScreen))
+		height = int(getSystemMetrics(smCyScreen))
+	}
+	return width, height
+}
+
+// revealAndAttachDesktopWallpaper 把「已经画好首帧、还遮着」的窗口挂进壁纸层并露面。
+//
+// 顺序是本函数存在的全部理由，三步都不能换位置：
+//
+// ① 先找壁纸层。这一步要等资源管理器（SendMessageTimeout），期间窗口必须还是
+// 遮着的 —— 否则那几毫秒里会有一个铺满屏幕的顶层窗口露出来。
+// ② 在**还是顶层窗口**的时候摘遮罩。实测：一旦 SetParent 成 WS_CHILD，
+// DwmSetWindowAttribute(DWMWA_CLOAK) 直接返回 0x80070006(E_HANDLE) ——
+// 子窗口上遮罩根本摘不掉，读回值还停在「已遮」。所以「先挂载、后摘遮罩」
+// 是行不通的。
+// ③ 立刻改样式 + SetParent + 摆位置。这三下都是不派发消息的 Win32 调用，
+// 「已摘遮罩」与「已经是子窗口」之间短到连一帧都凑不出来，
+// 所以第 ② 步不会在屏幕上留下任何东西。
+//
+// 失败时（第 ③ 步挂不上）会把遮罩加回去再返回：此刻窗口仍是顶层窗口，
+// 遮罩加得回来，也就不会留下一块盖住整个桌面的无边框窗口。
+func revealAndAttachDesktopWallpaper(raw unsafe.Pointer) error {
+	hwnd := uintptr(raw)
+	if hwnd == 0 || !isWindow(hwnd) {
+		return errors.New("窗口句柄无效")
+	}
+
+	layer, how := findWallpaperLayer()
+	if layer == 0 {
+		return errors.New("找不到桌面壁纸层（WorkerW）")
+	}
+
+	// 顶层状态下摘遮罩（这一步必须成功：摘不掉就说明它本来就不在遮罩里）
+	if !cloakNativeWindow(raw, false) {
+		log.Printf("[desktop-wallpaper] 摘掉启动遮罩失败（继续挂载，窗口可能一直不出现）")
+	}
+
+	if err := attachDesktopWallpaperWindowTo(hwnd, layer, how); err != nil {
+		// 挂不上就遮回去：宁可什么都不出现，也不要一块盖住整个桌面的窗口。
+		cloakNativeWindow(raw, true)
+		return err
+	}
+	return nil
+}
+
+// attachDesktopWallpaperWindow 自己找壁纸层，把窗口挂进去（旧路径与首建路径用）。
 //
 // raw 是 Wails 的 NativeWindow()（Windows 上就是 HWND）。
 func attachDesktopWallpaperWindow(raw unsafe.Pointer) error {
@@ -134,24 +262,36 @@ func attachDesktopWallpaperWindow(raw unsafe.Pointer) error {
 	if layer == 0 {
 		return errors.New("找不到桌面壁纸层（WorkerW）")
 	}
+	return attachDesktopWallpaperWindowTo(hwnd, layer, how)
+}
 
+// attachDesktopWallpaperWindowTo 是真正的挂载动作（壁纸层已经找好了）。
+//
+// 单独拆出来是为了让 revealAndAttachDesktopWallpaper 能把「找层」那一步
+// （会等资源管理器）挪到摘遮罩之前，中间不留空隙。
+func attachDesktopWallpaperWindowTo(hwnd, layer uintptr, how string) error {
 	// 1) 先变成子窗口。
 	//    只有 WS_CHILD 才能待在桌面那棵树里；同时把标题栏/边框那一套去掉，
 	//    WS_EX_TOOLWINDOW 让它彻底不进任务栏与 Alt+Tab，
 	//    WS_EX_NOACTIVATE 保证它永远不会抢焦点（抢了就会把用户正在用的窗口踢到后台）。
 	//
-	//    ★ 这里**必须**保持 WS_VISIBLE 关闭（Window 是 Hidden 创建的，本来就没有）。
-	//    窗口要一直隐藏到页面把第一帧画好（见 desktop_wallpaper.go#ensureDesktopWallpaper），
-	//    显式加上 WS_VISIBLE 或后面带 SWP_SHOWWINDOW 都会让它立刻显示出来 ——
-	//    用户看到的就是「刚打开时黑一下」。
+	//    ★ 这里**不动 WS_VISIBLE**：可见性现在携带语义，而且两条路径要的不一样。
+	//      · 两阶段路径：窗口此刻是 WS_VISIBLE 的（遮罩已经在
+	//        revealAndAttachDesktopWallpaper 里摘掉了）—— 必须保持可见，
+	//        挂进来才看得见；
+	//      · 旧路径：窗口是隐藏创建的，这里也保持隐藏，等页面画好第一帧再 Show()。
+	//    早先这里写死了一句 style &^= wsVisible，那会让两阶段路径的窗口在挂载的
+	//    同一瞬间变回隐藏 —— 后台画好的首帧就白渲染了（露出来仍是黑的）。
 	style := uint32(getWindowLong(hwnd, gwlStyle))
 	style &^= wsPopup | wsCaption | wsThickFrame | wsSysMenu | wsMinimizeBox | wsMaximizeBox
-	style &^= wsVisible
 	style |= wsChild | wsClipSiblings | wsClipChildren
 	setWindowLong(hwnd, gwlStyle, style)
 
+	// 顺手清掉 armDesktopWallpaperOffscreen 为「看不见的顶层窗口」加的
+	// WS_EX_TRANSPARENT：挂进来之后它在壁纸层的最底下，鼠标本来也落不到它身上，
+	// 清掉是为了让挂载后的窗口样式与旧实现逐位一致（少一个说不清的行为差异）。
 	exStyle := uint32(getWindowLong(hwnd, gwlExStyle))
-	exStyle &^= wsExTopmost | wsExAppWindow | wsExLayered
+	exStyle &^= wsExTopmost | wsExAppWindow | wsExLayered | wsExTransparent
 	exStyle |= wsExToolWindow | wsExNoActivate
 	setWindowLong(hwnd, gwlExStyle, exStyle)
 
@@ -165,18 +305,12 @@ func attachDesktopWallpaperWindow(raw unsafe.Pointer) error {
 
 	// 3) 铺满壁纸层的客户区，并压到 z 序最底 —— 那才是「在桌面图标之下」。
 	//    坐标是父窗口客户区坐标，壁纸层的原点就是 (0,0)，所以直接给 0,0。
-	var rc winRect
-	procGetClientRect.Call(layer, uintptr(unsafe.Pointer(&rc)))
-	width := int(rc.Right - rc.Left)
-	height := int(rc.Bottom - rc.Top)
-	if width <= 0 || height <= 0 {
-		// 客户区取不到（极少数 shell 组合）：退回主屏物理尺寸，
-		// 至少铺满一块，而不是退化成一个 0×0 的隐形窗口
-		width = int(getSystemMetrics(smCxScreen))
-		height = int(getSystemMetrics(smCyScreen))
-	}
-	// 只摆位置、排 z 序，刻意**不带** SWP_SHOWWINDOW：
-	// 显示时机由宿主决定（页面画好第一帧之后），见函数开头第 1 步的说明。
+	//
+	//    尺寸与 armDesktopWallpaperOffscreen 里摆的那一次一致，所以窗口不会因为
+	//    挂载而改变大小（合成器不用重建表面，遮罩后面画好的那一帧直接可用）。
+	//    只摆位置、排 z 序，刻意**不带** SWP_SHOWWINDOW：
+	//    显示时机由宿主决定，见函数开头第 1 步的说明。
+	width, height := wallpaperLayerSize(layer)
 	procSetWindowPos.Call(hwnd, hwndBottom, 0, 0, uintptr(width), uintptr(height),
 		swpNoActivate|swpFrameChanged)
 

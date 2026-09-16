@@ -113,16 +113,17 @@ export function MarkDesktopLyricsReady() {
 }
 
 /**
- * MarkDesktopWallpaperPainted 由背景歌词窗口在「第一帧内容已经写进 DOM」之后调用。
+ * MarkDesktopWallpaperPainted 由背景歌词窗口在「第一帧已经提交给合成器」之后调用。
  * 
- * 这是窗口**显示**的触发点（见 ensureDesktopWallpaper 的说明）：窗口创建时是
- * 隐藏的，页面自己只有一块深色底，皮肤要等数据推过来才画得出东西 ——
- * 创建后就显示，用户先看到的就是那块纯色（「刚打开的时候黑一下」）。
+ * 这是窗口**露面**的触发点（见 ensureDesktopWallpaper 的说明）：挂进壁纸层与
+ * 摘遮罩都在这一刻发生，所以它报得太早会露馅（露出来的还是上一帧的深色底），
+ * 报得太晚只是桌面上晚几十毫秒出现。页面那边因此要求**两帧 rAF** 之后再报
+ * （见 frontend/src/js/desktop-wallpaper-window.js#afterPaint）。
  * 
  * 必须由页面在 applyPatch 之后调用，而不是在加载完成的 Ready 那一刻：
- * Ready 时全量数据还在路上，这时候显示同样是一块空画面。
+ * Ready 时全量数据还在路上，这时候露面是一块空画面。
  * 
- * 幂等：页面重复调用、或兜底定时器已经先显示过，都不会有任何副作用。
+ * 幂等：页面重复调用、或兜底定时器已经先露面过，都不会有任何副作用。
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
 export function MarkDesktopWallpaperPainted() {

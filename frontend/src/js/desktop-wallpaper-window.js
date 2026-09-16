@@ -20,10 +20,12 @@
    播放器界面，迟早会和主界面显示得不一样。
 
    ★ 这个页面「什么循环都不跑」。
-   没有 requestAnimationFrame、没有 setInterval、没有常驻驱动动画的脚本：
+   没有常驻的 requestAnimationFrame、没有 setInterval、没有常驻驱动动画的脚本：
    只在收到推送时写一次 DOM。皮肤自己的 CSS 动画（例如唱片旋转）不在这个范畴，
    那是样式的一部分。加任何一条循环之前请先想清楚 —— 它会让一张静止的壁纸
    每秒重绘 60 次，而那正是「双份资源」最贵的部分。
+   （唯一的例外是报「首帧已提交」时用的那两次 requestAnimationFrame，
+   见本文件末尾的 afterPaint：那是**一次性**的，不是循环。）
 
    连实时频谱也是这样：那个窗口没有音频图，采样由**主窗口**做完，
    按 ~25Hz 以 spectrum 补丁推过来（desktop-wallpaper.js），皮肤只负责画。
@@ -401,20 +403,26 @@ function applyPatch(payload) {
   // 挂载时那一套。
   if (skin && type) ctx.push({ type, ...payload });
 
-  // —— ⑤ 皮肤挂上、数据也落地了 → 告诉后端可以显示窗口了 ——
-  // 必须放在最后：显示时机就是「这一帧画面已经写完」。
+  // —— ⑤ 皮肤挂上、数据也落地了 → 告诉后端可以摘遮罩了 ——
+  // 必须放在最后：露出时机的判据就是「这一次更新已经画进合成器」，
+  // 具体在哪一刻由 announcePainted 里的 afterPaint 决定。
   announcePainted();
 }
 
 /* --------------------------------------------------------------------------
    首帧就绪
    --------------------------------------------------------------------------
-   这个窗口是**隐藏创建**的（见 Go 侧 desktop_wallpaper.go#ensureDesktopWallpaper）：
-   页面自己的底色是深色，而皮肤要等主窗口把曲目/封面/歌词/主题推过来才画得出
-   东西 —— 创建后立刻显示，用户先看到的就是一块纯色（「刚打开时黑一下」）。
+   这个窗口在渲染首帧时对用户是**不可见**的（见 Go 侧
+   desktop_wallpaper.go#ensureDesktopWallpaper 与
+   desktop_wallpaper_windows.go#armDesktopWallpaperOffscreen）：它先被 DWM 遮住
+   显示出来，WebView2 因此开始出帧，而屏幕上一片空白。
 
-   所以显示时机由这里决定：皮肤挂上、并且主窗口的媒体快照已经到了，才算
-   「第一帧画好」。Go 那边另有兜底定时器，页面出任何问题时窗口也会显示出来。
+   这里决定的是「什么时候把遮罩摘掉」——也就是窗口第一次出现在桌面上的时刻，
+   所以判据分两层：
+     · 内容齐了：皮肤挂上、并且主窗口的媒体快照已经到了（announcePainted）；
+     · 这一帧真的画出来了：再等两帧 rAF（afterPaint），确保合成器已经收到。
+   只有内容、没有第二层，摘遮罩时会露出上一帧的深色底，就是「黑一下」。
+   Go 那边另有兜底定时器，页面出任何问题时窗口也会出现。
    -------------------------------------------------------------------------- */
 
 /** 是否已经通知过后端显示窗口（只通知一次） */
@@ -422,19 +430,56 @@ let paintedAnnounced = false;
 /** 是否收到过主窗口推来的媒体快照（type: song，哪怕 song 是 null） */
 let mediaSeen = false;
 
+/**
+ * 「两帧 rAF 一直没来」时的兜底通知时刻（ms）。
+ *
+ * 正常只要 ~32ms（两帧）；给到 150ms 是给「窗口刚创建、合成器还在热身」留余量。
+ * 真到了这个点 rAF 还没来，说明它在当前环境下根本不会来（旧路径的隐藏窗口），
+ * 那就只能先发信号 —— 宁可早一点黑一下，也不能让窗口永远不出现。
+ */
+const paintedFallbackDelay = 150;
+
 function announcePainted() {
   if (paintedAnnounced) return;
-  // 两个条件缺一不可：只有样式没有数据 = 空皮肤，只有数据没挂样式 = 空壳。
+  // 两个条件缺一不可：只有样式没有数据 = 空皮肤；只有数据没挂样式 = 空壳。
   // 注意 mediaSeen 判的是「收到过 song 补丁」而不是「有歌在播」——
   // 曲库为空、没有当前曲目时 song 是 null，那也是一份合法且已经渲染完的画面。
   if (!mountedId || !mediaSeen) return;
   paintedAnnounced = true;
-  // 等一轮宏任务：贴完主题令牌、挂上皮肤之后浏览器还要做一次样式与布局。
-  // 刻意**不用** requestAnimationFrame —— 窗口在显示之前根本不派发 BeginFrame，
-  // rAF 回调永远不会执行（主窗口的 windowReady 也是同一个原因才不用 rAF）。
-  setTimeout(() => {
+  afterPaint(() => {
     backend.desktopWallpaperPainted?.().catch(() => {});
-  }, 0);
+  });
+}
+
+/**
+ * 在「这一帧真的已经交给合成器」之后执行 fn。
+ *
+ * 为什么必须是**两帧** rAF，而不是以前那样等一轮宏任务（setTimeout 0）：
+ * 后端一收到这个信号就挂载 + 摘掉 DWM 遮罩，窗口从壁纸层里露出来。
+ * 而 setTimeout(0) 只说明「这一次 DOM 写入的任务跑完了」—— 样式、布局、绘制
+ * 以及合成器的提交都还没发生，摘遮罩时露出来的仍是上一帧（空皮肤那块深色底），
+ * 于是又黑一下。rAF 回调跑在下一帧的绘制**之前**，所以第二个 rAF 执行时，
+ * 第一次那次带内容的帧已经提交上去了。
+ *
+ * 为什么还要一条定时器兜底：万一本机不支持 DWM 遮罩，窗口走的是「隐藏创建」
+ * 那条旧路径，而隐藏窗口根本不派发 BeginFrame —— rAF 永远不会来。
+ * 没有兜底就等于信号永远发不出去，窗口也就永远不显示（那比黑一下严重得多）。
+ *
+ * @param {() => void} fn
+ */
+function afterPaint(fn) {
+  let done = false;
+  const fire = () => {
+    if (done) return;
+    done = true;
+    fn();
+  };
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => requestAnimationFrame(fire));
+    setTimeout(fire, paintedFallbackDelay);
+    return;
+  }
+  setTimeout(fire, 0);
 }
 
 /* --------------------------------------------------------------------------

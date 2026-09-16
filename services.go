@@ -1299,6 +1299,19 @@ type WindowService struct {
 	// 所以显示时机推迟到「页面确认第一帧画进 DOM」（MarkDesktopWallpaperPainted），
 	// 另有兜底定时器保证页面出任何问题时窗口也不会永远不出现。
 	wallpaperShown atomic.Bool
+	// wallpaperCloaked 记录「当前这个背景歌词窗口正处在遮罩显示状态」。
+	//
+	// 含意是两件事同时成立：窗口已经是 WS_VISIBLE 的（WebView2 因此正常出帧），
+	// 但它被 DWM 遮住、而且**还没有**挂进桌面壁纸层。
+	// 这是「先在后台把首帧渲染完，再放进桌面」的中间态，
+	// 见 desktop_wallpaper.go#ensureDesktopWallpaper 与 showDesktopWallpaperNow。
+	wallpaperCloaked atomic.Bool
+	// wallpaperAttached 记录「当前这个背景歌词窗口已经挂进桌面壁纸层（WorkerW）」。
+	//
+	// 两阶段路径下挂载发生在窗口画好之后（showDesktopWallpaperNow），
+	// 旧路径下发生在创建时（ensureDesktopWallpaper）—— 两条路都要幂等，
+	// 所以用一个标志记住「挂过了」，而不是靠窗口样式去猜。
+	wallpaperAttached atomic.Bool
 	// wallpaperGen 每次创建新的背景歌词窗口就 +1。
 	// 兜底定时器带着创建时的代数回调，用来判断「我等的是不是当前这个窗口」——
 	// 否则「关掉很快又打开」时，上一个窗口留下的定时器会把新窗口提前显示出来。

@@ -1,12 +1,16 @@
 /* ==========================================================================
    verify-wallpaper-first-frame.mjs — 桌面背景歌词「启动时黑一下」的验证
    --------------------------------------------------------------------------
-   修复思路：窗口**隐藏创建**，页面把第一帧写进 DOM 之后才让它显示
-   （Go 侧 desktop_wallpaper.go#ensureDesktopWallpaper / MarkDesktopWallpaperPainted）。
-   黑屏的成因就是「显示」与「画好」之间那段时间：页面自己的底色是深色，
+   修复思路：窗口先用 DWM 遮罩「显示但看不见」地把首帧渲染出来，页面确认
+   这一帧已经交给合成器之后，Go 侧才挂进桌面壁纸层 + 摘遮罩
+   （Go 侧 desktop_wallpaper.go#ensureDesktopWallpaper / MarkDesktopWallpaperPainted，
+   Windows 侧 desktop_wallpaper_windows.go#armDesktopWallpaperOffscreen）。
+   黑屏的成因就是「露面」与「画好」之间那段时间：页面自己的底色是深色，
    而皮肤要等主窗口把曲目/封面/歌词/主题推过来才画得出东西。
 
    本脚本验证**页面这一半**的判据：什么时候算「画好了」。
+   注意「画好了」还包含**两帧 rAF**（afterPaint）—— 所以下面每条断言前的等待
+   都在 300ms 以上，而不是原来那样 120ms。
    它用一个假的 /wails/runtime.js 把后端接上，然后：
      1. 只推样式（theme）→ 皮肤挂上了，但还没有媒体快照 → 不许显示；
      2. 再推媒体（song）    → 皮肤 + 数据都到位 → 必须通知显示（且只通知一次）；
@@ -236,10 +240,10 @@ check("初始为空快照时不显示（没有皮肤也没有数据）", (await 
 check("事件订阅已建立", (await emit(THEME)) > 0);
 check("只挂上皮肤（还没有媒体）时不显示", (await painted()) === 0);
 await emit(SONG_PATCH);
-await sleep(120);
+await sleep(300);
 check("皮肤 + 媒体都到位 → 立刻通知显示", (await painted()) === 1);
 await emit({ type: "progress", position: 1000, duration: 200000, playing: true, lyricIndex: 0 });
-await sleep(120);
+await sleep(300);
 check("之后的增量不重复通知（幂等）", (await painted()) === 1);
 const mounted = await evaluate(
   `(() => { const v = document.getElementById("wp-playerview");
@@ -252,10 +256,10 @@ check("整窗背景层的 mode 钩子已打上", mounted.appMode === "classic");
 /* ---- 场景 2：先媒体、后样式（IPC 顺序不保证）---- */
 await load({});
 await emit(SONG_PATCH);
-await sleep(120);
+await sleep(300);
 check("只有媒体、还没有样式时不显示", (await painted()) === 0);
 await emit(THEME);
-await sleep(120);
+await sleep(300);
 check("样式随后到位 → 通知显示", (await painted()) === 1);
 
 /* ---- 场景 3：曲库为空（song 是 null）也算合法画面 ---- */
@@ -270,7 +274,7 @@ await emit({
   coverIndex: 0,
   lyrics: { lines: [], text: "", source: "none", index: -1 },
 });
-await sleep(120);
+await sleep(300);
 check("song 为 null（曲库为空）也要显示，不能永远不出现", (await painted()) === 1);
 
 ws.close();

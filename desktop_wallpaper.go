@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -23,6 +24,10 @@ import (
      2. 用 SetParent 把这个窗口挂到桌面的「壁纸层」（WorkerW）里，并压到最底，
         于是它就在桌面图标之下 —— 这正是「桌面背景」的定义。
         Windows 专属部分见 desktop_wallpaper_windows.go。
+        ★ 顺序很讲究：页面把首帧画好之前**先不挂**，而是用 DWM 遮罩把窗口
+        遮着显示（WebView2 因此提前出帧）；画好之后先摘遮罩、再挂进壁纸层
+        （顺序不能反：子窗口上摘不掉遮罩）。这是「刚打开的时候黑一下」的正解，
+        理由见 ensureDesktopWallpaper 与 armDesktopWallpaperOffscreen。
      3. 数据由主窗口按**皮肤契约的 patch** 推过来（换歌 / 封面 / 歌词 / 进度 /
         设置 / 主题），通道与桌面歌词一致：WindowService 保存 + app.Event.Emit 广播。
 
@@ -170,8 +175,9 @@ func (s *WindowService) openDesktopWallpaperWindow() map[string]any {
 }
 
 // ensureDesktopWallpaper 确保背景歌词窗口存在（不存在就按「无边框 + 垫到桌面
-// 图标之下」新建）。新建出来的窗口是**隐藏的**，显示时机见 armDesktopWallpaperShow 与
-// MarkDesktopWallpaperPainted；已经存在时直接显示。
+// 图标之下」新建）。新建出来的窗口不是「建完就摆到桌面上」，而是先让它在
+// 用户看不见的地方把首帧画完，画好之后才挂进桌面并露面（见下）。
+// 已经存在时直接走「露面」那一步。
 //
 // 失败时返回人话原因：这个功能依赖未公开的桌面窗口结构，
 // 失败是**正常结果之一**（比如换了 shell、系统版本不兼容），必须能说清是哪一步。
@@ -186,29 +192,60 @@ func (s *WindowService) ensureDesktopWallpaper() (*application.WebviewWindow, st
 		return nil, "应用还没准备好"
 	}
 
+	// 每个新窗口都从「没挂载、没有遮罩」开始：这两个标志描述的是**当前这个窗口**，
+	// 关掉再打开就是一个全新的窗口，旧状态不能留下来。
+	s.wallpaperAttached.Store(false)
+	s.wallpaperCloaked.Store(false)
+
 	w := s.app.Window.NewWithOptions(s.desktopWallpaperOptions())
 	hwnd := w.NativeWindow()
 	if hwnd == nil {
 		w.Close()
 		return nil, "拿不到窗口句柄"
 	}
-	// 关键一步：把窗口挂到桌面图标那一层之下。
-	// Window 是 Hidden 创建的，attachDesktopWallpaperWindow 也不会让它变成可见，
-	// 所以这一步失败时屏幕上不会留下任何东西。
+
+	// ★ 两阶段：先把首帧在「桌面之外」渲染完，再放进桌面。
+	//
+	// 这一段与主窗口的做法是同一套（services.go#showPrepared），原因是同一个：
+	// 窗口是隐藏创建的，而 WebView2 的合成器要等窗口可见才出帧 ——
+	// 于是「Show() 之后到第一帧真的被合成出来」之间有一段空档，
+	// 那段时间窗口里什么都没有，露出来的是窗口自己的底色，也就是
+	// 「刚打开的时候黑一下」。光把显示时机推迟到「DOM 写完」并不够：
+	// DOM 写完不等于合成器已经把这一帧交上去。
+	//
+	// 主窗口用 DWM 的 cloak 把这个空档藏起来。这里同样，只是多一个约束：
+	// DWM 只对**顶层窗口**负责，而这个窗口最终必须是壁纸层（WorkerW）的子窗口。
+	// 所以顺序反过来 ——
+	//   ① armDesktopWallpaperOffscreen：遮着显示（顶层窗口，WebView2 开始出帧，
+	//      用户什么都看不见）；
+	//   ② MarkDesktopWallpaperPainted：页面确认首帧已经提交给合成器；
+	//   ③ showDesktopWallpaperNow：挂进壁纸层 + 摘遮罩，窗口出现的那一帧
+	//      就是画好的那一帧。
+	if armDesktopWallpaperOffscreen(hwnd) {
+		s.wallpaperCloaked.Store(true)
+		// 遮罩已经就位，这次 Show() 用户看不见：
+		// 它换来的是 WebView2 从现在开始正常出帧、rAF 正常派发。
+		w.Show()
+		s.armDesktopWallpaperShow()
+		return w, ""
+	}
+
+	// 本机做不到（找不到壁纸层 / 遮不住）：老实退回旧路径 ——
+	// 先挂进壁纸层（此刻仍是隐藏的），等页面画好第一帧再显示。
+	// 代价是那段空档藏不住，但功能本身必须照常可用。
+	//
+	// 这一步同时也是「开不了」的报错出口：找不到壁纸层时它返回具体原因，
+	// 前端据此把按钮回滚成关闭并提示（两阶段路径里做不到这一点，
+	// 因为挂载要等到页面画好之后，那时 openDesktopWallpaperWindow 早就返回了）。
 	if err := attachDesktopWallpaperWindow(hwnd); err != nil {
 		w.Close()
 		return nil, err.Error()
 	}
+	s.wallpaperAttached.Store(true)
 
-	// ★ 这里刻意**不**立刻 Show()。
-	//
-	// 页面此刻才刚刚开始加载：它自己的底色是深色的，而皮肤要等主窗口把
-	// 曲目/封面/歌词/主题推过来才画得出东西。创建后就显示的话，用户先看到的
-	// 就是一块纯色 —— 「刚打开的时候黑一下」。
-	//
-	// 所以显示时机交给页面自己：它把第一帧写进 DOM 之后调
-	// MarkDesktopWallpaperPainted。同时安排兜底定时器 —— 页面加载失败、
-	// 脚本报错、后端没连上时窗口也必须能出现（那比黑一下更糟）。
+	// 显示时机交给页面自己：它把第一帧画好之后调 MarkDesktopWallpaperPainted。
+	// 同时安排兜底定时器 —— 页面加载失败、脚本报错、后端没连上时窗口也必须能出现
+	//（那比黑一下更糟）。
 	s.armDesktopWallpaperShow()
 	return w, ""
 }
@@ -216,9 +253,15 @@ func (s *WindowService) ensureDesktopWallpaper() (*application.WebviewWindow, st
 /* --------------------------------------------------------------------------
    显示时机
    --------------------------------------------------------------------------
-   隐藏创建 → 页面画好第一帧 → 再显示。这与主窗口的做法是同一套
-   （见 main.go 的 winOpts.Hidden 与 WindowService.MarkReady，Wails issue #4611）。
-   区别只在于「画好」的判据：主窗口是 DOM 装配完，这里是皮肤挂上、数据落地。
+   遮罩显示（后台出帧）→ 页面确认首帧已提交给合成器 → 摘遮罩 → 挂进壁纸层。
+   这与主窗口的做法是同一套（见 main.go 的 winOpts.Hidden、services.go#showPrepared
+   与 window_reveal_windows.go，Wails issue #4611）；差别是「摘遮罩」必须排在
+   SetParent 之前，否则遮罩就摘不掉了（见 revealAndAttachDesktopWallpaper）。
+
+   为什么不能只做「DOM 写完就显示」：DOM 写完只说明页面把内容放进了文档树，
+   样式/布局/绘制以及合成器提交都还没发生。隐藏窗口不派发 BeginFrame，
+   页面那边的 rAF 也不会执行，所以「画好了」这件事必须由页面在两帧之后报上来
+   （见 frontend/src/js/desktop-wallpaper-window.js#afterPaint）。
    -------------------------------------------------------------------------- */
 
 // wallpaperShowFallback 是「页面第一帧迟迟没来」时的兜底显示时刻。
@@ -260,10 +303,16 @@ func (s *WindowService) showDesktopWallpaper(gen uint64) {
 	s.showDesktopWallpaperNow()
 }
 
-// showDesktopWallpaperNow 真正调用 Show()，且只做一次。
+// showDesktopWallpaperNow 让背景歌词窗口露面，且只做一次。
 //
 // 为什么用 CompareAndSwap 而不是 sync.Once：页面信号与兜底定时器会并发到达，
 // 谁都可能是第一个；而窗口关掉再打开又是一个新窗口，需要能再来一次。
+//
+// 两条路径都要在这里收口：
+// · 两阶段路径（wallpaperCloaked）：窗口早就是 WS_VISIBLE 的，只是被 DWM 遮住，
+// 且还没挂进壁纸层 —— 这里把这两件事一起做掉，窗口「出现」的那一帧
+// 就是页面已经画好的那一帧；
+// · 旧路径（本机遮不住）：窗口仍是隐藏的，先挂进壁纸层再 Show()。
 func (s *WindowService) showDesktopWallpaperNow() {
 	if !s.wallpaperShown.CompareAndSwap(false, true) {
 		return
@@ -273,6 +322,46 @@ func (s *WindowService) showDesktopWallpaperNow() {
 		// 窗口已经不在了（用户刚关掉 / 创建失败）：把标记退回去，下次再来
 		s.wallpaperShown.Store(false)
 		return
+	}
+	hwnd := w.NativeWindow()
+
+	if s.wallpaperCloaked.Load() {
+		// 阶段三：首帧已经在遮罩后面画好了 —— 现在才把它放进桌面。
+		//
+		// 摘遮罩与挂载都收在 revealAndAttachDesktopWallpaper 里，顺序是
+		// 「先摘遮罩、再 SetParent」（理由见那里的注释：子窗口上摘不掉遮罩）。
+		if !s.wallpaperAttached.Load() {
+			if hwnd == nil {
+				return
+			}
+			if err := revealAndAttachDesktopWallpaper(hwnd); err != nil {
+				// 挂不上（壁纸层在这两步之间被系统改掉，例如资源管理器重启）
+				// 时它已经把遮罩加回去了：桌面上什么都不会出现，也不会留下一块
+				// 盖住整个桌面的窗口。重新开关一次会走创建那条路，
+				// 那时挂载失败会照常报给前端（见 ensureDesktopWallpaper）。
+				log.Printf("[desktop-wallpaper] 挂进桌面壁纸层失败，已重新遮住不显示: %v", err)
+				return
+			}
+			s.wallpaperAttached.Store(true)
+		}
+		// 幂等补一次 Show()：阶段一那次显示万一没落实（Wails 的窗口实现
+		// 还没从 pendingRun 里跑起来时，Show 会直接返回），这里必须补上，
+		// 否则摘了遮罩也是一块不出帧的窗口。
+		w.Show()
+		return
+	}
+
+	// 旧路径：窗口仍是隐藏的。挂载其实在创建时就做完了（失败会直接报给前端），
+	// 这里只是防御性的一次；真挂不上就保持隐藏，理由同上 —— 不能让一块
+	// 铺满屏幕的顶层窗口跑出来。
+	if !s.wallpaperAttached.Load() {
+		if hwnd != nil {
+			if err := attachDesktopWallpaperWindow(hwnd); err != nil {
+				log.Printf("[desktop-wallpaper] 挂进桌面壁纸层失败，保持隐藏: %v", err)
+				return
+			}
+		}
+		s.wallpaperAttached.Store(true)
 	}
 	w.Show()
 }
@@ -374,16 +463,17 @@ func (s *WindowService) MarkDesktopWallpaperReady() map[string]any {
 	return state
 }
 
-// MarkDesktopWallpaperPainted 由背景歌词窗口在「第一帧内容已经写进 DOM」之后调用。
+// MarkDesktopWallpaperPainted 由背景歌词窗口在「第一帧已经提交给合成器」之后调用。
 //
-// 这是窗口**显示**的触发点（见 ensureDesktopWallpaper 的说明）：窗口创建时是
-// 隐藏的，页面自己只有一块深色底，皮肤要等数据推过来才画得出东西 ——
-// 创建后就显示，用户先看到的就是那块纯色（「刚打开的时候黑一下」）。
+// 这是窗口**露面**的触发点（见 ensureDesktopWallpaper 的说明）：挂进壁纸层与
+// 摘遮罩都在这一刻发生，所以它报得太早会露馅（露出来的还是上一帧的深色底），
+// 报得太晚只是桌面上晚几十毫秒出现。页面那边因此要求**两帧 rAF** 之后再报
+// （见 frontend/src/js/desktop-wallpaper-window.js#afterPaint）。
 //
 // 必须由页面在 applyPatch 之后调用，而不是在加载完成的 Ready 那一刻：
-// Ready 时全量数据还在路上，这时候显示同样是一块空画面。
+// Ready 时全量数据还在路上，这时候露面是一块空画面。
 //
-// 幂等：页面重复调用、或兜底定时器已经先显示过，都不会有任何副作用。
+// 幂等：页面重复调用、或兜底定时器已经先露面过，都不会有任何副作用。
 func (s *WindowService) MarkDesktopWallpaperPainted() map[string]any {
 	s.showDesktopWallpaperNow()
 	return map[string]any{"ok": true}
