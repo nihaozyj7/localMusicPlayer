@@ -1990,6 +1990,11 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 		// —— 交互 ——
 		case "rowClickAction":
 			c.RowClickAction = bootstrap.NormalizeRowClickAction(asString(raw, c.RowClickAction))
+		case "resumeProgress":
+			// 播放进度本身由前端随快照保存，后端只记这个开关
+			c.ResumeProgress = asBool(raw, c.ResumeProgress)
+		case "rememberVolume":
+			c.RememberVolume = asBool(raw, c.RememberVolume)
 		case "listDensity":
 			c.ListDensity = bootstrap.NormalizeListDensity(asString(raw, c.ListDensity))
 		case "minimizeToTray":

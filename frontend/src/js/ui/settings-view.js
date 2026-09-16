@@ -21,6 +21,7 @@ import { animationMs, setRuntimeToken } from "../runtime-tokens.js";
 import { toast } from "./overlays.js";
 import { applyRules, commit, compileRegex, flushConfigSync, state } from "../store.js";
 import { fmtCount, fmtSize } from "../utils.js";
+import { providerName } from "../provider-names.js";
 import {
   ANIMATION_SPEEDS,
   LIST_DENSITIES,
@@ -38,7 +39,7 @@ import {
 import { BACKDROP_MODES, backdropLabel } from "../backdrop.js";
 import { listThemes, resolvedGlassAlpha, resolvedGlassBlur } from "../theme.js";
 import { AI_VENDORS, aiVendorHint } from "../ai-vendors.js";
-import { PLAYER_SKIN_API_VERSION, availableSkins, skinLoadFailures, skinRegistryVersion } from "../playerhost.js";
+import { availableSkins, skinLoadFailures, skinRegistryVersion } from "../playerhost.js";
 import { themeRegistryVersion } from "../theme.js";
 import { closeSettings, doRescan, settingsLayerOpen } from "../shell.js";
 import { applyGlassAlpha } from "../theme.js";
@@ -47,34 +48,34 @@ import { createSlider } from "../slider.js";
 /* --------------------------------------------------------------------------
    设置分区
    --------------------------------------------------------------------------
+   大类只用于左侧导航；每个大类下面是一张或多张卡片，卡片就是「小组」。
    归类原则：
-     · 曲库      —— 管「有哪些歌」：扫描文件夹 + 过滤规则；
-     · 外观      —— 管「长什么样」：主题、播放界面样式（皮肤）、列表密度、
-                    专辑列、动画、窗口材质；
-     · 播放      —— 管「怎么播」：播放模式、随机方式、单击行为、记忆音量；
-     · 歌词      —— 管「歌词怎么来、怎么显示」；
-     · 音频      —— 管「听起来怎么样」：响度均衡；
-     · 在线与缓存 —— 管「联网下载与本地缓存」；
-     · AI 相关   —— 所有 AI 能力；
-     · 关于      —— 统计与维护。
+     · 曲库    —— 管「有哪些歌」：音乐文件夹 + 过滤规则；
+     · 外观    —— 管「长什么样」：主题、列表密度与专辑列、界面动画、
+                  播放界面样式（皮肤）；
+     · 播放器  —— 管「怎么播 / 听起来怎么样 / 歌词怎么显示」：播放行为、
+                  歌词、响度均衡；
+     · 数据    —— 管「联网与本地数据」：下载位置、封面来源、缓存与写标签；
+     · AI      —— 所有 AI 能力；
+     · 其他    —— 窗口与系统集成：窗口材质、圆角、关闭行为；
+     · 关于    —— 曲库统计与版本信息。
    -------------------------------------------------------------------------- */
 export const SECTIONS = [
   { id: "library", label: "曲库" },
   { id: "appearance", label: "外观" },
-  { id: "playback", label: "播放" },
-  { id: "lyrics", label: "歌词" },
-  { id: "loudness", label: "音频" },
-  { id: "online", label: "在线与缓存" },
-  { id: "ai", label: "AI 相关" },
+  { id: "player", label: "播放器" },
+  { id: "data", label: "数据" },
+  { id: "ai", label: "AI" },
+  { id: "other", label: "其他" },
   { id: "about", label: "关于" },
 ];
 
 /** 响度均衡的目标响度档位 */
 const LOUDNESS_TARGETS = [
-  { value: -14, label: "-14 LUFS · 较响（流媒体常见）" },
-  { value: -16, label: "-16 LUFS · 推荐（默认）" },
-  { value: -18, label: "-18 LUFS · 温和" },
-  { value: -23, label: "-23 LUFS · 广播标准（EBU R128）" },
+  { value: -14, label: "较响（流媒体常见）" },
+  { value: -16, label: "推荐（默认）" },
+  { value: -18, label: "温和" },
+  { value: -23, label: "广播级" },
 ];
 
 /** 响度均衡模式 */
@@ -297,7 +298,7 @@ class MpSettingsLayer extends MpElement {
               </div>
               ${this.foldersCard()} ${this.rulesCard()} ${this.themeCard()} ${this.playerCard()}
               ${this.playbackCard()} ${this.lyricsCard()} ${this.loudnessCard()} ${this.onlineCard()} ${this.aiCard()}
-              ${this.aboutCard()}
+              ${this.systemCard()} ${this.aboutCard()}
             </div>
           </div>
         </div>
@@ -327,7 +328,7 @@ class MpSettingsLayer extends MpElement {
               <div class="pathrow__meta">${chip}<span>${fmtCount(count)} 首</span></div>
             </div>
             <button class="btn btn--ghost btn--sm" type="button" data-act="rescan-folder" data-id=${f.id}>
-              ${icon("refresh")}<span>重扫</span>
+              ${icon("refresh")}<span>重新扫描</span>
             </button>
             <button
               class="btn btn--ghost btn--sm"
@@ -350,7 +351,7 @@ class MpSettingsLayer extends MpElement {
           <div class="card__desc">添加本地音乐目录，程序会扫描并实时监听其中的变化</div>
         </div>
         <div class="card__actions">
-          <button class="btn" type="button" data-act="scan-now">${icon("refresh")}<span>立即重新扫描</span></button>
+          <button class="btn" type="button" data-act="scan-now">${icon("refresh")}<span>重新扫描</span></button>
           <button class="btn btn--primary" type="button" data-act="add-folder">
             ${icon("folder-plus")}<span>添加文件夹</span>
           </button>
@@ -482,12 +483,12 @@ class MpSettingsLayer extends MpElement {
             : html`<div class="setting__hint">还没有规则。下面的预置规则可以一键添加。</div>`
         }
         <div class="rule__preview">
-          当前规则下：共扫描 <b>${fmtCount(total)}</b> 个文件，保留 <b>${fmtCount(kept)}</b> 首，过滤掉
+          当前规则下：共扫描 <b>${fmtCount(total)}</b> 个文件，保留 <b>${fmtCount(kept.length)}</b> 首，过滤掉
           <b>${fmtCount(excluded)}</b> 个
         </div>
       </div>
       <div class="card__foot">
-        <span>「排除」优先于「仅包含」；正则使用 JavaScript 语法（不区分大小写）</span>
+        <span>「排除」优先于「仅包含」；支持正则表达式（忽略大小写）</span>
         <span>大小单位在数值后填写，默认字节</span>
       </div>
     </section>`;
@@ -509,7 +510,7 @@ class MpSettingsLayer extends MpElement {
         </div>
         <div class="card__actions">
           <button class="btn btn--sm" type="button" data-act="reload-themes">
-            ${icon("refresh")}<span>重新扫描主题</span>
+            ${icon("refresh")}<span>重新扫描</span>
           </button>
           <button class="btn btn--sm" type="button" data-act="open-theme-dir">
             ${icon("folder")}<span>打开主题文件夹</span>
@@ -573,17 +574,63 @@ class MpSettingsLayer extends MpElement {
         })}
         ${settingRow({
           label: "毛玻璃模糊强度",
-          hint: "对应主题令牌 --glass-blur",
+          hint: "控制面板背后内容的模糊程度",
           control: rangeSlider("set-blur", "glassBlur", "模糊强度"),
         })}
         ${settingRow({
           label: "面板不透明度",
-          hint: "对应主题令牌 --glass-bg 的透明度",
+          hint: "面板背景的透明程度，数值越大越透",
           control: rangeSlider("set-alpha", "glassAlpha", "不透明度"),
         })}
         ${settingRow({
+          label: "界面动画",
+          hint: "关闭后取消过渡与旋转动画，低性能设备更流畅",
+          control: switchControl("animations", state.config.animations, "界面动画"),
+        })}
+        ${settingRow({
+          label: "过渡速度",
+          hint: "弹出层、菜单、面板的进出动画时长；默认快速 0.25 秒",
+          control: segmented("animationsSpeed", ANIMATION_SPEEDS, state.config.animationsSpeed || "fast"),
+        })}
+        ${settingRow({
+          label: "主题色跟随封面",
+          hint: "从当前封面提取主色调，作为界面主题色",
+          control: switchControl("accentFromCover", state.config.accentFromCover, "主题色跟随封面"),
+        })}
+        ${settingRow({
+          label: "显示专辑列",
+          hint: "窄窗口下会自动隐藏该列",
+          control: switchControl("showAlbumColumn", state.config.showAlbumColumn, "显示专辑列"),
+        })}
+        ${settingRow({
+          label: "列表密度",
+          hint: "对「本地歌曲」「播放列表」「歌单」三个列表同时生效",
+          control: segmented("listDensity", LIST_DENSITIES, state.config.listDensity || "cozy"),
+        })}
+      </div>
+    </section>`;
+  }
+
+  /* ------------------------------------------------------------------------
+     其他 —— 窗口与系统集成
+     ------------------------------------------------------------------------
+     这里放的是「不属于主题外观、也不属于播放行为」的窗口级设置：原生材质、
+     圆角、关闭行为。材质需要重启，圆角与托盘立刻生效，所以三种状态的说明
+     必须各自讲清楚（见 backdropNote）。
+     ------------------------------------------------------------------------ */
+  systemCard() {
+    return html` <section class="card" id="sec-system" data-section="other">
+      <div class="card__head">
+        <div class="card__icon">${icon("options")}</div>
+        <div class="card__titles">
+          <div class="card__title">窗口与系统</div>
+          <div class="card__desc">窗口材质、圆角与关闭行为；这些设置与系统能力相关，部分改动需要重启应用</div>
+        </div>
+      </div>
+      <div class="card__body">
+        ${settingRow({
           label: "窗口原生材质",
-          hint: "用系统原生的半透明材质当窗口底色（桌面壁纸会透出来）。仅 Windows 11 Build 22621+ 有完整效果，改动需重启应用",
+          hint: "用系统原生的半透明材质当窗口底色（桌面壁纸会透出来）。Windows 11 较新版本效果最完整，旧版本会自动降级。改动后需要重启应用",
           control: html` <div class="select">
             <select class="select__field" data-act="backdrop-mode" aria-label="窗口原生材质">
               ${BACKDROP_MODES.map(
@@ -607,31 +654,6 @@ class MpSettingsLayer extends MpElement {
           hint: "打开后点关闭按钮只把窗口收进系统托盘（任务栏右下角），音乐照常播放；要真正退出请用托盘图标的右键菜单",
           control: switchControl("minimizeToTray", state.config.minimizeToTray, "关闭时最小化到托盘"),
         })}
-        ${settingRow({
-          label: "界面动画",
-          hint: "关闭后取消过渡与旋转动画，低性能设备更流畅",
-          control: switchControl("animations", state.config.animations, "界面动画"),
-        })}
-        ${settingRow({
-          label: "过渡速度",
-          hint: "弹出层、菜单、面板的进出动画时长；默认快速 0.25 秒",
-          control: segmented("animationsSpeed", ANIMATION_SPEEDS, state.config.animationsSpeed || "fast"),
-        })}
-        ${settingRow({
-          label: "主题色跟随封面",
-          hint: "从当前封面提取主色，写入 --seed 令牌（需主题支持）",
-          control: switchControl("accentFromCover", state.config.accentFromCover, "主题色跟随封面"),
-        })}
-        ${settingRow({
-          label: "显示专辑列",
-          hint: "窄窗口下会自动隐藏该列",
-          control: switchControl("showAlbumColumn", state.config.showAlbumColumn, "显示专辑列"),
-        })}
-        ${settingRow({
-          label: "列表密度",
-          hint: "对「本地歌曲」「播放列表」「歌单」三个列表同时生效",
-          control: segmented("listDensity", LIST_DENSITIES, state.config.listDensity || "cozy"),
-        })}
       </div>
     </section>`;
   }
@@ -653,9 +675,9 @@ class MpSettingsLayer extends MpElement {
     if (info.preview) {
       notes.push("浏览器预览里没有原生窗口，材质只在打包后的应用里能看到。");
     } else {
-      notes.push(html`窗口当前生效：<b>${backdropLabel(active)}</b>${info.os ? ` · ${info.os}` : ""}`);
+      notes.push(html`窗口当前生效：<b>${backdropLabel(active)}</b>`);
       if (!info.supported && configured !== "off") {
-        notes.push("当前系统不支持 Mica / Acrylic（需要 Windows 11 Build 22621 或更高），会退化成普通的背景模糊。");
+        notes.push("当前系统不支持原生材质，会退化为普通的背景模糊。");
       }
       if (pending) {
         notes.push(html`已保存为 <b>${backdropLabel(configured)}</b>，重启应用后生效。`);
@@ -692,12 +714,12 @@ class MpSettingsLayer extends MpElement {
         <div class="card__titles">
           <div class="card__title">播放界面样式</div>
           <div class="card__desc">
-            内置样式来自独立包 player-skins（接口版本 ${PLAYER_SKIN_API_VERSION}）；把第三方样式放进样式目录即可扩展
+            内置 ${skins.filter((s) => s.builtin).length} 款样式；把第三方样式包放进样式目录即可使用
           </div>
         </div>
         <div class="card__actions">
           <button class="btn btn--sm" type="button" data-act="reload-skins">
-            ${icon("refresh")}<span>重新扫描样式</span>
+            ${icon("refresh")}<span>重新扫描</span>
           </button>
           <button class="btn btn--sm" type="button" data-act="open-skin-dir">
             ${icon("folder")}<span>打开样式目录</span>
@@ -767,7 +789,7 @@ class MpSettingsLayer extends MpElement {
         })}
         ${settingRow({
           label: "轮播间隔",
-          hint: "对应设置项 coverCarouselInterval（秒）",
+          hint: "每隔多少秒切换一张",
           control: rangeSlider("set-carousel", "coverCarouselInterval", "轮播间隔"),
         })}
       </div>
@@ -778,12 +800,12 @@ class MpSettingsLayer extends MpElement {
      播放
      ======================================================================== */
   playbackCard() {
-    return html` <section class="card" id="sec-playback" data-section="playback">
+    return html` <section class="card" id="sec-playback" data-section="player">
       <div class="card__head">
         <div class="card__icon">${icon("headphones")}</div>
         <div class="card__titles">
           <div class="card__title">播放</div>
-          <div class="card__desc">播放模式、随机方式与单击行为（界面相关的设置都在「外观」里）</div>
+          <div class="card__desc">播放模式、随机方式与单击歌曲时的行为</div>
         </div>
       </div>
       <div class="card__body">
@@ -814,14 +836,20 @@ class MpSettingsLayer extends MpElement {
         })}
         ${settingRow({
           label: "记忆音量",
-          hint: `当前音量 ${Math.round(state.volume * 100)}%`,
-          control: switchControl("rememberVolume", true, "记忆音量"),
+          hint: "记住上次的音量，下次启动时恢复",
+          control: switchControl("rememberVolume", state.config.rememberVolume !== false, "记忆音量"),
+        })}
+        ${settingRow({
+          label: "保留歌曲播放进度",
+          hint: "记住每首歌上次播到哪儿；退出后重新打开会回到那个位置。只恢复进度条，不会自动开始播放",
+          control: switchControl("resumeProgress", state.config.resumeProgress === true, "保留歌曲播放进度"),
         })}
         ${settingRow({
           label: "单击歌曲时的行为",
-          hint:
-            "双击始终是「立即播放这一首」；这个设置只影响单击：" +
-            "播放＝播放它并把它加进播放列表；播放该歌单＝播放它并用当前列表替换播放列表；添加为一首播放＝插到当前歌曲后面，点了「下一曲」就播它",
+          hint: html`双击始终是「立即播放这一首」，此设置只影响单击。<br />
+            播放：立刻播放这首歌，并加入播放列表；<br />
+            播放当前列表：用当前整个列表替换播放队列，从这首歌开始播；<br />
+            下一首播放：插到当前歌曲后面，下一次「下一曲」时播放。`,
           control: segmented("rowClickAction", ROW_CLICK_ACTIONS, state.config.rowClickAction || "next"),
         })}
       </div>
@@ -832,7 +860,7 @@ class MpSettingsLayer extends MpElement {
      歌词
      ======================================================================== */
   lyricsCard() {
-    return html` <section class="card" id="sec-lyrics" data-section="lyrics">
+    return html` <section class="card" id="sec-lyrics" data-section="player">
       <div class="card__head">
         <div class="card__icon">${icon("lyrics")}</div>
         <div class="card__titles">
@@ -853,7 +881,7 @@ class MpSettingsLayer extends MpElement {
         })}
         ${settingRow({
           label: "桌面歌词",
-          hint: "在桌面上显示一行置顶歌词（独立透明窗口，可拖动；底栏「桌面歌词」按钮同效）。位置会被记住，换显示器后跑丢了可以在这里重置",
+          hint: "在桌面上显示一行置顶歌词（独立透明窗口，可拖动；底栏「桌面歌词」按钮同效）。位置会被记住；换显示器后如果位置不对，可以在这里重置",
           control: html` ${switchControl("showDesktopLyrics", state.config.showDesktopLyrics, "桌面歌词")}
             <button
               class="btn btn--ghost btn--sm"
@@ -871,7 +899,7 @@ class MpSettingsLayer extends MpElement {
         })}
         ${settingRow({
           label: "歌词字号",
-          hint: "对应 --lyric-size，当前行会额外放大",
+          hint: "歌词文字大小，当前播放的那一行会略微放大",
           control: rangeSlider("set-lyric-size", "lyricsFontSize", "歌词字号"),
         })}
         ${settingRow({
@@ -900,13 +928,11 @@ class MpSettingsLayer extends MpElement {
     const tools = state.ffmpegState || {};
     const sourceText = tools.describe || ls.describe || "检测中…";
 
-    return html` <section class="card" id="sec-loudness" data-section="loudness">
+    return html` <section class="card" id="sec-loudness" data-section="player">
       <div class="card__head">
         <h2 class="card__title">${icon("scale")}<span>响度均衡</span></h2>
         <p class="card__desc">
-          按 EBU R128 测量整合响度（LUFS），回放时按目标响度做增益补偿， 让不同来源的歌曲音量听起来一致。<br />
-          <b>只在播放时按需测量</b>：播到哪首就测哪首，算好的补偿会缓存下来，
-          之后播放零延迟；没有手动预热的入口。改了目标响度后旧补偿会自动失效并按新标准重算。
+          让不同来源的歌曲音量听起来一样大。播放到哪首就测哪首，测好后自动记住，下次播放直接用；改动目标响度后会自动重新计算。
         </p>
       </div>
 
@@ -914,7 +940,7 @@ class MpSettingsLayer extends MpElement {
         <div class="setting__label">
           <span>均衡模式</span>
           <small class="u-fs-xs u-dim"
-            >逐曲：每首歌都拉到目标响度；同专辑：整张专辑用同一个增益，保留专辑内部的强弱对比</small
+            >逐曲：每首歌都调到相同响度；同专辑：整张专辑用同一次调整，保留专辑内部的强弱对比</small
           >
         </div>
         <div class="setting__control">${segmented("loudnessMode", LOUDNESS_MODES, cfg.loudnessMode || "off")}</div>
@@ -923,7 +949,7 @@ class MpSettingsLayer extends MpElement {
       <div class="setting">
         <div class="setting__label">
           <span>目标响度</span>
-          <small class="u-fs-xs u-dim">数字越小整体越轻。推荐 -16 LUFS。改动后已缓存的补偿会失效并重算</small>
+          <small class="u-fs-xs u-dim">数值越小整体越轻，推荐用默认档。改动后会自动重新计算</small>
         </div>
         <div class="setting__control">
           <div class="select">
@@ -943,7 +969,7 @@ class MpSettingsLayer extends MpElement {
       <div class="setting">
         <div class="setting__label">
           <span>真峰值保护</span>
-          <small class="u-fs-xs u-dim">抬升音量时限制增益，避免超过 -1 dBTP 造成削波失真</small>
+          <small class="u-fs-xs u-dim">音量抬高时自动限制幅度，避免声音破音</small>
         </div>
         <div class="setting__control">
           <button
@@ -961,7 +987,7 @@ class MpSettingsLayer extends MpElement {
       <div class="setting setting--stack">
         <div class="card__actions">
           <button class="btn btn--sm" type="button" data-act="loudness-refresh">
-            ${icon("refresh")}<span>重新拉取补偿</span>
+            ${icon("refresh")}<span>重新获取响度数据</span>
           </button>
           <button class="btn btn--sm btn--danger" type="button" data-act="loudness-clear">
             ${icon("trash")}<span>清除测量数据</span>
@@ -969,10 +995,9 @@ class MpSettingsLayer extends MpElement {
         </div>
 
         <div class="setting__hint">
-          当前标准下已算好 <b>${measured}</b> / ${total}
-          首${missing ? html`，其余 <b>${fmtCount(missing)}</b> 首会在播放时按需计算` : "（全部已算好）"}<br />
-          缓存文件里另有 ${ls.cached ?? 0} 条记录（含其他标准下的旧结果，不会生效）<br />
-          响度来源：<b>${available ? sourceText : "不可用"}</b>${available ? "" : " —— 转码与响度测量不可用"}
+          当前设置下已算好 <b>${measured}</b> / ${total}
+          首${missing ? html`，其余 <b>${fmtCount(missing)}</b> 首会在播放时计算` : "（全部已算好）"}<br />
+          响度来源：<b>${available ? sourceText : "不可用"}</b>
         </div>
       </div>
     </section>`;
@@ -986,10 +1011,10 @@ class MpSettingsLayer extends MpElement {
     const providers = state.coverProviders || [];
     const breaker = state.coverBreaker || {};
     const providerText = providers.length
-      ? providers.map((p) => (breaker[p] ? `${p}（暂时不可用）` : p)).join(" · ")
-      : "尚未连接后端";
+      ? providers.map((p) => (breaker[p] ? `${providerName(p)}（暂时不可用）` : providerName(p))).join(" · ")
+      : "正在读取…";
 
-    return html` <section class="card" id="sec-online" data-section="online">
+    return html` <section class="card" id="sec-online" data-section="data">
       <div class="card__head">
         <div class="card__icon">${icon("music")}</div>
         <div class="card__titles">
@@ -1072,9 +1097,9 @@ class MpSettingsLayer extends MpElement {
         </div>
       </div>
       <div class="card__foot">
-        <span>封面来自第三方公开接口（iTunes / 网易云 / Deezer / MusicBrainz），匹配不保证 100% 准确</span>
+        <span>封面来自公开曲库（iTunes / 网易云 / Deezer / MusicBrainz），匹配结果不保证完全准确</span>
         <button class="btn btn--sm" type="button" data-act="cover-refresh">
-          ${icon("refresh")}<span>清空封面缓存</span>
+          ${icon("refresh")}<span>清空封面与歌词缓存</span>
         </button>
       </div>
     </section>`;
@@ -1109,7 +1134,7 @@ class MpSettingsLayer extends MpElement {
         <div class="card__icon">${icon("settings")}</div>
         <div class="card__titles">
           <div class="card__title">AI 相关</div>
-          <div class="card__desc">自动匹配歌词 / 封面时，用 AI 从脏文件名里提取真实元数据</div>
+          <div class="card__desc">自动匹配歌词 / 封面时，用 AI 从文件名中还原歌曲信息</div>
         </div>
       </div>
       <div class="card__body">
@@ -1118,7 +1143,7 @@ class MpSettingsLayer extends MpElement {
         ${field("模型 ID", "例如 gpt-4o-mini、deepseek-chat；留空默认 gpt-4o-mini", "aiModelId", "gpt-4o-mini")}
         ${settingRow({
           label: "模型类型",
-          hint: "思考模式的开关参数各家不同，必须选对厂商才会发出正确的请求体；选「自动识别」会按接口地址与模型名判断",
+          hint: "不同厂商对思考模式的支持方式不同，选错会导致这个开关不生效；选「自动识别」可自动判断",
           control: html` <select class="select__field" data-act="ai-vendor" aria-label="模型类型">
             ${AI_VENDORS.map((v) => html`<option value=${v.id} ?selected=${v.id === (cfg.aiVendor || "auto")}>${v.label}</option>`)}
           </select>`,
@@ -1130,7 +1155,7 @@ class MpSettingsLayer extends MpElement {
         })}
         ${settingRow({
           label: "自动匹配歌词时使用 AI 清洗元数据",
-          hint: "自动匹配歌词前先用 AI 从文件名里还原真实的标题/歌手。AI 一次调用可能要十几秒，关掉后只做本地整形：匹配更快，但脏文件名的命中率会低一些",
+          hint: "自动匹配歌词前先用 AI 从文件名里还原真实的标题 / 歌手。AI 一次调用可能要十几秒，关掉后只做本地整理：匹配更快，但文件名不规范时命中率会低一些",
           control: switchControl(
             "aiLyricsClean",
             state.config.aiLyricsClean !== false,
@@ -1159,8 +1184,8 @@ class MpSettingsLayer extends MpElement {
       <div class="card__head">
         <div class="card__icon">${icon("info")}</div>
         <div class="card__titles">
-          <div class="card__title">关于与数据</div>
-          <div class="card__desc">曲库统计与缓存位置</div>
+          <div class="card__title">关于</div>
+          <div class="card__desc">曲库统计与版本信息</div>
         </div>
       </div>
       <div class="kv">
@@ -1179,13 +1204,7 @@ class MpSettingsLayer extends MpElement {
         <div class="kv__k">缓存目录</div>
         <div class="kv__v">${state.config.cacheDir}</div>
         <div class="kv__k">版本</div>
-        <div class="kv__v">0.1.0（Go + Wails3 · Lit 前端）</div>
-      </div>
-      <div class="card__foot">
-        <span>清空缓存不会删除任何本地音乐文件</span>
-        <button class="btn btn--danger btn--sm" type="button" data-act="clear-cache">
-          ${icon("trash")}<span>清空缓存</span>
-        </button>
+        <div class="kv__v">0.1.0</div>
       </div>
     </section>`;
   }

@@ -16,7 +16,7 @@
    ========================================================================== */
 
 import { backend, isWails } from "./bridge.js";
-import { commit, currentSong, notify, playNext, seek, state } from "./store.js";
+import { commit, currentSong, noteProgress, notify, persist, playNext, seek, state } from "./store.js";
 import { toast } from "./dom.js";
 
 let el = null;
@@ -25,6 +25,7 @@ let requestSeq = 0;
 let pendingSeek = null; // 切歌后待执行的跳转位置（毫秒）
 let lastAppliedGain = null; // 上一次写进链路的增益，避免每帧重复写入
 let srcChangedAt = 0; // 最近一次换 src 的时刻（performance.now），用于识别被 abort 的旧请求
+let lastProgressPersistAt = 0; // 上次把播放进度写进 localStorage 的时刻（5 秒节流）
 
 /** 换 src 之后多久内出现的媒体错误认定为"旧请求被取代"，不提示用户 */
 const LOAD_SETTLE_MS = 1500;
@@ -275,6 +276,14 @@ function bindEvents(node) {
     const bar = document.getElementById("progress");
     if (bar?.dataset.dragging === "true") return;
     state.position = node.currentTime * 1000;
+    // 记下这一首播到哪儿了；落盘做 5 秒节流（timeupdate 每秒约 4 次，
+    // 每次都写 localStorage 会明显拖慢主线程）。退出前由 main.js 的
+    // beforeunload → flushConfigSync() 把最后一帧写进去。
+    noteProgress(state.position);
+    if (state.config.resumeProgress === true && performance.now() - lastProgressPersistAt > 5000) {
+      lastProgressPersistAt = performance.now();
+      persist();
+    }
     notify();
   });
 
@@ -342,6 +351,19 @@ function bindEvents(node) {
 }
 
 /**
+ * 本次启动要恢复的播放位置（毫秒）。取值后立刻清零 —— 只恢复「启动时那一首」，
+ * 之后用户主动点播或切歌都从头开始，不会出现「点了歌却从中间放」的意外。
+ */
+function consumeResumeSeek(song) {
+  const saved = Number(state.pendingResumeMs) || 0;
+  state.pendingResumeMs = 0;
+  if (!saved || state.config.resumeProgress !== true) return 0;
+  const dur = song?.duration || state.duration || 0;
+  if (dur && saved >= dur - 3000) return 0;
+  return saved;
+}
+
+/**
  * 这次媒体错误是不是"被新的加载取代"导致的？
  * 典型场景：一首歌播完 → 自动切下一首 → 旧请求被 abort。
  * 判定：src 刚被换掉（1.5 秒内），或浏览器没给出错误码（abort 就是这个样子）。
@@ -389,11 +411,11 @@ export async function syncAudio() {
     if (seq !== requestSeq) return; // 期间又切歌了（新的 syncAudio 会接管换源状态）
     if (!url) {
       switchPhase = SWITCH_IDLE;
-      toast("无法播放：后端没有返回地址", { tone: "error", duration: 5000 });
+      toast("无法播放：没有取到可播放的地址", { tone: "error", duration: 5000 });
       return;
     }
 
-    pendingSeek = 0;
+    pendingSeek = consumeResumeSeek(song);
     node.src = url;
     srcChangedAt = performance.now();
     node.load();

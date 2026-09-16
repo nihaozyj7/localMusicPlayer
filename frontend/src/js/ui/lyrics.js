@@ -23,6 +23,7 @@ import {
   setLyricsOffset,
 } from "../playerhost.js";
 import { coverOf, fmtTime } from "../utils.js";
+import { providerListLabel } from "../provider-names.js";
 import { formatLrcTime, mergeDraftTimes, parseLyricDraft, serializeLrc, shiftLrc } from "@musicplayer/player-skins";
 
 /** 与 bridge.js 同理：绑定是按 URL 在运行时解析的，不能让打包器按文件路径解析 */
@@ -213,7 +214,7 @@ class MpLyricsPanel extends MpElement {
   /**
    来源优先级提示
    --------------------------------------------------------------------------
-   本程序的歌词读取顺序是：内嵌歌词 → 同名 .lrc → 程序缓存 → 在线匹配。
+   本程序的歌词读取顺序是：内嵌歌词 → 同目录 .lrc → 歌词缓存 → 在线自动匹配。
    微调 / 手动编辑的结果只能写进**缓存**（第三位），所以对「带内嵌歌词」或
    「有同名 .lrc」的歌，只写缓存会导致下次打开又变回旧歌词。
    这里选择**明说 + 给出口**，而不是假装没问题。
@@ -230,8 +231,8 @@ class MpLyricsPanel extends MpElement {
         <div class="lyricspanel__notice-text" data-notice-text>
           ${
             canEmbed
-              ? html`这首歌的歌词来自「${label}」，它的优先级高于程序缓存：只保存到缓存的话，下次打开仍会显示旧歌词。建议同时写入歌曲文件。`
-              : html`这首歌的歌词来自「${label}」，它的优先级高于程序缓存；而 ${ext ? "." + ext : "该格式"}
+              ? html`这首歌的歌词来自「${label}」，它的优先级高于歌词缓存：只保存到缓存的话，下次打开仍会显示旧歌词。建议同时写入歌曲文件。`
+              : html`这首歌的歌词来自「${label}」，它的优先级高于歌词缓存；而 ${ext ? "." + ext : "该格式"}
                 不支持写入歌词标签，所以本次改动只在<b>本次运行内</b>生效（重启后会变回旧歌词）。`
           }
         </div>
@@ -699,7 +700,7 @@ class MpLyricsPanel extends MpElement {
       const res = await service.LyricsProviders?.();
       const list = Array.isArray(res?.providers) ? res.providers : [];
       if (list.length) {
-        this._lastOnlineHint = "在线歌词来源：" + list.join(" / ");
+        this._lastOnlineHint = "在线歌词来源：" + providerListLabel(list);
         bumpLyricsPanelTick();
       }
     } catch {
@@ -715,7 +716,7 @@ class MpLyricsPanel extends MpElement {
     }
     const service = await getBindings();
     if (!service) {
-      toast("在线歌词后端未就绪", { tone: "error" });
+      toast("在线歌词服务暂不可用，请稍后再试", { tone: "error" });
       return;
     }
     const song = currentTarget();
@@ -752,7 +753,7 @@ class MpLyricsPanel extends MpElement {
     }
     const service = await getBindings();
     if (!service) {
-      toast("在线歌词后端未就绪", { tone: "error" });
+      toast("在线歌词服务暂不可用，请稍后再试", { tone: "error" });
       return;
     }
     try {

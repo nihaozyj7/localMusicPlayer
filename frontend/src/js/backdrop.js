@@ -22,9 +22,9 @@ export const BACKDROP_MODES = ["off", "auto", "mica", "acrylic", "tabbed"];
 const BACKDROP_LABELS = {
   off: "关闭（不透明窗口）",
   auto: "自动（系统决定）",
-  mica: "Mica（Win11 材质）",
-  acrylic: "Acrylic（亚克力）",
-  tabbed: "Tabbed（标签页材质）",
+  mica: "云母（Mica）",
+  acrylic: "亚克力（Acrylic）",
+  tabbed: "标签页（Tabbed）",
 };
 
 export function backdropLabel(mode) {

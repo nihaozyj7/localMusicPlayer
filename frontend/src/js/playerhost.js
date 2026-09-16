@@ -59,7 +59,7 @@ const SKINS_PREFIX = "/skins/";
    歌词装载（宿主职责：要访问后端与缓存，皮肤只消费解析好的结果）
    ==========================================================================
    回退链（顺序与设置里的「歌词来源优先级」一致）：
-     内嵌歌词 → 同目录同名 .lrc → 本程序缓存 → 在线自动匹配 → 暂无歌词
+     内嵌歌词 → 同目录 .lrc → 歌词缓存 → 在线自动匹配 → 暂无歌词
 
    前三级由后端 Lyrics.Load 一次搞定（读本地，很快）；在线匹配是网络操作，
    拆成第二步异步做（Lyrics.AutoMatch），这样切歌时界面不会白等十几秒。
@@ -256,13 +256,13 @@ export function currentLyricsInfo(songId) {
 export function lyricsSourceLabel(source) {
   switch (source) {
     case "embedded":
-      return "音频内嵌";
+      return "内嵌歌词";
     case "lrc-file":
-      return "同名 .lrc 文件";
+      return "同目录 .lrc";
     case "cache":
-      return "程序缓存";
+      return "歌词缓存";
     case "online":
-      return "在线匹配";
+      return "在线自动匹配";
     case "manual":
       return "手动编辑";
     case "preview":

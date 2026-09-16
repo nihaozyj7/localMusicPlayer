@@ -137,8 +137,6 @@ export function openPlaylistMenu(id, anchor) {
     items.push({ id: "delete", label: "删除歌单", icon: "trash", danger: true });
     items.push({ id: "sep2", kind: "sep" });
   }
-  items.push({ id: "export", label: "导出为 m3u", icon: "file" });
-
   const rect = anchor.getBoundingClientRect();
   openMenu({
     x: rect.left,
@@ -161,9 +159,6 @@ export function openPlaylistMenu(id, anchor) {
           break;
         case "delete":
           confirmDeletePlaylist(pl.id, () => navigate("library"));
-          break;
-        case "export":
-          toast("导出 m3u 需要接入后端后实现", { duration: 2200 });
           break;
         default:
           break;

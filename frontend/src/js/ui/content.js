@@ -251,15 +251,15 @@ class MpContent extends MpElement {
       queue: {
         icon: "queue",
         title: "播放列表是空的",
-        desc: "从「所有歌曲」或任意歌单里选择歌曲加入播放列表。",
-        ok: "去所有歌曲",
+        desc: "从「本地歌曲」或任意歌单里选择歌曲加入播放列表。",
+        ok: "去本地歌曲",
         act: "goto-library",
       },
       playlist: {
         icon: "playlist",
         title: "这个歌单还没有歌曲",
-        desc: "在「所有歌曲」里点击每首歌后面的爱心或更多菜单，把歌曲加进来。",
-        ok: "去所有歌曲",
+        desc: "在「本地歌曲」里点击每首歌后面的爱心或更多菜单，把歌曲加进来。",
+        ok: "去本地歌曲",
         act: "goto-library",
       },
       search: {

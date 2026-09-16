@@ -1,5 +1,6 @@
 /* ==========================================================================
-   settings.js — 设置界面（音乐文件夹 / 过滤规则 / 外观 / 播放 / 歌词 / 关于）
+   settings.js — 设置界面的业务逻辑
+   （文件夹 / 规则 / 主题 / 播放界面样式 / 播放 / 歌词 / 响度 / 在线 / AI / 窗口与系统）
    ========================================================================== */
 
 import { openModal, toast } from "./dom.js";
@@ -33,8 +34,8 @@ import { availableSkins, reloadSkins, removeSkin, setPlayerViewMode, skinLoadFai
 /** 单击歌曲行的可选行为（与 Go 侧 bootstrap.RowClickActions 一致） */
 export const ROW_CLICK_ACTIONS = [
   { value: "play", label: "播放" },
-  { value: "play-list", label: "播放该歌单" },
-  { value: "next", label: "添加为一首播放" },
+  { value: "play-list", label: "播放当前列表" },
+  { value: "next", label: "下一首播放" },
 ];
 
 /**
@@ -111,8 +112,8 @@ export function embedHintText() {
 /** 「把已有缓存补写进文件」按钮的说明文字 */
 export function embedWriteHint() {
   return (
-    "上面那个开关只对「之后」下载 / 更换的封面生效。缓存里已经存着的封面与歌词" +
-    `（${cacheSummary()}）可以用这个按钮一次性写进歌曲文件；mp3 / wav 等暂不支持写标签的格式会被跳过，不会动你的文件。`
+    "这个开关只对之后下载或更换的封面生效；已经存在缓存里的封面与歌词" +
+    `（${cacheSummary()}）可以用下面的按钮一次性写进歌曲文件。mp3 / wav 等暂不支持写标签的格式会被跳过，不会动你的文件。`
   );
 }
 
@@ -612,10 +613,10 @@ export function openThemeHelp(ctx = {}) {
     </div>
     ${promptActions({ copyKey: "theme", importKind: "theme", importLabel: "导入主题…" })}
     <div class="setting__hint setting__hint--steps">
-      主题只声明设计令牌，不需要写组件样式，因此可以随便换皮肤而不会破坏布局：<br />
+      主题只声明颜色，不需要写组件样式，因此换主题不会破坏布局：<br />
       · 选择器写 <b>:root[data-theme="你的文件名"]</b>，与文件名一致最省事；<br />
-      · 只改你关心的令牌，例如 <b>--glass-bg</b> / <b>--accent</b> / <b>--text-1</b>；<br />
-      · 未声明的令牌会自动回退到默认主题，缺失也不会写坏布局。
+      · 只改你想要的颜色，其余保持默认即可；<br />
+      · 没写到的颜色会自动沿用默认主题，缺失也不会弄坏布局。
     </div>`;
 
   const { root } = openModal({
@@ -670,7 +671,7 @@ function confirmThemeRemove(actEl, ctx) {
   const name = actEl.dataset.name || id;
   openModal({
     title: `移除主题「${name}」？`,
-    desc: "会删掉主题目录里对应的那个 CSS 文件。内置主题由程序在每次启动时重新生成，所以不提供移除。",
+    desc: "会删除这个主题对应的样式文件。内置主题不能移除。",
     okText: "移除",
     danger: true,
     onOk: async () => {
@@ -794,7 +795,7 @@ export async function handleSettingsAction(actEl, ctx = {}) {
           // 扫描结果由后端 scan:done 事件推回来，这里不再重复触发 rescan，
           // 避免出现两次并发扫描（曲库会排队，但没必要让用户多等一轮）
         } else {
-          toast("添加文件夹失败：后端没有返回结果", { tone: "error", duration: 6000 });
+          toast("添加文件夹失败，请重试", { tone: "error", duration: 6000 });
         }
         return;
       }
@@ -950,10 +951,6 @@ export async function handleSettingsAction(actEl, ctx = {}) {
         toast("浏览器预览模式下仅内置主题可用", { tone: "warning" });
       }
       break;
-    case "clear-cache":
-      toast("缓存清理需在后端实现（当前仅保存元数据缓存文件）", { tone: "warning" });
-      break;
-
     /* 播放界面样式（皮肤包） */
     case "skin-pick": {
       const picked = availableSkins().find((x) => x.id === id);
@@ -1051,7 +1048,7 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       await refreshLoudnessGains();
       const ls = await refreshLoudnessState();
       ctx.commit?.();
-      toast(`已重新拉取补偿（已测量 ${ls?.measured ?? 0} 首）`, { tone: "success" });
+      toast(`已重新获取响度数据（已测量 ${ls?.measured ?? 0} 首）`, { tone: "success" });
       break;
     }
     case "loudness-clear": {
@@ -1084,7 +1081,7 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       await invalidateLoudnessForTarget();
       await refreshLoudnessState();
       ctx.render?.();
-      toast(`目标响度已设为 ${v} LUFS，旧补偿已失效，将按新标准重算`, { tone: "success", duration: 3200 });
+      toast("目标响度已切换，响度数据将重新计算", { tone: "success", duration: 3200 });
       break;
     }
 
@@ -1304,7 +1301,7 @@ async function confirmDownloadDir(proposal, ctx) {
   if (!next) return;
 
   if (proposal.same) {
-    toast("这个位置就是当前的下载目录", { duration: 2200 });
+    toast("这已经是当前的下载目录", { duration: 2200 });
     return;
   }
 

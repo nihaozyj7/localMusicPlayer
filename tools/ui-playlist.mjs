@@ -266,8 +266,8 @@ try {
     JSON.stringify(nav)
   );
   check(
-    "设置重新分类为 8 类",
-    nav.labels.join(",") === "曲库,外观,播放,歌词,音频,在线与缓存,AI 相关,关于",
+    "设置重新分类为 7 类",
+    nav.labels.join(",") === "曲库,外观,播放器,数据,AI,其他,关于",
     JSON.stringify(nav.labels)
   );
 

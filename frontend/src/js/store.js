@@ -49,7 +49,7 @@ const DEFAULT_CONFIG = {
   watchFolders: true,
   playerViewMode: "classic", // classic | immersive | minimal
   // 与 Go 侧 bootstrap.Config 的默认值保持一致：
-  // 内嵌歌词 → 同目录 .lrc → 本程序缓存 → 在线自动匹配
+  // 内嵌歌词 → 同目录 .lrc → 歌词缓存 → 在线自动匹配
   lyricsSources: ["embedded", "lrc-file", "cache", "online"],
   lyricsFontSize: 16,
   lyricsLines: 7,
@@ -92,8 +92,13 @@ const DEFAULT_CONFIG = {
   embedMeta: false,
 
   // 交互
-  // 单击歌曲行的行为：play（播放并加入播放列表） | play-list（播放该歌单并替换列表） | next（添加为下一首播放）
+  // 单击歌曲行的行为：play（播放并加入播放列表） | play-list（播放当前列表并替换队列） | next（下一首播放）
   rowClickAction: "next",
+  // 保留歌曲播放进度：退出应用时记住每首歌的播放位置，下次打开回到上次听的地方。
+  // 只恢复进度条位置，不会自动开始播放（见 applyPendingPlayback / audio.js）。
+  resumeProgress: true,
+  // 记忆音量：退出时保存当前音量，下次启动恢复；关掉则每次启动都用默认音量。
+  rememberVolume: true,
   // 列表密度：compact（紧凑） | cozy（默认） | roomy（宽松）
   listDensity: "cozy",
   /* 封面轮播（详情页）：只影响详情页显示哪一张，不动「当前生效封面」 */
@@ -163,6 +168,12 @@ function initialState() {
     /* 播放 */
     queue: [],
     queueOrigin: null, // { type:'library'|'playlist', id }
+    /* 每首歌的上次播放位置（毫秒）：songId → ms。
+       只在「保留歌曲播放进度」打开时记录与恢复，随快照落盘（见 writeSnapshot）。 */
+    progress: {},
+    /* 本次启动要恢复的播放位置（毫秒，不落盘）。applyPendingPlayback 写入，
+       audio.js 在装载恢复出来的那首歌时消费一次（见 consumeResumeSeek）。 */
+    pendingResumeMs: 0,
     currentId: null,
     playing: false,
     position: 0,
@@ -171,7 +182,7 @@ function initialState() {
     volume: 0.8,
     muted: false,
     shuffleOrder: [],
-    /* 「添加为一首播放」在随机模式下的落点。
+    /* 「下一首播放」在随机模式下的落点。
        随机播放用的是 shuffleOrder 里的随机顺序，往 queue 里插到当前歌后面并不
        意味着它会真的下一个播，所以额外记一个显式标记，playNext 先消费它。 */
     forcedNextId: "",
@@ -1117,7 +1128,7 @@ export function playNext(auto = false) {
     emit("player:pause", { songId: state.currentId });
     return;
   }
-  // 「添加为一首播放」：随机模式下队列下标不代表播放顺序，先消费显式标记
+  // 「下一首播放」：随机模式下队列下标不代表播放顺序，先消费显式标记
   if (state.playMode === "shuffle" && state.forcedNextId) {
     const forced = state.forcedNextId;
     state.forcedNextId = "";
@@ -1146,8 +1157,37 @@ export function playPrev() {
 
 export function seek(ms) {
   state.position = Math.max(0, Math.min(ms, state.duration || 0));
+  // 暂停状态下拖动进度条也要记住落点：<audio> 的 timeupdate 只在播放时来。
+  noteProgress(state.position);
   commit();
   emit("player:seek", { ms });
+}
+
+/**
+ * 记下当前歌曲的播放位置（毫秒）。
+ *
+ * 高频调用（<audio> 的 timeupdate 约每秒 4 次），所以这里只写内存：
+ * 真正的落盘交给 persist() 的去抖与 beforeunload 时的 flushConfigSync()，
+ * 不会因为拖着进度条就把 localStorage 写穿。
+ */
+export function noteProgress(ms) {
+  const id = state.currentId;
+  if (!id || state.config.resumeProgress !== true) return;
+  if (!Number.isFinite(ms) || ms < 0) return;
+  if (!state.progress || typeof state.progress !== "object") state.progress = {};
+  state.progress[id] = Math.round(ms);
+}
+
+/** 快照里最多保留多少首歌的进度，避免长期使用后 localStorage 无限膨胀 */
+const PROGRESS_MAX = 1500;
+
+function pruneProgress(map) {
+  const keys = Object.keys(map || {});
+  if (keys.length <= PROGRESS_MAX) return map || {};
+  // 对象属性按插入顺序排列：保留最后写入的 PROGRESS_MAX 首。
+  const out = {};
+  for (const key of keys.slice(keys.length - PROGRESS_MAX)) out[key] = map[key];
+  return out;
 }
 
 export function setVolume(v) {
@@ -1175,7 +1215,7 @@ export function setPlayMode(mode) {
   const next = PLAY_MODES.includes(mode) || mode === "loop-all" ? mode : "sequence";
   if (next !== state.playMode) {
     state.playMode = next;
-    // 换了播放模式，之前记下的「添加为一首播放」落点不再适用
+    // 换了播放模式，之前记下的「下一首播放」落点不再适用
     state.forcedNextId = "";
   }
   state.config.playMode = state.playMode;
@@ -1202,6 +1242,7 @@ export function startMockTicker() {
     if (!state.playing || !state.currentId) return;
     if (audioEngineActive()) return; // 真实播放中，交给 <audio> 事件
     state.position += 250;
+    noteProgress(state.position);
     if (state.position >= state.duration) {
       if (state.sleepTimer?.type === "after-song") {
         // 定时停止：本首结束即停（loop-one 也一样）
@@ -1300,10 +1341,12 @@ function writeSnapshot() {
       sortKey: state.sortKey,
       sortDir: state.sortDir,
       playMode: state.playMode,
-      volume: state.volume,
-      muted: state.muted,
+      // 关掉「记忆音量」时不落盘（对象展开而不是整体赋值，避免多写两个默认值）
+      ...(state.config.rememberVolume !== false ? { volume: state.volume, muted: state.muted } : {}),
       queue: state.queue,
       currentId: state.currentId,
+      // 每首歌上次播到哪儿（见 noteProgress）。只在开关打开时才有内容。
+      progress: pruneProgress(state.progress),
       filterRules: state.filterRules,
       folders: state.folders,
       userPlaylists: state.playlists.filter((p) => !p.builtin),
@@ -1364,6 +1407,8 @@ const SYNCED_KEYS = [
   "onlineCover",
   "embedMeta",
   "rowClickAction",
+  "resumeProgress",
+  "rememberVolume",
   "listDensity",
   "coverCarousel",
   "coverCarouselInterval",
@@ -1392,8 +1437,11 @@ export async function flushConfigSync() {
     if (key in state.config) patch[key] = state.config[key];
   }
   patch.playMode = state.playMode;
-  patch.volume = state.volume;
-  patch.muted = state.muted;
+  // 关闭「记忆音量」时不把音量推给后端，避免下次启动又被旧值覆盖
+  if (state.config.rememberVolume !== false) {
+    patch.volume = state.volume;
+    patch.muted = state.muted;
+  }
   try {
     await backend.setConfig(patch);
   } catch (err) {
@@ -1410,8 +1458,13 @@ function applyPersisted(saved) {
   state.sortKey = saved.sortKey || state.sortKey;
   state.sortDir = saved.sortDir || state.sortDir;
   state.playMode = saved.playMode || state.playMode;
-  state.volume = typeof saved.volume === "number" ? saved.volume : state.volume;
-  state.muted = Boolean(saved.muted);
+  if (state.config.rememberVolume !== false) {
+    state.volume = typeof saved.volume === "number" ? saved.volume : state.volume;
+    state.muted = Boolean(saved.muted);
+  }
+  if (saved.progress && typeof saved.progress === "object") {
+    state.progress = saved.progress;
+  }
   if (Array.isArray(saved.filterRules) && saved.filterRules.length) {
     state.filterRules = saved.filterRules;
   }
@@ -1470,6 +1523,17 @@ function applyPendingPlayback() {
     state.currentId = state.queue[0];
   }
   state.duration = songById(state.currentId)?.duration ?? 0;
+
+  // 恢复上次退出时的播放位置：只把进度条放到那儿，不自动开始播放。
+  // 距离歌曲结尾太近（<3 秒）的位置没有恢复价值，按「从头开始」处理。
+  if (state.config.resumeProgress === true) {
+    const saved = Number(state.progress?.[state.currentId]);
+    const dur = state.duration || 0;
+    if (Number.isFinite(saved) && saved > 1000 && (!dur || saved < dur - 3000)) {
+      state.pendingResumeMs = saved;
+      state.position = saved;
+    }
+  }
   return true;
 }
 
@@ -1506,8 +1570,11 @@ export async function hydrateFromBackend() {
     // 后端配置为准（后端是唯一真源），视图类临时状态不受影响
     Object.assign(state.config, cfg);
     state.playMode = cfg.playMode || state.playMode;
-    state.volume = typeof cfg.volume === "number" ? cfg.volume : state.volume;
-    state.muted = Boolean(cfg.muted);
+    // 「记忆音量」关闭时，后端存着的旧音量也不还原
+    if (state.config.rememberVolume !== false) {
+      state.volume = typeof cfg.volume === "number" ? cfg.volume : state.volume;
+      state.muted = Boolean(cfg.muted);
+    }
     if (Array.isArray(cfg.filterRules) && cfg.filterRules.length) state.filterRules = cfg.filterRules;
   }
   if (Array.isArray(playlists) && playlists.length) {

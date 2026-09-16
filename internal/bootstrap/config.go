@@ -145,9 +145,15 @@ type Config struct {
 	// —— 交互 ——
 	// RowClickAction 单击歌曲行的行为（与前端 settings.js 的 ROW_CLICK_ACTIONS 一一对应）：
 	//   play      —— 播放：播这一首，并把它加进播放列表（不动现有列表）
-	//   play-list —— 播放该歌单：播这一首，并用当前列表替换播放列表
-	//   next      —— 添加为一首播放：插到当前歌曲后面（默认，不打断当前播放）
+	//   play-list —— 播放当前列表：播这一首，并用当前整个列表替换播放队列
+	//   next      —— 下一首播放：插到当前歌曲后面（默认，不打断当前播放）
 	RowClickAction string `json:"rowClickAction"`
+	// ResumeProgress 是否保留歌曲播放进度：打开后退出应用会记住每首歌播到哪儿，
+	// 下次打开回到那个位置（只恢复进度条，不会自动播放）。
+	// 每首歌的具体位置由前端随快照存在本地（localStorage），后端只保存这个开关。
+	ResumeProgress bool `json:"resumeProgress"`
+	// RememberVolume 是否记住上次的音量：关闭后每次启动都用默认音量。
+	RememberVolume bool `json:"rememberVolume"`
 	// ListDensity 列表密度：compact | cozy | roomy。
 	// 原来每张表头各有一个密度按钮，现在统一到设置里，对所有列表生效。
 	ListDensity string `json:"listDensity"`
@@ -337,6 +343,11 @@ func DefaultConfig() *Config {
 		EmbedMeta:   false,
 
 		RowClickAction: "next",
+		// 默认开启：与加入这个开关之前「回到上次那首歌」的体验一致，
+		// 只是把播放位置也一并恢复；不想要可以在设置里关掉。
+		ResumeProgress: true,
+		// 默认记住音量：与加入这个开关之前的行为一致，关掉即每次回到默认音量。
+		RememberVolume: true,
 		ListDensity:    "cozy",
 
 		ShowDesktopLyrics:    false,

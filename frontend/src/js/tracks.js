@@ -43,8 +43,8 @@ export const SORT_LABELS = {
    --------------------------------------------------------------------------
    单击有三种模式（与 Go 侧 bootstrap.RowClickActions 一一对应）：
      play       播放        —— 播这一首，并把它加进播放列表（不动现有列表）
-     play-list  播放该歌单  —— 播这一首，并用当前列表替换播放列表
-     next       添加为一首播放 —— 插到当前歌曲后面，下一次「下一曲」就播它（默认）
+     play-list  播放当前列表 —— 播这一首，并用当前整个列表替换播放队列
+     next       下一首播放   —— 插到当前歌曲后面，下一次「下一曲」就播它（默认）
 
    双击始终是「立即播放并从这一首开始」—— 这是各地播放器的通用约定，
    不受设置影响（否则把设置改成 next 之后就没有「马上听这首」的入口了）。
@@ -66,9 +66,9 @@ export function activateRow(row, { silent = false } = {}) {
     return;
   }
 
-  // 添加为一首播放（默认）
+  // 下一首播放（默认）
   addNextInQueue(songId);
-  if (!silent) toast("已添加为下一首播放", { tone: "success", duration: 1500 });
+  if (!silent) toast("已设为下一首播放", { tone: "success", duration: 1500 });
 }
 
 /* --------------------------------------------------------------------------
@@ -204,9 +204,13 @@ export function openTrackMenu(anchor, songId, pos = null) {
         }
         break;
       case "reveal":
-        import("./bridge.js").then((m) => {
-          m.backend.revealInExplorer(song.path);
-          toast("已在文件夹中定位（需接入后端）", { duration: 1800 });
+        import("./bridge.js").then(async (m) => {
+          try {
+            await m.backend.revealInExplorer(song.path);
+            toast("已在文件夹中显示", { duration: 1800 });
+          } catch (err) {
+            toast(`无法在文件夹中显示：${err?.message ?? err}`, { tone: "error", duration: 4000 });
+          }
         });
         break;
       default:

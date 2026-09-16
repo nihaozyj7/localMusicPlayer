@@ -232,7 +232,7 @@ class MpQueuePanel extends MpPanel {
                   (song) => song.id,
                   (song) => this.item(song)
                 )
-              : html`<div class="queue-panel__empty">播放列表是空的<br />从曲库把歌曲加进来吧</div>`
+              : html`<div class="queue-panel__empty">播放列表是空的<br />从曲库把歌曲加进来</div>`
           }
         </div>
       </section>
@@ -600,7 +600,7 @@ class MpSleepPanel extends MpPanel {
             </button>
           </div>
           <div class="sleep-panel__hint">
-            「歌曲播放完成后停止」打开时，倒计时到点如果这首还没播完，会等它播完再停 （不会在副歌中间掐掉）。拖到 0
+            「歌曲播放完成后停止」打开时，倒计时到点如果这首还没播完，会等它播完再停 （不会在歌曲中途打断）。拖到 0
             分钟即取消定时；设置从松手那一刻开始倒计时。
           </div>
         </div>
@@ -612,7 +612,7 @@ class MpSleepPanel extends MpPanel {
 function sleepReadout(timer, pendingMinutes) {
   if (typeof pendingMinutes === "number") {
     return pendingMinutes <= 0
-      ? { value: "未开启", sub: "松手即关闭定时" }
+      ? { value: "未开启", sub: "拖到 0 即取消" }
       : { value: `${pendingMinutes} 分钟`, sub: "松手开始倒计时" };
   }
   if (timer?.type === "after-song") {
@@ -622,7 +622,7 @@ function sleepReadout(timer, pendingMinutes) {
     const remain = Math.max(0, timer.until - Date.now());
     return { value: `剩余 ${fmtRemainShort(remain)}`, sub: `共 ${timer.minutes} 分钟` };
   }
-  return { value: "未开启", sub: "拖动上面的条设置分钟数" };
+  return { value: "未开启", sub: "拖动滑块设置时长" };
 }
 
 function fmtRemainShort(ms) {

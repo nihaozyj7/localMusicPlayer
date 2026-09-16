@@ -13,6 +13,7 @@ import { define, html, nothing, repeat, requestAppUpdate, icon } from "./base.js
 import { toast } from "./overlays.js";
 import { backend, isWails } from "../bridge.js";
 import { coverOfRaw } from "../utils.js";
+import { providerListLabel } from "../provider-names.js";
 import { commit, coverVersion, setCoverSet, state } from "../store.js";
 import { notifyCoverChanged } from "../playerhost.js";
 import { MpPanel } from "./panels.js";
@@ -542,10 +543,9 @@ function setCoverStatus(text) {
 
 const component = () => document.querySelector("mp-cover-layer");
 
-/** 提示文案里的来源列表 */
+/** 提示文案里的来源列表（后端给的是 id，这里换成用户看得懂的名字） */
 function providerLabel() {
-  const list = state.coverProviders || [];
-  return list.length ? list.join(" / ") : "iTunes / 网易云 / QQ 音乐 / Deezer / MusicBrainz";
+  return providerListLabel(state.coverProviders, "iTunes / 网易云 / QQ 音乐 / Deezer / MusicBrainz");
 }
 
 export function openCoverPanel(id) {
