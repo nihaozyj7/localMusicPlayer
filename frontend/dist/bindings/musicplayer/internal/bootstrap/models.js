@@ -10,6 +10,7 @@
  * @property {number} glassBlur
  * @property {number} glassAlpha
  * @property {string} nativeBackdrop - NativeBackdrop 窗口原生材质：off | auto | mica | acrylic | tabbed。 只有 Windows 会用得上，且必须在创建窗口时指定，改了要重启应用。
+ * @property {string} windowCorners - WindowCorners 主窗口圆角：system | round | small | square（见 NormalizeWindowCorners）。 同样是 Windows 11 的能力，但它改的是运行期可写的 DWM 属性，改完立刻生效、不用重启。
  * @property {boolean} animations
  * @property {string} animationsSpeed - AnimationsSpeed 界面过渡速度：fast（0.25s）| medium（0.5s）| slow（0.75s）。 前端把它换算成 --dur 令牌，全站动效（含各种弹出层）都从这一个令牌取值。
  * @property {boolean} accentFromCover

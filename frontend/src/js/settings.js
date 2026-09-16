@@ -43,6 +43,18 @@ export const ROW_CLICK_ACTIONS = [
   { value: "next", label: "添加为一首播放" },
 ]
 
+/**
+ * 主窗口圆角（与 Go 侧 bootstrap.WindowCornerModes 一致）。
+ * 圆角是系统（DWM）画的，只有这几档；没有「任意像素半径」——
+ * 那需要放弃系统外框自己画，是另一个量级的改动。
+ */
+export const WINDOW_CORNERS = [
+  { value: "system", label: "跟随系统" },
+  { value: "round", label: "标准" },
+  { value: "small", label: "小圆角" },
+  { value: "square", label: "直角" },
+]
+
 /** 列表密度（与 Go 侧 bootstrap.ListDensities 一致） */
 export const LIST_DENSITIES = [
   { value: "compact", label: "紧凑" },
@@ -1545,6 +1557,14 @@ export function handleSettingControl(actEl, ctx = {}) {
       if (segKey === "loudnessMode") {
         // 模式切换后需要重新拉取补偿增益表（off→on 或 track↔album）
         refreshLoudnessGains()
+      }
+      if (segKey === "windowCorners") {
+        // 圆角是运行期可写的 DWM 属性：立刻推给后端，点完就能看到（不用重启）
+        if (isWails()) {
+          backend.setWindowCorners(value).catch((err) => {
+            console.warn("[settings] 设置窗口圆角失败", err)
+          })
+        }
       }
     }
     ctx.commit?.()

@@ -92,7 +92,10 @@ type Config struct {
 	// NativeBackdrop 窗口原生材质：off | auto | mica | acrylic | tabbed。
 	// 只有 Windows 会用得上，且必须在创建窗口时指定，改了要重启应用。
 	NativeBackdrop string `json:"nativeBackdrop"`
-	Animations     bool   `json:"animations"`
+	// WindowCorners 主窗口圆角：system | round | small | square（见 NormalizeWindowCorners）。
+	// 同样是 Windows 11 的能力，但它改的是运行期可写的 DWM 属性，改完立刻生效、不用重启。
+	WindowCorners string `json:"windowCorners"`
+	Animations    bool   `json:"animations"`
 	// AnimationsSpeed 界面过渡速度：fast（0.25s）| medium（0.5s）| slow（0.75s）。
 	// 前端把它换算成 --dur 令牌，全站动效（含各种弹出层）都从这一个令牌取值。
 	AnimationsSpeed string `json:"animationsSpeed"`
@@ -254,6 +257,29 @@ func NormalizeBackdropMode(mode string) string {
 }
 
 /* --------------------------------------------------------------------------
+   主窗口圆角
+   -------------------------------------------------------------------------- */
+
+// WindowCornerModes 主窗口圆角可选值。
+//
+// 为什么只有四档、没有「连续半径」：圆角是 DWM 画的，系统只给了
+// DWMWA_WINDOW_CORNER_PREFERENCE 这一个开关（默认 / 圆角 / 小圆角 / 直角）。
+// 想要任意像素的半径就得放弃系统外框（阴影 + 抗锯齿圆角）自己画，
+// 那是另一个量级的改动，这里不碰。
+var WindowCornerModes = []string{"system", "round", "small", "square"}
+
+// NormalizeWindowCorners 规范化圆角值：大小写/空格无关，非法值落回 system。
+func NormalizeWindowCorners(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	for _, m := range WindowCornerModes {
+		if m == mode {
+			return mode
+		}
+	}
+	return "system"
+}
+
+/* --------------------------------------------------------------------------
    默认值
    -------------------------------------------------------------------------- */
 
@@ -266,6 +292,7 @@ func DefaultConfig() *Config {
 		GlassBlur:       22,
 		GlassAlpha:      62,
 		NativeBackdrop:  "off",
+		WindowCorners:   "system",
 		Animations:      true,
 		AnimationsSpeed: "fast",
 		ShowAlbumColumn: true,
@@ -597,6 +624,8 @@ func normalize(cfg *Config) {
 	}
 	// 手改配置写成 "Mica" / "MICA" 也算数；无法识别的值落回默认（off）
 	cfg.NativeBackdrop = NormalizeBackdropMode(cfg.NativeBackdrop)
+	// 圆角同理：认不出来就跟随系统
+	cfg.WindowCorners = NormalizeWindowCorners(cfg.WindowCorners)
 	if cfg.ScanConcurrency <= 0 {
 		cfg.ScanConcurrency = def.ScanConcurrency
 	}

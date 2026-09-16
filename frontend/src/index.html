@@ -32,8 +32,103 @@
     -->
     <style id="runtime-tokens"></style>
     <style id="swatch-styles"></style>
+    <!--
+      启动过渡画面（#boot-splash）的样式。
+      刻意内联在 <head> 里、而不是放进 styles/*.css：
+        · 它必须在外链样式表之后「立刻」生效，不能等任何一次额外请求；
+        · 这一段只服务首帧，与主题令牌体系无关，放在这里不会污染主题。
+      CSP 的 style-src 本来就允许 unsafe-inline（见上面的 meta）。
+    -->
+    <style id="boot-splash-style">
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        /* 缓存图还没解码出来时先铺主题底色，避免闪一下白 */
+        background: var(--bg-window, #0b0c12);
+        opacity: 1;
+        transition: opacity 0.22s ease;
+        /* 过渡画面只负责好看：不吃鼠标事件（拖动 / 点击照常落到窗口上） */
+        pointer-events: none;
+      }
+      #boot-splash[data-hide] {
+        opacity: 0;
+      }
+      /* 缓存图默认**不可见**：它有可能 404（首次启动 / 非 Windows / 浏览器预览），
+         而浏览器对加载失败的 <img> 会画一个「碎图标」—— 那正是用户看到的那张破图。
+         只有确认真的加载出来了（data-hasframe，见 js/main.js）才显示。
+         用 opacity 而不是 display:none，是为了保证图片一定会被请求与解码。 */
+      #boot-splash__frame {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        /* 窗口尺寸 / DPI 与上次不同也能铺满：多出来的部分裁掉即可 */
+        object-fit: cover;
+        object-position: top left;
+        opacity: 0;
+      }
+      #boot-splash[data-hasframe] #boot-splash__frame {
+        opacity: 1;
+      }
+      /* 加载动画：默认形态（还没有缓存图 / 还没确认能显示） */
+      #boot-splash__mark {
+        position: relative;
+        display: flex;
+        width: 72px;
+        height: 72px;
+        align-items: center;
+        justify-content: center;
+      }
+      #boot-splash[data-hasframe] #boot-splash__mark {
+        display: none;
+      }
+      #boot-splash__mark svg {
+        width: 27px;
+        height: 27px;
+        color: var(--text-2, rgba(244, 244, 246, 0.66));
+      }
+      /* 转圈的那一圈：用 ::after 画，省一个 DOM 节点 */
+      #boot-splash__mark::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        border: 2px solid var(--accent-weak, rgba(255, 255, 255, 0.14));
+        border-top-color: var(--accent, #ffffff);
+        animation: boot-splash-spin 0.9s linear infinite;
+      }
+      @keyframes boot-splash-spin {
+        to {
+          transform: rotate(1turn);
+        }
+      }
+    </style>
   </head>
-  <body>
+<body>
+    <!-- ==================================================================
+         启动过渡画面（#boot-splash）
+         ==================================================================
+         Go 侧每次真正退出时抓一张窗口画面缓存成 JPEG（见 boot_frame.go），
+         这里直接把它当 <img> 铺满窗口：窗口一露面就是「刚才那个界面」，
+         等真正的界面装配好再淡出（见 js/main.js#hideBootSplash）。
+
+         两种形态的 DOM 都写死在 HTML 里（默认是加载动画，缓存图加载成功后才换成
+         data-hasframe 那一形态）—— 它必须是「第一帧就画得出来」的，
+         不能依赖哪个 JS 模块先跑一遍。 -->
+    <div id="boot-splash" aria-hidden="true">
+      <img id="boot-splash__frame" src="/boot-frame.jpg" alt="" decoding="async" />
+      <div id="boot-splash__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 18V5l10-2v13" />
+          <circle cx="6.5" cy="18" r="2.6" />
+          <circle cx="16.5" cy="16" r="2.6" />
+        </svg>
+      </div>
+    </div>
     <!-- ==================================================================
          图标精灵（全部 stroke 型，颜色继承 currentColor，尺寸由 CSS 控制）
          ================================================================== -->

@@ -46,26 +46,47 @@ const earlyThemePath = "/early-theme.js"
 // hexColorRe 校验种子色：只接受 3/6 位十六进制，避免把任意字符串拼进 CSS
 var hexColorRe = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
 
-// earlyThemeScript 生成 /early-theme.js 的内容。
-func earlyThemeScript(store *bootstrap.Store, themeMgr *theme.Manager) []byte {
-	cfg := store.Get()
+// earlyThemeState 是「首帧主题」的解析结果：完全不经过前端，只看磁盘上的配置。
+//
+// /early-theme.js（浏览器里那一帧）与窗口底色（firstFrameWindowColour）都从它
+// 出发 —— 两边必须是同一件事，否则「窗口底色」和「页面第一帧」又会错开一档，
+// 那就等于换了个颜色的闪。
+type earlyThemeState struct {
+	Theme string // 已确认存在的主题 id
+	Mode  string
+	Seed  string // 空串 = 没有取色记录
+	Seed2 string
+}
 
-	themeID := strings.TrimSpace(cfg.Theme)
-	mode := strings.TrimSpace(cfg.ThemeMode)
-	seed := validHexColor(cfg.CoverSeed)
-	seed2 := validHexColor(cfg.CoverSeed2)
+// resolveEarlyTheme 按磁盘上的真实配置算出首帧主题。
+func resolveEarlyTheme(store *bootstrap.Store, themeMgr *theme.Manager) earlyThemeState {
+	var st earlyThemeState
+	if store != nil {
+		cfg := store.Get()
+		st.Theme = strings.TrimSpace(cfg.Theme)
+		st.Mode = strings.TrimSpace(cfg.ThemeMode)
+		st.Seed = validHexColor(cfg.CoverSeed)
+		st.Seed2 = validHexColor(cfg.CoverSeed2)
+	}
 
 	// 配置里的主题可能已经被用户删掉了（主题文件不在磁盘上）。这时别硬套，
 	// 退回到 index.html 的默认主题，剩下的交给前端 discoverThemes 去纠正。
-	if themeID == "" || !themeExists(themeMgr, themeID) {
-		themeID = "dark-minimal"
+	if st.Theme == "" || !themeExists(themeMgr, st.Theme) {
+		st.Theme = "dark-minimal"
 	}
-	if mode == "" {
-		mode = "dark"
+	if st.Mode == "" {
+		st.Mode = "dark"
 	}
-	if seed2 == "" {
-		seed2 = seed
+	if st.Seed2 == "" {
+		st.Seed2 = st.Seed
 	}
+	return st
+}
+
+// earlyThemeScript 生成 /early-theme.js 的内容。
+func earlyThemeScript(store *bootstrap.Store, themeMgr *theme.Manager) []byte {
+	st := resolveEarlyTheme(store, themeMgr)
+	themeID, mode, seed, seed2 := st.Theme, st.Mode, st.Seed, st.Seed2
 
 	themeJSON, err := json.Marshal(themeID)
 	if err != nil {
@@ -110,6 +131,53 @@ func earlyThemeScript(store *bootstrap.Store, themeMgr *theme.Manager) []byte {
 			"if(b){b.dataset.styleEpoch=String((Number(b.dataset.styleEpoch)||0)+1);}" +
 			"}catch(e){}})();")
 	return []byte(b.String())
+}
+
+// reBgApp 从主题 CSS 里读 --bg-app（首帧底色）。
+var reBgApp = regexp.MustCompile(`--bg-app\s*:\s*([^;\r\n}]+)`)
+
+// firstFrameHex 算「页面第一帧的底色」，与 earlyThemeScript 写给 --bg-app 的值
+// 完全一致。
+//
+// 封面取色主题用同一个种子色混出近似底色（真正的颜色要等封面解码完，第一帧
+// 只能是这个近似值，见文件头说明）；其它主题直接读它自己声明的 --bg-app ——
+// 内置主题也被 syncBuiltin 写到了用户目录里，所以自定义主题与内置主题走的是
+// 同一条路。
+func firstFrameHex(st earlyThemeState, themeMgr *theme.Manager) string {
+	if st.Theme == "cover-dark" && st.Seed != "" {
+		return mixHex(st.Seed, "#07070a", 0.18)
+	}
+	if themeMgr == nil {
+		return ""
+	}
+	css, err := themeMgr.CSS(st.Theme)
+	if err != nil {
+		return ""
+	}
+	// 注释里也可能出现 --bg-app，所以逐个匹配、取第一个**合法纯色**的值。
+	for _, m := range reBgApp.FindAllStringSubmatch(css, -1) {
+		if hex := validHexColor(strings.TrimSpace(m[1])); hex != "" {
+			return hex
+		}
+	}
+	return ""
+}
+
+// firstFrameWindowColour 给出窗口创建时的底色（application.WebviewWindowOptions
+// 的 BackgroundColour）。
+//
+// 为什么需要一个「按主题算」的底色：窗口在 WebView2 吐出第一帧之前，露出来的
+// 就是它。写死近黑时，浅色主题启动那一下就是黑闪。虽然正常路径下窗口是遮着
+// 显示、等第一帧画好才露面的（见 services.go#showPrepared），但这个值仍然是
+// 兜底：万一遮罩用不了（老系统 / 远程桌面），第一帧至少是同一个颜色。
+func firstFrameWindowColour(store *bootstrap.Store, themeMgr *theme.Manager) application.RGBA {
+	// 算不出来时保持和 index.html 写着的一致的近黑，与改动前完全一样。
+	fallback := application.NewRGB(8, 8, 10)
+	r, g, b, ok := parseHex(firstFrameHex(resolveEarlyTheme(store, themeMgr), themeMgr))
+	if !ok {
+		return fallback
+	}
+	return application.NewRGB(uint8(r), uint8(g), uint8(b))
 }
 
 // earlyThemeHandler 返回 /early-theme.js 的处理器。

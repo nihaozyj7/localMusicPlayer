@@ -142,11 +142,15 @@ export function MarkDesktopWallpaperReady() {
 }
 
 /**
- * MarkReady 前端把 DOM 装配好之后调用：这时才把主窗口显示出来。
+ * MarkReady 前端把 DOM 装配好之后调用：这时才让主窗口真正出现在屏幕上。
  * 
  * 为什么窗口创建时是 Hidden（见 main.go 的 winOpts）：Wails 在不隐藏时会用
  * 带 WS_VISIBLE 的样式创建窗口，而 WebView2 在页面渲染完成前会先亮一块白底 ——
  * 那正是首屏那一下闪烁（Wails issue #4611 的修法就是创建时排除 WS_VISIBLE）。
+ * 
+ * 「隐藏创建」只是躲开了白底，却换来了黑闪：controller 不可见时 WebView2 不出帧，
+ * 所以 Show() 之后还要等合成器吐出第一帧，这段时间窗口里是空的（露出来的就是
+ * 窗口底色）。真正的修法是 showPrepared —— 见那里的注释。
  * 
  * 刻意**不用** sync.Once 锁死：前端的信号有可能到得太早 —— 窗口实现还在
  * pendingRun 里没跑起来时，WebviewWindow.Show() 只会去 InvokeSync(w.Run)
@@ -157,6 +161,14 @@ export function MarkDesktopWallpaperReady() {
  */
 export function MarkReady() {
     return $Call.ByID(1144975395);
+}
+
+/**
+ * MarkReadyAsync 与 MarkReady 等价，但不阻塞调用方（HTTP 处理器用）。
+ * @returns {$CancellablePromise<void>}
+ */
+export function MarkReadyAsync() {
+    return $Call.ByID(986582981);
 }
 
 /**
@@ -235,6 +247,20 @@ export function SetFullscreen(on) {
  */
 export function SetMinimizeToTray(on) {
     return $Call.ByID(3272139870, on);
+}
+
+/**
+ * SetWindowCorners 设置主窗口圆角（system | round | small | square）并立刻生效。
+ * 
+ * 与「窗口原生材质」不同：材质只能在创建窗口时指定，而圆角是运行期可写的
+ * DWM 属性，所以这里点完立刻就能看到效果，不需要重启。
+ * 
+ * 返回规范化之后的值，前端据此回写自己的配置（非法值会落回 system）。
+ * @param {string} mode
+ * @returns {$CancellablePromise<string>}
+ */
+export function SetWindowCorners(mode) {
+    return $Call.ByID(3654306471, mode);
 }
 
 /**

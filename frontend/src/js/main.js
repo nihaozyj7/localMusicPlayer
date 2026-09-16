@@ -52,6 +52,80 @@ import { initSearchPanel } from "./searchpanel.js";
 import { initDownloads } from "./downloads.js";
 import { startRuntime } from "./runtime.js";
 
+/* --------------------------------------------------------------------------
+   启动过渡画面（index.html#boot-splash）
+   --------------------------------------------------------------------------
+   Go 侧每次真正退出时用 PrintWindow 抓一张窗口画面缓存成 JPEG（见 boot_frame.go），
+   下次启动由 /boot-frame.jpg 提供给这里的 <img>：窗口一露面看到的就是「刚才那个
+   界面」，等真正的界面装配好再淡出（hideBootSplash），中间不会出现任何空档。
+
+   它与「DWM 遮罩」（window_reveal_windows.go）是两件事，配合使用：
+     · 遮罩保证窗口出现在屏幕上时「已经有画好的帧」，不会有空白窗口；
+     · 过渡画面决定那一帧长什么样 —— 上一帧缓存 / 加载动画。
+
+   抓不到缓存图（首次启动 / 非 Windows / 抓帧失败 / 浏览器预览）就退化成
+   加载动画形态：默认那形态就是加载动画，只有确认缓存图真的加载出来了
+   （naturalWidth > 0）才给容器打上 data-hasframe 切换过去。
+
+   ★ 不能让 <img> 默认可见：404 时浏览器会给它画一个「碎图标」，用户看到的就是
+   一张破图（CSS 里它默认 opacity:0，见 index.html#boot-splash-style）。
+   -------------------------------------------------------------------------- */
+const bootSplash = document.getElementById("boot-splash");
+const bootSplashFrame = document.getElementById("boot-splash__frame");
+
+/** 缓存图确实加载出来了 → 换成「上一帧」形态（CSS 的两个 data-hasframe 规则） */
+function showBootFrame() {
+  if (bootSplash) bootSplash.dataset.hasframe = "1";
+}
+
+if (bootSplashFrame) {
+  // 模块跑到这里时图片可能已经有结果了：complete 且 naturalWidth 为 0 就是 404，
+  // 那时 error 事件不会再补发，所以这里直接判一次。
+  if (bootSplashFrame.complete) {
+    if (bootSplashFrame.naturalWidth > 0) showBootFrame();
+  } else {
+    bootSplashFrame.addEventListener("load", showBootFrame, { once: true });
+  }
+}
+
+let windowReadySent = false;
+
+/** 让 Go 侧把主窗口露出来（只发一次；见 services.go#showPrepared/MarkReady） */
+function markWindowReady() {
+  if (windowReadySent) return;
+  windowReadySent = true;
+  // 首选：普通 HTTP 请求（见 services.go#bootRevealPath）。它走网络栈，
+  // 不会像 Wails 的 JS→Go 绑定那样在启动阶段被积压近一秒。
+  fetch("/boot/reveal", { cache: "no-store", keepalive: true }).catch(() => {});
+  // 兜底：万一这条请求被拦（自定义 CSP / 资源协议），回到绑定调用。
+  backend.windowReady().catch(() => {});
+}
+
+let bootSplashHidden = false;
+
+/** 真正的界面已经画好：淡出过渡画面（只做一次） */
+function hideBootSplash() {
+  if (bootSplashHidden || !bootSplash) return;
+  bootSplashHidden = true;
+  bootSplash.dataset.hide = "1";
+  // 过渡结束后摘掉节点：它铺满整窗，留着会一直占一层合成
+  setTimeout(() => bootSplash.remove(), 400);
+}
+
+// 页面一跑起来就立刻报「可以露面了」，一刻都不等。
+//
+// 这一段是模块里的第一句可执行代码（模块脚本在 </body> 前，属于 defer 执行），
+// 而接口走的是普通 HTTP 请求而不是 Wails 的 JS→Go 绑定 —— 后者在启动阶段
+// 会被宿主的 WebView2 初始化堵住近一秒，实测窗口因此白等 800ms（表现就是
+// 「任务栏图标都出来半天了，窗口才冒出来」，见 services.go#bootRevealPath）。
+//
+// 为什么不怕「露早了」：过渡层是写死在 HTML 里的（样式也内联），首帧就会画出来；
+// 就算早几毫秒，露出来的也只是与过渡层同色的窗口底色（窗口底色取自同一套主题令牌），
+// 肉眼看不出差别。
+markWindowReady();
+// 兜底：后面万一哪里抛了异常，也不能把过渡画面永远糊在界面上。
+setTimeout(hideBootSplash, 12000);
+
 /** 下载中的 toast（bvid → toast 句柄），进度事件复用同一条 */
 const downloadToasts = new Map();
 
@@ -419,20 +493,11 @@ async function main() {
   await applyResolvedTheme(state.config);
   applyVolume();
 
-  // DOM 已经装配好：让 Go 侧把主窗口显示出来。
+  // 界面已经装配好：让过渡画面淡出，把屏幕交给真正的界面。
   //
-  // ★ 这里**不能**用 requestAnimationFrame 等首帧：窗口是隐藏的时候 WebView2
-  // 根本不派发 BeginFrame，rAF 回调永远不会执行 —— 而 document.visibilityState
-  // 仍然是 "visible"，从 JS 侧完全看不出异常。
-  // 所以：宏任务立刻发；窗口若已经可见，rAF 那一帧再补发一次（只发一次）。
-  let windowReadySent = false;
-  const markWindowReady = () => {
-    if (windowReadySent) return;
-    windowReadySent = true;
-    backend.windowReady().catch(() => {});
-  };
-  setTimeout(markWindowReady, 0);
-  requestAnimationFrame(() => requestAnimationFrame(markWindowReady));
+  // 露面时机**不在这里** —— 过渡画面（上一帧缓存 / 加载动画）一画好就已经
+  // 让 Go 侧把窗口露出来了，见文件顶部的 bootSplash 那一段。
+  requestAnimationFrame(() => requestAnimationFrame(hideBootSplash));
 
   // 响度能力与补偿表（后端可用时）
   await refreshLoudnessState();

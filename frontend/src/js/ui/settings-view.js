@@ -25,6 +25,7 @@ import {
   ANIMATION_SPEEDS,
   LIST_DENSITIES,
   ROW_CLICK_ACTIONS,
+  WINDOW_CORNERS,
   cacheSummary,
   embedHintText,
   embedWriteHint,
@@ -511,6 +512,11 @@ class MpSettingsLayer extends MpElement {
               </div>`,
           })}
           ${this.backdropNote()}
+          ${settingRow({
+            label: "窗口圆角",
+            hint: "主窗口四角的圆角幅度。圆角由系统绘制，只有这几档（仅 Windows 11 有效）",
+            control: segmented("windowCorners", WINDOW_CORNERS, state.config.windowCorners || "system"),
+          })}
           ${settingRow({
             label: "关闭时最小化到托盘",
             hint: "打开后点关闭按钮只把窗口收进系统托盘（任务栏右下角），音乐照常播放；要真正退出请用托盘图标的右键菜单",

@@ -189,11 +189,29 @@ func main() {
 					skinsHandler = state.skins.Handler()
 				}
 				earlyTheme := earlyThemeHandler(store, themeMgr)
+				// 启动过渡图（上一次退出时缓存的画面）也不在 dist 里，
+				// 同样要在静态资源之前拦下来（见 boot_frame.go）
+				bootFrame := bootFrameHandler(store)
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					// 前端的「首帧画好了，可以露面了」信号。
+					//
+					// 刻意走普通 HTTP 请求，而不是 Wails 的 JS→Go 绑定：那条链路
+					// 要把 web message 交给宿主线程再派发，而启动阶段宿主主线程
+					// 正忙着起 WebView2，实测能晚到近一秒 —— 窗口就白等这么久，
+					// 表现就是「任务栏图标都出来半天了，窗口才冒出来」。
+					if r.URL.Path == bootRevealPath {
+						state.windowSvc.MarkReadyAsync()
+						w.WriteHeader(http.StatusNoContent)
+						return
+					}
 					// 首帧主题：必须在静态资源之前拦下来，否则会被当成
 					// 「不存在的文件」而 404（index.html 的 <head> 里同步引用它）。
 					if r.URL.Path == earlyThemePath {
 						earlyTheme.ServeHTTP(w, r)
+						return
+					}
+					if r.URL.Path == bootFramePath {
+						bootFrame.ServeHTTP(w, r)
 						return
 					}
 					if strings.HasPrefix(r.URL.Path, onlinePrefix) {
@@ -273,14 +291,20 @@ func main() {
 		MinWidth:  1000,
 		MinHeight: 680,
 		Frameless: true,
-		// 窗口底色取近黑，和深色主题一致（浅色主题由前端首帧就换掉，见 early_theme.go）
-		BackgroundColour: application.NewRGB(8, 8, 10),
+		// 窗口底色：WebView2 吐出第一帧之前，露出来的就是它。以前写死近黑，
+		// 浅色主题启动时就是「黑一下」；现在按磁盘上的真实主题算（见
+		// early_theme.go#firstFrameWindowColour），取不到时才退回近黑。
+		BackgroundColour: firstFrameWindowColour(store, themeMgr),
 		URL:              "/",
 		// 先隐藏，等前端把第一帧画完再显示（WindowService.MarkReady）。
 		//
 		// 不隐藏的话 Wails 会用带 WS_VISIBLE 的样式创建窗口，而 WebView2 在页面
 		// 渲染完成前会先亮一块白底 —— 那就是首屏那一下「闪一下」。
 		// 隐藏创建能直接从样式里去掉 WS_VISIBLE（Wails issue #4611 的修法）。
+		//
+		// 但「隐藏」同时意味着 WebView2 不出帧，Show 之后还要等第一帧 —— 那一段
+		// 空档就是「黑一下」。应用一跑起来就用 DWM 把窗口遮住再显示，把这个空档
+		// 挪到用户看不见的地方（见 services.go#showPrepared）。
 		Hidden: true,
 	}
 	if backdrop, ok := backdropTypeFor(backdropMode); ok {
@@ -300,6 +324,9 @@ func main() {
 	// Listener。用 Listener 的话事件已经在派发途中，窗口照样会被销毁。
 	state.window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		if !state.windowSvc.hideToTrayOnClose() {
+			// 真正退出：趁窗口还在（还可见、还是当前那张画面），抓一帧缓存下来，
+			// 下次启动拿它当过渡图（见 boot_frame.go / index.html#boot-splash）。
+			state.windowSvc.captureBootFrame()
 			return
 		}
 		e.Cancel()
@@ -317,6 +344,16 @@ func main() {
 	// MarkReady 只在「还没真正显示过」时动手，所以重复调用不会抢焦点。
 	time.AfterFunc(1500*time.Millisecond, state.windowSvc.MarkReady)
 	time.AfterFunc(4*time.Second, state.windowSvc.MarkReady)
+
+	// 应用一开始跑就把窗口「显示出来但遮住」，让 WebView2 边启动边出帧。
+	// 前端首帧画好就走 /boot/reveal 让 ShowMain 摘遮罩，窗口出现的那一帧
+	// 已经是画好的（见 services.go#showPrepared）。
+	//
+	// 为什么不能晚一点再显示：WebView2 的合成器要等窗口可见才开始出帧，
+	// 显示得越晚，页面吐出第一帧就越晚（实测晚 300ms 以上）。
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		state.windowSvc.startPreparedBoot()
+	})
 
 	// 上次开着「关闭时最小化到托盘」的话，启动时就把托盘图标建出来
 	if store.Get().MinimizeToTray {

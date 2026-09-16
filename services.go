@@ -1312,6 +1312,29 @@ type WindowService struct {
 	// shown 记录「主窗口到底显示出来没有」。前端的 Ready 与 main.go 的兜底
 	// 定时器都会调 MarkReady，只有真正显示成功才置位（见 MarkReady）。
 	shown atomic.Bool
+	// bootCloaked 记录「窗口已经是 WS_VISIBLE 的，只是被 DWM 遮住」这个中间态：
+	// showPrepared 把它置位，ShowMain 负责摘遮罩（见 showPrepared）。
+	bootCloaked atomic.Bool
+	// cloakUnsupported 记录「这台机器上遮不住」。只探测一次，之后彻底退回
+	// 旧路径（隐藏创建 + 就绪后显示），不再每 8ms 重试一遍系统调用。
+	cloakUnsupported atomic.Bool
+	// bootPreparedOnce 保证「准备窗口」的轮询只跑一轮（托盘 / 第二次启动都
+	// 可能再触发）。
+	bootPreparedOnce sync.Once
+	// revealRequested 记录「已经有人要求窗口真正露面了」（ShowMain 一进来就置位）。
+	// 与 shown 分开：shown 只在确认窗口真的可见时才置位（允许重试，见 MarkReady），
+	// 而「露面流程已经开始」这件事必须先于 Show 生效，否则 showPrepared 可能
+	// 在 ShowMain 之后才把遮罩加上去，窗口就永远露不出来了。
+	revealRequested atomic.Bool
+	// bootMu 保护「遮住 / 摘遮罩」这个状态机。
+	//
+	// 不加锁有一个很难复现但很致命的交错：前端 ready 来得特别早时，
+	// ShowMain 可能在 showPrepared 把 bootCloaked 置位**之前**跑完摘遮罩，
+	// 紧接着 showPrepared 才遮上去 —— 遮罩就永远摘不掉了（窗口再也不出现）。
+	//
+	// 注意锁的范围**不包含** w.Show() / w.Focus()：它们内部是 InvokeSync，
+	// 持有锁等主线程时，万一主线程正好在等同一个锁就是死锁。
+	bootMu sync.Mutex
 	// tray 是「关闭时最小化到托盘」用的系统托盘图标；开关关闭时为 nil。
 	trayMu sync.Mutex
 	tray   *application.SystemTray
@@ -1411,11 +1434,15 @@ func (s *WindowService) IsMaximized() bool {
    主窗口的显示时机 + 系统托盘
    -------------------------------------------------------------------------- */
 
-// MarkReady 前端把 DOM 装配好之后调用：这时才把主窗口显示出来。
+// MarkReady 前端把 DOM 装配好之后调用：这时才让主窗口真正出现在屏幕上。
 //
 // 为什么窗口创建时是 Hidden（见 main.go 的 winOpts）：Wails 在不隐藏时会用
 // 带 WS_VISIBLE 的样式创建窗口，而 WebView2 在页面渲染完成前会先亮一块白底 ——
 // 那正是首屏那一下闪烁（Wails issue #4611 的修法就是创建时排除 WS_VISIBLE）。
+//
+// 「隐藏创建」只是躲开了白底，却换来了黑闪：controller 不可见时 WebView2 不出帧，
+// 所以 Show() 之后还要等合成器吐出第一帧，这段时间窗口里是空的（露出来的就是
+// 窗口底色）。真正的修法是 showPrepared —— 见那里的注释。
 //
 // 刻意**不用** sync.Once 锁死：前端的信号有可能到得太早 —— 窗口实现还在
 // pendingRun 里没跑起来时，WebviewWindow.Show() 只会去 InvokeSync(w.Run)
@@ -1429,6 +1456,117 @@ func (s *WindowService) MarkReady() {
 	s.ShowMain()
 }
 
+// showPrepared 在「用户看不见」的前提下把主窗口显示出来，让 WebView2 立刻开始出帧。
+//
+// 这是首屏那一下黑闪的正解：
+//  1. 先用 DWM 的 cloak 把窗口遮住（window_reveal_windows.go）；
+//  2. 再 Show()，让它变成 WS_VISIBLE —— WebView2 因此正常运行合成、rAF 正常派发，
+//     前端那句「第一帧画好了」才有意义；
+//  3. 用户什么都看不见；等 MarkReady 走到 ShowMain 时只多做一件事：摘掉遮罩。
+//
+// 于是窗口「出现」的那一帧已经是画好的帧，中间那个空档根本不存在。
+//
+// 返回 true 表示这件事已经尘埃落定（准备成功，或确认本机做不到），调用方不用重试。
+func (s *WindowService) showPrepared() bool {
+	if s.shown.Load() {
+		return true
+	}
+	if s.cloakUnsupported.Load() {
+		return true // 已经确认遮不住，保持旧路径
+	}
+	w := s.current()
+	if w == nil {
+		return false
+	}
+
+	// 锁里再确认一次「还没有人要求露面 / 还没遮过」：ShowMain 可能刚好抢在
+	// 我们前面跑完（见 bootMu 的注释）。
+	s.bootMu.Lock()
+	if s.revealRequested.Load() || s.bootCloaked.Load() {
+		s.bootMu.Unlock()
+		return true
+	}
+	hwnd := w.NativeWindow()
+	if hwnd == nil {
+		// 原生窗口还没建出来（启动时窗口是在 Wails 的 goroutine 里创建的），
+		// 交给调用方稍后再试。这里刻意不自己调 w.Run() 建窗口：那会和
+		// pendingRun 抢着建，可能建出两个窗口实现。
+		s.bootMu.Unlock()
+		return false
+	}
+	if !cloakNativeWindow(hwnd, true) {
+		s.cloakUnsupported.Store(true)
+		s.bootMu.Unlock()
+		// 遮不住就别遮了，但窗口照样提前显示：WebView2 还是得先出帧，
+		// 露面时才是画好的画面（代价是这几百毫秒里露的是窗口底色）。
+		w.Show()
+		log.Printf("[boot] 本机不支持 DWM 隐身，改为「先显示、后出帧」")
+		return true
+	}
+	s.bootCloaked.Store(true)
+	s.bootMu.Unlock()
+
+	// Show 必须在锁外：它内部走 InvokeSync。
+	w.Show()
+	// Show 之后任务栏才挂上按钮，所以紧接着摘掉：WebView2 还要几百毫秒才出首帧，
+	// 那段时间图标孤零零挂着，用户看着就是「窗口迟迟不来」。
+	// 露面时（ShowMain）再把它加回来（见 setTaskbarPresence）。
+	setTaskbarPresence(hwnd, false)
+	// 顺带把系统外框（阴影 + 圆角）补上：遮罩显示这一步吃掉了原本由
+	// WM_ACTIVATE 触发的那次设置（见 applyWindowDecorations）。
+	s.applyMainDecorations(w)
+	log.Printf("[boot] 主窗口已遮罩显示：WebView2 现在开始出帧，首屏不再有空白窗口")
+	return true
+}
+
+// applyMainDecorations 按当前配置重设主窗口的系统外框与圆角。
+//
+// 全屏时跳过：全屏要的就是「无边框、无阴影、方角」，Wails 进全屏时也会主动
+// 把外框延伸关掉（webview_window_windows.go#fullscreen）。
+func (s *WindowService) applyMainDecorations(w *application.WebviewWindow) {
+	if w == nil || w.IsFullscreen() {
+		return
+	}
+	mode := "system"
+	if s.store != nil {
+		mode = bootstrap.NormalizeWindowCorners(s.store.Get().WindowCorners)
+	}
+	applyWindowDecorations(w.NativeWindow(), mode)
+}
+
+// startPreparedBoot 在应用跑起来之后尽早执行 showPrepared。
+//
+// 为什么要轮询：ApplicationStarted 是 Wails 消息循环刚起来时发的，而窗口本身
+// 在另一个 goroutine 里创建（application.go 的 pendingRun），两者没有先后保证。
+// 轮询窗口很窄（几毫秒一次、最多 3 秒），命中之后立刻退出。
+func (s *WindowService) startPreparedBoot() {
+	s.bootPreparedOnce.Do(func() {
+		go func() {
+			deadline := time.Now().Add(3 * time.Second)
+			for time.Now().Before(deadline) {
+				if s.shown.Load() || s.showPrepared() {
+					return
+				}
+				time.Sleep(8 * time.Millisecond)
+			}
+			log.Printf("[boot] 等待原生窗口超时，首屏回到「隐藏创建 + 就绪后显示」")
+		}()
+	})
+}
+
+// bootRevealPath 是前端「首帧已经画好，可以露面了」的 HTTP 信号路径。
+//
+// 为什么不用 Wails 的 JS→Go 绑定：那条链路要把 web message 交给宿主线程再派发，
+// 而启动阶段宿主主线程正忙着初始化 WebView2，实测信号能晚到近一秒 —— 窗口就
+// 白等这么久（表现就是「任务栏图标都出来半天了，窗口才冒出来」）。
+// 普通 HTTP 请求走网络栈，不受宿主主线程忙不忙影响，实测几十毫秒内到达。
+const bootRevealPath = "/boot/reveal"
+
+// MarkReadyAsync 与 MarkReady 等价，但不阻塞调用方（HTTP 处理器用）。
+func (s *WindowService) MarkReadyAsync() {
+	go s.MarkReady()
+}
+
 // ShowMain 显示并聚焦主窗口（前端 ready / 兜底定时器 / 托盘点击 / 第二个实例）
 //
 // 可以重复调用：已经显示时只是再 Focus 一下（托盘点击、第二次启动都需要这个语义）。
@@ -1437,11 +1575,51 @@ func (s *WindowService) ShowMain() {
 	if w == nil {
 		return
 	}
+	// 记下「这次是不是从隐藏状态唤起」（托盘 / 第二次启动）：只有这种情形才需要
+	// 后面那次补抢前台（见本函数末尾）。
+	restoring := !w.IsVisible()
 	if w.IsMinimised() {
 		w.UnMinimise()
 	}
+	// 先声明「露面流程已经开始」，showPrepared 之后就不会再遮了（见 bootMu 注释）。
+	s.bootMu.Lock()
+	s.revealRequested.Store(true)
+	reveal := s.bootCloaked.Swap(false)
+	s.bootMu.Unlock()
+
+	// 摘遮罩要排在 Show 前面：遮罩态下窗口已经是 WS_VISIBLE 的，摘掉的那一刻
+	// 屏幕上直接就是 WebView2 已经画好的那一帧（见 showPrepared）。
+	if reveal {
+		if hwnd := w.NativeWindow(); hwnd != nil {
+			if !cloakNativeWindow(hwnd, false) {
+				log.Printf("[boot] 摘掉启动遮罩失败：窗口可能不会出现")
+			}
+			// 任务栏按钮与窗口同时回来（showPrepared 里摘掉的那一下）。
+			// 放在摘遮罩之后：窗口还是遮着的时候 AddTab 会被资源管理器忽略。
+			setTaskbarPresence(hwnd, true)
+		}
+	}
 	w.Show()
+	// 露面这一刻再确认一次外框与圆角：遮罩期间窗口可能一次都没被激活过，
+	// Wails 那条「WM_ACTIVATE 里补外框」的路径就永远不会走（见 applyWindowDecorations）。
+	s.applyMainDecorations(w)
 	w.Focus()
+	// w.Focus() 内部只有一句 SetForegroundWindow：从托盘唤起时窗口往往只是「显示」
+	// 出来，z 序还停在原来的位置（被别的窗口压着）。这里再显式刷一次 z 序并抢前台
+	// （见 raiseNativeWindow），让「托盘菜单唤起」和「第二次启动」都真的到最前。
+	raiseNativeWindow(w.NativeWindow())
+	// 托盘菜单 / 托盘图标那一下，我们自己的弹出层正在关闭，资源管理器可能在这之后
+	// 又把前台还回去 —— 于是窗口「是显示出来了，但还压不住别的窗口」。稍后再确认
+	// 一次：只在窗口仍然可见、而且前台确实不是本进程时才补一枪（避免顶掉用户
+	// 这几百毫秒里刚点的窗口）。
+	if restoring {
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			if w.IsVisible() && !isSelfForeground() {
+				raiseNativeWindow(w.NativeWindow())
+			}
+		}()
+	}
 	// IsVisible 读的是窗口实现的真实状态：显示成功才置位，
 	// 这样「信号到得太早」的那一次不会把后续重试挡掉。
 	if w.IsVisible() {
@@ -1449,11 +1627,49 @@ func (s *WindowService) ShowMain() {
 	}
 }
 
+// captureBootFrame 真正退出时抓一帧当前画面，缓存给下次启动当过渡图。
+//
+// 只在窗口可见且没最小化时抓：收进托盘之后再退出的话，窗口没有渲染内容，
+// 抓出来是黑的或者过期的 —— 那还不如留着上一次那张。
+func (s *WindowService) captureBootFrame() {
+	if s.store == nil {
+		return
+	}
+	w := s.current()
+	if w == nil || !w.IsVisible() || w.IsMinimised() {
+		return
+	}
+	start := time.Now()
+	size, err := saveBootFrame(s.store, w.NativeWindow())
+	if err != nil {
+		log.Printf("[boot] 缓存首屏过渡图失败: %v", err)
+		return
+	}
+	log.Printf("[boot] 已缓存首屏过渡图: %d KB（耗时 %s）", size/1024, time.Since(start).Round(time.Millisecond))
+}
+
 // HideMain 收起主窗口（「关闭时最小化到托盘」用）
 func (s *WindowService) HideMain() {
 	if w := s.current(); w != nil {
 		w.Hide()
 	}
+}
+
+// SetWindowCorners 设置主窗口圆角（system | round | small | square）并立刻生效。
+//
+// 与「窗口原生材质」不同：材质只能在创建窗口时指定，而圆角是运行期可写的
+// DWM 属性，所以这里点完立刻就能看到效果，不需要重启。
+//
+// 返回规范化之后的值，前端据此回写自己的配置（非法值会落回 system）。
+func (s *WindowService) SetWindowCorners(mode string) string {
+	clean := bootstrap.NormalizeWindowCorners(mode)
+	if s.store != nil {
+		if err := s.store.Update(func(c *bootstrap.Config) { c.WindowCorners = clean }); err != nil {
+			log.Printf("[window] 保存窗口圆角失败: %v", err)
+		}
+	}
+	s.applyMainDecorations(s.current())
+	return clean
 }
 
 // SetMinimizeToTray 打开 / 关闭「关闭时最小化到托盘」，并立刻同步托盘图标。
@@ -1661,6 +1877,8 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			c.GlassAlpha = asInt(raw, c.GlassAlpha)
 		case "nativeBackdrop":
 			c.NativeBackdrop = bootstrap.NormalizeBackdropMode(asString(raw, c.NativeBackdrop))
+		case "windowCorners":
+			c.WindowCorners = bootstrap.NormalizeWindowCorners(asString(raw, c.WindowCorners))
 		case "animations":
 			c.Animations = asBool(raw, c.Animations)
 		case "animationsSpeed":

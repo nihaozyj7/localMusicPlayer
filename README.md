@@ -113,15 +113,41 @@ $env:MUSICPLAYER_FFMPEG_DIR = "D:\mp-bin"              # 改内置版本的解�
 - **应用图标**：`build/appicon.png`（参考 `音乐.svg` 的粉底白色音符）→
   `wails3 task generate:icons` 生成 `build/windows/icon.ico` 与 `build/darwin/icon.icns`，
   构建时由 `generate:syso` 把 ico 打进 exe；系统托盘直接 embed 同一个 PNG。
-- **首屏不再闪一下**：主窗口改成 `Hidden: true` 创建，前端把 DOM 装配好之后调
-  `WindowService.MarkReady` 才显示（不隐藏时 Wails 会用带 `WS_VISIBLE` 的样式创建窗口，
-  WebView2 在页面渲染出第一帧前会先亮一块白底 —— 那就是首屏那一下闪烁）。
-  ★ 这里有个坑：**不能用 `requestAnimationFrame` 等首帧**。窗口隐藏时 WebView2 不派发
-  BeginFrame，rAF 回调永远不执行，而 `document.visibilityState` 仍然是 `visible`
-  （它反映 WebView 控制器的可见性，不是系统窗口的），从 JS 侧完全看不出来 ——
-  前端信号发不出去，窗口只能等兜底定时器，表现就是「第一次打不开、启动要好几年」。
-  现在用宏任务立刻发，Go 侧再在 1.5s / 4s 补两次；`MarkReady` 只在「还没真正显示过」
-  时动手，重复调用不会抢焦点。实测冷启动窗口约 0.85s 可见。
+- **首屏不白闪、也不黑闪**：分三层解决，缺一层就会看到「白一下 / 黑一下 / 空一下」。
+  1. 主窗口 `Hidden: true` 创建 —— 不隐藏时 Wails 会用带 `WS_VISIBLE` 的样式创建窗口，
+     WebView2 在页面渲染出第一帧前会先亮一块白底（首屏那一下白闪）。
+  2. 应用一跑起来就给它打上 DWM 的隐身标记（`DWMWA_CLOAK`），**先显示出来、但遮住**：
+     `WS_VISIBLE` 让 WebView2 正常合成出帧、rAF 正常派发，而用户什么都看不见；
+     前端把首帧画好后再摘掉遮罩，于是窗口「出现」的那一帧已经是画好的帧
+     （见 `window_reveal_windows.go` 与 `services.go#showPrepared`）。
+     ★ 这里有个坑：**窗口真隐藏时不能用 `requestAnimationFrame` 等首帧** ——
+     WebView2 不派发 BeginFrame，rAF 永远不执行，而 `document.visibilityState`
+     仍是 `visible`，从 JS 侧完全看不出来。遮罩方案正是为了让这个前提不成立。
+  3. 露面时看到的画面是**上次退出时缓存的上一帧**：退出时用 `PrintWindow`
+     （`PW_RENDERFULLCONTENT`）抓一张 JPEG 写进缓存目录，启动时由 `/boot-frame.jpg`
+     提供给 `index.html#boot-splash`，真正的界面装配好再淡出 —— 观感就是「窗口一
+     出现就是刚才那个界面」（见 `boot_frame.go` / `js/main.js`）。
+     首次启动、抓帧失败或非 Windows 时，同一层就是加载动画那一形态（缓存图加载
+     失败时浏览器会画一个「碎图标」，所以它默认 `opacity: 0`，只有确认加载出来了才
+     打上 `data-hasframe` 露出来 —— 见 `index.html#boot-splash-style`）。
+  4. 遮罩期间窗口虽然已经 `WS_VISIBLE`，但会先被摘掉任务栏按钮
+     （`WS_EX_TOOLWINDOW`，露面时换回 `WS_EX_APPWINDOW`）—— 否则任务栏图标会比
+     窗口早出现几百毫秒，看着就像「点了半天没反应」。
+  5. 「首帧画好了」这句信号走的是**普通 HTTP 请求**（`/boot/reveal`），不是 Wails 的
+     JS→Go 绑定：启动阶段宿主主线程正忙着初始化 WebView2，绑定消息实测会被压后近一秒
+     （窗口就白等这么久）；HTTP 走网络栈，几十毫秒内到。前端在模块的第一句可执行代码里
+     就把它发出去，所以窗口露面几乎与首帧同时发生。
+  兜底仍在：Go 侧 1.5s / 4s 各补一次 `MarkReady`，前端另有 12s（撤下过渡层）的定时器；
+  `MarkReady` 只在「还没真正显示过」时动手，重复调用不会抢焦点。
+  实测冷启动：窗口（连带任务栏图标）约 1.0~1.2s 出现，露的就是缓存的那一帧。
+- **托盘唤起 / 第二次启动**：窗口会显式刷一次 z 序并抢前台（`raiseNativeWindow`），
+  而不是只依赖 Wails 的 `Focus()`（它内部只有一句 `SetForegroundWindow`，对「不是当前
+  前台进程」的调用会被系统拒绝，表现就是窗口出来了却还压在其他窗口下面）。
+- **主窗口圆角**：设置 → 外观 →「窗口圆角」（跟随系统 / 标准 / 小圆角 / 直角）。
+  圆角与 Aero 阴影都来自 DWM（`DwmExtendFrameIntoClientArea` +
+  `DWMWA_WINDOW_CORNER_PREFERENCE`，只有这几档、没有任意半径）。原来它只在
+  `WM_ACTIVATE` 里设置，而遮罩方案下这次激活可能被跳过（表现就是窗口没阴影、没圆角），
+  所以现在每次露面都会显式重设一次；圆角改完立刻生效，不需要重启。
 
 ---
 

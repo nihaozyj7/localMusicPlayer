@@ -26,6 +26,7 @@ const DEFAULT_CONFIG = {
   glassAlpha: 62,
   glassAlphaCustom: false, // 用户是否手动调整过面板透明度（true 才按配置实时合成）
   nativeBackdrop: "off", // 窗口原生材质：off | auto | mica | acrylic | tabbed（改了要重启）
+  windowCorners: "system", // 主窗口圆角：system | round | small | square（立刻生效，见 WindowService.SetWindowCorners）
   minimizeToTray: false, // 点关闭按钮时收进系统托盘而不是退出应用
   animations: true,
   // 过渡速度：fast（0.25s，默认）| medium（0.5s）| slow（0.75s）。
@@ -1215,6 +1216,7 @@ const SYNCED_KEYS = [
   "glassBlur",
   "glassAlpha",
   "nativeBackdrop",
+  "windowCorners",
   "minimizeToTray",
   "animations",
   "animationsSpeed",

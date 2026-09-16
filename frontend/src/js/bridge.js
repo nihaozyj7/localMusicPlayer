@@ -230,11 +230,14 @@ export const backend = {
   loudnessRefresh: () => call(bindings?.Loudness?.RefreshTools),
 
   /* ---- 窗口 ---- */
-  // 主窗口是「隐藏创建、前端 ready 后再显示」的（防 WebView2 首帧白闪，
-  // 见 main.go 的 winOpts.Hidden 与 WindowService.MarkReady）。
+  // 主窗口是「隐藏创建 → 再遮罩显示、前端 ready 后摘遮罩」的
+  // （防 WebView2 首帧白闪与 Show 之后的空白窗口，见 main.go 的 winOpts.Hidden、
+  // services.go 的 showPrepared / MarkReady）。
   windowReady: () => call(bindings?.Window?.MarkReady),
   // 「关闭时最小化到托盘」：写配置 + 立即创建/销毁托盘图标
   minimizeToTray: (on) => call(bindings?.Window?.SetMinimizeToTray, Boolean(on)),
+  // 主窗口圆角（system | round | small | square）：写配置 + 立刻改 DWM 圆角偏好
+  setWindowCorners: (mode) => call(bindings?.Window?.SetWindowCorners, String(mode)),
   windowMinimize: () => call(bindings?.Window?.Minimize),
   windowToggleMaximize: () => call(bindings?.Window?.ToggleMaximize),
   windowClose: () => call(bindings?.Window?.Close),
