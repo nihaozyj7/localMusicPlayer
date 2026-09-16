@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/ffmpeg"
-	"musicplayer/internal/library"
-	"musicplayer/internal/loudness"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/ffmpeg"
+	"localmusicplayer/internal/library"
+	"localmusicplayer/internal/loudness"
 )
 
 // newLoudnessFixture 造一个「有一首歌的曲库 + 响度服务」。
@@ -17,7 +17,7 @@ import (
 func newLoudnessFixture(t *testing.T) (*LoudnessService, *library.Manager, string) {
 	t.Helper()
 	dataDir := t.TempDir()
-	t.Setenv("MUSICPLAYER_DATA_DIR", dataDir)
+	t.Setenv("LMPLAYER_DATA_DIR", dataDir)
 
 	store, err := bootstrap.NewStore()
 	if err != nil {

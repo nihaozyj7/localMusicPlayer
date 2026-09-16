@@ -63,7 +63,7 @@ export function getTheme(id) {
 
 /**
  * 后端模式：扫描用户主题目录并把每个主题的 CSS 注入为独立样式表。
- * 这样用户往 %APPDATA%\MusicPlayer\themes\ 丢一个 CSS 文件，
+ * 这样用户往 %APPDATA%\LocalMusicPlayer\themes\ 丢一个 CSS 文件，
  * 打开设置界面就能看到新主题 —— 不需要改任何前端文件（需求 A8）。
  *
  * 每次扫描都是**以磁盘为准的整体同步**，而不是只往上加：

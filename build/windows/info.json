@@ -5,10 +5,10 @@
   "info": {
     "0000": {
       "ProductVersion": "0.1.0",
-      "CompanyName": "The MusicPlayer Authors",
+      "CompanyName": "The localMusicPlayer Authors",
       "FileDescription": "本地曲库 + 在线试听的桌面音乐播放器",
-      "LegalCopyright": "Copyright 2026 The MusicPlayer Authors",
-      "ProductName": "音乐播放器",
+      "LegalCopyright": "Copyright 2026 The localMusicPlayer Authors",
+      "ProductName": "LMPlayer",
       "Comments": "Licensed under the Apache License, Version 2.0"
     }
   }

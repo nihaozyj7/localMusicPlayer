@@ -1,4 +1,4 @@
-module musicplayer
+module localmusicplayer
 
 go 1.25.0
 

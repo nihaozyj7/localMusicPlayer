@@ -13,7 +13,7 @@
    不依赖搜索是否命中。
 
    用法：
-     node tools/onlinecheck.mjs [--exe bin/musicplayer.exe] [--port 9377]
+     node tools/onlinecheck.mjs [--exe bin/lmplayer.exe] [--port 9377]
                                 [--query "晴天"] [--bvid BVxxxx] [--skip-download]
    ========================================================================== */
 
@@ -32,7 +32,7 @@ function arg(name, fallback) {
 }
 const hasFlag = (name) => process.argv.includes(`--${name}`);
 
-const EXE = path.resolve(ROOT, arg("exe", "bin/musicplayer.exe"));
+const EXE = path.resolve(ROOT, arg("exe", "bin/lmplayer.exe"));
 const PORT = Number(arg("port", "9377"));
 const QUERY = arg("query", "晴天");
 // 默认用一个稳定存在的公开视频做下载验证（可用 --bvid 覆盖）
@@ -55,12 +55,12 @@ const logFd = openSync(logPath, "w");
 const child = spawn(EXE, [], {
   env: {
     ...process.env,
-    MUSICPLAYER_DEBUG_PORT: String(PORT),
+    LMPLAYER_DEBUG_PORT: String(PORT),
     WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2"),
     // 独立数据目录，避免污染用户真实配置
-    MUSICPLAYER_DATA_DIR: path.join(workDir, "data"),
+    LMPLAYER_DATA_DIR: path.join(workDir, "data"),
     // 下载目录固定到临时目录，方便断言
-    MUSICPLAYER_MUSIC_DIR: path.join(workDir, "Music"),
+    LMPLAYER_MUSIC_DIR: path.join(workDir, "Music"),
   },
   stdio: ["ignore", logFd, logFd],
   detached: false,

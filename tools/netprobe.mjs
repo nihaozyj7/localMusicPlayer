@@ -20,7 +20,7 @@ const ROOT = path.resolve(__dirname, "..");
 
 const EXE = path.resolve(
   ROOT,
-  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/musicplayer-debug.exe"
+  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/lmplayer-debug.exe"
 );
 const PORT = 9334;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -30,7 +30,7 @@ mkdirSync(workDir, { recursive: true });
 
 const logFd = openSync(path.join(workDir, "app.log"), "w");
 const child = spawn(EXE, [], {
-  env: { ...process.env, MUSICPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
+  env: { ...process.env, LMPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
   stdio: ["ignore", logFd, logFd],
 });
 closeSync(logFd);
@@ -105,7 +105,7 @@ await sleep(12000);
 const probe = await send("Runtime.evaluate", {
   expression: `(async () => {
     const out = {};
-    const Media = (await import('/bindings/musicplayer/index.js')).MediaService;
+    const Media = (await import('/bindings/localmusicplayer/index.js')).MediaService;
     const id = document.querySelector('.track[data-id]')?.dataset?.id;
     out.songId = id;
     out.url = await Media.URL(id);

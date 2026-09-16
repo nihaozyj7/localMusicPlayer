@@ -149,7 +149,7 @@ func TestResolvePrefersEnvVar(t *testing.T) {
 	if err := os.WriteFile(fake, []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("MUSICPLAYER_FFMPEG", fake)
+	t.Setenv("LMPLAYER_FFMPEG", fake)
 	t.Cleanup(Reset)
 
 	tools := Resolve()
@@ -166,7 +166,7 @@ func TestResolvePrefersEnvVar(t *testing.T) {
 
 func TestResolveIgnoresBadEnvVar(t *testing.T) {
 	Reset()
-	t.Setenv("MUSICPLAYER_FFMPEG", filepath.Join(t.TempDir(), "nope.exe"))
+	t.Setenv("LMPLAYER_FFMPEG", filepath.Join(t.TempDir(), "nope.exe"))
 	t.Cleanup(Reset)
 
 	tools := Resolve()
@@ -177,7 +177,7 @@ func TestResolveIgnoresBadEnvVar(t *testing.T) {
 
 func TestCacheDirOverride(t *testing.T) {
 	custom := filepath.Join(t.TempDir(), "my-bin")
-	t.Setenv("MUSICPLAYER_FFMPEG_DIR", custom)
+	t.Setenv("LMPLAYER_FFMPEG_DIR", custom)
 	got, err := cacheDir()
 	if err != nil {
 		t.Fatal(err)

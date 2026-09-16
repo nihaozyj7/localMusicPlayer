@@ -7,7 +7,7 @@
    用应用自己的搜索框定位曲目，避免依赖列表顺序。
 
    用法：
-     node tools/playtest.mjs --exe bin/musicplayer-debug.exe --query wma
+     node tools/playtest.mjs --exe bin/lmplayer-debug.exe --query wma
    ========================================================================== */
 
 import { spawn } from "node:child_process";
@@ -23,7 +23,7 @@ function arg(name, fallback) {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const EXE = path.resolve(ROOT, arg("exe", "bin/musicplayer-debug.exe"));
+const EXE = path.resolve(ROOT, arg("exe", "bin/lmplayer-debug.exe"));
 const PORT = Number(arg("port", "9335"));
 const QUERY = arg("query", "");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -38,7 +38,7 @@ mkdirSync(workDir, { recursive: true });
 const logFd = openSync(path.join(workDir, "app.log"), "w");
 
 const child = spawn(EXE, [], {
-  env: { ...process.env, MUSICPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
+  env: { ...process.env, LMPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
   stdio: ["ignore", logFd, logFd],
 });
 closeSync(logFd);

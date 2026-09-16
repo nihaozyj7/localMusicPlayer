@@ -16,7 +16,7 @@ package main
 import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // backdropTypeFor 把配置里的材质名映射成 Wails 的 BackdropType。

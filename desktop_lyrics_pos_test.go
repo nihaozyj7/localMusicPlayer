@@ -5,7 +5,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // TestRectVisibleEnough 位置存档的校验规则：至少要三分之一面积落在某块屏幕里，
@@ -47,7 +47,7 @@ func TestRectVisibleEnough(t *testing.T) {
 // 0 是合法坐标（主屏左上角就是 0，副屏在主屏左侧时 X 为负），
 // 所以「没存过」只能用 -1 表示 —— 拿 0 当哨兵会把「拖到左上角」误判成没存过。
 func TestDesktopLyricsPosSentinel(t *testing.T) {
-	t.Setenv("MUSICPLAYER_DATA_DIR", t.TempDir())
+	t.Setenv("LMPLAYER_DATA_DIR", t.TempDir())
 	store, err := bootstrap.NewStore()
 	if err != nil {
 		t.Fatalf("创建配置存储失败: %v", err)

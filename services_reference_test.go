@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"musicplayer/internal/skins"
-	"musicplayer/internal/theme"
+	"localmusicplayer/internal/skins"
+	"localmusicplayer/internal/theme"
 )
 
 // 这两个测试盯的是「AI 提示词里的参考资料必须是本机真实存在的路径」：

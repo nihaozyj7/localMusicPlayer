@@ -1,7 +1,7 @@
 // Package ffmpeg 负责解析可用的 ffmpeg 可执行文件。
 //
 // 解析优先级：
-//  1. 环境变量 MUSICPLAYER_FFMPEG（排查问题或指定自编译版本时用）
+//  1. 环境变量 LMPLAYER_FFMPEG（排查问题或指定自编译版本时用）
 //  2. 内置二进制：把编译进 exe 的 ffmpeg 解包到缓存目录后使用
 //  3. 系统已安装的 ffmpeg（PATH / 常见安装位置）
 //
@@ -29,8 +29,8 @@ import (
 	"strings"
 	"sync"
 
-	"musicplayer/internal/atomicfile"
-	"musicplayer/internal/executil"
+	"localmusicplayer/internal/atomicfile"
+	"localmusicplayer/internal/executil"
 )
 
 // BinaryName 平台相关的可执行文件名
@@ -115,11 +115,11 @@ func Prewarm() error {
 }
 
 func resolve() Tools {
-	if p := strings.TrimSpace(os.Getenv("MUSICPLAYER_FFMPEG")); p != "" {
+	if p := strings.TrimSpace(os.Getenv("LMPLAYER_FFMPEG")); p != "" {
 		if st, err := os.Stat(p); err == nil && !st.IsDir() {
 			return Tools{FFmpeg: p, Source: "env"}
 		}
-		log.Printf("[ffmpeg] MUSICPLAYER_FFMPEG 指向的文件不可用: %s", p)
+		log.Printf("[ffmpeg] LMPLAYER_FFMPEG 指向的文件不可用: %s", p)
 	}
 
 	if p, err := extractBundled(); err != nil {
@@ -208,17 +208,17 @@ func writeCached(target string, data []byte) (string, error) {
 
 // cacheDir 内置二进制的解包位置
 func cacheDir() (string, error) {
-	if dir := strings.TrimSpace(os.Getenv("MUSICPLAYER_FFMPEG_DIR")); dir != "" {
+	if dir := strings.TrimSpace(os.Getenv("LMPLAYER_FFMPEG_DIR")); dir != "" {
 		return dir, nil
 	}
 	if base, err := os.UserCacheDir(); err == nil && base != "" {
-		return filepath.Join(base, "MusicPlayer", "bin"), nil
+		return filepath.Join(base, "LocalMusicPlayer", "bin"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("无法定位缓存目录: %w", err)
 	}
-	return filepath.Join(home, ".musicplayer", "bin"), nil
+	return filepath.Join(home, ".localmusicplayer", "bin"), nil
 }
 
 /* --------------------------------------------------------------------------

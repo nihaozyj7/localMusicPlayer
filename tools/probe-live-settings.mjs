@@ -6,7 +6,7 @@
      · 点导航项后点开关，确认选中态不跳回第一个；
      · 用真实鼠标点击紧凑播放控件的播放/暂停，确认状态真的变了；
      · 确认标题栏仍然露在外面且可交互。
-   用法：node tools/probe-live-settings.mjs [--exe bin/musicplayer.exe]
+   用法：node tools/probe-live-settings.mjs [--exe bin/lmplayer.exe]
    ========================================================================== */
 
 import { spawn } from "node:child_process";
@@ -23,7 +23,7 @@ function arg(name, fallback) {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const EXE = path.resolve(ROOT, arg("exe", "bin/musicplayer.exe"));
+const EXE = path.resolve(ROOT, arg("exe", "bin/lmplayer.exe"));
 const PORT = Number(arg("port", "9393"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -143,10 +143,10 @@ console.log(`预置：${probeSongPath}（id=${probeSongId}）+ 一份封面与�
 const child = spawn(EXE, [], {
   env: {
     ...process.env,
-    MUSICPLAYER_DEBUG_PORT: String(PORT),
+    LMPLAYER_DEBUG_PORT: String(PORT),
     WEBVIEW2_USER_DATA_FOLDER: path.join(runDir, "wv2"),
-    MUSICPLAYER_DATA_DIR: dataDir,
-    MUSICPLAYER_MUSIC_DIR: musicDir,
+    LMPLAYER_DATA_DIR: dataDir,
+    LMPLAYER_MUSIC_DIR: musicDir,
   },
   stdio: "ignore",
 });

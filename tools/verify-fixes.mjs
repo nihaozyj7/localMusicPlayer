@@ -23,10 +23,10 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
-const EXE = path.resolve(ROOT, "bin/musicplayer.exe");
+const EXE = path.resolve(ROOT, "bin/lmplayer.exe");
 const PORT = 9334;
 const WAIT = 16000;
-const CONFIG = path.join(process.env.APPDATA || "", "MusicPlayer", "config.json");
+const CONFIG = path.join(process.env.APPDATA || "", "LocalMusicPlayer", "config.json");
 const CONFIG_BAK = `${CONFIG}.verify-bak`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -89,7 +89,7 @@ const logFd = openSync(logPath, "w");
 const child = spawn(EXE, [], {
   env: {
     ...process.env,
-    MUSICPLAYER_DEBUG_PORT: String(PORT),
+    LMPLAYER_DEBUG_PORT: String(PORT),
     WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2"),
   },
   stdio: ["ignore", logFd, logFd],

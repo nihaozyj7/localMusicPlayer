@@ -42,7 +42,7 @@ if (!existsSync(join(DIST, "wallpaper.html"))) {
 
 /** 从生成的绑定里取出两个方法的调用 ID（stub 靠它分辨谁是谁） */
 function bindingId(file, fnName) {
-  const src = readFileSync(join(DIST, "bindings", "musicplayer", file), "utf8");
+  const src = readFileSync(join(DIST, "bindings", "localmusicplayer", file), "utf8");
   const m = new RegExp(`export function ${fnName}\\(\\)\\s*\\{\\s*return \\$Call\\.ByID\\((\\d+)\\)`).exec(src);
   if (!m) throw new Error(`绑定里找不到 ${fnName}`);
   return m[1];

@@ -73,7 +73,7 @@ const DEFAULT_CONFIG = {
   aiModelId: "",
   // 自动匹配歌词时先用 AI 清洗元数据（关掉后只做本地整形，不再等 8~18 秒的 AI）
   aiLyricsClean: true,
-  cacheDir: "%APPDATA%\\MusicPlayer\\cache",
+  cacheDir: "%APPDATA%\\LocalMusicPlayer\\cache",
   scanConcurrency: 4,
 
   /* 响度均衡（LUFS 补偿） */
@@ -1365,7 +1365,7 @@ function writeSnapshot() {
 /* --------------------------------------------------------------------------
    配置同步到 Go 后端
    --------------------------------------------------------------------------
-   后端是配置的唯一真源（%APPDATA%\MusicPlayer\config.json）；
+   后端是配置的唯一真源（%APPDATA%\LocalMusicPlayer\config.json）；
    localStorage 只在浏览器预览时兜底。
    -------------------------------------------------------------------------- */
 const SYNCED_KEYS = [

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 /* --------------------------------------------------------------------------
@@ -19,7 +19,7 @@ import (
 // （用户很可能把 Music 整个目录加进来，而下载目录就在它下面）。
 func TestEffectiveFoldersIncludesDownloadDir(t *testing.T) {
 	music := t.TempDir()
-	t.Setenv("MUSICPLAYER_MUSIC_DIR", music)
+	t.Setenv("LMPLAYER_MUSIC_DIR", music)
 	downloads := bootstrap.DefaultDownloadDir()
 
 	t.Run("默认会带上下载目录", func(t *testing.T) {
@@ -168,9 +168,9 @@ func TestDirMusicStats(t *testing.T) {
 
 func TestApplyDirMigratesFiles(t *testing.T) {
 	dataDir := t.TempDir()
-	t.Setenv("MUSICPLAYER_DATA_DIR", dataDir)
+	t.Setenv("LMPLAYER_DATA_DIR", dataDir)
 	music := t.TempDir()
-	t.Setenv("MUSICPLAYER_MUSIC_DIR", music)
+	t.Setenv("LMPLAYER_MUSIC_DIR", music)
 
 	store, err := bootstrap.NewStore()
 	if err != nil {
@@ -226,9 +226,9 @@ func TestApplyDirMigratesFiles(t *testing.T) {
 
 func TestApplyDirWithoutMigrationKeepsFiles(t *testing.T) {
 	dataDir := t.TempDir()
-	t.Setenv("MUSICPLAYER_DATA_DIR", dataDir)
+	t.Setenv("LMPLAYER_DATA_DIR", dataDir)
 	music := t.TempDir()
-	t.Setenv("MUSICPLAYER_MUSIC_DIR", music)
+	t.Setenv("LMPLAYER_MUSIC_DIR", music)
 
 	store, err := bootstrap.NewStore()
 	if err != nil {
@@ -311,8 +311,8 @@ func TestRowClickAndDensityRejectGarbage(t *testing.T) {
 
 func newDownloadFixture(t *testing.T) *DownloadService {
 	t.Helper()
-	t.Setenv("MUSICPLAYER_DATA_DIR", t.TempDir())
-	t.Setenv("MUSICPLAYER_MUSIC_DIR", t.TempDir())
+	t.Setenv("LMPLAYER_DATA_DIR", t.TempDir())
+	t.Setenv("LMPLAYER_MUSIC_DIR", t.TempDir())
 	store, err := bootstrap.NewStore()
 	if err != nil {
 		t.Fatal(err)

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 /* ==========================================================================

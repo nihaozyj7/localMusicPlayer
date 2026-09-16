@@ -18,10 +18,13 @@
    -------------------------------------------------------------------------- */
 
 /** 应用显示名。和窗口标题 / 托盘提示保持一致。 */
-export const APP_NAME = "音乐播放器";
+export const APP_NAME = "本地音乐播放器";
 
-/** 仓库里用的英文标识（可执行文件名、数据目录名都是它）。 */
-export const APP_ID = "MusicPlayer";
+/** 仓库里用的英文标识（模块名、包作用域、数据目录名都以它为准）。 */
+export const APP_ID = "localMusicPlayer";
+
+/** 应用标题：窗口标题栏、托盘提示、安装包产品名都用它（取 ID 的首字母）。 */
+export const APP_TITLE = "LMPlayer";
 
 /** 一句话定位，显示在关于页顶部。 */
 export const APP_TAGLINE = "本地曲库 + 在线试听的桌面音乐播放器";
@@ -37,9 +40,9 @@ export const APP_VERSION_FALLBACK = "0.1.0";
 /** 本项目自身的开源协议（SPDX）。 */
 export const APP_LICENSE = "Apache-2.0";
 
-export const APP_COPYRIGHT = "Copyright 2026 MusicPlayer contributors";
+export const APP_COPYRIGHT = "Copyright 2026 The localMusicPlayer Authors";
 
-const REPO = "https://github.com/nihaozyj7/MusicPlayer";
+const REPO = "https://github.com/nihaozyj7/localMusicPlayer";
 
 /** 关于页顶部那几个跳转按钮。 */
 export const PROJECT_LINKS = [

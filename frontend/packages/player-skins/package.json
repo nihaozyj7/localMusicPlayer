@@ -1,5 +1,5 @@
 {
-  "name": "@musicplayer/player-skins",
+  "name": "@localmusicplayer/player-skins",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,7 +7,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nihaozyj7/MusicPlayer.git",
+    "url": "git+https://github.com/nihaozyj7/localMusicPlayer.git",
     "directory": "frontend/packages/player-skins"
   },
   "exports": {

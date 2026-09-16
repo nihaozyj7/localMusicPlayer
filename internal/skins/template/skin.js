@@ -23,7 +23,7 @@
 // 第三方样式是浏览器直接 import 的模块，没有打包器帮你解析裸包名，
 // 所以 export 一个普通对象最稳（宿主会校验必需字段并补默认值）。
 // 如果你想用仓库里那套 defineSkin() 做校验，就在开发环境写成
-//     import { defineSkin } from "@musicplayer/player-skins/contract";
+//     import { defineSkin } from "@localmusicplayer/player-skins/contract";
 // 并把 id 换成你自己的样式 id（目录名）。
 export default {
   apiVersion: 1,

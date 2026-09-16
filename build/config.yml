@@ -5,11 +5,11 @@ version: "3"
 
 # This information is used to generate the build assets.
 info:
-  companyName: "The MusicPlayer Authors" # The name of the company
-  productName: "音乐播放器" # The name of the application
-  productIdentifier: "com.musicplayer.app" # The unique product identifier
+  companyName: "The localMusicPlayer Authors" # The name of the company
+  productName: "LMPlayer" # The name of the application
+  productIdentifier: "com.localmusicplayer.app" # The unique product identifier
   description: "本地曲库 + 在线试听的桌面音乐播放器" # The application description
-  copyright: "Copyright 2026 The MusicPlayer Authors" # Copyright text
+  copyright: "Copyright 2026 The localMusicPlayer Authors" # Copyright text
   comments: "Licensed under the Apache License, Version 2.0" # Comments
   # 版本号与 Go 侧常量 services_app.go#appVersion 保持一致
   version: "0.1.0" # The application version

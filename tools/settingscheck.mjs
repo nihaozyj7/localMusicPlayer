@@ -9,7 +9,7 @@
      2. 关掉应用，重新启动（同一个数据目录）
      3. 检查设置是否还在，以及配置文件里是否真的有这几个键
 
-   用法：node tools/settingscheck.mjs [--exe bin/musicplayer.exe] [--port 9388]
+   用法：node tools/settingscheck.mjs [--exe bin/lmplayer.exe] [--port 9388]
    ========================================================================== */
 
 import { spawn } from "node:child_process";
@@ -26,7 +26,7 @@ function arg(name, fallback) {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const EXE = path.resolve(ROOT, arg("exe", "bin/musicplayer.exe"));
+const EXE = path.resolve(ROOT, arg("exe", "bin/lmplayer.exe"));
 const PORT = Number(arg("port", "9388"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -59,10 +59,10 @@ async function boot(label) {
   const child = spawn(EXE, [], {
     env: {
       ...process.env,
-      MUSICPLAYER_DEBUG_PORT: String(PORT),
+      LMPLAYER_DEBUG_PORT: String(PORT),
       WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, `wv2-${label}`),
-      MUSICPLAYER_DATA_DIR: dataDir,
-      MUSICPLAYER_MUSIC_DIR: path.join(workDir, "Music"),
+      LMPLAYER_DATA_DIR: dataDir,
+      LMPLAYER_MUSIC_DIR: path.join(workDir, "Music"),
     },
     stdio: ["ignore", fd, fd],
     detached: false,

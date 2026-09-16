@@ -7,7 +7,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 /* ==========================================================================

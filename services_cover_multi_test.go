@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/coverfetch"
-	"musicplayer/internal/meta"
-	"musicplayer/internal/metacache"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/coverfetch"
+	"localmusicplayer/internal/meta"
+	"localmusicplayer/internal/metacache"
 )
 
 /* --------------------------------------------------------------------------
@@ -61,7 +61,7 @@ func newCoverSvcForTest(t *testing.T) (*CoverService, *metacache.Store, string) 
 	if err := os.WriteFile(songPath, buildTinyM4A(), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("MUSICPLAYER_DATA_DIR", filepath.Join(dir, "data"))
+	t.Setenv("LMPLAYER_DATA_DIR", filepath.Join(dir, "data"))
 	store, err := bootstrap.NewStore()
 	if err != nil {
 		t.Fatal(err)

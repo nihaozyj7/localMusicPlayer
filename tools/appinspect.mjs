@@ -8,7 +8,7 @@
 
    用法：
      node tools/appinspect.mjs
-     node tools/appinspect.mjs --exe bin/musicplayer.exe --port 9333 --wait 20000
+     node tools/appinspect.mjs --exe bin/lmplayer.exe --port 9333 --wait 20000
    ========================================================================== */
 
 import { spawn } from "node:child_process";
@@ -24,7 +24,7 @@ function arg(name, fallback) {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const EXE = path.resolve(ROOT, arg("exe", "bin/musicplayer.exe"));
+const EXE = path.resolve(ROOT, arg("exe", "bin/lmplayer.exe"));
 const PORT = Number(arg("port", "9333"));
 const WAIT = Number(arg("wait", "18000"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -48,7 +48,7 @@ const logFd = openSync(logPath, "w");
 const child = spawn(EXE, [], {
   env: {
     ...process.env,
-    MUSICPLAYER_DEBUG_PORT: String(PORT),
+    LMPLAYER_DEBUG_PORT: String(PORT),
     // WebView2 独立数据目录，避免「已在运行」导致调试端口不生效
     WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2"),
   },
@@ -146,7 +146,7 @@ console.log("\n================ 绑定可用性 ================");
 const bindingInfo = await evaluate(`(async () => {
   const out = {};
   try {
-    const mod = await import('/bindings/musicplayer/index.js');
+    const mod = await import('/bindings/localmusicplayer/index.js');
     out.exports = Object.keys(mod);
     const Media = mod.MediaService || mod.Media;
     out.mediaExports = Media ? Object.keys(Media) : null;

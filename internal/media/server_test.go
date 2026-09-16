@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/ffmpeg"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/ffmpeg"
 )
 
 // setFFmpegForTest 直接指定 srv 使用的 ffmpeg 路径，并把「已解析」置位。

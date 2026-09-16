@@ -17,7 +17,7 @@ import (
 	"os"
 	"time"
 
-	"musicplayer/internal/ffmpeg"
+	"localmusicplayer/internal/ffmpeg"
 )
 
 func main() {

@@ -3,7 +3,7 @@
    --------------------------------------------------------------------------
    工作方式：
      · 在 Wails 应用里：加载由 `wails3 generate bindings -b -i` 生成的绑定
-       （frontend/bindings/musicplayer/*），所有调用打到 Go 服务。
+       （frontend/bindings/localmusicplayer/*），所有调用打到 Go 服务。
      · 在浏览器预览里（node tools/dev-server.js）：绑定里的 /wails/runtime.js
        不存在，import 会失败，此时自动降级为 mock，界面照样能跑。
 
@@ -30,7 +30,7 @@
      · 但打包器会按**文件路径**解析字符串字面量，于是找不到 src/bindings/ 而报错。
    所以这里统一用变量 + @vite-ignore：打包器不碰它，运行时由浏览器解析。
    -------------------------------------------------------------------------- */
-const BINDINGS_ENTRY = "../bindings/musicplayer/index.js";
+const BINDINGS_ENTRY = "../bindings/localmusicplayer/index.js";
 const WAILS_RUNTIME = "/wails/runtime.js";
 const EVENTS_ENTRY = "../bindings/github.com/wailsapp/wails/v3/internal/eventcreate.js";
 
@@ -367,7 +367,7 @@ export const backend = new Proxy(backendImpl, {
     if (typeof prop === "string" && !(prop in target) && !NON_METHOD_PROPS.has(prop)) {
       const msg =
         `[bridge] backend.${prop} 未接线：bridge.js 里缺少这个键。` +
-        `若 Go 侧/绑定层存在同名方法（看 frontend/bindings/musicplayer/），` +
+        `若 Go 侧/绑定层存在同名方法（看 frontend/bindings/localmusicplayer/），` +
         `在那个对象里补一行即可。`;
       console.error(msg);
       return () => {

@@ -37,7 +37,7 @@ import {
   parseLrc,
   resolveSkin,
   unregisterSkin,
-} from "@musicplayer/player-skins";
+} from "@localmusicplayer/player-skins";
 
 /**
  * 播放详情页滑入 / 滑出，等的是 playerview.css 里的 --pv-slide-dur

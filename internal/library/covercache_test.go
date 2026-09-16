@@ -10,13 +10,13 @@ import (
 	"strings"
 	"testing"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/covercache"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/covercache"
 )
 
 // 这条测试锁的是本轮的核心要求：**元数据缓存里不应该存 base64 封面数据**。
 //
-// 背景：实测真实缓存 %APPDATA%\MusicPlayer\metadata-cache.json 是 5.59MB，
+// 背景：实测真实缓存 %APPDATA%\LocalMusicPlayer\metadata-cache.json 是 5.59MB，
 // 其中 5.57MB（99.6%）是内嵌封面的 base64 data URL。改成内容寻址之后，
 // 缓存里只剩一个十几字节的文件名。
 func TestLegacyCoverMigrationDropsBase64(t *testing.T) {

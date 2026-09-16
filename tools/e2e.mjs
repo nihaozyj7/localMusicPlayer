@@ -4,7 +4,7 @@
    覆盖：列表渲染 → 播放出声 → 按需响度补偿 → 转码播放（若有该格式的文件）
    全部在真实 WebView2 里通过操作界面完成，不是调 API 绕过 UI。
 
-   用法：node tools/e2e.mjs --exe bin/musicplayer.exe
+   用法：node tools/e2e.mjs --exe bin/lmplayer.exe
    ========================================================================== */
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
@@ -15,7 +15,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const EXE = path.resolve(
   ROOT,
-  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/musicplayer.exe"
+  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/lmplayer.exe"
 );
 const PORT = Number(process.env.MP_PORT || 9371);
 const QUERY = process.env.MP_QUERY || "";
@@ -26,7 +26,7 @@ const workDir = path.join(ROOT, `.tmp-e2e-${PORT}`);
 mkdirSync(workDir, { recursive: true });
 const logFd = openSync(path.join(workDir, "app.log"), "w");
 const child = spawn(EXE, [], {
-  env: { ...process.env, MUSICPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
+  env: { ...process.env, LMPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
   stdio: ["ignore", logFd, logFd],
 });
 closeSync(logFd);
@@ -162,7 +162,7 @@ if (WANT_LOUDNESS) {
   const loud = await evaluate(`(async () => {
     const store = await import('/js/store.js');
     const audio = await import('/js/audio.js');
-    const Loud = (await import('/bindings/musicplayer/index.js')).LoudnessService;
+    const Loud = (await import('/bindings/localmusicplayer/index.js')).LoudnessService;
 
     // 必须针对**正在播放**的那首歌验证：响度是按需算的，
     // 只会为当前播放曲目触发测量（这正是设计目标）。
@@ -213,7 +213,7 @@ if (WANT_LOUDNESS) {
 /* ---------------- 4) 转码路径（若能找到非原生格式） ---------------- */
 console.log("\n[4] 内置 ffmpeg 能力");
 const ff = await evaluate(`(async () => {
-  const Media = (await import('/bindings/musicplayer/index.js')).MediaService;
+  const Media = (await import('/bindings/localmusicplayer/index.js')).MediaService;
   return await Media.State();
 })()`);
 console.log("   " + JSON.stringify(ff?.tools ?? ff));

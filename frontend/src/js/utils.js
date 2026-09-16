@@ -101,7 +101,7 @@ export function groupBy(arr, keyFn) {
   return map;
 }
 
-/** LRC 解析与定位已随「歌词渲染」一起抽到 @musicplayer/player-skins（src/lrc.js）。
+/** LRC 解析与定位已随「歌词渲染」一起抽到 @localmusicplayer/player-skins（src/lrc.js）。
  *  这里刻意不再保留副本：两份实现迟早会漂，而歌词行号算错的表现是「高亮错行」，
  *  非常难查。需要解析/定位请从包入口 import。 */
 

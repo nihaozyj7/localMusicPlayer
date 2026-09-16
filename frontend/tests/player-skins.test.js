@@ -1,5 +1,5 @@
 /* ==========================================================================
-   player-skins.test.js — 皮肤包（@musicplayer/player-skins）的单测
+   player-skins.test.js — 皮肤包（@localmusicplayer/player-skins）的单测
    --------------------------------------------------------------------------
    覆盖三块**纯逻辑**：
      1. LRC 解析与定位（高亮错行的锅基本都在这里）；
@@ -26,7 +26,7 @@ import {
   resolveSkin,
   unregisterSkin,
   escapeHtml,
-} from "@musicplayer/player-skins";
+} from "@localmusicplayer/player-skins";
 
 /* --------------------------------------------------------------------------
    LRC

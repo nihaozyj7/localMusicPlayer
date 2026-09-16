@@ -3,7 +3,7 @@
 // # 为什么需要它
 //
 // 这些字节以前是**以 base64 data URL 的形式直接塞进 library 的元数据缓存**的
-// （%APPDATA%\MusicPlayer\metadata-cache.json）。实测那份缓存 5.59MB，其中
+// （%APPDATA%\LocalMusicPlayer\metadata-cache.json）。实测那份缓存 5.59MB，其中
 // 5.57MB（99.6%）是 base64 封面：每次扫描结束都要把它整份序列化一遍，启动还要
 // 整份解析；而同一张图（整张专辑共用一张封面是常态）会被逐首重复存 N 份。
 //
@@ -35,8 +35,8 @@ import (
 	"strings"
 	"time"
 
-	"musicplayer/internal/atomicfile"
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/atomicfile"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // Prefix 是同源封面路由前缀（与 media.AudioPrefix 一样挂在 asset server 上）。

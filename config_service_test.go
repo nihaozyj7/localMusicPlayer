@@ -6,14 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // newCfgFixture 造一个独立数据目录的配置服务。
 func newCfgFixture(t *testing.T) (*ConfigService, string) {
 	t.Helper()
 	dataDir := t.TempDir()
-	t.Setenv("MUSICPLAYER_DATA_DIR", dataDir)
+	t.Setenv("LMPLAYER_DATA_DIR", dataDir)
 	store, err := bootstrap.NewStore()
 	if err != nil {
 		t.Fatalf("创建配置存储失败: %v", err)
@@ -107,7 +107,7 @@ func TestLoudnessModeRejectsGarbage(t *testing.T) {
 // 且能被用户改掉并落盘。
 func TestDownloadDirDefaultAndPatch(t *testing.T) {
 	musicDir := t.TempDir()
-	t.Setenv("MUSICPLAYER_MUSIC_DIR", musicDir)
+	t.Setenv("LMPLAYER_MUSIC_DIR", musicDir)
 
 	svc, _ := newCfgFixture(t)
 	def := svc.Get().DownloadDir

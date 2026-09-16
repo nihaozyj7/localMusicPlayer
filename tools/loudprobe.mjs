@@ -15,7 +15,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const EXE = path.resolve(
   ROOT,
-  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/musicplayer.exe"
+  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/lmplayer.exe"
 );
 const PORT = Number(process.env.MP_PORT || 9381);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -30,7 +30,7 @@ const workDir = path.join(ROOT, `.tmp-loudprobe-${PORT}`);
 mkdirSync(workDir, { recursive: true });
 const logFd = openSync(path.join(workDir, "app.log"), "w");
 const child = spawn(EXE, [], {
-  env: { ...process.env, MUSICPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
+  env: { ...process.env, LMPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
   stdio: ["ignore", logFd, logFd],
 });
 closeSync(logFd);
@@ -91,7 +91,7 @@ const direct = await evaluate(`(async () => {
   try { shell.navigate('all'); } catch {}
   await new Promise((r) => setTimeout(r, 1000));
   const store = await import('/js/store.js');
-  const Loud = (await import('/bindings/musicplayer/index.js')).LoudnessService;
+  const Loud = (await import('/bindings/localmusicplayer/index.js')).LoudnessService;
 
   const row = document.querySelector('.track[data-id]');
   const songId = row?.dataset?.id;
@@ -132,7 +132,7 @@ console.log("\n[4] 模拟用户操作：开逐曲均衡（触发 refreshLoudness
 const flow = await evaluate(`(async () => {
   const store = await import('/js/store.js');
   const audio = await import('/js/audio.js');
-  const Loud = (await import('/bindings/musicplayer/index.js')).LoudnessService;
+  const Loud = (await import('/bindings/localmusicplayer/index.js')).LoudnessService;
   const songId = store.state.currentId;
   if (!songId) return { error: '没有正在播放的歌' };
 

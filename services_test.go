@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/library"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/library"
 )
 
 // hermeticDownloadDir 给测试一个隔离的「下载目录」。
@@ -68,7 +68,7 @@ func writeTestWAV(t *testing.T, path string, durationSec int) {
 func newTestService(t *testing.T) (*LibraryService, *bootstrap.Store, string) {
 	t.Helper()
 	dataDir := t.TempDir()
-	t.Setenv("MUSICPLAYER_DATA_DIR", dataDir)
+	t.Setenv("LMPLAYER_DATA_DIR", dataDir)
 
 	store, err := bootstrap.NewStore()
 	if err != nil {

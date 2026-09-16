@@ -13,10 +13,10 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/coverfetch"
-	"musicplayer/internal/meta"
-	"musicplayer/internal/metacache"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/coverfetch"
+	"localmusicplayer/internal/meta"
+	"localmusicplayer/internal/metacache"
 )
 
 // CoverService 管理歌曲封面：联网搜索、本地缓存、以及（可选）写回歌曲元数据。

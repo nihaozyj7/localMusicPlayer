@@ -13,7 +13,7 @@ import (
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
 
-const sourceUA = "MusicPlayer/1.0 (lyrics)"
+const sourceUA = "LMPlayer/1.0 (lyrics)"
 
 // maxErrBody 错误信息里最多带多少字节的响应体（body 上限是 12MB）。
 const maxErrBody = 512

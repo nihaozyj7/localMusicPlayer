@@ -3,7 +3,7 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "musicplayer.exe"
+name: "lmplayer.exe"
 arch: ${GOARCH}
 platform: "linux"
 version: "0.1.0"
@@ -11,18 +11,18 @@ section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
 description: "本地曲库 + 在线试听的桌面音乐播放器"
-vendor: "The MusicPlayer Authors"
-homepage: "https://github.com/nihaozyj7/MusicPlayer"
+vendor: "The localMusicPlayer Authors"
+homepage: "https://github.com/nihaozyj7/localMusicPlayer"
 license: "Apache-2.0"
 release: "1"
 
 contents:
-  - src: "./bin/musicplayer.exe"
-    dst: "/usr/local/bin/musicplayer.exe"
+  - src: "./bin/lmplayer.exe"
+    dst: "/usr/local/bin/lmplayer.exe"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/musicplayer.exe.png"
-  - src: "./build/linux/musicplayer.exe.desktop"
-    dst: "/usr/share/applications/musicplayer.exe.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/lmplayer.exe.png"
+  - src: "./build/linux/lmplayer.exe.desktop"
+    dst: "/usr/share/applications/lmplayer.exe.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
 depends:

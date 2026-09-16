@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"musicplayer/internal/skins"
-	"musicplayer/internal/theme"
+	"localmusicplayer/internal/skins"
+	"localmusicplayer/internal/theme"
 )
 
 /* --------------------------------------------------------------------------

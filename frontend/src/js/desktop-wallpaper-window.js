@@ -4,7 +4,7 @@
    需求：「把当前正在播放的样式投影到桌面中去……去除掉 UI，只保留播放界面样式
    所渲染的内容」。所以这个页面不再自己画一层背景加几行字，而是——
 
-     加载与详情页**完全相同的那套皮肤**（@musicplayer/player-skins），
+     加载与详情页**完全相同的那套皮肤**（@localmusicplayer/player-skins），
      挂载主窗口当前正在用的那一个样式，只把 UI 砍掉。
 
    于是它和 frontend/src/js/playerhost.js 是同一件事的两个宿主。差别只有三处：
@@ -34,7 +34,7 @@
 
 import { backend, connect, on } from "./bridge.js";
 import { DEFAULT_COVER } from "./utils.js";
-import { loadExternalSkin, resolveSkin } from "@musicplayer/player-skins";
+import { loadExternalSkin, resolveSkin } from "@localmusicplayer/player-skins";
 
 const appEl = document.getElementById("wp-app");
 const view = document.getElementById("wp-playerview");

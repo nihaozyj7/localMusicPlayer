@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // TestReadAllReportsCancellation 是「取消不能被当成『这些就是全部歌』」的

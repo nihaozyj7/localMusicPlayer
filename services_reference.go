@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"musicplayer/internal/skins"
+	"localmusicplayer/internal/skins"
 )
 
 /* --------------------------------------------------------------------------

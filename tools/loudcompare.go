@@ -21,10 +21,10 @@ import (
 	"strings"
 	"time"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/ffmpeg"
-	"musicplayer/internal/library"
-	"musicplayer/internal/loudness"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/ffmpeg"
+	"localmusicplayer/internal/library"
+	"localmusicplayer/internal/loudness"
 )
 
 func main() {
@@ -52,7 +52,7 @@ func main() {
 		panic(err)
 	}
 	defer os.RemoveAll(tmp)
-	os.Setenv("MUSICPLAYER_DATA_DIR", tmp)
+	os.Setenv("LMPLAYER_DATA_DIR", tmp)
 
 	store, _ := bootstrap.NewStore()
 	_ = store.Update(func(c *bootstrap.Config) {

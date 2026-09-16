@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
-Name=音乐播放器
+Name=LMPlayer
 Comment=本地曲库 + 在线试听的桌面音乐播放器
 # The Exec line includes %u to pass the URL to the application
-Exec=/usr/local/bin/musicplayer.exe %u
+Exec=/usr/local/bin/lmplayer.exe %u
 Terminal=false
 Type=Application
-Icon=musicplayer.exe
+Icon=lmplayer.exe
 Categories=Utility;
-StartupWMClass=musicplayer.exe
+StartupWMClass=lmplayer.exe
 
  

@@ -3,7 +3,7 @@ package filter
 import (
 	"testing"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // TestApplyMatchesMatch 防止「批量预编译」重构与单曲 Match 的语义漂移。

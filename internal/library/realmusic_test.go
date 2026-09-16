@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // TestRealMusicFolder 真实曲库手工验证：
@@ -25,7 +25,7 @@ func TestRealMusicFolder(t *testing.T) {
 	}
 
 	dataDir := t.TempDir()
-	t.Setenv("MUSICPLAYER_DATA_DIR", dataDir)
+	t.Setenv("LMPLAYER_DATA_DIR", dataDir)
 	store, err := bootstrap.NewStore()
 	if err != nil {
 		t.Fatal(err)

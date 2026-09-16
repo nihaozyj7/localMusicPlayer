@@ -5,7 +5,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // 材质名 → Wails 枚举的映射必须一一对上，否则设置界面选 Mica 却拿到别的东西。

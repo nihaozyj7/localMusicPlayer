@@ -49,7 +49,7 @@ import { spectrum } from "./audio.js";
 import { paintFloatingLyricBar } from "./desktop-lyrics.js";
 import { requestAppUpdate } from "./ui/base.js";
 import { getRuntimeTokens } from "./runtime-tokens.js";
-import { resolveSkin } from "@musicplayer/player-skins";
+import { resolveSkin } from "@localmusicplayer/player-skins";
 import {
   currentLyricWindow,
   currentMediaSnapshot,

@@ -6,7 +6,7 @@
      2) 补偿值进入 Web Audio 的 GainNode（真的作用到回放上）
      3) 改了目标响度后，之前的补偿失效并按新标准重算
 
-   用法：node tools/loudtest.mjs --exe bin/musicplayer.exe
+   用法：node tools/loudtest.mjs --exe bin/lmplayer.exe
    ========================================================================== */
 
 import { spawn } from "node:child_process";
@@ -22,7 +22,7 @@ function arg(name, fallback) {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const EXE = path.resolve(ROOT, arg("exe", "bin/musicplayer-debug.exe"));
+const EXE = path.resolve(ROOT, arg("exe", "bin/lmplayer-debug.exe"));
 const PORT = Number(arg("port", "9337"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -36,7 +36,7 @@ mkdirSync(workDir, { recursive: true });
 const logFd = openSync(path.join(workDir, "app.log"), "w");
 
 const child = spawn(EXE, [], {
-  env: { ...process.env, MUSICPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
+  env: { ...process.env, LMPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
   stdio: ["ignore", logFd, logFd],
 });
 closeSync(logFd);
@@ -95,7 +95,7 @@ await sleep(12000);
 // 页面里可以直接 import 模块，利用 store 的 API 改配置
 console.log("\n================ 1) 先看响度能力与初始状态 ================");
 const before = await evaluate(`(async () => {
-  const Loud = (await import('/bindings/musicplayer/index.js')).LoudnessService;
+  const Loud = (await import('/bindings/localmusicplayer/index.js')).LoudnessService;
   const st = await Loud.State();
   return {
     available: st.available,
@@ -113,7 +113,7 @@ console.log("\n================ 2) 开启逐曲均衡并播放一首歌 ========
 const result = await evaluate(`(async () => {
   const store = await import('/js/store.js');
   const audio = await import('/js/audio.js');
-  const Loud = (await import('/bindings/musicplayer/index.js')).LoudnessService;
+  const Loud = (await import('/bindings/localmusicplayer/index.js')).LoudnessService;
 
   // 开启逐曲均衡
   store.state.config.loudnessMode = 'track';
@@ -157,7 +157,7 @@ console.log("\n================ 3) 改目标响度 → 旧补偿应失效 ======
 const afterChange = await evaluate(`(async () => {
   const store = await import('/js/store.js');
   const audio = await import('/js/audio.js');
-  const Loud = (await import('/bindings/musicplayer/index.js')).LoudnessService;
+  const Loud = (await import('/bindings/localmusicplayer/index.js')).LoudnessService;
   const songId = ${JSON.stringify(result?.songId ?? null)};
 
   // 按设置界面里的做法：改标准 → 让旧补偿失效

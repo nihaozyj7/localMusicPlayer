@@ -6,7 +6,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"musicplayer/internal/skins"
+	"localmusicplayer/internal/skins"
 )
 
 // SkinService 播放界面皮肤（样式包）接口。

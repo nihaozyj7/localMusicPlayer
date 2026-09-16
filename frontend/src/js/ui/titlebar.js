@@ -32,7 +32,7 @@ class MpTitlebar extends MpElement {
       <header class="titlebar" id="titlebar">
         <div class="titlebar__brand">
           <svg class="titlebar__logo"><use href="#i-music"></use></svg>
-          <span>音乐播放器</span>
+          <span>LMPlayer</span>
         </div>
         <span class="titlebar__sep"></span>
         <div class="titlebar__drag"></div>

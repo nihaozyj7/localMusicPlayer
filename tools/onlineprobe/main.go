@@ -14,8 +14,8 @@ import (
 	"os"
 	"time"
 
-	"musicplayer/internal/bilibili"
-	"musicplayer/internal/coverfetch"
+	"localmusicplayer/internal/bilibili"
+	"localmusicplayer/internal/coverfetch"
 )
 
 func stats(body []byte) string {

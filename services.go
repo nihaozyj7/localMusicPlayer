@@ -16,14 +16,14 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/executil"
-	"musicplayer/internal/library"
-	"musicplayer/internal/loudness"
-	"musicplayer/internal/lyrics"
-	"musicplayer/internal/media"
-	"musicplayer/internal/metacache"
-	"musicplayer/internal/theme"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/executil"
+	"localmusicplayer/internal/library"
+	"localmusicplayer/internal/loudness"
+	"localmusicplayer/internal/lyrics"
+	"localmusicplayer/internal/media"
+	"localmusicplayer/internal/metacache"
+	"localmusicplayer/internal/theme"
 )
 
 // ---------------------------------------------------------------------------
@@ -1737,7 +1737,7 @@ func (s *WindowService) ensureTray() {
 	}
 	tray := s.app.SystemTray.New()
 	tray.SetIcon(appIconPNG)
-	tray.SetTooltip("音乐播放器")
+	tray.SetTooltip("LMPlayer")
 	menu := s.app.NewMenu()
 	menu.Add("显示主界面").OnClick(func(*application.Context) { s.ShowMain() })
 	menu.AddSeparator()

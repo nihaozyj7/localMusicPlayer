@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/coverfetch"
-	"musicplayer/internal/library"
-	"musicplayer/internal/metacache"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/coverfetch"
+	"localmusicplayer/internal/library"
+	"localmusicplayer/internal/metacache"
 )
 
 /* --------------------------------------------------------------------------
@@ -70,8 +70,8 @@ func TestWriteCacheToFiles(t *testing.T) {
 	}
 
 	// 配置存储没有「指定目录」的构造器，走它自己的环境变量（测试里只想拿一个
-	// 干净的 Store，不关心内容），这样不会碰到用户真实的 %APPDATA%\MusicPlayer
-	t.Setenv("MUSICPLAYER_DATA_DIR", filepath.Join(dir, "data"))
+	// 干净的 Store，不关心内容），这样不会碰到用户真实的 %APPDATA%\LocalMusicPlayer
+	t.Setenv("LMPLAYER_DATA_DIR", filepath.Join(dir, "data"))
 	store, err := bootstrap.NewStore()
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestWriteCacheToFilesMatchesLibraryIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("MUSICPLAYER_DATA_DIR", filepath.Join(dir, "data"))
+	t.Setenv("LMPLAYER_DATA_DIR", filepath.Join(dir, "data"))
 	store, err := bootstrap.NewStore()
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +245,7 @@ func TestWriteCacheToFilesMatchesLibraryIDs(t *testing.T) {
 
 func TestWriteCacheToFilesEmpty(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("MUSICPLAYER_DATA_DIR", filepath.Join(dir, "data"))
+	t.Setenv("LMPLAYER_DATA_DIR", filepath.Join(dir, "data"))
 	store, err := bootstrap.NewStore()
 	if err != nil {
 		t.Fatal(err)

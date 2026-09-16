@@ -6,7 +6,7 @@
      · /bindings/* 映射到 frontend/bindings（wails3 generate bindings 产物）
      · /packages/* 映射到 frontend/packages（工作区里的独立包，如播放界面皮肤）
      · 给 index.html 注入一张 import map，让浏览器能解析工作区包名
-       （`@musicplayer/player-skins`）；正式开发/构建请用 `npm run dev`（Vite），
+       （`@localmusicplayer/player-skins`）；正式开发/构建请用 `npm run dev`（Vite），
        这里保留只是为了「没装 node_modules 也能看界面」。
      · /wails/runtime.js 在预览下返回一个最小 shim，让生成代码能 import 成功
        （真正的 Wails 应用会由框架自己提供 /wails/runtime.js）
@@ -25,8 +25,8 @@ const NODE_MODULES = path.resolve(__dirname, "..", "node_modules");
 
 /** 工作区包 → 浏览器可取的 URL（与 frontend/package.json 的依赖名保持一致） */
 const BARE_SPECIFIERS = [
-  ["@musicplayer/player-skins/contract", "/packages/player-skins/src/contract.js"],
-  ["@musicplayer/player-skins", "/packages/player-skins/src/index.js"],
+  ["@localmusicplayer/player-skins/contract", "/packages/player-skins/src/contract.js"],
+  ["@localmusicplayer/player-skins", "/packages/player-skins/src/index.js"],
   // 第三方包（拖拽排序 SortableJS）：浏览器不认裸包名，映射到同源的
   // /vendor/* 路径。正式构建由 Vite 打包，这条映射只服务于零依赖预览。
   ["sortablejs", "/vendor/sortablejs.js"],
@@ -40,7 +40,7 @@ const VENDOR_FILES = {
 /**
  * 让源码能被「浏览器原生 ESM」直接跑起来 —— 这个服务器没有打包器，两件事必须自己做：
  *
- * 1. **裸包名换成同源路径**：`import "@musicplayer/player-skins"` 浏览器不认识。
+ * 1. **裸包名换成同源路径**：`import "@localmusicplayer/player-skins"` 浏览器不认识。
  *    本来该用 import map，但 import map 是内联脚本，会被页面 CSP
  *    （`script-src 'self'`）拦掉 —— 实测拦掉后模块解析失败、界面全白。
  *    直接改写说明符最稳，也不用放宽 CSP。

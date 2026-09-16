@@ -1,6 +1,6 @@
 # Third-Party Notices / 第三方许可证声明
 
-本项目（MusicPlayer / 音乐播放器）以 **Apache License 2.0** 发布（见 [LICENSE](LICENSE)）。
+本项目（localMusicPlayer / 本地音乐播放器）以 **Apache License 2.0** 发布（见 [LICENSE](LICENSE)）。
 下面的内容说明**随程序一起分发**的第三方组件、它们各自的许可证，以及必须一并保留的版权声明。
 
 > 这份清单与「设置 → 关于 → 开源依赖」里展示的是同一份数据（源文件 `frontend/src/js/about-info.js`）。

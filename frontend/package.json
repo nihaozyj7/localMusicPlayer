@@ -1,9 +1,9 @@
 {
-  "name": "@musicplayer/app",
+  "name": "@localmusicplayer/app",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "音乐播放器前端（原生 ESM 源码 + Lit + Vite 构建），产物同步到 frontend/dist 供 go:embed",
+  "description": "本地音乐播放器前端（原生 ESM 源码 + Lit + Vite 构建），产物同步到 frontend/dist 供 go:embed",
   "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@musicplayer/player-skins": "*",
+    "@localmusicplayer/player-skins": "*",
     "lit": "^3.3.3",
     "sortablejs": "^1.15.7"
   }

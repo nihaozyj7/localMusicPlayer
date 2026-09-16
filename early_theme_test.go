@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/theme"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/theme"
 )
 
 /* ==========================================================================
@@ -17,10 +17,10 @@ import (
    所以这里把几个关键不变量固定下来。
    ========================================================================== */
 
-// newTestStore 在临时目录里建一份干净配置（配置目录由 MUSICPLAYER_DATA_DIR 决定）
+// newTestStore 在临时目录里建一份干净配置（配置目录由 LMPLAYER_DATA_DIR 决定）
 func newTestStore(t *testing.T) *bootstrap.Store {
 	t.Helper()
-	t.Setenv("MUSICPLAYER_DATA_DIR", filepath.Join(t.TempDir(), "data"))
+	t.Setenv("LMPLAYER_DATA_DIR", filepath.Join(t.TempDir(), "data"))
 	store, err := bootstrap.NewStore()
 	if err != nil {
 		t.Fatalf("创建配置失败: %v", err)

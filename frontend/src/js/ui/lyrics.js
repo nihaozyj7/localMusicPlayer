@@ -24,10 +24,10 @@ import {
 } from "../playerhost.js";
 import { coverOf, fmtTime } from "../utils.js";
 import { providerListLabel } from "../provider-names.js";
-import { formatLrcTime, mergeDraftTimes, parseLyricDraft, serializeLrc, shiftLrc } from "@musicplayer/player-skins";
+import { formatLrcTime, mergeDraftTimes, parseLyricDraft, serializeLrc, shiftLrc } from "@localmusicplayer/player-skins";
 
 /** 与 bridge.js 同理：绑定是按 URL 在运行时解析的，不能让打包器按文件路径解析 */
-const BINDINGS_ENTRY = "../bindings/musicplayer/index.js";
+const BINDINGS_ENTRY = "../bindings/localmusicplayer/index.js";
 
 let bindings = null;
 async function getBindings() {

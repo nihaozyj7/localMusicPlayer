@@ -12,8 +12,8 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/theme"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/theme"
 )
 
 /* ==========================================================================

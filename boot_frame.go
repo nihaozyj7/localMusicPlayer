@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 /* ==========================================================================

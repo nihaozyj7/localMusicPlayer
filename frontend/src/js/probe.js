@@ -168,7 +168,7 @@ export function runProbe() {
   if (document.querySelector(".sidebar__foot")) issues.push("侧边栏底部仍存在旧的操作区");
 
   /* 4.3 沉浸样式：详情页不能有卡片边框；整窗背景层存在且可见
-         （data-skin 是新钩子：样式由 @musicplayer/player-skins 的皮肤声明） */
+         （data-skin 是新钩子：样式由 @localmusicplayer/player-skins 的皮肤声明） */
   const pv = document.getElementById("playerview");
   if (pv?.dataset.skin === "immersive" && pv.dataset.state === "opened") {
     const card = document.querySelector(".immersive__card");

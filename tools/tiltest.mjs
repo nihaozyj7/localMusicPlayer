@@ -11,7 +11,7 @@
      2) 按钮区域是 no-drag（否则点最小化会变成拖窗口）
      3) 实际拖动标题栏时窗口位置会变
 
-   用法：node tools/tiltest.mjs --exe bin/musicplayer.exe
+   用法：node tools/tiltest.mjs --exe bin/lmplayer.exe
    ========================================================================== */
 
 import { spawn } from "node:child_process";
@@ -27,7 +27,7 @@ function arg(name, fallback) {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const EXE = path.resolve(ROOT, arg("exe", "bin/musicplayer.exe"));
+const EXE = path.resolve(ROOT, arg("exe", "bin/lmplayer.exe"));
 const PORT = Number(arg("port", "9336"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -41,7 +41,7 @@ mkdirSync(workDir, { recursive: true });
 const logFd = openSync(path.join(workDir, "app.log"), "w");
 
 const child = spawn(EXE, [], {
-  env: { ...process.env, MUSICPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
+  env: { ...process.env, LMPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
   stdio: ["ignore", logFd, logFd],
 });
 closeSync(logFd);

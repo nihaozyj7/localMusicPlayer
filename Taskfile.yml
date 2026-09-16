@@ -1,7 +1,7 @@
 version: "3"
 
 # ============================================================================
-#  音乐播放器 · Wails3 构建入口
+#  本地音乐播放器 · Wails3 构建入口
 #  常用：
 #    wails3 task build          构建 exe 到 bin/（自动跑 Vite 构建，缺依赖会 npm install）
 #    wails3 task run            构建并运行
@@ -13,7 +13,7 @@ version: "3"
 # ============================================================================
 
 vars:
-  APP_NAME: "musicplayer"
+  APP_NAME: "lmplayer"
   BIN_DIR: "bin"
   VITE_PORT: "{{.WAILS_VITE_PORT | default 5173}}"
   GOOS: "{{.GOOS | default OS}}"

@@ -10,8 +10,8 @@
    这些都只有在 exe 里跑才作数。
 
    用法：
-     node tools/check-app.mjs                       # 使用 bin/musicplayer.exe
-     node tools/check-app.mjs --exe bin/musicplayer.exe --port 9355 --wait 15000
+     node tools/check-app.mjs                       # 使用 bin/lmplayer.exe
+     node tools/check-app.mjs --exe bin/lmplayer.exe --port 9355 --wait 15000
    退出码 0 = 全部通过。
    ========================================================================== */
 
@@ -28,7 +28,7 @@ function arg(name, fallback) {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const EXE = path.resolve(ROOT, arg("exe", "bin/musicplayer.exe"));
+const EXE = path.resolve(ROOT, arg("exe", "bin/lmplayer.exe"));
 const PORT = Number(arg("port", "9355"));
 const WAIT = Number(arg("wait", "12000"));
 // 可选：把数据目录也指到临时目录，避免与「用户正在用的那个实例」抢同一份配置/缓存
@@ -48,9 +48,9 @@ console.log(`启动应用：${EXE}`);
 const child = spawn(EXE, [], {
   env: {
     ...process.env,
-    MUSICPLAYER_DEBUG_PORT: String(PORT),
+    LMPLAYER_DEBUG_PORT: String(PORT),
     WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2"),
-    ...(DATA ? { MUSICPLAYER_DATA_DIR: path.resolve(ROOT, DATA) } : {}),
+    ...(DATA ? { LMPLAYER_DATA_DIR: path.resolve(ROOT, DATA) } : {}),
   },
   stdio: ["ignore", logFd, logFd],
 });
@@ -175,7 +175,7 @@ check(
 
 /* ---- 3：新绑定在运行时存在（Cover 多封面 API + Skins）---- */
 const api = await evaluate(`(async () => {
-  const mod = await import("/bindings/musicplayer/index.js");
+  const mod = await import("/bindings/localmusicplayer/index.js");
   const names = (obj) => (obj ? Object.keys(obj).filter((k) => typeof obj[k] === "function").sort() : []);
   return {
     cover: names(mod.CoverService),
@@ -196,7 +196,7 @@ check(
 
 /* ---- 4：真实后端返回的封面集合形状正确 ---- */
 const coverShape = await evaluate(`(async () => {
-  const mod = await import("/bindings/musicplayer/index.js");
+  const mod = await import("/bindings/localmusicplayer/index.js");
   const songs = await mod.LibraryService.Songs({});
   const list = Array.isArray(songs) ? songs : songs?.songs || [];
   const song = list.find((s) => s && !s.online) || list[0];
@@ -221,7 +221,7 @@ check(
 
 /* ---- 5：轮播是全局设置（config 里有这两个键）---- */
 const cfg = await evaluate(`(async () => {
-  const mod = await import("/bindings/musicplayer/index.js");
+  const mod = await import("/bindings/localmusicplayer/index.js");
   const c = await mod.ConfigService.Get();
   return { carousel: c?.coverCarousel, interval: c?.coverCarouselInterval };
 })()`);

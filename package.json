@@ -1,18 +1,18 @@
 {
-  "name": "musicplayer-workspace",
+  "name": "locallocalmusicplayer-workspace",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "音乐播放器（Go + Wails3 + Lit）：本地曲库 + 在线试听的桌面音乐播放器",
+  "description": "本地音乐播放器（Go + Wails3 + Lit）：本地曲库 + 在线试听的桌面音乐播放器",
   "license": "Apache-2.0",
-  "author": "The MusicPlayer Authors",
-  "homepage": "https://github.com/nihaozyj7/MusicPlayer#readme",
+  "author": "The localMusicPlayer Authors",
+  "homepage": "https://github.com/nihaozyj7/localMusicPlayer#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nihaozyj7/MusicPlayer.git"
+    "url": "git+https://github.com/nihaozyj7/localMusicPlayer.git"
   },
   "bugs": {
-    "url": "https://github.com/nihaozyj7/MusicPlayer/issues"
+    "url": "https://github.com/nihaozyj7/localMusicPlayer/issues"
   },
   "keywords": [
     "music-player",
@@ -31,9 +31,9 @@
     "node": ">=20.19"
   },
   "scripts": {
-    "dev": "npm run dev --workspace @musicplayer/app",
-    "preview": "npm run preview --workspace @musicplayer/app",
-    "build:assets": "npm run build --workspace @musicplayer/app",
+    "dev": "npm run dev --workspace @localmusicplayer/app",
+    "preview": "npm run preview --workspace @localmusicplayer/app",
+    "build:assets": "npm run build --workspace @localmusicplayer/app",
     "build": "node tools/build-frontend.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

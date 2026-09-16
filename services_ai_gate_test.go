@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // TestAiLyricsCleanGate 「自动匹配歌词时使用 AI 清洗元数据」开关必须真的能关掉 AI。
@@ -14,7 +14,7 @@ import (
 // 这里不联网，只断言闸门本身：配置齐全（baseUrl + apiKey）时，
 // aiLyricsClean=false 必须让 aiEnabled() 为 false。
 func TestAiLyricsCleanGate(t *testing.T) {
-	t.Setenv("MUSICPLAYER_DATA_DIR", t.TempDir())
+	t.Setenv("LMPLAYER_DATA_DIR", t.TempDir())
 	store, err := bootstrap.NewStore()
 	if err != nil {
 		t.Fatalf("创建配置存储失败: %v", err)

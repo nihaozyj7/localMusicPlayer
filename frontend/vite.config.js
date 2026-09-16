@@ -3,7 +3,7 @@
    --------------------------------------------------------------------------
    为什么是 Vite：源码仍然是原生 ESM（没有框架、没有 JSX/TS），
    但工程上需要真正的 dev server（HMR）、依赖解析（npm workspaces 里的
-   @musicplayer/player-skins）、语法降级与产物哈希。
+   @localmusicplayer/player-skins）、语法降级与产物哈希。
 
    两个「非标准」的地方需要插件补齐：
      1. `/bindings/*` —— wails3 generate bindings 的产物。
@@ -96,7 +96,7 @@ function wailsRuntimeShim() {
     });
   };
   return {
-    name: "musicplayer:wails-preview-shim",
+    name: "lmplayer:wails-preview-shim",
     configureServer: install,
     configurePreviewServer: install,
   };
@@ -111,7 +111,7 @@ export default defineConfig({
   resolve: {
     alias: {
       // 皮肤包以工作区包名引入；显式再给一条别名，保证在未跑 npm install 时也能解析
-      "@musicplayer/player-skins": path.join(here, "packages", "player-skins", "src", "index.js"),
+      "@localmusicplayer/player-skins": path.join(here, "packages", "player-skins", "src", "index.js"),
     },
   },
   server: {

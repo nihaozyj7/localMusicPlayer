@@ -14,8 +14,8 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"musicplayer/internal/bilibili"
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bilibili"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // DownloadService 把在线歌曲保存到本地。

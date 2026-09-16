@@ -3,7 +3,7 @@ package filter
 import (
 	"testing"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 func rule(id, typ, op, value, unit, scope string) bootstrap.FilterRule {

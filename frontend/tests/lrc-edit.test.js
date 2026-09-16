@@ -18,7 +18,7 @@ import {
   parseLyricDraft,
   serializeLrc,
   shiftLrc,
-} from "@musicplayer/player-skins";
+} from "@localmusicplayer/player-skins";
 
 test("formatLrcTime：百分秒、补零、负数与非 60.00 进位", () => {
   assert.equal(formatLrcTime(0), "[00:00.00]");

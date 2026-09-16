@@ -12,9 +12,9 @@ import (
 	"os"
 	"time"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/library"
-	"musicplayer/internal/media"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/library"
+	"localmusicplayer/internal/media"
 )
 
 func main() {

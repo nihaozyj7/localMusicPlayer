@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/lyrics"
-	"musicplayer/internal/metacache"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/lyrics"
+	"localmusicplayer/internal/metacache"
 )
 
 /* --------------------------------------------------------------------------
@@ -84,7 +84,7 @@ func newLyricsFixture(t *testing.T) *lyricsFixture {
 		"t_plain": {ID: "t_plain", Path: plain, Title: "Track 07", Artist: "未知歌手", Album: "未知专辑", Ext: ".m4a"},
 	}
 
-	t.Setenv("MUSICPLAYER_DATA_DIR", filepath.Join(dir, "data"))
+	t.Setenv("LMPLAYER_DATA_DIR", filepath.Join(dir, "data"))
 	store, err := bootstrap.NewStore()
 	if err != nil {
 		t.Fatal(err)

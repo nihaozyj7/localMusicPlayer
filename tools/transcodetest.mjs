@@ -14,7 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const EXE = path.resolve(
   ROOT,
-  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/musicplayer.exe"
+  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/lmplayer.exe"
 );
 const PORT = Number(process.env.MP_PORT || 9391);
 const QUERY = process.env.MP_QUERY || "转码测试样本";
@@ -24,7 +24,7 @@ const workDir = path.join(ROOT, `.tmp-transcode-${PORT}`);
 mkdirSync(workDir, { recursive: true });
 const logFd = openSync(path.join(workDir, "app.log"), "w");
 const child = spawn(EXE, [], {
-  env: { ...process.env, MUSICPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
+  env: { ...process.env, LMPLAYER_DEBUG_PORT: String(PORT), WEBVIEW2_USER_DATA_FOLDER: path.join(workDir, "wv2") },
   stdio: ["ignore", logFd, logFd],
 });
 closeSync(logFd);
@@ -131,7 +131,7 @@ check("时长约 4 秒（与样本一致）", Math.abs((play?.duration ?? 0) - 4
 
 console.log("\n[2] 转码缓存已落盘");
 const cache = await evaluate(`(async () => {
-  const Media = (await import('/bindings/musicplayer/index.js')).MediaService;
+  const Media = (await import('/bindings/localmusicplayer/index.js')).MediaService;
   return await Media.CacheStats();
 })()`);
 console.log("   " + JSON.stringify(cache));

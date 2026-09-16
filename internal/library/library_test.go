@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // writeWAV 生成一个最小可解析的 WAV（1 秒 8kHz 单声道），用于测试时长解析。
@@ -53,7 +53,7 @@ func writeWAV(t *testing.T, path string, seconds int) {
 func newTestManager(t *testing.T) (*Manager, *bootstrap.Store, string) {
 	t.Helper()
 	dataDir := t.TempDir()
-	t.Setenv("MUSICPLAYER_DATA_DIR", dataDir)
+	t.Setenv("LMPLAYER_DATA_DIR", dataDir)
 
 	store, err := bootstrap.NewStore()
 	if err != nil {

@@ -18,7 +18,7 @@ import (
 	"os"
 	"time"
 
-	"musicplayer/internal/coverfetch"
+	"localmusicplayer/internal/coverfetch"
 )
 
 func main() {

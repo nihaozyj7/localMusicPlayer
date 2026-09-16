@@ -25,10 +25,10 @@ import (
 	"sync"
 	"time"
 
-	"musicplayer/internal/atomicfile"
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/executil"
-	"musicplayer/internal/ffmpeg"
+	"localmusicplayer/internal/atomicfile"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/executil"
+	"localmusicplayer/internal/ffmpeg"
 )
 
 // AlgoVersion 测量算法的版本号。
@@ -96,7 +96,7 @@ type Manager struct {
 	watchers []func()
 }
 
-// NewManager 创建管理器；dataDir 通常为 %APPDATA%\MusicPlayer
+// NewManager 创建管理器；dataDir 通常为 %APPDATA%\LocalMusicPlayer
 func NewManager(dataDir string, concurrency int) *Manager {
 	if concurrency <= 0 {
 		n := 4

@@ -608,7 +608,7 @@ func setVorbisField(comments [][2]string, key, value string) [][2]string {
 }
 
 func buildVorbisComment(comments [][2]string) []byte {
-	const vendor = "MusicPlayer"
+	const vendor = "LMPlayer"
 	var out []byte
 	be := func(v uint32) {
 		out = append(out, byte(v), byte(v>>8), byte(v>>16), byte(v>>24))

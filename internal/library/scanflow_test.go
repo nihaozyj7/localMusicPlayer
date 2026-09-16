@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // TestScanPicksUpFolderAddedAfterStartup 回归测试：

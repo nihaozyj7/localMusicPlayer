@@ -13,17 +13,17 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
-	"musicplayer/internal/bilibili"
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/covercache"
-	"musicplayer/internal/coverfetch"
-	"musicplayer/internal/ffmpeg"
-	"musicplayer/internal/library"
-	"musicplayer/internal/loudness"
-	"musicplayer/internal/media"
-	"musicplayer/internal/metacache"
-	"musicplayer/internal/skins"
-	"musicplayer/internal/theme"
+	"localmusicplayer/internal/bilibili"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/covercache"
+	"localmusicplayer/internal/coverfetch"
+	"localmusicplayer/internal/ffmpeg"
+	"localmusicplayer/internal/library"
+	"localmusicplayer/internal/loudness"
+	"localmusicplayer/internal/media"
+	"localmusicplayer/internal/metacache"
+	"localmusicplayer/internal/skins"
+	"localmusicplayer/internal/theme"
 )
 
 //go:embed all:frontend/dist
@@ -140,7 +140,7 @@ func main() {
 	state.appSvc = NewAppService()
 	state.loudnessSvc = NewLoudnessService(loudMgr, lib)
 	state.downloadSvc = NewDownloadService(store, onlineClient)
-	// 封面/歌词缓存放在配置的缓存目录下（默认 %APPDATA%\MusicPlayer\cache）
+	// 封面/歌词缓存放在配置的缓存目录下（默认 %APPDATA%\LocalMusicPlayer\cache）
 	state.metaCache = metacache.NewStore(filepath.Join(store.Get().CacheDir, "meta"))
 	state.coverSvc = NewCoverService(store, state.metaCache, coverfetch.New(), songs)
 	// AI 元数据清洗：自动匹配封面时先用它把脏文件名解析成正确的元数据。
@@ -159,13 +159,13 @@ func main() {
 	skinSvc := NewSkinService(skinMgr)
 
 	var browserArgs []string
-	if port := strings.TrimSpace(os.Getenv("MUSICPLAYER_DEBUG_PORT")); port != "" {
+	if port := strings.TrimSpace(os.Getenv("LMPLAYER_DEBUG_PORT")); port != "" {
 		browserArgs = append(browserArgs, "--remote-debugging-port="+port)
 	}
 
 	app := application.New(application.Options{
-		Name:        "Music Player",
-		Description: "Local music player with online search",
+		Name:        "LMPlayer",
+		Description: "本地音乐播放器（localMusicPlayer）",
 		Services: []application.Service{
 			application.NewService(state.librarySvc),
 			application.NewService(NewPlaylistService(store)),
@@ -254,7 +254,7 @@ func main() {
 		// 然后第二个进程自己退出（见 single_instance.go）。回调里要做的就是
 		// 「把已有窗口显示出来并抢焦点」——这正是需求里要的行为。
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID: "com.musicplayer.app",
+			UniqueID: "com.localmusicplayer.app",
 			OnSecondInstanceLaunch: func(application.SecondInstanceData) {
 				if state != nil && state.windowSvc != nil {
 					state.windowSvc.ShowMain()
@@ -298,7 +298,7 @@ func main() {
 	backdropMode := bootstrap.NormalizeBackdropMode(store.Get().NativeBackdrop)
 	winOpts := application.WebviewWindowOptions{
 		Name:      "main",
-		Title:     "Music Player",
+		Title:     "LMPlayer",
 		Width:     1280,
 		Height:    820,
 		MinWidth:  1000,

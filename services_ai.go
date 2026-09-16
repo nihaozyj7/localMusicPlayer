@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // AiService 用 OpenAI 兼容的 Chat Completions 接口做「元数据清洗」。

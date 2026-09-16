@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"musicplayer/internal/lyrics"
+	"localmusicplayer/internal/lyrics"
 )
 
 /* --------------------------------------------------------------------------
@@ -529,7 +530,7 @@ func sameOrParent(parent, child string) bool {
 
 // systemMusicDir 返回系统「音乐」目录（Windows 走 shell 已知文件夹）。
 func systemMusicDir() string {
-	if dir := os.Getenv("MUSICPLAYER_MUSIC_DIR"); dir != "" {
+	if dir := os.Getenv("LMPLAYER_MUSIC_DIR"); dir != "" {
 		return dir
 	}
 	switch runtime.GOOS {
@@ -557,7 +558,7 @@ func systemMusicDir() string {
 }
 
 func defaultDataDir() string {
-	if dir := os.Getenv("MUSICPLAYER_DATA_DIR"); dir != "" {
+	if dir := os.Getenv("LMPLAYER_DATA_DIR"); dir != "" {
 		return dir
 	}
 	switch runtime.GOOS {
@@ -569,17 +570,58 @@ func defaultDataDir() string {
 		if base == "" {
 			base = "."
 		}
-		return filepath.Join(base, "MusicPlayer")
+		return filepath.Join(base, "LocalMusicPlayer")
 	case "darwin":
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, "Library", "Application Support", "MusicPlayer")
+		return filepath.Join(home, "Library", "Application Support", "LocalMusicPlayer")
 	default:
 		if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-			return filepath.Join(xdg, "musicplayer")
+			return filepath.Join(xdg, "localmusicplayer")
 		}
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".config", "musicplayer")
+		return filepath.Join(home, ".config", "localmusicplayer")
 	}
+}
+
+// legacyDataDir 返回「改名之前」的数据目录：同名同层级，只把最后一段换成旧名字。
+// 认不出来（比如测试里用 LMPLAYER_DATA_DIR 指到临时目录）时返回空串。
+func legacyDataDir(newDir string) string {
+	switch filepath.Base(newDir) {
+	case "LocalMusicPlayer":
+		return filepath.Join(filepath.Dir(newDir), "MusicPlayer")
+	case "localmusicplayer":
+		return filepath.Join(filepath.Dir(newDir), "musicplayer")
+	}
+	return ""
+}
+
+// migrateLegacyDataDir 把旧版本用的数据目录整体改名到新名字。
+//
+// 背景：0.1.0 之前数据目录叫 MusicPlayer / musicplayer；改名之后如果不迁移，
+// 用户的设置、歌单、收藏、封面与歌词缓存会在升级后「全部消失」—— 文件其实
+// 还在磁盘上，只是程序不再看那个目录了。
+//
+// 只在「新目录不存在」且「旧目录存在」时迁移一次；任何一步失败都不致命，
+// 照常使用新目录（用户可以手动搬）。
+func migrateLegacyDataDir(newDir string) {
+	if newDir == "" {
+		return
+	}
+	if _, err := os.Stat(newDir); err == nil {
+		return // 新目录已经在用，旧的留着不动
+	}
+	legacy := legacyDataDir(newDir)
+	if legacy == "" {
+		return
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		return // 没有旧目录：全新安装
+	}
+	if err := os.Rename(legacy, newDir); err != nil {
+		log.Printf("[config] 旧数据目录迁移失败（将继续使用新目录）: %v", err)
+		return
+	}
+	log.Printf("[config] 已把数据目录从 %s 迁移到 %s", legacy, newDir)
 }
 
 /* --------------------------------------------------------------------------
@@ -596,6 +638,7 @@ type Store struct {
 // NewStore 加载配置；文件不存在或损坏时落回默认值（不会覆盖坏文件，先备份）
 func NewStore() (*Store, error) {
 	cfg := DefaultConfig()
+	migrateLegacyDataDir(cfg.DataDir)
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建数据目录失败: %w", err)
 	}

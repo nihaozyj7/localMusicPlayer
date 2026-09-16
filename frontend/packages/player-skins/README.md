@@ -1,4 +1,4 @@
-# @musicplayer/player-skins
+# @localmusicplayer/player-skins
 
 播放详情页的**样式包**（皮肤）：负责背景渲染、歌词渲染与交互；
 音频、进度、曲目、封面、歌词文本、设置项全部由宿主提供并主动推送。
@@ -49,7 +49,7 @@
 ## 用法（应用侧）
 
 ```js
-import { listSkins, getSkin, resolveSkin, reloadSkins } from "@musicplayer/player-skins";
+import { listSkins, getSkin, resolveSkin, reloadSkins } from "@localmusicplayer/player-skins";
 
 for (const skin of listSkins()) {
   // { id, name, icon, order, background, builtin, source }
@@ -61,7 +61,7 @@ for (const skin of listSkins()) {
 ## 用法（写一个样式）
 
 ```js
-import { defineSkin } from "@musicplayer/player-skins/contract";
+import { defineSkin } from "@localmusicplayer/player-skins/contract";
 
 export default defineSkin({
   apiVersion: 1,
@@ -103,7 +103,7 @@ export default defineSkin({
 ### 自带两个可复用的零件
 
 ```js
-import { createLyricsView, createBackgroundLayer, parseLrc, findLyricIndex } from "@musicplayer/player-skins";
+import { createLyricsView, createBackgroundLayer, parseLrc, findLyricIndex } from "@localmusicplayer/player-skins";
 ```
 
 - `createLyricsView(host, { escape, onSeek, onOpenFolder })`：

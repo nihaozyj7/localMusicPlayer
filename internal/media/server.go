@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/ffmpeg"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/ffmpeg"
 )
 
 // WAV 输出参数（采样率 / 声道 / 头长度 / 帧长 / 字节率的约定）全部由
@@ -351,7 +351,7 @@ func (s *Server) ensureTranscoded(ctx context.Context, song bootstrap.Song) (str
 	dir := s.getCacheDir()
 	if dir == "" {
 		// 没有配置缓存目录就退回系统临时目录
-		dir = filepath.Join(os.TempDir(), "MusicPlayer", "transcode")
+		dir = filepath.Join(os.TempDir(), "LocalMusicPlayer", "transcode")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("创建转码缓存目录失败: %w", err)

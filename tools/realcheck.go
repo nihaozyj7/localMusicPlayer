@@ -22,11 +22,11 @@ import (
 	"strings"
 	"time"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/library"
-	"musicplayer/internal/lyrics"
-	"musicplayer/internal/media"
-	"musicplayer/internal/meta"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/library"
+	"localmusicplayer/internal/lyrics"
+	"localmusicplayer/internal/media"
+	"localmusicplayer/internal/meta"
 )
 
 func main() {
@@ -167,7 +167,7 @@ func makeAPESample(srv *media.Server) string {
 		fmt.Println("  （找不到 ffmpeg，跳过 .ape 样本生成）")
 		return ""
 	}
-	dir := os.Getenv("MUSICPLAYER_DATA_DIR")
+	dir := os.Getenv("LMPLAYER_DATA_DIR")
 	if dir == "" {
 		dir = os.TempDir()
 	}

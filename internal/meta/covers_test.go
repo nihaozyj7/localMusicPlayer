@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"musicplayer/internal/metacache"
+	"localmusicplayer/internal/metacache"
 )
 
 /* --------------------------------------------------------------------------

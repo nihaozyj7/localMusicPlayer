@@ -44,7 +44,7 @@ import (
 	"sync"
 	"time"
 
-	"musicplayer/internal/atomicfile"
+	"localmusicplayer/internal/atomicfile"
 )
 
 // Kind 缓存类别。

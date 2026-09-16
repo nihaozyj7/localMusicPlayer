@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/ffmpeg"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/ffmpeg"
 )
 
 // jsonUnmarshal 只是给测试用的薄封装

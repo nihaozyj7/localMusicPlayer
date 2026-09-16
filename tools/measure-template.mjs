@@ -94,8 +94,8 @@ export const MEASURE_CODE = `
 
 /** 裸包名 → 量测页里可直接解析的同源路径（没有打包器，也没有 import map 可用） */
 const BARE_SPECIFIERS = [
-  ["@musicplayer/player-skins/contract", "/packages/player-skins/src/contract.js"],
-  ["@musicplayer/player-skins", "/packages/player-skins/src/index.js"],
+  ["@localmusicplayer/player-skins/contract", "/packages/player-skins/src/contract.js"],
+  ["@localmusicplayer/player-skins", "/packages/player-skins/src/index.js"],
 ];
 
 /**
@@ -107,7 +107,7 @@ const BARE_SPECIFIERS = [
  *    页面一片空白，量出来的全是 undefined。改成「摘掉 + 用 <link> 引入」，
  *    样式照样生效，只是换成了浏览器原生支持的方式。
  *
- * 2. **把工作区包名换成同源路径**：`import "@musicplayer/player-skins"` 是裸说明符，
+ * 2. **把工作区包名换成同源路径**：`import "@localmusicplayer/player-skins"` 是裸说明符，
  *    浏览器不认识。本来可以用 import map，但 import map 是**内联脚本**，
  *    会被页面的 CSP（`script-src 'self'`）拦掉 —— 实测就是被拦掉，
  *    于是模块解析失败、页面全空。直接改写说明符最稳，不依赖 CSP 放宽。
@@ -121,7 +121,7 @@ function rewriteForBrowser(dir, rootDir, collected) {
     }
     if (!e.name.endsWith(".js") && !e.name.endsWith(".mjs")) continue;
     const src = readFileSync(full, "utf8");
-    if (!src.includes(".css") && !src.includes("@musicplayer/")) continue;
+    if (!src.includes(".css") && !src.includes("@localmusicplayer/")) continue;
 
     const kept = [];
     let changed = false;

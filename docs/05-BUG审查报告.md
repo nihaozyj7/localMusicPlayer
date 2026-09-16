@@ -10,7 +10,7 @@
 
 | #   | 命令                                                                                                                             | 结果                                                     | 说明                                                                                                                                                                      |
 | --- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `go test ./...`                                                                                                                  | **exit 0**，全部 `ok`（musicplayer + 15 个 internal 包） | 现有测试全绿                                                                                                                                                              |
+| 1   | `go test ./...`                                                                                                                  | **exit 0**，全部 `ok`（localmusicplayer + 15 个 internal 包） | 现有测试全绿                                                                                                                                                              |
 | 2   | `go vet ./...`                                                                                                                   | **exit 0**，无输出                                       | 静态检查无告警                                                                                                                                                            |
 | 3   | `go test -race ./...`                                                                                                            | **exit 0**，无 `DATA RACE`                               | 见下方「重要限制」：现有测试没有覆盖到下面报告的并发路径                                                                                                                  |
 | 4   | `npm run check`                                                                                                                  | **exit 1**                                               | lint 失败：`frontend/packages/player-skins/src/skins/magia.js 711:52 error Unnecessary escape character: \-  no-useless-escape`（typecheck / node:test 因此**没有运行**） |
@@ -33,7 +33,7 @@
 - **判断依据**: 需求 A2「设置完成后监听这些文件夹，自动更新歌曲」；`watcher.go:18` 注释「Watcher 监听音乐文件夹变化（需求 A2）」；`main.go:305-323` 的 `startWatchers` 是启动期唯一的启动点。
 - **现象**: 全新安装（配置里还没有任何文件夹）时，用户添加第一个文件夹后，「实时监听」在设置里显示为开、文件夹徽标也显示监听中，但**实际不生效**——之后往这个目录里放文件/删文件，曲库不会自动同步，必须手动「重新扫描」。同理：启动时「实时监听」是关的，用户在设置里打开它，本次运行也不会生效。
 - **复现步骤**:
-  1. 删除/重命名 `%APPDATA%\MusicPlayer\config.json`（或让 `folders` 为空），启动应用；
+  1. 删除/重命名 `%APPDATA%\LocalMusicPlayer\config.json`（或让 `folders` 为空），启动应用；
   2. 设置 → 添加一个音乐文件夹（此时 `startWatchers` 早已在启动时因 `len(roots)==0` 直接 return，`Watcher.Start` 从未被调用）；
   3. 用资源管理器往该文件夹复制一个 .mp3；
   4. 观察「所有歌曲」——不会出现新歌（`scan:done` 不触发）。
@@ -164,7 +164,7 @@
 - **复现步骤**:
   1. 打开「桌面背景歌词」，确认桌面出现背景歌词；
   2. 关闭应用再启动；
-  3. 观察：不会恢复；查看 `%APPDATA%\MusicPlayer\config.json`，`"showDesktopWallpaper"` 仍为 `false`。
+  3. 观察：不会恢复；查看 `%APPDATA%\LocalMusicPlayer\config.json`，`"showDesktopWallpaper"` 仍为 `false`。
 - **证据**:
   - `grep 'ShowDesktopWallpaper' *.go` → 仅 `internal/bootstrap/config.go`（定义/默认值/规范化）与 `early_theme.go`（**读取**），**没有任何写入**；`services.go:1592-1593` 只有 `case "showDesktopLyrics": c.ShowDesktopLyrics = …`。
   - `services.go:1477-1624` 的 switch 中没有 `showDesktopWallpaper` 分支（未知键被静默忽略）。

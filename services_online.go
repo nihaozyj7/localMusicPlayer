@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"musicplayer/internal/bilibili"
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/coverfetch"
-	"musicplayer/internal/lyricsfetch"
+	"localmusicplayer/internal/bilibili"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/coverfetch"
+	"localmusicplayer/internal/lyricsfetch"
 )
 
 type OnlineService struct {

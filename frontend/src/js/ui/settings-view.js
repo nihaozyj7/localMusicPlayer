@@ -28,6 +28,7 @@ import {
   APP_LICENSE,
   APP_NAME,
   APP_TAGLINE,
+  APP_TITLE,
   APP_VERSION_FALLBACK,
   BUNDLED_BINARIES,
   DATA_SOURCES,
@@ -720,7 +721,7 @@ class MpSettingsLayer extends MpElement {
   /* ------------------------------------------------------------------------
      播放界面样式（皮肤）
      ------------------------------------------------------------------------
-     内置样式已经从主程序抽到独立包 @musicplayer/player-skins，
+     内置样式已经从主程序抽到独立包 @localmusicplayer/player-skins，
      用户还可以往数据目录丢第三方样式。皮肤包本身**不参与迁移**，
      这里只负责把「有哪些样式」画出来。
      ------------------------------------------------------------------------ */
@@ -1224,7 +1225,8 @@ class MpSettingsLayer extends MpElement {
               <span class="about-hero__version">v${version}</span>
               <span class="chip chip--ok"><i class="chip__dot"></i>${APP_LICENSE}</span>
             </div>
-            <div class="about-hero__meta">${APP_COPYRIGHT} · ${APP_ID}</div>
+            <div class="about-hero__meta">${APP_TITLE} · ${APP_ID}</div>
+            <div class="about-hero__meta">${APP_COPYRIGHT}</div>
           </div>
           <div class="about-hero__links">
             ${PROJECT_LINKS.map(

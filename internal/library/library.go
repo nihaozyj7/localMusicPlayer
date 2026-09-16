@@ -18,12 +18,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"musicplayer/internal/atomicfile"
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/covercache"
-	"musicplayer/internal/ffmpeg"
-	"musicplayer/internal/filter"
-	"musicplayer/internal/meta"
+	"localmusicplayer/internal/atomicfile"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/covercache"
+	"localmusicplayer/internal/ffmpeg"
+	"localmusicplayer/internal/filter"
+	"localmusicplayer/internal/meta"
 )
 
 // ScanResult 一次扫描的结果统计

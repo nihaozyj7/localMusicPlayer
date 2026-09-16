@@ -17,7 +17,7 @@ import (
 	"strings"
 	"sync"
 
-	"musicplayer/internal/bootstrap"
+	"localmusicplayer/internal/bootstrap"
 )
 
 // regexCache 缓存编译好的正则；非法 pattern 缓存为 nil（不重复尝试编译）。

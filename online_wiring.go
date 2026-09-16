@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"musicplayer/internal/bilibili"
-	"musicplayer/internal/bootstrap"
-	"musicplayer/internal/coverfetch"
-	"musicplayer/internal/lyricsfetch"
+	"localmusicplayer/internal/bilibili"
+	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/coverfetch"
+	"localmusicplayer/internal/lyricsfetch"
 )
 
 // newOnlineService 装配在线能力：音频/歌词/封面。

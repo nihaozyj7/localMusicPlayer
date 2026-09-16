@@ -19,17 +19,17 @@ function arg(name, fallback) {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const EXE = path.resolve(ROOT, arg("exe", "bin/musicplayer.exe"));
+const EXE = path.resolve(ROOT, arg("exe", "bin/lmplayer.exe"));
 const PORT = Number(arg("port", "9391"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const child = spawn(EXE, [], {
   env: {
     ...process.env,
-    MUSICPLAYER_DEBUG_PORT: String(PORT),
+    LMPLAYER_DEBUG_PORT: String(PORT),
     WEBVIEW2_USER_DATA_FOLDER: path.join(ROOT, ".tmp-hitcheck", "wv2"),
-    MUSICPLAYER_DATA_DIR: path.join(ROOT, ".tmp-hitcheck", "data"),
-    MUSICPLAYER_MUSIC_DIR: path.join(ROOT, ".tmp-hitcheck", "Music"),
+    LMPLAYER_DATA_DIR: path.join(ROOT, ".tmp-hitcheck", "data"),
+    LMPLAYER_MUSIC_DIR: path.join(ROOT, ".tmp-hitcheck", "Music"),
   },
   stdio: "ignore",
 });

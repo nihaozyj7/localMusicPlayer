@@ -146,7 +146,7 @@ export function ensureSwatchStyles() {
 /**
  * 播放界面样式（皮肤）卡片。
  *
- * 内置样式已经从主程序抽到独立包 @musicplayer/player-skins，
+ * 内置样式已经从主程序抽到独立包 @localmusicplayer/player-skins，
  * 用户还可以往数据目录 `<数据目录>/player-skins/<id>/` 丢一个第三方样式
  * （skin.js + 可选 skin.css / skin.json），点「重新扫描样式」即可出现。
  * 卡片里同时放着轮播的两个设置 —— 它们本来就属于「播放界面怎么显示」。
@@ -253,7 +253,7 @@ function themeReferenceSection(ref) {
 }
 
 function skinAiPrompt(ref = null) {
-  return `请为「音乐播放器」（Go + WebView2 的 Windows 桌面应用）产出一个第三方「播放界面样式（皮肤）」包。这个包会被应用直接扫描并加载，因此必须严格满足下面的规格。
+  return `请为「本地音乐播放器」（Go + WebView2 的 Windows 桌面应用）产出一个第三方「播放界面样式（皮肤）」包。这个包会被应用直接扫描并加载，因此必须严格满足下面的规格。
 
 本说明只约定「产物必须满足哪些规则、格式、环境与参考」，不规定也不暗示视觉风格；风格由使用者自行构思。
 
@@ -324,7 +324,7 @@ patch 只带与该类型相关的字段；不确定时用 ctx.media() / ctx.play
 5. 需要私有变量时定义在自己的作用域里（例如 .playerview[data-skin="<样式id>"] 内），不要写到 :root。
 
 【五、行为约束】
-1. 不要 import 应用内部模块（store / bridge / utils / playerhost / @musicplayer/player-skins 等）；数据只从 ctx 拿，动作只走 ctx.actions；不要直接操作音频元素或应用状态。
+1. 不要 import 应用内部模块（store / bridge / utils / playerhost / @localmusicplayer/player-skins 等）；数据只从 ctx 拿，动作只走 ctx.actions；不要直接操作音频元素或应用状态。
 2. 不要轮询：禁止用 setInterval 或定时 setTimeout 反复拉数据（动画、防抖、一次性延时除外）。
 3. 歌词高亮用 ctx.media().lyrics.index 与 lines，不要自己解析 LRC 文本。
 4. 动效要尊重 ctx.options().animations（为 false 时不要做位移动效）；时长与缓动优先用 --dur / --ease。
@@ -356,7 +356,7 @@ ${skinReferenceSection(ref)}
 }
 
 function themeAiPrompt(ref = null) {
-  return `请为「音乐播放器」（Go + WebView2 的 Windows 桌面应用）产出一个「外观主题」CSS 文件。
+  return `请为「本地音乐播放器」（Go + WebView2 的 Windows 桌面应用）产出一个「外观主题」CSS 文件。
 
 本说明只约定「产物必须满足哪些规则、格式、环境与参考」，不规定也不暗示配色与气质；主题风格由使用者自行构思。
 

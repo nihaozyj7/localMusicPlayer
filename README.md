@@ -1,13 +1,13 @@
 <div align="center">
 
-# 音乐播放器 · MusicPlayer
+# 本地音乐播放器 · localMusicPlayer
 
 **本地曲库 + 在线试听的桌面音乐播放器**
 
 Go · Wails v3 · Lit 3 · Vite · FFmpeg
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/nihaozyj7/MusicPlayer?include_prereleases&sort=semver)](https://github.com/nihaozyj7/MusicPlayer/releases)
+[![Release](https://img.shields.io/github/v/release/nihaozyj7/localMusicPlayer?include_prereleases&sort=semver)](https://github.com/nihaozyj7/localMusicPlayer/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078d4.svg)](#系统要求)
 [![Made with Wails](https://img.shields.io/badge/made%20with-Wails%20v3-DF0000.svg)](https://v3.wails.io/)
 
@@ -76,30 +76,22 @@ Go · Wails v3 · Lit 3 · Vite · FFmpeg
 
 ---
 
-## 截图
-
-| 主界面 | 沉浸播放 |
-| --- | --- |
-| ![主界面](docs/screenshots/01-main-dark.png) | ![沉浸播放](docs/screenshots/08-player-immersive.png) |
-
-| 浅色主题 | 设置 |
-| --- | --- |
-| ![浅色主题](docs/screenshots/02-main-light.png) | ![设置](docs/screenshots/05-settings-folders.png) |
-
-更多截图（播放样式、歌单、封面面板等）见 [`docs/screenshots`](docs/screenshots)。
+| 主界面 | 播放器1 | 播放器2 |
+| --- | --- | --- |
+| ![主界面](assets/README/主界面-1.png) | ![播放器1](assets/README/播放器2.png) | ![播放器2](assets/README/播放器3.png) |
 
 ---
 
 ## 下载
 
-到 [Releases](https://github.com/nihaozyj7/MusicPlayer/releases) 下载最新的 `musicplayer.exe`，
+到 [Releases](https://github.com/nihaozyj7/localMusicPlayer/releases) 下载最新的 `lmplayer.exe`，
 双击即可运行，**不需要安装**（绿色版）。
 
 首次运行时程序会在数据目录解包内嵌的 FFmpeg：
 
 ```text
-%APPDATA%\MusicPlayer\         配置、曲库缓存、歌词与封面缓存
-%LOCALAPPDATA%\MusicPlayer\bin\  解包出来的 ffmpeg.exe（可以直接替换）
+%APPDATA%\LocalMusicPlayer\         配置、曲库缓存、歌词与封面缓存
+%LOCALAPPDATA%\LocalMusicPlayer\bin\  解包出来的 ffmpeg.exe（可以直接替换）
 ```
 
 ### 系统要求
@@ -225,7 +217,7 @@ docs/                    设计、审查与实现文档
 本项目以 **Apache License 2.0** 开源，全文见 [`LICENSE`](LICENSE)。
 
 ```text
-Copyright 2026 The MusicPlayer Authors
+Copyright 2026 The localMusicPlayer Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -258,7 +250,7 @@ You may obtain a copy of the License at
 ### 致谢
 
 感谢 [Go](https://go.dev/)、[Wails](https://v3.wails.io/)、[Lit](https://lit.dev/)、[Vite](https://vite.dev/)、
-[FFmpeg](https://ffmpeg.org/) 以及 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) 里列出的每一个库 —— 
+[FFmpeg](https://ffmpeg.org/) 以及 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) 里列出的每一个库 ——
 没有它们，这个播放器不会存在。
 
 也感谢上面那些数据服务的提供方，以及每一位提反馈的人：界面细节、格式兼容性、性能问题的每一条
