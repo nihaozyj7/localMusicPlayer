@@ -2,7 +2,7 @@
 
 // loudcheck.go —— 用真实曲库跑一遍响度测量与补偿计算，人工验收用。
 //
-//	go run tools/loudcheck.go "C:\Users\Example\Music" 6
+//	go run tools/loudcheck.go "D:\Music" 6
 //
 // 第二个参数是最多测几首（默认 5）。会打印每首的 LUFS、真峰值与补偿增益，
 // 并把增益差异（最响与最轻之差）算出来 —— 这个差值就是「响度均衡」能抹平的幅度。

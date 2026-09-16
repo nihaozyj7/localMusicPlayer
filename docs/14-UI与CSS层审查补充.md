@@ -381,7 +381,7 @@ Rollup 永远不会对最大的产物报警；`reportCompressedSize: false` 又�
 
 ```js
 // tools/build-ffmpeg.mjs:64
-const MINGW_BIN = process.env.MP_MINGW_BIN || "C:\\Users\\Example\\Application\\mingw64\\bin";
+const MINGW_BIN = process.env.MP_MINGW_BIN || "C:\\msys64\\mingw64\\bin";
 ```
 
 有 env 覆盖，但默认值是**作者本机路径**。同文件 pin 了 `SOURCE_VERSION = "8.1.2"`（`:59`）

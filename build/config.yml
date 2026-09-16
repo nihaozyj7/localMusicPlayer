@@ -5,13 +5,14 @@ version: "3"
 
 # This information is used to generate the build assets.
 info:
-  companyName: "My Company" # The name of the company
-  productName: "My Product" # The name of the application
-  productIdentifier: "com.mycompany.myproduct" # The unique product identifier
-  description: "A program that does X" # The application description
-  copyright: "(c) 2025, My Company" # Copyright text
-  comments: "Some Product Comments" # Comments
-  version: "0.0.1" # The application version
+  companyName: "The MusicPlayer Authors" # The name of the company
+  productName: "音乐播放器" # The name of the application
+  productIdentifier: "com.musicplayer.app" # The unique product identifier
+  description: "本地曲库 + 在线试听的桌面音乐播放器" # The application description
+  copyright: "Copyright 2026 The MusicPlayer Authors" # Copyright text
+  comments: "Licensed under the Apache License, Version 2.0" # Comments
+  # 版本号与 Go 侧常量 services_app.go#appVersion 保持一致
+  version: "0.1.0" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension
   #                               # If not set and Assets.car exists, defaults to "appicon"

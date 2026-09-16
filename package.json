@@ -3,7 +3,26 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "本地音乐播放器（Go + Wails3）：前端工程化工作区（npm workspaces + Vite）",
+  "description": "音乐播放器（Go + Wails3 + Lit）：本地曲库 + 在线试听的桌面音乐播放器",
+  "license": "Apache-2.0",
+  "author": "The MusicPlayer Authors",
+  "homepage": "https://github.com/nihaozyj7/MusicPlayer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nihaozyj7/MusicPlayer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nihaozyj7/MusicPlayer/issues"
+  },
+  "keywords": [
+    "music-player",
+    "wails",
+    "go",
+    "lit",
+    "desktop",
+    "flac",
+    "lyrics"
+  ],
   "workspaces": [
     "frontend",
     "frontend/packages/*"

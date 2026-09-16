@@ -741,7 +741,295 @@
   overflow-wrap: anywhere;
 }
 
+/* ==========================================================================
+   关于（应用信息 / 技术栈 / 开源依赖 / 开源协议 / 参考与致谢）
+   --------------------------------------------------------------------------
+   这一组卡片的结构都是「一行一条」的清单，所以复用同一套行 / 说明块样式，
+   只是密度不同：about-row 是一行一项（技术栈、数据来源），about-note 是
+   带说明段落的块（协议说明、致谢）。
+   ========================================================================== */
+
+/* —— 顶部：名称 / 版本 / 协议 + 跳转按钮 —— */
+.about-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  padding: var(--sp-4) var(--sp-3) var(--sp-2);
+}
+
+.about-hero__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.about-hero__title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.about-hero__name {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.about-hero__version {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: var(--font-num);
+  font-size: var(--fs-sm);
+}
+
+.about-hero__meta {
+  color: var(--text-3);
+  font-family: var(--font-num);
+  font-size: var(--fs-sm);
+  user-select: text;
+}
+
+.about-hero__links {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+/* —— 可点的外部链接文本（依赖名 / 数据来源名）——
+   不用 --accent 表示悬停：默认主题下强调色就是白色，和正文一个颜色，
+   下划线在深浅两套主题里都读得出来。 */
+.linkbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-1);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  text-align: left;
+}
+
+.linkbtn svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.linkbtn:hover span {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.linkbtn:hover svg {
+  color: var(--text-1);
+}
+
+/* —— 许可证小标签 —— */
+.tagchip {
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 8px;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.tagchip--ok {
+  color: var(--success);
+}
+
+.tagchip--warn {
+  color: var(--warning);
+}
+
+/* —— 一行一项（技术栈 / 数据来源）—— */
+.about-row {
+  display: flex;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.about-row:hover {
+  background: var(--surface-hover);
+}
+
+.about-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.about-row__title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.about-row__version {
+  color: var(--text-3);
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+}
+
+.about-row__desc {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+
+/* —— 依赖清单表 —— */
+.libtable {
+  display: flex;
+  flex-direction: column;
+  /* 行自带的 padding 已经有横向留白，这里不再套内边距，避免和卡片对齐错位 */
+  margin-top: var(--sp-1);
+}
+
+.libtable__head,
+.libtable__row {
+  display: grid;
+  grid-template-columns: minmax(148px, 1.05fr) 132px minmax(0, 2fr);
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+}
+
+.libtable__head {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  border-bottom: var(--hairline);
+}
+
+.libtable__row {
+  border-bottom: var(--hairline);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.libtable__row:last-child {
+  border-bottom: none;
+}
+
+.libtable__row:hover {
+  background: var(--surface-hover);
+}
+
+.libtable__cell {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.libtable__cell--name,
+.libtable__cell--role {
+  flex-wrap: wrap;
+}
+
+.libtable__cell--role {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.libtable__version {
+  color: var(--text-3);
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+}
+
+.libtable__kind {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 17px;
+  padding: 0 5px;
+  border: var(--hairline);
+  border-radius: var(--r-xs);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+/* —— 带说明段落的块（协议说明 / 致谢）—— */
+.about-note {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  border-radius: var(--r-sm);
+}
+
+.about-note__title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  color: var(--text-1);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+
+.about-note__body {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: 1.65;
+}
+
+/* —— 分组小标题 —— */
+.about-subtitle {
+  padding: var(--sp-3) var(--sp-3) var(--sp-1);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.02em;
+}
+
+.about-subtitle--gap {
+  margin-top: var(--sp-2);
+  border-top: var(--hairline);
+}
+
+/* 页脚放多行说明（免责声明）时改成上下排 */
+.card__foot--stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  line-height: 1.65;
+}
+
 @media (max-width: 980px) {
+  /* 窄窗口下依赖表降到两行：表头隐藏，用途换行到名字下面 */
+  .libtable__head {
+    display: none;
+  }
+
+  .libtable__row {
+    grid-template-columns: minmax(0, 1fr) 104px;
+    align-items: start;
+  }
+
+  .libtable__cell--role {
+    grid-column: 1 / -1;
+  }
+
   .rule {
     grid-template-columns: minmax(0, 1fr) 100px 88px auto auto;
   }

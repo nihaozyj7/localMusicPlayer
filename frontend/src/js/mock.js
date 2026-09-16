@@ -104,7 +104,7 @@ export const MOCK_FOLDERS = [
   },
   {
     id: "folder_3",
-    path: "C:\\Users\\Example\\Music\\Downloads",
+    path: "D:\\Music\\Downloads",
     trackCount: 0,
     status: "ok",
     watching: true,
@@ -114,7 +114,7 @@ export const MOCK_FOLDERS = [
 
 export const MOCK_SONGS = [
   ...build(RAW.slice(0, 24), "D:\\Music\\音乐库", 1),
-  ...build(RAW.slice(24), "C:\\Users\\Example\\Music\\Downloads", 13),
+  ...build(RAW.slice(24), "D:\\Music\\Downloads", 13),
   ...build(JUNK, "D:\\Music\\音乐库", 21),
 ];
 

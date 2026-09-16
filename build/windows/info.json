@@ -5,11 +5,11 @@
   "info": {
     "0000": {
       "ProductVersion": "0.1.0",
-      "CompanyName": "My Company",
-      "FileDescription": "A MusicPlayer application",
-      "LegalCopyright": "© 2026, My Company",
+      "CompanyName": "The MusicPlayer Authors",
+      "FileDescription": "本地曲库 + 在线试听的桌面音乐播放器",
+      "LegalCopyright": "Copyright 2026 The MusicPlayer Authors",
       "ProductName": "音乐播放器",
-      "Comments": "This is a comment"
+      "Comments": "Licensed under the Apache License, Version 2.0"
     }
   }
 }

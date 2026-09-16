@@ -51,6 +51,7 @@ type appState struct {
 
 	librarySvc  *LibraryService
 	windowSvc   *WindowService
+	appSvc      *AppService
 	loudnessSvc *LoudnessService
 	downloadSvc *DownloadService
 	coverSvc    *CoverService
@@ -136,6 +137,7 @@ func main() {
 
 	state.librarySvc = NewLibraryService(lib, watch, store)
 	state.windowSvc = NewWindowService(store)
+	state.appSvc = NewAppService()
 	state.loudnessSvc = NewLoudnessService(loudMgr, lib)
 	state.downloadSvc = NewDownloadService(store, onlineClient)
 	// 封面/歌词缓存放在配置的缓存目录下（默认 %APPDATA%\MusicPlayer\cache）
@@ -171,6 +173,7 @@ func main() {
 			application.NewService(themeSvc),
 			application.NewService(skinSvc),
 			application.NewService(NewConfigService(store)),
+			application.NewService(state.appSvc),
 			application.NewService(NewMediaService(mediaSrv, songs)),
 			application.NewService(state.loudnessSvc),
 			application.NewService(state.windowSvc),
@@ -262,6 +265,7 @@ func main() {
 	state.app = app
 	state.librarySvc.app = app
 	state.windowSvc.app = app
+	state.appSvc.app = app
 	themeSvc.app = app
 	skinSvc.app = app
 	// 下载服务需要应用句柄来弹「选择保存位置」的目录对话框，

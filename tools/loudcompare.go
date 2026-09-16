@@ -2,7 +2,7 @@
 
 // loudcompare.go —— 用真歌对比「纯 Go BS.1770」与「ffmpeg loudnorm」的结果。
 //
-//	go run tools/loudcompare.go "C:\Users\Example\Music" 8
+//	go run tools/loudcompare.go "D:\Music" 8
 //
 // 这是纯 Go 实现能不能替代 ffmpeg 做测量的关键验证：两者测同一批文件，
 // 整合响度与真峰值的差异应当很小（EBU R128 允差通常在 ±0.1 LU 量级）。

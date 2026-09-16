@@ -12,7 +12,7 @@ import (
 
 // TestRealMusicFolder 真实曲库手工验证：
 //
-//	$env:MP_REAL_MUSIC="C:\Users\Example\Music"; go test ./internal/library -run TestRealMusicFolder -v
+//	$env:MP_REAL_MUSIC="D:\Music"; go test ./internal/library -run TestRealMusicFolder -v
 //
 // 不设环境变量时自动跳过，因此不会影响 CI。
 func TestRealMusicFolder(t *testing.T) {

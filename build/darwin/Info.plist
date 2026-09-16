@@ -8,11 +8,11 @@
         <key>CFBundleExecutable</key>
             <string>musicplayer.exe</string>
         <key>CFBundleIdentifier</key>
-            <string>com.example.musicplayer</string>
+            <string>com.musicplayer.app</string>
         <key>CFBundleVersion</key>
             <string>0.1.0</string>
         <key>CFBundleGetInfoString</key>
-            <string>This is a comment</string>
+            <string>本地曲库 + 在线试听的桌面音乐播放器</string>
         <key>CFBundleShortVersionString</key>
             <string>0.1.0</string>
         <key>CFBundleIconFile</key>
@@ -24,6 +24,6 @@
         <key>NSHighResolutionCapable</key>
             <string>true</string>
         <key>NSHumanReadableCopyright</key>
-            <string>© 2026, My Company</string>
+            <string>Copyright 2026 The MusicPlayer Authors</string>
     </dict>
 </plist>

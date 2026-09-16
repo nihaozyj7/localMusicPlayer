@@ -1,0 +1,33 @@
+MusicPlayer (音乐播放器)
+Copyright 2026 The MusicPlayer Authors
+
+This product includes software developed as part of the MusicPlayer project
+(https://github.com/nihaozyj7/MusicPlayer).
+
+--------------------------------------------------------------------------------
+Bundled FFmpeg
+--------------------------------------------------------------------------------
+
+This product bundles an independently built executable of FFmpeg 8.1.2
+(https://ffmpeg.org/), compiled from the official source by this project's own
+build script (build/ffmpeg/build-minimal.sh). FFmpeg is licensed under the
+GNU Lesser General Public License, version 2.1 or later (LGPL-2.1-or-later).
+
+The build does NOT enable --enable-gpl or --enable-nonfree, so the bundled
+binary is an LGPL build. The binary is shipped as a separate executable that is
+unpacked next to the application data directory and may be replaced by the user,
+which satisfies the LGPL relinking requirement.
+
+FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
+
+For the full list of compiled-in components and the license analysis, see
+internal/ffmpeg/bin/FFMPEG-LICENSE.txt in the source distribution,
+and https://ffmpeg.org/legal.html for FFmpeg's own licensing information.
+
+--------------------------------------------------------------------------------
+Third-party libraries
+--------------------------------------------------------------------------------
+
+The full list of runtime libraries, their versions and their licenses is
+maintained in THIRD-PARTY-NOTICES.md and is also shown in the application under
+Settings -> About.

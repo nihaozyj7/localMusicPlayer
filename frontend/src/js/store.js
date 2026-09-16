@@ -193,6 +193,10 @@ function initialState() {
     loudnessGains: {},
     loudnessState: null, // 后端响度能力/进度快照
 
+    /* 应用版本号：来自后端 AppService.Version()（设置 → 关于里展示）。
+       空串表示还没问到（浏览器预览或后端尚未连接），视图用 about-info 的兜底值。 */
+    appVersion: "",
+
     /* 在线封面：后端注册的来源与熔断状态（设置界面展示用） */
     coverProviders: [],
     coverBreaker: {},
@@ -1545,12 +1549,15 @@ export async function hydrateFromBackend() {
   const ok = await connect();
   if (!ok) return false;
 
-  const [songs, folders, cfg, playlists] = await Promise.all([
+  const [songs, folders, cfg, playlists, version] = await Promise.all([
     backend.songs(),
     backend.folders(),
     backend.getConfig(),
     backend.playlists(),
+    // 版本号只影响「关于」卡片里的一行文本，失败不该拖垮整个启动流程
+    backend.appVersion().catch(() => null),
   ]);
+  if (version) state.appVersion = String(version);
 
   if (Array.isArray(songs)) {
     state.allSongsRaw = songs;

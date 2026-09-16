@@ -29,8 +29,11 @@ case "${2:-}" in
   /*) OUT="$2" ;;
 esac
 
-# 工具链位置允许被环境变量覆盖（tools/build-ffmpeg.mjs 会传进来）
-MINGW_BIN="${MP_MINGW_BIN:-/c/Users/Example/Application/mingw64/bin}"
+# 工具链位置：正常由 tools/build-ffmpeg.mjs 通过 MP_MINGW_BIN 传进来（它会先找
+# PATH 里的 gcc，再退到 C:\msys64\mingw64\bin）。直接跑本脚本时留空即可 ——
+# 前提是 mingw64/bin 已经在 PATH 里，这也是 MinGW 安装器的默认做法。
+# 这里刻意不写死任何人的绝对路径。
+MINGW_BIN="${MP_MINGW_BIN:-}"
 # Windows 路径 → MSYS 风格，否则 bash 里的 PATH 不认反斜杠
 case "$MINGW_BIN" in
   [A-Za-z]:*)
@@ -52,7 +55,10 @@ echo "  能力: $(echo "$DECODERS" | tr ',' '\n' | wc -l) 个解码器 / $(echo 
 cd "$SRC_DIR"
 
 # 让 configure 与 make 都能找到 MinGW 工具链
-export PATH="$MINGW_BIN:/usr/bin:/bin:$PATH"
+# （MINGW_BIN 为空时保持原 PATH 不变，直接用它自己找到的 gcc）
+if [ -n "$MINGW_BIN" ]; then
+  export PATH="$MINGW_BIN:/usr/bin:/bin:$PATH"
+fi
 export CC=gcc
 export AR=ar
 export RANLIB=ranlib

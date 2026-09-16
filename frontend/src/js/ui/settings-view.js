@@ -23,6 +23,24 @@ import { applyRules, commit, compileRegex, flushConfigSync, state } from "../sto
 import { fmtCount, fmtSize } from "../utils.js";
 import { providerName } from "../provider-names.js";
 import {
+  APP_COPYRIGHT,
+  APP_ID,
+  APP_LICENSE,
+  APP_NAME,
+  APP_TAGLINE,
+  APP_VERSION_FALLBACK,
+  BUNDLED_BINARIES,
+  DATA_SOURCES,
+  DISCLAIMER,
+  LICENSE_NOTES,
+  PROJECT_LINKS,
+  TECH_STACK,
+  THANKS,
+  allLibs,
+  licenseSummary,
+  nameWithVersion,
+} from "../about-info.js";
+import {
   ANIMATION_SPEEDS,
   LIST_DENSITIES,
   ROW_CLICK_ACTIONS,
@@ -58,7 +76,7 @@ import { createSlider } from "../slider.js";
      · 数据    —— 管「联网与本地数据」：下载位置、封面来源、缓存与写标签；
      · AI      —— 所有 AI 能力；
      · 其他    —— 窗口与系统集成：窗口材质、圆角、关闭行为；
-     · 关于    —— 曲库统计与版本信息。
+     · 关于    —— 版本、技术栈、开源依赖与协议、参考与致谢。
    -------------------------------------------------------------------------- */
 export const SECTIONS = [
   { id: "library", label: "曲库" },
@@ -298,7 +316,8 @@ class MpSettingsLayer extends MpElement {
               </div>
               ${this.foldersCard()} ${this.rulesCard()} ${this.themeCard()} ${this.playerCard()}
               ${this.playbackCard()} ${this.lyricsCard()} ${this.loudnessCard()} ${this.onlineCard()} ${this.aiCard()}
-              ${this.systemCard()} ${this.aboutCard()}
+              ${this.systemCard()} ${this.aboutCard()} ${this.techCard()}
+              ${this.libsCard()} ${this.licenseCard()} ${this.creditsCard()}
             </div>
           </div>
         </div>
@@ -1175,8 +1194,17 @@ class MpSettingsLayer extends MpElement {
 
   /* ========================================================================
      关于
+     ========================================================================
+     这是一整组卡片（都挂在 about 分区下，导航条「关于」一跳跳到这里）：
+       · 应用信息 —— 版本、协议、仓库入口 + 曲库统计；
+       · 技术栈   —— 应用站在哪些技术之上；
+       · 开源依赖 —— 逐项列出库与许可证（含随 Wails 引入的间接依赖）；
+       · 开源协议 —— 本项目 / 内嵌 FFmpeg / 第三方库的许可结论；
+       · 参考与致谢 —— 在线数据来源与鸣谢。
+     资料本身在 about-info.js 里，这里只负责排版。
      ======================================================================== */
   aboutCard() {
+    const version = state.appVersion || APP_VERSION_FALLBACK;
     const s = state.lastScan;
     const total = state.songs.reduce((sum, x) => sum + x.duration, 0);
     const bytes = state.songs.reduce((sum, x) => sum + x.size, 0);
@@ -1184,27 +1212,207 @@ class MpSettingsLayer extends MpElement {
       <div class="card__head">
         <div class="card__icon">${icon("info")}</div>
         <div class="card__titles">
-          <div class="card__title">关于</div>
-          <div class="card__desc">曲库统计与版本信息</div>
+          <div class="card__title">关于 ${APP_NAME}</div>
+          <div class="card__desc">${APP_TAGLINE}</div>
         </div>
       </div>
-      <div class="kv">
-        <div class="kv__k">曲库文件</div>
-        <div class="kv__v">${fmtCount(state.allSongsRaw.length)} 个</div>
-        <div class="kv__k">过滤后歌曲</div>
-        <div class="kv__v">${fmtCount(state.songs.length)} 首</div>
-        <div class="kv__k">被规则过滤</div>
-        <div class="kv__v">${fmtCount(s?.excluded ?? 0)} 个</div>
-        <div class="kv__k">总时长</div>
-        <div class="kv__v">${Math.floor(total / 3600000)} 小时 ${Math.floor((total % 3600000) / 60000)} 分</div>
-        <div class="kv__k">占用空间</div>
-        <div class="kv__v">${fmtSize(bytes)}</div>
-        <div class="kv__k">上次扫描</div>
-        <div class="kv__v">${s ? new Date(s.at).toLocaleString("zh-CN") : "—"}</div>
-        <div class="kv__k">缓存目录</div>
-        <div class="kv__v">${state.config.cacheDir}</div>
-        <div class="kv__k">版本</div>
-        <div class="kv__v">0.1.0</div>
+      <div class="card__body">
+        <div class="about-hero">
+          <div class="about-hero__main">
+            <div class="about-hero__title">
+              <span class="about-hero__name">${APP_NAME}</span>
+              <span class="about-hero__version">v${version}</span>
+              <span class="chip chip--ok"><i class="chip__dot"></i>${APP_LICENSE}</span>
+            </div>
+            <div class="about-hero__meta">${APP_COPYRIGHT} · ${APP_ID}</div>
+          </div>
+          <div class="about-hero__links">
+            ${PROJECT_LINKS.map(
+              (l) => html`<button
+                class="btn btn--sm"
+                type="button"
+                data-act="about-open-url"
+                data-url=${l.url}
+                title=${l.url}
+              >
+                ${icon(l.icon)}<span>${l.label}</span>
+              </button>`
+            )}
+          </div>
+        </div>
+        <div class="setting__hint">
+          界面与后端都在本机运行：曲库、封面、歌词缓存在你自己的磁盘上；只有在你主动搜索 / 匹配 / 下载时才会联网。
+        </div>
+        <div class="kv">
+          <div class="kv__k">曲库文件</div>
+          <div class="kv__v">${fmtCount(state.allSongsRaw.length)} 个</div>
+          <div class="kv__k">过滤后歌曲</div>
+          <div class="kv__v">${fmtCount(state.songs.length)} 首</div>
+          <div class="kv__k">被规则过滤</div>
+          <div class="kv__v">${fmtCount(s?.excluded ?? 0)} 个</div>
+          <div class="kv__k">总时长</div>
+          <div class="kv__v">${Math.floor(total / 3600000)} 小时 ${Math.floor((total % 3600000) / 60000)} 分</div>
+          <div class="kv__k">占用空间</div>
+          <div class="kv__v">${fmtSize(bytes)}</div>
+          <div class="kv__k">上次扫描</div>
+          <div class="kv__v">${s ? new Date(s.at).toLocaleString("zh-CN") : "—"}</div>
+          <div class="kv__k">缓存目录</div>
+          <div class="kv__v">${state.config.cacheDir}</div>
+        </div>
+      </div>
+      <div class="card__foot">
+        <span>版本号来自后端常量（services_app.go#appVersion），与安装包元数据同源</span>
+      </div>
+    </section>`;
+  }
+
+  /* —— 技术栈 —— */
+  techCard() {
+    return html` <section class="card" data-section="about">
+      <div class="card__head">
+        <div class="card__icon">${icon("bolt")}</div>
+        <div class="card__titles">
+          <div class="card__title">技术栈</div>
+          <div class="card__desc">这个播放器由哪些技术搭起来</div>
+        </div>
+      </div>
+      <div class="card__body">
+        ${TECH_STACK.map(
+          (t) => html` <div class="about-row">
+            <div class="about-row__main">
+              <div class="about-row__title">
+                <button class="linkbtn" type="button" data-act="about-open-url" data-url=${t.url} title=${t.url}>
+                  <span>${t.name}</span>${icon("external")}
+                </button>
+                <span class="about-row__version">${t.version}</span>
+              </div>
+              <div class="about-row__desc">${t.role}</div>
+            </div>
+          </div>`
+        )}
+      </div>
+      <div class="card__foot">
+        <span>界面代码是无需构建即可阅读的原生 ESM；需要类型的地方用 JSDoc + tsc 检查</span>
+      </div>
+    </section>`;
+  }
+
+  /* —— 开源依赖 —— */
+  libsCard() {
+    const libs = allLibs();
+    const summary = licenseSummary(libs)
+      .map((x) => `${x.license} × ${x.count}`)
+      .join(" · ");
+    return html` <section class="card" data-section="about">
+      <div class="card__head">
+        <div class="card__icon">${icon("options")}</div>
+        <div class="card__titles">
+          <div class="card__title">开源依赖</div>
+          <div class="card__desc">随程序一起分发的第三方库；点名字可以打开它的仓库</div>
+        </div>
+      </div>
+      <div class="card__body">
+        <div class="libtable">
+          <div class="libtable__head">
+            <span>库 / 版本</span><span>许可证</span><span>用途</span>
+          </div>
+          ${libs.map(
+            (l) => html` <div class="libtable__row">
+              <div class="libtable__cell libtable__cell--name">
+                <button class="linkbtn" type="button" data-act="about-open-url" data-url=${l.url} title=${l.url}>
+                  <span>${l.name}</span>${icon("external")}
+                </button>
+                <span class="libtable__version">${l.version}</span>
+              </div>
+              <div class="libtable__cell"><span class="tagchip">${l.license}</span></div>
+              <div class="libtable__cell libtable__cell--role">
+                <span class="libtable__kind">${l.kind}</span>${l.role}
+              </div>
+            </div>`
+          )}
+        </div>
+        ${BUNDLED_BINARIES.map(
+          (b) => html` <div class="about-note">
+            <div class="about-note__title">
+              <span>${nameWithVersion(b)}</span><span class="tagchip tagchip--warn">${b.license}</span>
+            </div>
+            <div class="about-note__body">${b.role}</div>
+            <button class="linkbtn" type="button" data-act="about-open-url" data-url=${b.url} title=${b.url}>
+              <span>FFmpeg 许可说明</span>${icon("external")}
+            </button>
+          </div>`
+        )}
+      </div>
+      <div class="card__foot">
+        <span>${summary}</span>
+      </div>
+    </section>`;
+  }
+
+  /* —— 开源协议 —— */
+  licenseCard() {
+    return html` <section class="card" data-section="about">
+      <div class="card__head">
+        <div class="card__icon">${icon("scale")}</div>
+        <div class="card__titles">
+          <div class="card__title">开源协议</div>
+          <div class="card__desc">你可以对这份代码做什么</div>
+        </div>
+      </div>
+      <div class="card__body">
+        ${LICENSE_NOTES.map(
+          (n) => html` <div class="about-note">
+            <div class="about-note__title">
+              <span>${n.label}</span>
+              <span class=${n.tone === "ok" ? "tagchip tagchip--ok" : "tagchip"}>${n.value}</span>
+            </div>
+            <div class="about-note__body">${n.desc}</div>
+          </div>`
+        )}
+      </div>
+      <div class="card__foot">
+        <span>第三方许可证的完整文本随仓库分发（见 THIRD-PARTY-NOTICES.md）</span>
+        <button class="btn btn--sm" type="button" data-act="about-open-url" data-url="https://www.apache.org/licenses/LICENSE-2.0">
+          ${icon("external")}<span>阅读 Apache-2.0</span>
+        </button>
+      </div>
+    </section>`;
+  }
+
+  /* —— 参考与致谢 —— */
+  creditsCard() {
+    return html` <section class="card" data-section="about">
+      <div class="card__head">
+        <div class="card__icon">${icon("heart")}</div>
+        <div class="card__titles">
+          <div class="card__title">参考与致谢</div>
+          <div class="card__desc">在线能力所依赖的公开数据来源，以及要感谢的人</div>
+        </div>
+      </div>
+      <div class="card__body">
+        <div class="about-subtitle">在线数据来源</div>
+        ${DATA_SOURCES.map(
+          (d) => html` <div class="about-row">
+            <div class="about-row__main">
+              <div class="about-row__title">
+                <button class="linkbtn" type="button" data-act="about-open-url" data-url=${d.url} title=${d.url}>
+                  <span>${d.name}</span>${icon("external")}
+                </button>
+              </div>
+              <div class="about-row__desc">${d.role}</div>
+            </div>
+          </div>`
+        )}
+        <div class="about-subtitle about-subtitle--gap">致谢</div>
+        ${THANKS.map(
+          (t) => html` <div class="about-note">
+            <div class="about-note__title"><span>${t.title}</span></div>
+            <div class="about-note__body">${t.body}</div>
+          </div>`
+        )}
+      </div>
+      <div class="card__foot card__foot--stack">
+        ${DISCLAIMER.map((d) => html`<span>· ${d}</span>`)}
       </div>
     </section>`;
   }

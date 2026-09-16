@@ -2,7 +2,7 @@
 
 // realcheck.go —— 用真实曲库跑一次完整后端链路，并把媒体服务留在前台以便联调。
 //
-//	go run tools/realcheck.go -dir "C:\Users\Example\Music"                 # 跑一遍就退出
+//	go run tools/realcheck.go -dir "D:\Music"                               # 跑一遍就退出
 //	go run tools/realcheck.go -dir "..." -serve -ape                        # 起服务并生成转码样本
 //
 // -serve 会打印 MP_AUDIO_URL=<原生格式播放地址> 与 MP_TRANSCODE_URL=<转码格式播放地址>，

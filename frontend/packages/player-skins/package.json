@@ -3,7 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "播放详情界面的背景与歌词渲染包（皮肤）：统一的皮肤接口 + 内置经典/沉浸/简约三种样式",
+  "description": "播放详情界面的背景与歌词渲染包（皮肤）：统一的皮肤接口 + 内置多种样式",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nihaozyj7/MusicPlayer.git",
+    "directory": "frontend/packages/player-skins"
+  },
   "exports": {
     ".": "./src/index.js",
     "./contract": "./src/contract.js",

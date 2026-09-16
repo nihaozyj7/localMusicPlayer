@@ -729,6 +729,30 @@ export async function handleSettingsAction(actEl, ctx = {}) {
   const id = actEl.dataset.id;
 
   switch (act) {
+    /* 关于页里的外部链接：仓库 / 反馈 / 协议全文 / 依赖仓库。
+       必须走后端 ShellExecute —— WebView 里 window.open 开出来的窗口由 WebView
+       管理（没有地址栏，也不是用户习惯的浏览器）。浏览器预览下没有后端，
+       退化成复制链接 + 提示。 */
+    case "about-open-url": {
+      const url = String(actEl.dataset.url || "").trim();
+      if (!url) return;
+      if (!isWails()) {
+        try {
+          await navigator.clipboard.writeText(url);
+          toast("预览模式没有系统浏览器：链接已复制", { duration: 2600 });
+        } catch {
+          toast(url, { duration: 5200 });
+        }
+        return;
+      }
+      try {
+        await backend.openExternalUrl(url);
+      } catch (err) {
+        toast(`打开链接失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
+      }
+      return;
+    }
+
     /* 桌面歌词位置记忆的出口：换显示器/改分辨率后存档可能落在别扭的地方，
        给用户一个「回到默认」的按钮，而不是让他去删配置文件。 */
     case "reset-desktop-lyrics-pos": {
@@ -1437,7 +1461,7 @@ export function promptPath({ manual = false } = {}) {
       desc: manual
         ? "系统目录选择器没能打开，请直接粘贴文件夹完整路径。"
         : "浏览器预览模式下无法调用系统目录选择器，请手动输入路径。",
-      body: html`<input class="input" data-field="path" type="text" placeholder="C:\\Users\\Example\\Music" />`,
+      body: html`<input class="input" data-field="path" type="text" placeholder="D:\\Music" />`,
       okText: "添加",
       onOk: (values) => {
         const p = String(values.path || "").trim();

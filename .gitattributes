@@ -1,0 +1,29 @@
+# ============================================================================
+#  .gitattributes — 换行与二进制文件的处理规则
+# ----------------------------------------------------------------------------
+#  1. 仓库里一律存 LF：Windows 上的 core.autocrlf=true 只影响工作区，
+#     不会让同一份文件在不同平台提交出不同的 blob。
+#  2. .sh / .mjs 这类要在类 Unix 环境里执行的脚本显式 eol=lf，
+#     否则在 Windows 上被转成 CRLF 后拿到 Linux 跑会报 "/bin/bash^M"。
+#  3. 二进制资源不做任何转换。
+# ============================================================================
+
+* text=auto
+
+*.sh   text eol=lf
+*.mjs  text eol=lf
+*.js   text eol=lf
+*.css  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.icns binary
+*.exe  binary
+*.gz   binary
+*.woff2 binary

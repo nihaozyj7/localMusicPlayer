@@ -12,7 +12,7 @@ func TestStableIDMatchesFrontend(t *testing.T) {
 		want   string
 	}{
 		{`D:\Music\音乐库\陈默\静默频率\夜航西飞.flac`, "t", "t_1geb140"},
-		{`C:\Users\Example\Music\Downloads\Aurora Lane\Paper Cities\Rooftop Rain.flac`, "t", "t_1immw50"},
+		{`D:\Music\Downloads\Aurora Lane\Paper Cities\Rooftop Rain.flac`, "t", "t_1k2uor"},
 		{"/home/user/music/a.mp3", "t", "t_1jlkyrx"},
 		{`D:\Music\音乐库`, "t", "t_iwkvkg"},
 		{"", "t", "t_ztntfp"},

@@ -8,6 +8,7 @@
        不存在，import 会失败，此时自动降级为 mock，界面照样能跑。
 
    后端服务与方法（Go 侧见 services.go）：
+     App       Version / OpenURL
      Library   Scan / Songs / Folders / AddFolder / RemoveFolder / SetWatchers /
                ToggleLike / RevealInExplorer / PickDirectory / Stats
      Playlist  List / Create / Rename / Delete / AddSongs / RemoveSongs /
@@ -61,6 +62,7 @@ export async function connect() {
     await mod.LibraryService.Folders();
 
     bindings = {
+      App: mod.AppService,
       Library: mod.LibraryService,
       Playlist: mod.PlaylistService,
       Lyrics: mod.LyricsService,
@@ -170,6 +172,15 @@ async function call(fn, ...args) {
    而是给出**可操作**的提示（并在控制台记一次）。
    -------------------------------------------------------------------------- */
 const backendImpl = {
+  /* ---- 应用自身（设置 → 关于） ---- */
+  // 版本号来自 Go 侧常量（services_app.go#appVersion），是唯一事实来源；
+  // 浏览器预览下拿不到，调用方用 about-info.js 的兜底值。
+  appVersion: () => call(bindings?.App?.Version),
+  // 用系统默认浏览器打开外部链接。WebView 里 window.open 开出来的窗口由
+  // WebView 管理（没有地址栏、也不是用户习惯的浏览器），所以必须交给宿主
+  // 进程调 ShellExecute；后端只放行 http / https（见 AppService.OpenURL）。
+  openExternalUrl: (url) => call(bindings?.App?.OpenURL, String(url)),
+
   /* ---- 曲库 ---- */
   scan: (folderIds = []) => call(bindings?.Library?.Scan, folderIds),
   songs: () => call(bindings?.Library?.Songs),

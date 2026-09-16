@@ -10,10 +10,10 @@ version: "0.1.0"
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
-description: "A MusicPlayer application"
-vendor: "My Company"
-homepage: "https://wails.io"
-license: "MIT"
+description: "本地曲库 + 在线试听的桌面音乐播放器"
+vendor: "The MusicPlayer Authors"
+homepage: "https://github.com/nihaozyj7/MusicPlayer"
+license: "Apache-2.0"
 release: "1"
 
 contents:
