@@ -150,7 +150,7 @@ export const PATCH_TYPES = [
  * @property {string} [description]
  * @property {boolean} [background] 需要整窗背景层
  * @property {number|boolean} [spectrum] 需要用实时频谱驱动画面。数字 = 要多少段
- *   （例如游戏风的柱子数），true = 默认 32 段。宿主据此采样并推 spectrum 补丁，
+ *   （例如一根按频段起伏的电平柱），true = 默认 32 段。宿主据此采样并推 spectrum 补丁，
  *   皮肤只负责把 bands 画上去 —— 皮肤不碰 AudioContext，也不自己跑 rAF
  * @property {string[]} [styles] CSS 相对路径（外部皮肤用；内置皮肤由打包器引入）
  * @property {boolean} [builtin] 是否内置样式（内置样式省略此字段，视为 true）

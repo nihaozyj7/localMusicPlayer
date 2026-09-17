@@ -1,0 +1,942 @@
+/* ==========================================================================
+   arcanum.css — 播放界面样式「星阵咏唱」（id: arcanum）
+   --------------------------------------------------------------------------
+   作用域约定（应用的硬性要求）：
+     · 播放详情页内的元素一律以  .playerview[data-skin="arcanum"] 开头；
+     · 详情页之外的外壳（标题栏 / 底栏 / 侧边栏 / 整窗背景层）以
+       .app[data-mode="arcanum"] 开头。
+
+   这一张表就是「舞台」本身，结构按纵深从前到后分成五层（与需求一致）：
+
+     远景  .ar-void（整窗背景层，CSS 深空 + 静态星空 + 两层雾）     depth 0.18
+     中景  canvas.ar-scene（主法阵：同心圆 / 符文环 / 星座线 / 涟漪）  depth 0.55
+     法器  .ar-core（法阵中心的水晶核心 = 封面）                       depth 0.8
+     近景  .ar-runes / .ar-line / .ar-unit（咒语符文）                depth 1.0
+     前景  canvas.ar-dust（光尘 / 火星 / 余烬 / 羽毛 / 水滴 / 风线）   depth 1.4
+
+   **层与层的相对位移才是「镜头在动」的知觉来源**：所有层都按同一个镜头位移
+   乘以各自的 depth 走（JS 每帧写 transform），远景几乎不动、前景动得最多。
+
+   性能纪律（本仓特效样式踩过的坑，见 docs/14 / docs/23）：
+     · 入场动画**只用 transform + opacity**，不用 filter: blur（一行几十个字
+       同时模糊 = 几十次离屏光栅化；实测每帧多花 15~23ms）；
+     · **不写常驻 will-change**（歌词单元每换一句就重建一次，提升图层集合
+       会跟着反复翻桌）；
+     · `filter: blur()` 只出现在「非当前句」的整行上（最多 5 个元素），
+       当前句永远是清晰的 —— 这既是景深，也避开了上面那个坑；
+     · 只过渡 transform / opacity；**不过渡 font-size**（文本度量一变就是整段
+       重排 + 重新栅格化）。所以「当前句更大」是靠 scale 实现的，不是改字号。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   0. 调色板 —— 全部由主题令牌派生，换主题 / 切深浅色 / 封面取色都会跟着变
+   -------------------------------------------------------------------------- */
+.app[data-mode="arcanum"] {
+  /* 星辉（主）/ 星尘（副）/ 余烬（点缀） */
+  --ar-a1: color-mix(in oklab, var(--accent) 86%, var(--text-1));
+  --ar-a2: color-mix(in oklab, var(--accent) 52%, var(--heart));
+  --ar-a3: color-mix(in oklab, var(--accent) 20%, var(--heart));
+
+  /* 深空底色：比窗口底色更亮一点点 / 更深一点点，拉开纵深 */
+  --ar-b1: color-mix(in oklab, var(--bg-app) 86%, var(--accent));
+  --ar-b2: color-mix(in oklab, var(--bg-app) 58%, var(--c-black));
+
+  /* 文字层级：当前句用 --text-1，旧句靠透明度退到远处 */
+  --ar-ink: color-mix(in oklab, var(--text-1) 76%, transparent);
+  --ar-ink-dim: color-mix(in oklab, var(--text-1) 34%, transparent);
+  --ar-hair: color-mix(in oklab, var(--accent) 22%, transparent);
+  --ar-scrim: color-mix(in oklab, var(--bg-app) 88%, transparent);
+
+  /* 由 JS 每帧写入的元素电平（四根柱子）与重拍辉光 */
+  --ar-eq0: 0.04;
+  --ar-eq1: 0.04;
+  --ar-eq2: 0.04;
+  --ar-eq3: 0.04;
+  --ar-glow: 0;
+}
+
+/* 读色探针：JS 用它把 var(--ar-a1) 解析成 canvas 能用的 rgb() */
+.app[data-mode="arcanum"] .ar-probe {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   1. 外壳 chrome：详情页展开时标题栏 / 侧边栏退到深空里，底栏留一层薄纱
+   -------------------------------------------------------------------------- */
+.app[data-mode="arcanum"][data-view="player"]::before,
+.app[data-mode="arcanum"][data-view="player"]::after {
+  opacity: 0;
+}
+
+.app[data-mode="arcanum"][data-view="player"] .titlebar {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.app[data-mode="arcanum"][data-view="player"] .sidebar {
+  background: none;
+  border-right-color: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* 底栏必须还能读：传输控件压在星空上不给一层纱是看不清的 */
+.app[data-mode="arcanum"][data-view="player"] .playerbar {
+  background: linear-gradient(
+    0deg,
+    var(--ar-scrim) 0,
+    color-mix(in oklab, var(--bg-app) 44%, transparent) 64%,
+    transparent 100%
+  );
+  border-top-color: var(--ar-hair);
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.4)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.4)) saturate(var(--glass-saturate));
+}
+
+/* --------------------------------------------------------------------------
+   2. 远景：整窗深空（ctx.backgroundRoot = .skin-bg）
+   --------------------------------------------------------------------------
+   这里刻意**不做任何动画**：星星的闪烁与雾的漂移由中景画布负责，
+   远景只提供一块静态的深空底色 + 一层固定的星点。理由是背景层在
+   .playerview 之外、z-index 更低，动它就得再起一个循环，而它本来就应该
+   「几乎不动」—— 那正是纵深的对照物。JS 只给它一个很小的视差位移。
+   -------------------------------------------------------------------------- */
+.app[data-mode="arcanum"] .skin-bg {
+  background: var(--ar-b2);
+}
+
+.app[data-mode="arcanum"] .ar-void {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  contain: content;
+}
+
+.app[data-mode="arcanum"] .ar-void__sky,
+.app[data-mode="arcanum"] .ar-void__stars,
+.app[data-mode="arcanum"] .ar-void__fog,
+.app[data-mode="arcanum"] .ar-void__vignette {
+  position: absolute;
+  inset: -6%;
+}
+
+.app[data-mode="arcanum"] .ar-void__sky {
+  background:
+    radial-gradient(120% 90% at 50% 108%, color-mix(in oklab, var(--ar-a2) 26%, transparent) 0, transparent 62%),
+    radial-gradient(90% 70% at 12% -8%, color-mix(in oklab, var(--ar-a1) 12%, transparent) 0, transparent 58%),
+    radial-gradient(80% 80% at 92% 6%, color-mix(in oklab, var(--ar-a3) 14%, transparent) 0, transparent 60%),
+    linear-gradient(180deg, var(--ar-b2) 0%, var(--ar-b1) 46%, var(--ar-b2) 100%);
+}
+
+/* 静态星点：24 颗放在两层里（远层小、近层大），由 CSS 直接给背景，
+   零 JS 开销、resize 不用重算。 */
+.app[data-mode="arcanum"] .ar-void__stars {
+  /* 16 颗静态星点：由 CSS 直接给背景，零 JS 开销、resize 不用重算。
+     尺寸做到 1.5~2.7px：再小在浅色主题下会看不见（深空底色本身就暗）。 */
+  background-image:
+    radial-gradient(2px 2px at 8% 14%, color-mix(in oklab, var(--ar-a1) 84%, transparent) 0, transparent 100%),
+    radial-gradient(1.6px 1.6px at 21% 32%, color-mix(in oklab, var(--text-1) 58%, transparent) 0, transparent 100%),
+    radial-gradient(2.4px 2.4px at 34% 8%, color-mix(in oklab, var(--ar-a2) 74%, transparent) 0, transparent 100%),
+    radial-gradient(1.7px 1.7px at 46% 24%, color-mix(in oklab, var(--text-1) 50%, transparent) 0, transparent 100%),
+    radial-gradient(2.2px 2.2px at 58% 12%, color-mix(in oklab, var(--ar-a1) 70%, transparent) 0, transparent 100%),
+    radial-gradient(1.5px 1.5px at 67% 30%, color-mix(in oklab, var(--text-1) 56%, transparent) 0, transparent 100%),
+    radial-gradient(2.6px 2.6px at 78% 9%, color-mix(in oklab, var(--ar-a3) 70%, transparent) 0, transparent 100%),
+    radial-gradient(1.7px 1.7px at 91% 26%, color-mix(in oklab, var(--text-1) 46%, transparent) 0, transparent 100%),
+    radial-gradient(1.9px 1.9px at 14% 58%, color-mix(in oklab, var(--ar-a1) 64%, transparent) 0, transparent 100%),
+    radial-gradient(1.5px 1.5px at 29% 74%, color-mix(in oklab, var(--text-1) 42%, transparent) 0, transparent 100%),
+    radial-gradient(2.3px 2.3px at 41% 52%, color-mix(in oklab, var(--ar-a2) 68%, transparent) 0, transparent 100%),
+    radial-gradient(1.6px 1.6px at 55% 80%, color-mix(in oklab, var(--text-1) 48%, transparent) 0, transparent 100%),
+    radial-gradient(2.1px 2.1px at 72% 62%, color-mix(in oklab, var(--ar-a1) 60%, transparent) 0, transparent 100%),
+    radial-gradient(1.5px 1.5px at 86% 78%, color-mix(in oklab, var(--text-1) 40%, transparent) 0, transparent 100%),
+    radial-gradient(2.7px 2.7px at 96% 52%, color-mix(in oklab, var(--ar-a3) 62%, transparent) 0, transparent 100%),
+    radial-gradient(1.7px 1.7px at 5% 88%, color-mix(in oklab, var(--ar-a1) 54%, transparent) 0, transparent 100%);
+  opacity: 1;
+}
+
+.app[data-mode="arcanum"] .ar-void__fog {
+  background:
+    radial-gradient(46% 38% at 22% 68%, color-mix(in oklab, var(--ar-a2) 16%, transparent) 0, transparent 70%),
+    radial-gradient(52% 40% at 78% 40%, color-mix(in oklab, var(--ar-a1) 12%, transparent) 0, transparent 72%);
+}
+
+.app[data-mode="arcanum"] .ar-void__vignette {
+  background: radial-gradient(
+    86% 78% at 50% 44%,
+    transparent 34%,
+    color-mix(in oklab, var(--c-black) 62%, transparent) 100%
+  );
+}
+
+/* --------------------------------------------------------------------------
+   3. 舞台（ctx.root = .playerview__stage 内的 .ar-stage）
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="arcanum"] {
+  background: none;
+}
+
+.playerview[data-skin="arcanum"] .playerview__stage {
+  container-type: size;
+}
+
+.playerview[data-skin="arcanum"] .ar-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* 窗口适配比例（fit.js）：所有尺寸都写成 calc(<设计值> * var(--ar-fit))，
+     于是同一套设计值在主窗口与桌面上是同一个比例 */
+  --ar-fit: 1;
+  --ar-lsize: 16px;
+}
+
+.playerview[data-skin="arcanum"] .ar-scene,
+.playerview[data-skin="arcanum"] .ar-dust {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.playerview[data-skin="arcanum"] .ar-scene {
+  z-index: 1;
+}
+
+.playerview[data-skin="arcanum"] .ar-dust {
+  z-index: 4;
+  /* 前景粒子只负责氛围，永远不吃鼠标 —— 否则它会挡住歌词的点击 */
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   4. 法器：法阵中心的水晶核心（封面）
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="arcanum"] .ar-core {
+  position: absolute;
+  left: 50%;
+  top: 58%;
+  z-index: 2;
+  width: calc(196px * var(--ar-fit));
+  height: calc(196px * var(--ar-fit));
+  transform: translate(-50%, -50%);
+  border: 0;
+  padding: 0;
+  background: none;
+  opacity: 0.92;
+}
+
+.playerview[data-skin="arcanum"] .ar-core__artwrap {
+  position: absolute;
+  inset: 13%;
+  overflow: hidden;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--ar-a1) 42%, transparent),
+    0 0 calc(46px * var(--ar-fit)) color-mix(in oklab, var(--ar-a2) 46%, transparent),
+    0 0 calc(120px * var(--ar-fit)) color-mix(in oklab, var(--ar-a2) 22%, transparent);
+}
+
+.playerview[data-skin="arcanum"] .ar-core__art {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  /* 核心是"记忆里的水晶"：比正常封面亮一点、柔一点，不与歌词抢对比 */
+  filter: saturate(1.08) brightness(0.92) contrast(1.04);
+}
+
+/* 旋转的符文环：conic + mask 挖空成环，只用 transform 转（可合成） */
+.playerview[data-skin="arcanum"] .ar-core__ring {
+  position: absolute;
+  inset: -2%;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    color-mix(in oklab, var(--ar-a1) 70%, transparent) 32deg,
+    transparent 74deg,
+    color-mix(in oklab, var(--ar-a3) 62%, transparent) 132deg,
+    transparent 196deg,
+    color-mix(in oklab, var(--ar-a2) 66%, transparent) 268deg,
+    transparent 330deg
+  );
+  -webkit-mask: radial-gradient(circle, transparent 62%, var(--c-black) 66%, var(--c-black) 82%, transparent 86%);
+  mask: radial-gradient(circle, transparent 62%, var(--c-black) 66%, var(--c-black) 82%, transparent 86%);
+  animation: ar-core-spin 26s linear infinite;
+}
+
+.playerview[data-skin="arcanum"] .ar-core__pin {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 13%;
+  height: 13%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in oklab, var(--ar-a1) 92%, var(--text-1)) 0 30%, transparent 70%);
+  box-shadow: 0 0 calc(20px * var(--ar-fit)) color-mix(in oklab, var(--ar-a1) 62%, transparent);
+}
+
+.playerview[data-skin="arcanum"] .ar-stage:not([data-passive="1"]) .ar-core {
+  cursor: pointer;
+}
+
+.playerview[data-skin="arcanum"] .ar-stage[data-passive="1"] .ar-core {
+  pointer-events: none;
+}
+
+.playerview[data-skin="arcanum"] .ar-stage:not([data-passive="1"]) .ar-core:focus-visible {
+  outline: 2px solid var(--ar-a1);
+  outline-offset: calc(6px * var(--ar-fit));
+}
+
+/* --------------------------------------------------------------------------
+   5. 近景：咒语符文
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="arcanum"] .ar-runes {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  /* 尺寸容器：行用 cqw / cqh 定位（见 .ar-line 的 transform），
+     窗口一变尺寸，构图自动按比例跟着走，JS 不需要重算坐标 */
+  container-type: size;
+  /* 镜头缩放要绕"焦点"发生（焦点在 (50%, 40%)，与计划里的基准点一致） */
+  transform-origin: 50% 40%;
+  font-family: var(--font-sans);
+  font-size: calc(var(--ar-lsize) * 2.2 * var(--ar-fit));
+  line-height: 1.12;
+  /* 不做过渡：这个 transform 每帧都被 JS 重写 */
+}
+
+.playerview[data-skin="arcanum"] .ar-stage[data-lyrics="off"] .ar-runes,
+.playerview[data-skin="arcanum"][data-lyrics="off"] .ar-runes {
+  display: none;
+}
+
+.playerview[data-skin="arcanum"] .ar-line {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  display: inline-flex;
+  align-items: baseline;
+  white-space: nowrap;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  line-height: inherit;
+  color: var(--ar-ink);
+  text-align: left;
+  /* 位置（--ar-nx/ny）、倾斜（--ar-nr）、层级大小（--ar-ns）都由 JS 写成变量；
+     -50% 把整句居中到节点上 —— 百分比在 translate 里是自己的尺寸 */
+  transform: translate3d(calc(-50% + var(--ar-nx, 0) * 1cqw), calc(-50% + var(--ar-ny, 0) * 1cqh), 0)
+    rotate(calc(var(--ar-nr, 0) * 1deg)) scale(var(--ar-ns, 1));
+  transform-origin: 50% 50%;
+  /* 唱完的句子要"飞"到法阵外环上变成符文 —— 这条过渡就是那一飞。
+     只过渡 transform / opacity：都在合成器上。 */
+  transition:
+    transform 1.8s var(--ease-out),
+    opacity 1s var(--ease);
+  will-change: auto;
+}
+
+/* 当前句：最亮、最清晰、最靠前（大小由 --ar-ns 给，不改字号 → 不重排） */
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] {
+  color: var(--text-1);
+  z-index: 2;
+}
+
+/* 下一句：半透明、轻微模糊 —— 这是景深的"后面一层" */
+.playerview[data-skin="arcanum"] .ar-line[data-state="near"] {
+  opacity: 0.34;
+  filter: blur(1.2px);
+  z-index: 1;
+}
+
+/* 更后面的句子：更小更暗更模糊 */
+.playerview[data-skin="arcanum"] .ar-line[data-state="far"] {
+  opacity: 0.16;
+  filter: blur(2.6px);
+  z-index: 0;
+}
+
+/* 唱完的句子：飞到外环、缩成一枚符文、然后淡出（动画只动 opacity，
+   位移交给上面那条 transform 过渡） */
+.playerview[data-skin="arcanum"] .ar-line[data-state="past"] {
+  color: var(--ar-ink-dim);
+  filter: blur(0.6px);
+  z-index: 1;
+  animation: ar-seal 3.4s var(--ease) forwards;
+  pointer-events: none;
+}
+
+.playerview[data-skin="arcanum"] .ar-line[data-state="past"] .ar-unit {
+  animation: none;
+}
+
+/* 缩到符文大小之后就不该再被读到 —— 屏读器只关心还没唱与正在唱的句子 */
+.playerview[data-skin="arcanum"] .ar-line[data-state="past"]::after {
+  content: "";
+  position: absolute;
+  inset: -0.4em;
+}
+
+.playerview[data-skin="arcanum"] .ar-stage:not([data-passive="1"]) .ar-line {
+  cursor: pointer;
+}
+
+.playerview[data-skin="arcanum"] .ar-stage:not([data-passive="1"]) .ar-line:hover {
+  color: var(--text-1);
+}
+
+.playerview[data-skin="arcanum"] .ar-stage:not([data-passive="1"]) .ar-line:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--ar-a1) 78%, transparent);
+  outline-offset: calc(8px * var(--ar-fit));
+  border-radius: var(--r-xs);
+}
+
+/* —— 单元：一个"咒语" = 一个字素 ——
+   静止位置（--ar-dx/dy/dr/ds 是每条计划的散落偏移）先写成变量，
+   十种入场动画的最后关键帧都回到它，所以 both 填充结束后不会跳。 */
+.playerview[data-skin="arcanum"] .ar-unit {
+  --ar-rest: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotate(var(--ar-dr, 0deg)) scale(var(--ar-ds, 1));
+  display: inline-block;
+  white-space: pre;
+  transform: var(--ar-rest);
+  /* 刻意不写 will-change（见文件头） */
+}
+
+/* 层级：关键词更大更亮，连接词更小更暗（--ar-ds 已经含了大小，
+   这里补颜色与辉光） */
+.playerview[data-skin="arcanum"] .ar-unit[data-tier="key"] {
+  color: color-mix(in oklab, var(--ar-a3) 72%, var(--text-1));
+  text-shadow: 0 0 calc(16px * var(--ar-fit)) color-mix(in oklab, var(--ar-a2) 46%, transparent);
+  font-weight: var(--fw-semibold);
+}
+
+.playerview[data-skin="arcanum"] .ar-unit[data-tier="link"] {
+  color: color-mix(in oklab, var(--text-1) 52%, transparent);
+  font-weight: var(--fw-normal);
+}
+
+/* 逐字点亮：已唱 = 星辉色，正在唱 = 星辉 + 辉光 + 重拍时随 --ar-glow 一起亮 */
+.playerview[data-skin="arcanum"] .ar-unit[data-hold="done"] {
+  color: var(--ar-a1);
+}
+
+.playerview[data-skin="arcanum"] .ar-unit[data-hold="now"] {
+  color: color-mix(in oklab, var(--ar-a1) 70%, var(--text-1));
+  text-shadow:
+    0 0 calc((10px + 26px * var(--ar-glow, 0)) * var(--ar-fit)) color-mix(in oklab, var(--ar-a2) 62%, transparent),
+    0 0 calc((3px + 10px * var(--ar-glow, 0)) * var(--ar-fit)) var(--text-1);
+}
+
+/* --------------------------------------------------------------------------
+   6. 十种入场魔法
+   --------------------------------------------------------------------------
+   每个 @keyframes 的 100% 都回到 --ar-rest，因此动画结束后元素停在"散落位"上。
+   全部只改 transform / opacity。
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit {
+  animation-duration: var(--ar-du, 520ms);
+  animation-delay: var(--ar-d, 0ms);
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-fill-mode: both;
+}
+
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="summon"] {
+  animation-name: ar-summon;
+}
+
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="appear"] {
+  animation-name: ar-appear;
+}
+
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="write"] {
+  animation-name: ar-write;
+}
+
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="fall"] {
+  animation-name: ar-fall;
+}
+
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="rise"] {
+  animation-name: ar-rise;
+}
+
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="slash"] {
+  animation-name: ar-slash;
+}
+
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="spiral"] {
+  animation-name: ar-spiral;
+}
+
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="mirror"] {
+  animation-name: ar-mirror;
+}
+
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="unseal"] {
+  animation-name: ar-unseal;
+}
+
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="burst"] {
+  animation-name: ar-burst;
+}
+
+/* 1 召唤式：从法阵中心的光柱里升起来 */
+@keyframes ar-summon {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 1.7em), 0) rotate(-6deg)
+      scale(calc(var(--ar-ds, 1) * 0.28));
+  }
+
+  62% {
+    opacity: 1;
+    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) - 0.06em), 0) rotate(2deg)
+      scale(calc(var(--ar-ds, 1) * 1.12));
+  }
+
+  100% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+}
+
+/* 2 凭空式：从大到小收拢，像从空气里显形 */
+@keyframes ar-appear {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotate(var(--ar-dr, 0deg))
+      scale(calc(var(--ar-ds, 1) * 1.85));
+  }
+
+  70% {
+    opacity: 1;
+    transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotate(var(--ar-dr, 0deg))
+      scale(calc(var(--ar-ds, 1) * 0.95));
+  }
+
+  100% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+}
+
+/* 3 书写式：像被光笔从左往右写出来 */
+@keyframes ar-write {
+  0% {
+    opacity: 0;
+    transform: translate3d(calc(var(--ar-dx, 0em) - 0.9em), var(--ar-dy, 0em), 0) rotate(var(--ar-dr, 0deg))
+      scale(calc(var(--ar-ds, 1) * 0.62));
+  }
+
+  60% {
+    opacity: 1;
+    transform: translate3d(calc(var(--ar-dx, 0em) + 0.05em), var(--ar-dy, 0em), 0) rotate(var(--ar-dr, 0deg))
+      scale(calc(var(--ar-ds, 1) * 1.06));
+  }
+
+  100% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+}
+
+/* 4 坠落式：从上方落下，落地弹一下 */
+@keyframes ar-fall {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) - 2em), 0) rotate(var(--ar-dr, 0deg))
+      scale(calc(var(--ar-ds, 1) * 1.32));
+  }
+
+  66% {
+    opacity: 1;
+    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 0.13em), 0)
+      rotate(calc(var(--ar-dr, 0deg) + 3deg)) scale(calc(var(--ar-ds, 1) * 0.92));
+  }
+
+  100% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+}
+
+/* 5 升腾式：从下方浮起来，像气泡 / 灵魂 */
+@keyframes ar-rise {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 1.4em), 0)
+      rotate(calc(var(--ar-dr, 0deg) + 9deg)) scale(calc(var(--ar-ds, 1) * 0.55));
+  }
+
+  100% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+}
+
+/* 6 斜切式：从左上飞来，带一点回弹 */
+@keyframes ar-slash {
+  0% {
+    opacity: 0;
+    transform: translate3d(calc(var(--ar-dx, 0em) - 1.7em), calc(var(--ar-dy, 0em) - 1em), 0)
+      rotate(calc(var(--ar-dr, 0deg) - 24deg)) scale(calc(var(--ar-ds, 1) * 0.72));
+  }
+
+  70% {
+    opacity: 1;
+    transform: translate3d(calc(var(--ar-dx, 0em) + 0.08em), calc(var(--ar-dy, 0em) + 0.05em), 0)
+      rotate(calc(var(--ar-dr, 0deg) + 3deg)) scale(calc(var(--ar-ds, 1) * 1.06));
+  }
+
+  100% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+}
+
+/* 7 螺旋式：绕着中心转小半圈再定格 */
+@keyframes ar-spiral {
+  0% {
+    opacity: 0;
+    transform: translate3d(calc(var(--ar-dx, 0em) - 0.2em), calc(var(--ar-dy, 0em) + 0.1em), 0)
+      rotate(calc(var(--ar-dr, 0deg) - 220deg)) scale(calc(var(--ar-ds, 1) * 0.3));
+  }
+
+  55% {
+    opacity: 1;
+    transform: translate3d(calc(var(--ar-dx, 0em) + 0.5em), calc(var(--ar-dy, 0em) - 0.3em), 0)
+      rotate(calc(var(--ar-dr, 0deg) + 42deg)) scale(calc(var(--ar-ds, 1) * 1.1));
+  }
+
+  100% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+}
+
+/* 8 镜像式：从法阵的倒影里翻上来（rotateY 在两个关键帧里都在，保证可插值） */
+@keyframes ar-mirror {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 0.85em), 0) rotateY(180deg)
+      rotate(var(--ar-dr, 0deg)) scale(calc(var(--ar-ds, 1) * 0.78));
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotateY(0deg) rotate(var(--ar-dr, 0deg))
+      scale(var(--ar-ds, 1));
+  }
+}
+
+/* 9 解封式：从符文 / 卡页里展开 */
+@keyframes ar-unseal {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotate(calc(var(--ar-dr, 0deg) - 14deg))
+      scale(calc(var(--ar-ds, 1) * 0.12));
+  }
+
+  60% {
+    opacity: 1;
+    transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotate(calc(var(--ar-dr, 0deg) + 4deg))
+      scale(calc(var(--ar-ds, 1) * 1.22));
+  }
+
+  100% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+}
+
+/* 10 爆裂式：重拍上炸开，再聚成一个字 */
+@keyframes ar-burst {
+  0% {
+    opacity: 0;
+    transform: translate3d(calc(var(--ar-dx, 0em) - 1.2em), calc(var(--ar-dy, 0em) - 0.8em), 0)
+      rotate(calc(var(--ar-dr, 0deg) + 20deg)) scale(calc(var(--ar-ds, 1) * 0.2));
+  }
+
+  35% {
+    opacity: 1;
+    transform: translate3d(calc(var(--ar-dx, 0em) + 0.14em), calc(var(--ar-dy, 0em) + 0.07em), 0)
+      rotate(calc(var(--ar-dr, 0deg) - 5deg)) scale(calc(var(--ar-ds, 1) * 1.5));
+  }
+
+  64% {
+    opacity: 1;
+    transform: translate3d(calc(var(--ar-dx, 0em) - 0.05em), var(--ar-dy, 0em), 0)
+      rotate(calc(var(--ar-dr, 0deg) + 2deg)) scale(calc(var(--ar-ds, 1) * 0.94));
+  }
+
+  100% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+}
+
+/* 唱完之后缩成符文、淡出 */
+@keyframes ar-seal {
+  0% {
+    opacity: 0.72;
+  }
+
+  42% {
+    opacity: 0.46;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes ar-core-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   7. 降级：用户关掉动画 / 系统要求减少动效
+   --------------------------------------------------------------------------
+   两个钩子同时生效：
+     · data-anim="off"  —— 关掉所有入场动画、核心旋转、法阵 rAF（JS 也停了）；
+     · data-clear="1"   —— 切成**清晰歌词模式**：不再散落，改成居中竖排三行，
+       保证「减少动态效果」的用户读到的仍然是一份正常歌词。
+   -------------------------------------------------------------------------- */
+/* 关掉动效时必须压住入场动画 —— 这里用 !important 是**故意的**：
+   "入场魔法"那几条规则是按 data-mode 命中的、优先级有 6~7 个类/属性，
+   而"减少动态效果"是用户/系统的显式偏好，它必须赢。
+   这是本仓唯一允许出现 !important 的场景（用户偏好 > 装饰性动画）。 */
+.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-unit,
+.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-line,
+.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-core__ring {
+  animation: none !important;
+}
+
+.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-unit {
+  opacity: 1;
+  transform: var(--ar-rest);
+}
+
+.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-line[data-state="past"] {
+  opacity: 0.24;
+}
+
+.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-line[data-state="far"] {
+  opacity: 0.3;
+  filter: none;
+}
+
+/* —— 清晰歌词模式 ——
+   不散落、不倾斜、不模糊：当前句居中，前后各留一句，剩下的直接不显示。
+   一份"正常歌词"是「减少动态效果」用户真正需要的东西，而不是把动效调慢。 */
+.playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-runes {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(14px * var(--ar-fit));
+  font-size: calc(var(--ar-lsize) * 1.6 * var(--ar-fit));
+  /* 背后是法阵与法器：给一层很淡的底衬，保证任何主题下都读得清 */
+  background: radial-gradient(
+    62% 46% at 50% 50%,
+    color-mix(in oklab, var(--bg-app) 78%, transparent) 0,
+    transparent 78%
+  );
+}
+
+/* 单元也放平：散落偏移、倾斜、大小层级、发光全部取消，
+   只保留"已唱 / 正在唱"的颜色 —— 那才是读歌词需要的唯一信息。 */
+.playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-unit {
+  transform: none;
+  text-shadow: none;
+}
+
+.playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-line {
+  position: static;
+  display: block;
+  transform: none;
+  transition: none;
+  filter: none;
+  opacity: 0.42;
+  text-align: center;
+  white-space: normal;
+}
+
+.playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-line[data-state="past"],
+.playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-line[data-state="far"] {
+  opacity: 0.24;
+}
+
+.playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-line[data-state="active"] {
+  opacity: 1;
+}
+
+.playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-core {
+  opacity: 0.7;
+}
+
+/* --------------------------------------------------------------------------
+   8. 空态
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="arcanum"] .ar-empty {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  max-width: 60%;
+  color: var(--ar-ink-dim);
+  font-family: var(--font-sans);
+  font-size: calc(var(--fs-lg) * var(--ar-fit));
+  text-align: center;
+}
+
+/* --------------------------------------------------------------------------
+   9. HUD：曲目信息 / 元素指示 / 段落名
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="arcanum"] .ar-hud {
+  position: absolute;
+  inset: calc(16px * var(--ar-fit)) calc(26px * var(--ar-fit)) calc(14px * var(--ar-fit));
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.playerview[data-skin="arcanum"] .ar-hud__meta {
+  max-width: 52%;
+  font-family: var(--font-sans);
+}
+
+.playerview[data-skin="arcanum"] .ar-hud__kicker {
+  display: block;
+  margin-bottom: calc(4px * var(--ar-fit));
+  color: color-mix(in oklab, var(--ar-a1) 62%, transparent);
+  font-size: calc(10px * var(--ar-fit));
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.26em;
+}
+
+.playerview[data-skin="arcanum"] .ar-hud__title {
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: calc(20px * var(--ar-fit));
+  font-weight: var(--fw-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playerview[data-skin="arcanum"] .ar-hud__artist {
+  overflow: hidden;
+  margin-top: calc(2px * var(--ar-fit));
+  color: var(--ar-ink-dim);
+  font-size: calc(12px * var(--ar-fit));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playerview[data-skin="arcanum"] .ar-hud__el {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--ar-fit));
+  color: var(--ar-ink-dim);
+  font-size: calc(11px * var(--ar-fit));
+  letter-spacing: 0.14em;
+}
+
+.playerview[data-skin="arcanum"] .ar-hud__el-dot {
+  width: calc(7px * var(--ar-fit));
+  height: calc(7px * var(--ar-fit));
+  border-radius: 50%;
+  background: var(--ar-a2);
+  box-shadow: 0 0 calc((6px + 14px * var(--ar-glow, 0)) * var(--ar-fit))
+    color-mix(in oklab, var(--ar-a2) 70%, transparent);
+}
+
+.playerview[data-skin="arcanum"] .ar-hud__bars {
+  display: flex;
+  align-items: flex-end;
+  gap: calc(2px * var(--ar-fit));
+  height: calc(18px * var(--ar-fit));
+}
+
+.playerview[data-skin="arcanum"] .ar-hud__bars i {
+  display: block;
+  width: calc(3px * var(--ar-fit));
+  height: 100%;
+  border-radius: var(--r-full);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--ar-a1) 78%, transparent),
+    color-mix(in oklab, var(--ar-a2) 34%, transparent)
+  );
+  transform: scaleY(var(--ar-eq0));
+  transform-origin: bottom;
+}
+
+.playerview[data-skin="arcanum"] .ar-hud__bars i:nth-child(1) {
+  transform: scaleY(var(--ar-eq0));
+}
+
+.playerview[data-skin="arcanum"] .ar-hud__bars i:nth-child(2) {
+  transform: scaleY(var(--ar-eq1));
+}
+
+.playerview[data-skin="arcanum"] .ar-hud__bars i:nth-child(3) {
+  transform: scaleY(var(--ar-eq2));
+}
+
+.playerview[data-skin="arcanum"] .ar-hud__bars i:nth-child(4) {
+  transform: scaleY(var(--ar-eq3));
+}
+
+/* 段落名：贴在右上角，很淡 —— 它是"舞台剧本"的旁白，不该抢歌词 */
+.playerview[data-skin="arcanum"] .ar-hud__section {
+  position: absolute;
+  right: 0;
+  top: 0;
+  color: color-mix(in oklab, var(--text-1) 30%, transparent);
+  font-family: var(--font-sans);
+  font-size: calc(11px * var(--ar-fit));
+  letter-spacing: 0.42em;
+}
+
+/* --------------------------------------------------------------------------
+   10. 窄窗口：HUD 缩小、法器收一点，构图仍然完整
+   -------------------------------------------------------------------------- */
+@media (max-width: 1120px) {
+  .playerview[data-skin="arcanum"] .ar-hud__meta {
+    max-width: 68%;
+  }
+
+  .playerview[data-skin="arcanum"] .ar-hud__title {
+    font-size: calc(17px * var(--ar-fit));
+  }
+}
+
+@media (max-height: 720px) {
+  .playerview[data-skin="arcanum"] .ar-core {
+    width: calc(150px * var(--ar-fit));
+    height: calc(150px * var(--ar-fit));
+  }
+}

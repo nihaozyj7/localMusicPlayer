@@ -18,6 +18,7 @@
 import { defineSkin } from "../contract.js";
 import { createFxLyrics } from "../fx-lyrics.js";
 import { createCamera } from "../fx-camera.js";
+import { applyFit as writeFit } from "../fit.js";
 import { EMPTY_TRACK, lyricsEmptyText, setCoverImage, subtitleOf } from "../html.js";
 import "./anime.css";
 
@@ -311,10 +312,18 @@ const skin = defineSkin({
         }
         camera.setEnabled(on);
       },
+
+      /* 窗口适配比例（见 fit.js）：写到舞台上，整棵子树继承；
+         CSS 里所有尺寸都是 calc(<设计值> * var(--an-fit))，于是窗口越大整体越大。 */
+      applyFit() {
+        writeFit(ctx.root, "--an-fit");
+      },
     };
 
     inst.paintSong();
     inst.paintOptions();
+    // 窗口适配比例：必须在 DOM 建好之后量一次（见 fit.js）
+    inst.applyFit();
     // 这里（以及整个皮肤里）都**不用** camera.pulse()：那个「换镜脉冲」会把所有
     // 相机层沿 X 推最多 150px 再弹回来，看着就是整屏向右摆一下。进场时它和分镜
     // 推进的 pop() 打架，切歌时又和歌词翻页抢注意力，所以整条弧线直接不要了。
@@ -362,6 +371,7 @@ const skin = defineSkin({
         inst.paintOptions();
         break;
       case "resize":
+        inst.applyFit();
         inst.lyrics.markMeasure();
         break;
       case "close":
@@ -377,6 +387,8 @@ const skin = defineSkin({
     inst.camera.destroy();
     inst.lyrics.destroy();
     if (inst.bg) inst.bg.dataset.anim = "off";
+    // 自定义属性写在宿主的舞台上：不清掉会留给下一个挂载的样式
+    inst.ctx.root.style.removeProperty("--an-fit");
     inst = null;
   },
 });

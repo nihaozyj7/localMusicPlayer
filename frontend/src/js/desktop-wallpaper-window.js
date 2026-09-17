@@ -240,7 +240,9 @@ function watchResize() {
     const r = stage.getBoundingClientRect();
     ctx.push({ type: "resize", width: Math.round(r.width), height: Math.round(r.height) });
   });
-  resizeObserver.observe(stage);
+  // box: "border-box" 的理由见 playerhost.js#watchResize：皮肤会在 resize
+  // 回调里改自己的 padding / 字号，观察内容盒会把这种改动当成尺寸变化。
+  resizeObserver.observe(stage, { box: "border-box" });
 }
 
 function stopWatchingResize() {

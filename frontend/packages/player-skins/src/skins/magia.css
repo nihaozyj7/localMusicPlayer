@@ -460,9 +460,9 @@
   isolation: isolate;
   /* 歌词基准字号：由 JS 按 ctx.options().lyricsFontSize 覆盖 */
   --mg-lyric-size: 26px;
-  /* 唱片直径：曲目信息在唱片上方，竖着要给它留位置，
-     所以比只放唱片时收一档；矮窗口另有媒体查询再收。 */
-  --mg-disc: clamp(160px, 32vmin, 360px);
+  /* 唱片直径 = 设计值 × 窗口适配比例（见 fit.js）。原先写死 32vmin + 360px 上限，
+     投到整块桌面（桌面背景歌词）时上限先到顶，唱片在两千多 px 的画面上显得很小。 */
+  --mg-disc: clamp(140px, calc(265px * var(--mg-fit, 1)), 760px);
 }
 
 /* HUD：矩形与线条做的取景框 */
@@ -858,12 +858,9 @@
   pointer-events: auto;
   /* 歌词区自己就是一个「尺寸容器」：下面的 50cqh 留白要按它自己的高度算 */
   container-type: size;
-  /* 一层极淡的底衬：背景是手绘线条时，纯文字容易被线条穿过 */
-  background: radial-gradient(
-    118% 92% at 38% 50%,
-    color-mix(in oklab, var(--bg-app) 58%, transparent) 0,
-    transparent 74%
-  );
+  /* 这里刻意**没有**底衬色块：原先那一层 --bg-app 的径向渐变在深色主题下
+     就是一块渐变黑，压在手绘夜景上很难看，已被否掉。文字可读性靠字号、
+     字重与 text-shadow（见 .mg-line[data-state="active"]）来保证。 */
 }
 
 /* 左缘的「咒文轴」：一条竖线 + 刻度 */
@@ -924,7 +921,7 @@
   border: 0;
   background: none;
   font-family: inherit;
-  font-size: calc(var(--mg-lyric-size) * 0.92);
+  font-size: calc(var(--mg-lyric-size) * 0.92 * var(--mg-fit, 1));
   line-height: 1.42;
   color: var(--text-1);
   text-align: left;
@@ -948,7 +945,7 @@
 .playerview[data-skin="magia"] .mg-line[data-state="active"] {
   opacity: 1;
   filter: none;
-  font-size: calc(var(--mg-lyric-size) * 1.16);
+  font-size: calc(var(--mg-lyric-size) * 1.16 * var(--mg-fit, 1));
   font-weight: var(--fw-semibold);
   color: var(--text-1);
   text-shadow:
@@ -1005,7 +1002,7 @@
 }
 
 .playerview[data-skin="magia"] .mg-empty__glyph {
-  font-size: calc(var(--mg-lyric-size) * 1.6);
+  font-size: calc(var(--mg-lyric-size) * 1.6 * var(--mg-fit, 1));
   color: var(--mg-a2);
   opacity: 0.8;
   animation: mg-breathe calc(var(--mg-anim) * 4.6s) ease-in-out infinite;
@@ -1214,7 +1211,7 @@
 
 @media (max-width: 1000px) {
   .playerview[data-skin="magia"] .mg-shell {
-    --mg-disc: clamp(112px, 24vmin, 240px);
+    --mg-disc: clamp(112px, calc(177px * var(--mg-fit, 1)), 520px);
   }
 }
 
@@ -1222,7 +1219,7 @@
    而是继续左右两栏、把唱片收小。 */
 @media (max-width: 860px) {
   .playerview[data-skin="magia"] .mg-shell {
-    --mg-disc: clamp(92px, 21vmin, 180px);
+    --mg-disc: clamp(92px, calc(133px * var(--mg-fit, 1)), 380px);
   }
 
   .playerview[data-skin="magia"] .mg-meta__kicker {
@@ -1242,13 +1239,13 @@
    矮窗口必须把唱片收得更多，否则唱片会顶到标题上。 */
 @media (max-height: 780px) {
   .playerview[data-skin="magia"] .mg-shell {
-    --mg-disc: clamp(108px, 26vmin, 260px);
+    --mg-disc: clamp(108px, calc(191px * var(--mg-fit, 1)), 560px);
   }
 }
 
 @media (max-height: 620px) {
   .playerview[data-skin="magia"] .mg-shell {
-    --mg-disc: clamp(88px, 21vmin, 190px);
+    --mg-disc: clamp(88px, calc(140px * var(--mg-fit, 1)), 400px);
   }
 
   .playerview[data-skin="magia"] .mg-meta__kicker {

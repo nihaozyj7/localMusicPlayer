@@ -6,7 +6,8 @@
    这个包里面提供播放详情界面的背景渲染和交互（歌词的渲染也包含在内）」）：
      · 定义**皮肤接口**（contract.js）；
      · 提供歌词渲染器与整窗背景层的可复用实现；
-     · 内置七种样式：经典 / 沉浸 / 简约 / 二次元手绘 / 舞台 / 游戏风 / 魔法阵；
+     · 内置六种样式：经典 / 沉浸 / 简约 / 二次元手绘 / 魔法阵 · 手绘次元 /
+      星阵咏唱（纵深魔法舞台）；
      · 提供一个注册表：宿主用它列样式、按 id 取样式，第三方皮肤也能注册进来。
 
    扩展方式（两条路，接口完全一样）：
@@ -20,9 +21,8 @@ import classic from "./skins/classic.js";
 import immersive from "./skins/immersive.js";
 import minimal from "./skins/minimal.js";
 import anime from "./skins/anime.js";
-import stage from "./skins/stage.js";
-import arcade from "./skins/arcade.js";
 import magia from "./skins/magia.js";
+import arcanum from "./skins/arcanum.js";
 import "./lyrics.css";
 import "./background-layer.css";
 // 特效歌词渲染器（fx-lyrics.js）的骨架样式：四个特效样式共用，必须有这一行，
@@ -30,7 +30,7 @@ import "./background-layer.css";
 import "./fx-lyrics.css";
 
 /** 内置样式（顺序即按钮组顺序的默认依据） */
-export const BUILTIN_SKINS = [classic, immersive, minimal, anime, stage, arcade, magia];
+export const BUILTIN_SKINS = [classic, immersive, minimal, anime, magia, arcanum];
 
 /** 兜底样式：配置里写的 id 不认识时用它 */
 export const DEFAULT_SKIN_ID = "classic";
@@ -50,6 +50,22 @@ export {
 export { createLyricsView } from "./lyrics-view.js";
 export { createBackgroundLayer } from "./background-layer.js";
 export { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf, lyricsEmptyText } from "./html.js";
+export { applyFit, fitScale, fitScaleOf, FIT_REFERENCE, FIT_MIN, FIT_MAX } from "./fit.js";
+// 「星阵咏唱」用到的三块纯逻辑（零 DOM，可单测）
+export {
+  ENTRANCE_MODES,
+  SECTION_PROGRAMS,
+  MIN_UNIT_MS,
+  buildGraphemeTimeline,
+  detectSections,
+  lineTextKey,
+  planLine,
+  resolveFocus,
+  unitWeight,
+} from "./arcanum-timing.js";
+export { ELEMENT_HUE, ELEMENT_NAME, bandSplit, createElementAnalyzer } from "./arcanum-audio.js";
+export { createStageCamera } from "./arcanum-stage.js";
+export { buildRunes } from "./arcanum-scene.js";
 
 /* --------------------------------------------------------------------------
    注册表

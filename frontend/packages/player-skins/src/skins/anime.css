@@ -265,9 +265,9 @@
 .playerview[data-skin="anime"] .playerview__stage {
   display: grid;
   grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
-  gap: clamp(10px, 2.6vmin, 48px);
+  gap: calc(22px * var(--an-fit, 1));
   align-items: stretch;
-  padding: clamp(8px, 2.2vmin, 28px) clamp(12px, 3.4vmin, 56px) clamp(10px, 2.6vmin, 34px);
+  padding: calc(18px * var(--an-fit, 1)) calc(28px * var(--an-fit, 1)) calc(22px * var(--an-fit, 1));
 }
 
 .playerview[data-skin="anime"] .an-cam {
@@ -284,20 +284,20 @@
   grid-template-rows: auto auto;
   align-content: center;
   justify-items: center;
-  gap: clamp(12px, 2.4vmin, 30px);
+  gap: calc(20px * var(--an-fit, 1));
   min-height: 0;
   min-width: 0;
 }
 
 .playerview[data-skin="anime"] .an-panel {
   position: relative;
-  width: clamp(150px, 30vmin, 330px);
+  width: clamp(150px, calc(248px * var(--an-fit, 1)), 720px);
   aspect-ratio: 1;
-  padding: 11px;
-  border: 3px solid var(--an-ink);
-  border-radius: 12px;
+  padding: calc(11px * var(--an-fit, 1));
+  border: calc(3px * var(--an-fit, 1)) solid var(--an-ink);
+  border-radius: calc(12px * var(--an-fit, 1));
   background: var(--an-paper);
-  box-shadow: 7px 8px 0 var(--an-shadow);
+  box-shadow: calc(7px * var(--an-fit, 1)) calc(8px * var(--an-fit, 1)) 0 var(--an-shadow);
   transform: rotate(-1.4deg);
 }
 
@@ -305,9 +305,9 @@
   /* 不放内描边：分镜格已经有 3px 的墨线外框，里面再套一圈就成了「双层框」，
      镜头里的封面显得又挤又笨。这里只留圆角裁切。 */
   position: absolute;
-  inset: 11px;
+  inset: calc(11px * var(--an-fit, 1));
   overflow: hidden;
-  border-radius: 7px;
+  border-radius: calc(7px * var(--an-fit, 1));
   background: var(--an-paper-2);
 }
 
@@ -322,55 +322,55 @@
 
 .playerview[data-skin="anime"] .an-panel__tape {
   position: absolute;
-  width: 64px;
-  height: 20px;
+  width: calc(64px * var(--an-fit, 1));
+  height: calc(20px * var(--an-fit, 1));
   background: color-mix(in oklab, var(--an-coral) 34%, transparent);
-  border: 1.5px solid color-mix(in oklab, var(--an-ink) 40%, transparent);
+  border: calc(1.5px * var(--an-fit, 1)) solid color-mix(in oklab, var(--an-ink) 40%, transparent);
   opacity: 0.9;
 }
 
 .playerview[data-skin="anime"] .an-panel__tape--l {
-  left: -14px;
-  top: 14px;
+  left: calc(-14px * var(--an-fit, 1));
+  top: calc(14px * var(--an-fit, 1));
   transform: rotate(-32deg);
 }
 
 .playerview[data-skin="anime"] .an-panel__tape--r {
-  right: -14px;
-  bottom: 18px;
+  right: calc(-14px * var(--an-fit, 1));
+  bottom: calc(18px * var(--an-fit, 1));
   transform: rotate(-28deg);
 }
 
 .playerview[data-skin="anime"] .an-panel__spark {
   position: absolute;
-  width: 26px;
-  height: 26px;
+  width: calc(26px * var(--an-fit, 1));
+  height: calc(26px * var(--an-fit, 1));
   background: var(--an-coral);
   clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%);
   animation: an-twinkle calc(var(--an-anim) * 2.6s) ease-in-out infinite;
 }
 
 .playerview[data-skin="anime"] .an-panel__spark--a {
-  left: -16px;
-  top: -14px;
+  left: calc(-16px * var(--an-fit, 1));
+  top: calc(-14px * var(--an-fit, 1));
 }
 
 .playerview[data-skin="anime"] .an-panel__spark--b {
-  right: -18px;
-  bottom: -10px;
+  right: calc(-18px * var(--an-fit, 1));
+  bottom: calc(-10px * var(--an-fit, 1));
   animation-delay: calc(var(--an-anim) * -1.3s);
 }
 
 .playerview[data-skin="anime"] .an-meta {
   display: grid;
   justify-items: center;
-  gap: 3px;
+  gap: calc(3px * var(--an-fit, 1));
   max-width: 100%;
   text-align: center;
 }
 
 .playerview[data-skin="anime"] .an-meta__kicker {
-  font-size: var(--fs-xs);
+  font-size: clamp(11px, calc(12px * var(--an-fit, 1)), 26px);
   font-weight: var(--fw-bold);
   letter-spacing: 0.32em;
   color: var(--an-coral);
@@ -382,16 +382,16 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: clamp(15px, 2.1vmin, 25px);
+  font-size: clamp(15px, calc(17px * var(--an-fit, 1)), 46px);
   font-weight: var(--fw-bold);
   color: var(--text-1);
   text-shadow: 2px 2px 0 color-mix(in oklab, var(--an-paper) 70%, transparent);
 }
 
 .playerview[data-skin="anime"] .an-meta__rule {
-  width: clamp(56px, 11vmin, 140px);
-  height: 3px;
-  border-radius: 2px;
+  width: clamp(56px, calc(70px * var(--an-fit, 1)), 200px);
+  height: calc(3px * var(--an-fit, 1));
+  border-radius: calc(2px * var(--an-fit, 1));
   background: var(--an-ink);
   transform-origin: left center;
   animation: an-draw calc(var(--an-anim) * 1.4s) var(--fxl-ease) both;
@@ -402,20 +402,20 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: var(--fs-sm);
+  font-size: clamp(12px, calc(13px * var(--an-fit, 1)), 30px);
   color: var(--text-2);
 }
 
 .playerview[data-skin="anime"] .an-eq {
   display: flex;
   align-items: flex-end;
-  gap: 3px;
-  height: 15px;
-  margin-top: 7px;
+  gap: calc(3px * var(--an-fit, 1));
+  height: calc(15px * var(--an-fit, 1));
+  margin-top: calc(7px * var(--an-fit, 1));
 }
 
 .playerview[data-skin="anime"] .an-eq span {
-  width: 4px;
+  width: calc(4px * var(--an-fit, 1));
   height: 100%;
   border-radius: 2px 2px 0 0;
   background: var(--an-ink);
@@ -452,19 +452,30 @@
   position: relative;
   min-width: 0;
   min-height: 0;
-  /* 一层极淡的底衬：背景是手绘线条与网点时，纯文字会被线条穿过 */
-  background: radial-gradient(
-    120% 94% at 34% 50%,
-    color-mix(in oklab, var(--an-paper) 62%, transparent) 0,
-    color-mix(in oklab, var(--an-paper) 24%, transparent) 42%,
-    transparent 76%
-  );
+  /* 这里刻意**没有**底衬 / 渐隐色块。
+     以前压着一层半透明的径向渐变（浅色主题下是纸色，深色主题下显成一块发灰的
+     渐变黑），糊在手绘背景上很难看，已被否掉；文字可读性改由下面 fxl__line
+     的一圈极淡纸色描边保证，而不是靠色块。 */
+}
+
+/* fx-lyrics.css 给滚动区上下各留了一条 15% 高的渐隐带（--fxl-fade = --bg-app），
+   在手绘背景上就是两条又直又黑的横带。anime 不需要它，直接摘掉。 */
+.playerview[data-skin="anime"] .an-lyrics .fxl::before,
+.playerview[data-skin="anime"] .an-lyrics .fxl::after {
+  display: none;
 }
 
 .playerview[data-skin="anime"] .an-lyrics .fxl {
-  --fxl-size: var(--an-lsize, 17px);
-  --fxl-size-active: calc(var(--an-lsize, 17px) * 1.34);
+  /* 尺寸 = 用户设置的字号 × 窗口适配比例（见 fit.js） */
+  --fxl-size: calc(var(--an-lsize, 17px) * var(--an-fit, 1));
+  --fxl-size-active: calc(var(--fxl-size) * 1.34);
   --fxl-dim: 0.46;
+  --fxl-gap: calc(3px * var(--an-fit, 1));
+}
+
+/* 极淡的一圈纸色描边：不用底色块也能把文字从网点 / 线条里抬出来 */
+.playerview[data-skin="anime"] .an-lyrics .fxl__line {
+  text-shadow: 0 1px 1px color-mix(in oklab, var(--an-paper) 72%, transparent);
 }
 
 .playerview[data-skin="anime"] .fxl__line[data-state="active"] {
@@ -694,20 +705,12 @@
   animation-play-state: paused;
 }
 
-/* 窄窗口：继续左右两栏，把分镜格收小 */
-@media (max-width: 980px) {
-  .playerview[data-skin="anime"] .an-panel {
-    width: clamp(112px, 24vmin, 220px);
-  }
-}
-
+/* 窄窗口：继续左右两栏。分镜格的尺寸交给 --an-fit（它按舞台短边算，窄窗口
+   本来就小），不再另写固定 px —— 那等于把窗口适配比例又按死在某个断点上。
+   这里只隐藏次要信息。 */
 @media (max-width: 820px) {
   .playerview[data-skin="anime"] .an-meta__kicker,
   .playerview[data-skin="anime"] .an-eq {
     display: none;
-  }
-
-  .playerview[data-skin="anime"] .an-panel {
-    width: clamp(92px, 20vmin, 170px);
   }
 }

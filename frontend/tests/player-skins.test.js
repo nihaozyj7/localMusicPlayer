@@ -4,7 +4,8 @@
    覆盖三块**纯逻辑**：
      1. LRC 解析与定位（高亮错行的锅基本都在这里）；
      2. 皮肤契约（缺字段 / 接口版本不符要在加载时就报出来）；
-     3. 注册表（内置样式清单与排序、不认识 id 的兜底）。
+     3. 注册表（内置样式清单与排序、不认识 id 的兜底）；
+     4. 窗口适配比例（fit.js 的倍数怎么算、夹取与 0 尺寸兜底）。
    DOM 行为（挂载、歌词滚动、整窗背景层）由无头浏览器自检负责：
      node tools/check-player-host.mjs
    ========================================================================== */
@@ -28,6 +29,21 @@ import {
   escapeHtml,
   lyricsEmptyText,
   loadExternalSkin,
+  fitScale,
+  fitScaleOf,
+  FIT_REFERENCE,
+  FIT_MIN,
+  FIT_MAX,
+  // 「星阵咏唱」的纯逻辑（字素时间轴 / 段落剧本 / 七元素分析 / 跟随运镜）
+  MIN_UNIT_MS,
+  buildGraphemeTimeline,
+  detectSections,
+  planLine,
+  resolveFocus,
+  unitWeight,
+  bandSplit,
+  createElementAnalyzer,
+  createStageCamera,
 } from "@localmusicplayer/player-skins";
 
 /* --------------------------------------------------------------------------
@@ -38,12 +54,8 @@ test("外部样式不能占用内置 id（否则内置样式会被磁盘上的�
   // 真实事故：magia 从第三方样式并入内置之后，用户数据目录里那份旧副本仍然存在，
   // 注册表按 id 覆盖 → 内置 magia 的修复永远跑不到。
   const mod =
-    "data:text/javascript," +
-    encodeURIComponent("export default { id: 'magia', name: '旧副本', mount() {} };");
-  await assert.rejects(
-    () => loadExternalSkin({ id: "magia", module: mod }),
-    /与内置样式同名/
-  );
+    "data:text/javascript," + encodeURIComponent("export default { id: 'magia', name: '旧副本', mount() {} };");
+  await assert.rejects(() => loadExternalSkin({ id: "magia", module: mod }), /与内置样式同名/);
   // 内置样式仍然在，且没有被改过
   assert.equal(getSkin("magia")?.name, "魔法阵 · 手绘次元");
 });
@@ -166,19 +178,47 @@ test("inspectSkinModule：分别识别 default / skin 导出与缺失", () => {
 });
 
 /* --------------------------------------------------------------------------
+   窗口适配比例（fit.js）
+   --------------------------------------------------------------------------
+   整窗背景型样式投到桌面背景（整块桌面）时，固定 px 的封面 / 歌词会显得又小又空。
+   fitScale 把「舞台短边 / 基准短边」算成一个无量纲倍数交给 CSS 等比缩放。
+   -------------------------------------------------------------------------- */
+
+test("fitScale：按舞台短边算倍数，并夹在 FIT_MIN / FIT_MAX 之间", () => {
+  assert.equal(fitScale(FIT_REFERENCE, FIT_REFERENCE), 1);
+  // 取的是短边：宽 2560 但高只有基准值 → 倍数仍是 1
+  assert.equal(fitScale(2560, FIT_REFERENCE), 1);
+  assert.equal(fitScale(1400, 1600), 2); // 短边 1400 = 2 × 基准短边
+  assert.equal(fitScale(100, 100), FIT_MIN);
+  assert.equal(fitScale(20000, 20000), FIT_MAX);
+  // 详情页关闭时 ResizeObserver 会推 0×0：返回 0 会把封面与歌词压成一条线
+  assert.equal(fitScale(0, 0), 1);
+  assert.equal(fitScale(-100, -100), 1);
+  // 只有一维有效时按那一维算（宽读到 0 不等于高度也没了）
+  assert.equal(fitScale(Number.NaN, 800), fitScale(0, 800));
+});
+
+test("fitScaleOf：优先量元素，元素没有尺寸时退回窗口，无窗口时给 1", () => {
+  assert.equal(fitScaleOf({ clientWidth: 1400, clientHeight: 900 }), fitScale(1400, 900));
+  assert.equal(fitScaleOf({ clientWidth: 0, clientHeight: 0 }), 1); // node 环境里没有 window
+  assert.equal(fitScaleOf(null), 1);
+  assert.equal(fitScaleOf(undefined), 1);
+});
+
+/* --------------------------------------------------------------------------
    注册表
    -------------------------------------------------------------------------- */
 
-test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸 → 简约 → 二次元 → 舞台 → 游戏风 → 魔法阵）", () => {
+test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸 → 简约 → 二次元 → 魔法阵 → 星阵咏唱）", () => {
   // 内置样式是「产品的一部分」：这个清单变了就必须有人显式改这里，
   // 免得新增样式时漏注册、或者顺序被无意打乱。
   assert.deepEqual(
     listSkins().map((s) => s.id),
-    ["classic", "immersive", "minimal", "anime", "stage", "arcade", "magia"]
+    ["classic", "immersive", "minimal", "anime", "magia", "arcanum"]
   );
   assert.deepEqual(
     BUILTIN_SKINS.map((s) => s.id),
-    ["classic", "immersive", "minimal", "anime", "stage", "arcade", "magia"]
+    ["classic", "immersive", "minimal", "anime", "magia", "arcanum"]
   );
   for (const skin of BUILTIN_SKINS) {
     assert.equal(typeof skin.mount, "function", `${skin.id} 缺 mount`);
@@ -191,7 +231,7 @@ test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸 → �
 
 test("需要整窗背景层的内置样式（沉浸 / 特效类）都声明了 background", () => {
   const withBg = BUILTIN_SKINS.filter((s) => s.background).map((s) => s.id);
-  assert.deepEqual(withBg, ["immersive", "anime", "stage", "arcade", "magia"]);
+  assert.deepEqual(withBg, ["immersive", "anime", "magia", "arcanum"]);
   // 经典与简约是「不铺满整窗」的两种：一个左唱片右歌词，一个只留文字
   assert.deepEqual(
     BUILTIN_SKINS.filter((s) => !s.background).map((s) => s.id),
@@ -242,4 +282,178 @@ test("unregisterSkin：注销后列表里不再有它（「删了还在」的修
 test("escapeHtml：曲目名里的尖括号不能穿透成标签", () => {
   assert.equal(escapeHtml('<img src=x onerror="alert(1)">'), "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
   assert.equal(escapeHtml(null), "");
+});
+
+/* --------------------------------------------------------------------------
+   「星阵咏唱」的纯逻辑
+   --------------------------------------------------------------------------
+   这一套是「纵深魔法舞台」里唯一能脱离 DOM 验的部分：逐字素时间轴、段落判定、
+   舞台计划、七元素分析、跟随运镜。剩下的绘制（canvas）与入场动画（CSS）由
+   node tools/check-player-host.mjs 在无头浏览器里验。
+   -------------------------------------------------------------------------- */
+
+test("unitWeight：CJK > 拉丁 > 标点 > 空白（时间权重按'唱得多久'分档）", () => {
+  assert.equal(unitWeight("你"), 1);
+  assert.ok(unitWeight("a") < unitWeight("你"));
+  assert.ok(unitWeight("，") < unitWeight("a"));
+  assert.ok(unitWeight(" ") < unitWeight("，"));
+  assert.equal(unitWeight(""), 0);
+});
+
+test("buildGraphemeTimeline：铺满整行、时间严格递增、每个字素不短于 MIN_UNIT_MS", () => {
+  const line = buildGraphemeTimeline("你好，世界", 1000, 2000);
+  assert.equal(line.length, 5);
+  assert.equal(line[0].time, 1000);
+  // 中文比标点占的时间长
+  assert.ok(line[2].dur < line[0].dur);
+  let cursor = 1000;
+  for (const unit of line) {
+    assert.ok(unit.dur >= MIN_UNIT_MS, unit.ch + " 的时长不应低于下限");
+    assert.equal(unit.time, cursor);
+    cursor += unit.dur;
+  }
+  // 一个字素都没被挤掉：总时长就是行时长
+  assert.ok(Math.abs(cursor - 2000) < 1);
+});
+
+test("buildGraphemeTimeline：极端短行也不会把标点压成零时长（否则逗号会跟着后一个字入场）", () => {
+  const line = buildGraphemeTimeline("a,b,cd,ef", 0, 260);
+  assert.ok(line.length > 0);
+  for (const unit of line) assert.ok(unit.dur >= MIN_UNIT_MS, unit.ch);
+  assert.deepEqual(buildGraphemeTimeline("", 0, 1000), []);
+});
+
+test("detectSections：重复句判副歌、副歌前判预副歌、最后 12% 判尾奏", () => {
+  const lines = [
+    { time: 0, text: "第一句" },
+    { time: 2000, text: "会重复的副歌" },
+    { time: 4000, text: "过渡句" },
+    { time: 6000, text: "会重复的副歌" },
+    { time: 8000, text: "收尾句" },
+  ];
+  const sections = detectSections(lines);
+  assert.equal(sections.length, lines.length);
+  // 副歌就是会重复的那一句
+  assert.equal(sections[1], "chorus");
+  assert.equal(sections[3], "chorus");
+  // 副歌前一句是预副歌
+  assert.equal(sections[0], "pre");
+  assert.equal(sections[2], "pre");
+  // 最后一行为尾奏
+  assert.equal(sections[4], "outro");
+  // 空输入不炸
+  assert.deepEqual(detectSections([]), []);
+  assert.deepEqual(detectSections(null), []);
+});
+
+test("planLine：同一句永远生成同一套构图（确定性），十种入场方式都在选项里", () => {
+  const line = { time: 10000, text: "我爱你" };
+  const endAt = () => 13000;
+  const a = planLine(line, 3, "chorus", endAt);
+  const b = planLine(line, 3, "chorus", endAt);
+  assert.deepEqual(a.units, b.units);
+  assert.deepEqual(a.node, b.node);
+  assert.equal(a.units.length, 3);
+  for (const unit of a.units) {
+    assert.ok(typeof unit.mode === "string" && unit.mode.length > 0);
+    assert.ok(unit.durMs >= 300);
+    assert.ok(unit.delayMs >= 0);
+  }
+  // 同一句在不同段落里给出不同的剧本（副歌比主歌更大更亮）
+  const verse = planLine(line, 3, "verse", endAt);
+  assert.ok(a.program.sizeScale > verse.program.sizeScale);
+});
+
+test("resolveFocus：进入下一句前 lookahead 窗口就先看过去（镜头先动、字再出现）", () => {
+  const lines = [
+    { time: 0, text: "a" },
+    { time: 1000, text: "b" },
+    { time: 2000, text: "c" },
+  ];
+  // 还早：焦点留在当前句
+  assert.deepEqual(resolveFocus(lines, 700, 260), { active: 0, target: 0 });
+  // 进入 0.26s 窗口：焦点已经交给下一句
+  assert.deepEqual(resolveFocus(lines, 800, 260), { active: 0, target: 1 });
+  // 还没到第一句：active 是 -1，但目标已经是第 0 句
+  assert.deepEqual(resolveFocus(lines, -100, 260), { active: -1, target: 0 });
+  assert.deepEqual(resolveFocus([], 100), { active: -1, target: -1 });
+});
+
+test("bandSplit / createElementAnalyzer：重拍被识别成脉冲，元素随主导频段切换", () => {
+  const split = bandSplit(32);
+  assert.equal(split.count, 32);
+  assert.ok(split.lowEnd < split.bassEnd && split.bassEnd < split.midEnd);
+
+  const a = createElementAnalyzer(32);
+  const quiet = new Array(32).fill(0.04);
+  const spike = new Array(32).fill(0.04);
+  for (let i = 0; i < split.lowEnd; i += 1) spike[i] = 0.95;
+
+  // 先安静地跑一会儿：建立基线（不然第一帧就会被当成"重拍"）
+  a.update(quiet);
+  for (let i = 0; i < 60; i += 1) a.frame(1 / 30, { playing: true });
+  assert.equal(a.live, true);
+  assert.ok(a.low < 0.2);
+  assert.equal(a.onset, 0);
+  assert.equal(a.element, "earth");
+
+  // 低频突然砸下来 → 重拍 + 元素是"地"
+  a.update(spike);
+  a.frame(1 / 30, { playing: true });
+  assert.ok(a.onset > 0.6, "重拍脉冲应当被点亮：" + a.onset);
+  assert.ok(a.thunder > 0.6);
+  assert.equal(a.onsetBand, "earth");
+
+  // 高频持续主导 → 过 1.1s 迟滞之后切到"光"
+  const bright = new Array(32).fill(0.04);
+  for (let i = split.midEnd; i < 32; i += 1) bright[i] = 0.9;
+  for (let i = 0; i < 90; i += 1) {
+    a.update(bright);
+    a.frame(1 / 30, { playing: true });
+  }
+  assert.equal(a.element, "light");
+
+  // 拿不到频谱：live=false，走歌词节拍回退（低频仍会随行头脉冲起伏）
+  a.update(null);
+  assert.equal(a.live, false);
+  for (let i = 0; i < 30; i += 1) a.frame(1 / 30, { playing: true, tempoPulse: 0.9 });
+  assert.ok(!a.live);
+});
+
+test("createStageCamera：位移夹在边界内、每帧位移有速度上限、关掉动效后回到中位", () => {
+  const cam = createStageCamera({ lean: 0.42, maxPanRatio: 0.14, maxSpeedRatio: 0.34 });
+  cam.resize(1000, 800);
+  const cap = 0.14 * 800;
+  // 目标点再远，镜头也不许跑出舞台
+  cam.aim({ x: 0.6, y: 0.3 });
+  for (let i = 0; i < 200; i += 1) cam.step(1 / 60, { enabled: true });
+  // 上限是 maxPan × 1.25（多出来的 25% 是叠在目标上的自主漂移的余量）
+  assert.ok(Math.abs(cam.state.panX) <= cap * 1.25 + 1, "panX=" + cam.state.panX);
+  assert.ok(Math.abs(cam.state.panY) <= cap * 1.25 + 1, "panY=" + cam.state.panY);
+
+  // 速度上限：单帧位移不超过 maxSpeedRatio × 短边 × dt（防眩晕）
+  const cam2 = createStageCamera({ lean: 0.42, maxPanRatio: 0.14, maxSpeedRatio: 0.34 });
+  cam2.resize(1000, 800);
+  cam2.aim({ x: 0.6, y: 0 });
+  const before = cam2.state.panX;
+  cam2.step(1 / 60, { enabled: true });
+  const moved = Math.abs(cam2.state.panX - before);
+  assert.ok(moved <= 0.34 * 800 * (1 / 60) + 0.001, "单帧位移=" + moved);
+
+  // 关掉动效：镜头回到中位、不再跟随
+  for (let i = 0; i < 60; i += 1) cam2.step(1 / 30, { enabled: false });
+  assert.ok(Math.abs(cam2.state.panX) < 1, "panX=" + cam2.state.panX);
+  assert.equal(cam2.state.shakeX, 0);
+});
+
+test("createStageCamera：重拍轻震有明显的起止（幅度在两端的包络里为 0）", () => {
+  const cam = createStageCamera();
+  cam.resize(1000, 800);
+  cam.pulse(1);
+  cam.step(1 / 60, { enabled: true });
+  assert.ok(Math.abs(cam.state.shakeX) > 0);
+  // 0.42s 之后震动必须完全结束，不能残留
+  for (let i = 0; i < 40; i += 1) cam.step(1 / 60, { enabled: true });
+  assert.equal(cam.state.shakeX, 0);
+  assert.equal(cam.state.shakeY, 0);
 });

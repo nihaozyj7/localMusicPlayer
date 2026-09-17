@@ -830,7 +830,12 @@ function watchResize() {
     const r = host.stage.getBoundingClientRect();
     push({ type: "resize", width: Math.round(r.width), height: Math.round(r.height) });
   });
-  host.resizeObserver.observe(host.stage);
+  // box: "border-box" —— 观察边框盒而不是内容盒。
+  // 皮肤会在 resize 里改自己的 padding / 字号（窗口适配比例，见 fit.js）：
+  // 默认观察内容盒时，padding 一变就算「尺寸变了」，回调里再写样式会立刻触发
+  // 「ResizeObserver loop completed with undelivered notifications」。
+  // 我们本来读的就是 getBoundingClientRect()（边框盒），观察边框盒才是同一件事。
+  host.resizeObserver.observe(host.stage, { box: "border-box" });
 }
 
 /* --------------------------------------------------------------------------
@@ -1043,7 +1048,7 @@ export function syncPlaybackState({ force = false } = {}) {
      · 谁有音频谁负责采。详情页宿主有 <audio>（audio.js 里的 AnalyserNode 分接），
        桌面背景歌词宿主没有 —— 两者现在都是**推**：那个窗口的频谱由主窗口采好
        经 IPC 送过去（见 desktop-wallpaper.js）。皮肤只有一条渲染路径。
-     · 皮肤用 defineSkin 的 spectrum 字段声明自己要多少段（例如游戏风 = 柱子数），
+     · 皮肤用 defineSkin 的 spectrum 字段声明自己要多少段（例如按频段起伏的电平柱），
        没声明的皮肤这里一次采样都不做，也不会有任何推送。
      · 30Hz 而不是每帧：电平柱是离散的像素方块，30Hz 看不出台阶，
        推送量却只有逐帧的 50%。停止播放时补推 bands:null，皮肤回到待机起伏。

@@ -21,6 +21,7 @@
 
 import { defineSkin } from "../contract.js";
 import { lyricsEmptyText } from "../html.js";
+import { applyFit as writeFit } from "../fit.js";
 import "./magia.css";
 
 const ID = "magia";
@@ -1320,6 +1321,9 @@ export default defineSkin({
     /* —— 舞台 —— */
     ctx.root.innerHTML = SHELL_HTML;
     const shell = ctx.root.querySelector(".mg-shell");
+    // 窗口适配比例（见 fit.js）：唱片直径与歌词字号都写成 calc(设计值 * --mg-fit)，
+    // 于是主窗口里看起来正好的比例，投到整块桌面上会一起等比放大。
+    writeFit(shell, "--mg-fit");
     const ring = ctx.root.querySelector(".mg-ring");
     if (ring) ring.innerHTML = buildSigil();
 
@@ -1496,6 +1500,7 @@ export default defineSkin({
         break;
       case "resize":
         if (Number(patch.width) > 0) {
+          writeFit(inst.refs.shell, "--mg-fit");
           inst.particles.resize();
           inst.lyrics.markMeasure();
         }

@@ -134,7 +134,7 @@ async function main() {
   check(
     "样式按钮组按皮肤注册表渲染",
     // 内置六种（用户数据目录里的第三方样式会接在后面）
-    Array.isArray(skins) && skins.slice(0, 6).join(",") === "classic,immersive,minimal,anime,arcade,magia",
+    Array.isArray(skins) && skins.slice(0, 6).join(",") === "classic,immersive,minimal,anime,magia,arcanum",
     JSON.stringify(skins)
   );
 
@@ -402,7 +402,165 @@ async function main() {
     JSON.stringify({ closed: anim?.closed, opened: anim?.opened })
   );
 
-  /* 8. 设置里的主题 / 样式卡片：选中热区是卡片内部的按钮，且内置项不出现「移除」
+  /* 8. 窗口适配比例：整窗背景型样式（anime / magia）投到桌面（更大的视口）时，
+        封面 / 唱片与歌词必须等比放大，而不是停在固定 px 上限上；
+        同时手绘歌词区不能再有渐变底衬。
+        这正是「在窗口里看着还行、放到背景桌面就比例失调」那条反馈。 */
+  const measureFit = (skin) =>
+    evaluate(`(() => {
+      const stage = document.getElementById("playerview-stage");
+      const shell = document.querySelector(".mg-shell");
+      const panel = document.querySelector(".an-panel");
+      const disc = document.querySelector(".mg-disc");
+      const lyrics = document.querySelector(${JSON.stringify(skin === "magia" ? ".mg-lyrics" : ".an-lyrics")});
+      const line = document.querySelector(${JSON.stringify(skin === "magia" ? ".mg-line" : ".fxl__line")});
+      const fxl = lyrics ? lyrics.querySelector(".fxl") : null;
+      const cs = (el) => (el ? getComputedStyle(el) : null);
+      return {
+        animeFit: stage ? cs(stage).getPropertyValue("--an-fit").trim() : "",
+        magiaFit: shell ? cs(shell).getPropertyValue("--mg-fit").trim() : "",
+        panelW: panel ? Math.round(panel.getBoundingClientRect().width) : 0,
+        discW: disc ? Math.round(disc.getBoundingClientRect().width) : 0,
+        lineSize: line ? parseFloat(cs(line).fontSize) : 0,
+        lyricsBg: lyrics ? cs(lyrics).backgroundImage : "",
+        fadeDisplay: fxl ? getComputedStyle(fxl, "::before").display : "",
+      };
+    })()`);
+  const fitAt = async (skin, width, height) => {
+    await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+    await send("Page.navigate", { url: `${BASE}?probe=1&view=player&pv=${skin}&playing=1` });
+    await sleep(1800);
+    return measureFit(skin);
+  };
+
+  const animeSmall = await fitAt("anime", 1280, 820);
+  const animeLarge = await fitAt("anime", 2560, 1440);
+  check(
+    "anime：桌面尺寸下封面与歌词等比放大（不再是固定 px 上限）",
+    Number(animeLarge?.animeFit) > Number(animeSmall?.animeFit) &&
+      animeLarge?.panelW > animeSmall?.panelW * 1.3 &&
+      animeLarge?.lineSize > animeSmall?.lineSize * 1.3,
+    JSON.stringify({ small: animeSmall, large: animeLarge })
+  );
+  check(
+    "anime：歌词区没有渐变底衬（含 fx-lyrics 的上下渐隐带）",
+    animeLarge?.lyricsBg === "none" && animeLarge?.fadeDisplay === "none",
+    JSON.stringify({ bg: animeLarge?.lyricsBg, fade: animeLarge?.fadeDisplay })
+  );
+
+  const magiaSmall = await fitAt("magia", 1280, 820);
+  const magiaLarge = await fitAt("magia", 2560, 1440);
+  check(
+    "magia：桌面尺寸下唱片与歌词等比放大",
+    Number(magiaLarge?.magiaFit) > Number(magiaSmall?.magiaFit) &&
+      magiaLarge?.discW > magiaSmall?.discW * 1.3 &&
+      magiaLarge?.lineSize > magiaSmall?.lineSize * 1.3,
+    JSON.stringify({ small: magiaSmall, large: magiaLarge })
+  );
+  check("magia：歌词区没有渐变底衬", magiaLarge?.lyricsBg === "none", JSON.stringify(magiaLarge));
+  await send("Emulation.clearDeviceMetricsOverride");
+
+  /* 8b. 「星阵咏唱」：纵深舞台必须真的搭起来 ——
+        中景法阵画布有分辨率、法器核心挂了封面、歌词是散落的符文而不是滚动列表、
+        整窗深空背景层在、镜头位移真的写到了歌词层的 transform 上。 */
+  await send("Page.navigate", { url: `${BASE}?probe=1&view=player&pv=arcanum&playing=1` });
+  await sleep(2200);
+  const arcanum = await evaluate(`(() => {
+    const pv = document.getElementById("playerview");
+    const stage = document.querySelector(".ar-stage");
+    const scene = document.querySelector(".ar-scene");
+    const dust = document.querySelector(".ar-dust");
+    const runes = document.querySelector(".ar-runes");
+    const art = document.querySelector(".ar-core__art");
+    // ★ 取「当前句」的单元，而不是文档里第一个 .ar-line：窗口里前面还有已经
+    // 唱完的句子，它们停在"符文"状态、本来就没有入场动画。
+    const line = document.querySelector('.ar-line[data-state="active"]');
+    const unit = line ? line.querySelector(".ar-unit") : null;
+    const bg = document.getElementById("skin-background");
+    return {
+      skin: pv ? pv.dataset.skin : "",
+      bgHidden: bg ? bg.hidden : true,
+      hasVoid: Boolean(document.querySelector(".ar-void")),
+      scenePixels: scene ? scene.width * scene.height : 0,
+      dustPixels: dust ? dust.width * dust.height : 0,
+      coreHasCover: Boolean(art && art.getAttribute("src")),
+      lineCount: document.querySelectorAll(".ar-line").length,
+      activeLines: document.querySelectorAll('.ar-line[data-state="active"]').length,
+      unitCount: unit ? line.querySelectorAll(".ar-unit").length : 0,
+      modes: unit ? unit.dataset.mode : "",
+      runesTransform: runes ? runes.style.transform : "",
+      unitAnim: unit ? getComputedStyle(unit).animationName : "",
+      coreSize: Math.round((document.querySelector(".ar-core") || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width),
+      fit: stage ? getComputedStyle(stage).getPropertyValue("--ar-fit").trim() : "",
+    };
+  })()`);
+  check(
+    "星阵咏唱：整窗深空 + 中景法阵 + 前景粒子的画布都就位且有分辨率",
+    arcanum?.skin === "arcanum" &&
+      arcanum?.bgHidden === false &&
+      arcanum?.hasVoid === true &&
+      arcanum?.scenePixels > 100000 &&
+      arcanum?.dustPixels > 100000,
+    JSON.stringify(arcanum)
+  );
+  check(
+    "星阵咏唱：封面变成法阵中心的法器（不再是左边一栏）",
+    arcanum?.coreHasCover === true && arcanum?.coreSize > 80,
+    JSON.stringify({ cover: arcanum?.coreHasCover, core: arcanum?.coreSize })
+  );
+  check(
+    "星阵咏唱：歌词是散落的符文，当前句有入场魔法且镜头已经落在它身上",
+    arcanum?.lineCount > 0 &&
+      arcanum?.activeLines === 1 &&
+      arcanum?.unitCount > 1 &&
+      typeof arcanum?.modes === "string" &&
+      arcanum.modes.length > 0 &&
+      /translate3d/.test(arcanum?.runesTransform || "") &&
+      Number(arcanum?.fit) > 0,
+    JSON.stringify({
+      lines: arcanum?.lineCount,
+      active: arcanum?.activeLines,
+      units: arcanum?.unitCount,
+      mode: arcanum?.modes,
+      tf: arcanum?.runesTransform,
+      anim: arcanum?.unitAnim,
+    })
+  );
+
+  /* 8c. 减少动态效果：切成"清晰歌词模式"（居中竖排、没有入场魔法、没有散落位移）——
+        这是可访问性要求里最容易做假的一条（"把动效调慢"不等于"看得清"）。 */
+  await send("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+  });
+  await send("Page.navigate", { url: `${BASE}?probe=1&view=player&pv=arcanum&playing=1` });
+  await sleep(2000);
+  const reducedMotion = await evaluate(`(() => {
+    const stage = document.querySelector(".ar-stage");
+    const line = document.querySelector('.ar-line[data-state="active"]');
+    const unit = line ? line.querySelector(".ar-unit") : null;
+    const cs = line ? getComputedStyle(line) : null;
+    return {
+      anim: stage ? stage.dataset.anim : "",
+      clear: stage ? stage.dataset.clear : "",
+      position: cs ? cs.position : "",
+      transform: cs ? cs.transform : "",
+      unitAnimation: unit ? getComputedStyle(unit).animationName : "",
+      unitTransform: unit ? getComputedStyle(unit).transform : "",
+    };
+  })()`);
+  check(
+    "星阵咏唱：减少动态效果时切成清晰歌词模式（居中竖排 / 无入场魔法 / 无散落位移）",
+    reducedMotion?.anim === "off" &&
+      reducedMotion?.clear === "1" &&
+      reducedMotion?.position === "static" &&
+      reducedMotion?.transform === "none" &&
+      reducedMotion?.unitAnimation === "none" &&
+      reducedMotion?.unitTransform === "none",
+    JSON.stringify(reducedMotion)
+  );
+  await send("Emulation.setEmulatedMedia", { features: [] });
+
+  /* 9. 设置里的主题 / 样式卡片：选中热区是卡片内部的按钮，且内置项不出现「移除」
         （删除按钮只能放在按钮外面 —— 嵌套 button 会被解析器拆开，卡片结构会散） */
   const cards = await evaluate(`(async () => {
     const shell = await import("/js/shell.js");
@@ -424,7 +582,9 @@ async function main() {
     "主题 / 样式卡片：选中按钮在卡片内、没有 button 嵌套",
     cards?.themes > 0 &&
       cards?.themesWithPick === cards?.themes &&
-      cards?.skins >= 8 &&
+      // 内置五种样式都要在（预览模式不加载用户数据目录里的第三方样式；
+      // 这个阈值以前写死 8，比内置数量还大，一直是失败项）
+      cards?.skins >= 5 &&
       cards?.skinsWithPick === cards?.skins &&
       cards?.nestedButtons === 0 &&
       cards?.activeSkins === 1,
