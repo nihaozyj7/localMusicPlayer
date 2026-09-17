@@ -222,7 +222,13 @@
    3. 舞台（ctx.root = .playerview__stage 内的 .ar-stage）
    -------------------------------------------------------------------------- */
 .playerview[data-skin="arcanum"] {
-  background: none;
+  /* 深空底必须是实色：只写 background: none 的话，宿主 layout.css 的
+     var(--bg-window)（以及封面取色主题下 .app-bg 的封面虚化图）会从
+     .ar-void__sky 的半透明罩里透出来 —— 浅色主题下星阵会变成一片惨白，
+     「夜里的星阵」这个前提就没了。
+     这里铺本样式自己的深空底色 --ar-b2（由 --bg-app 混 --c-black 派生），
+     整窗背景层 .skin-bg 叠在它上面，深空因此不再受主题底色影响。 */
+  background: var(--ar-b2);
   /* 安全区（px）：上 = 标题栏 + 详情页头部（返回 / 样式按钮），下 = 底栏。
      JS 每次尺寸变化都会重新量并覆盖这两个值（见 arcanum.js#measureSafeArea）；
      这里的 calc 只是"JS 还没跑"时的首帧兜底。52px = .playerview__head 的高度。

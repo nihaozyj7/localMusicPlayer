@@ -440,7 +440,13 @@
    5. 舞台骨架（ctx.root = #playerview-stage 内的 .mg-shell）
    -------------------------------------------------------------------------- */
 .playerview[data-skin="magia"] {
-  background: none;
+  /* 详情页自己就是一块不透明的手绘夜景：不跟随主题、不吃底层封面虚化。
+     只写 background: none 的话，宿主 layout.css 给的 var(--bg-window) 会被
+     本皮肤的 .mg-bg__sky / .mg-bg__veil 等半透明层透出来 —— 浅色主题下
+     手绘夜景会糊成一片灰白，封面取色主题下还会混进封面的颜色。
+     这里铺的是本样式自己的「纸面色」（--mg-paper 由 --bg-app 派生，
+     深浅色主题下都成立），舞台与整窗背景层因此叠在实底上。 */
+  background: var(--mg-paper);
 }
 
 .playerview[data-skin="magia"] .playerview__stage {
