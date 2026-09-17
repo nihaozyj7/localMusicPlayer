@@ -6,13 +6,17 @@
      · 详情页之外的外壳（标题栏 / 底栏 / 侧边栏 / 整窗背景层）以
        .app[data-mode="arcanum"] 开头。
 
-   这一张表就是「舞台」本身，结构按纵深从前到后分成五层（与需求一致）：
+   这一张表就是「舞台」本身，结构按纵深从前到后分成四层：
 
-     远景  .ar-void（整窗背景层，CSS 深空 + 静态星空 + 两层雾）     depth 0.18
+     远景  .ar-void（整窗背景层：模糊封面 + CSS 深空 + 静态星空 + 雾） depth 0.18
      中景  canvas.ar-scene（主法阵：同心圆 / 符文环 / 星座线 / 涟漪）  depth 0.55
-     法器  .ar-core（法阵中心的水晶核心 = 封面）                       depth 0.8
      近景  .ar-runes / .ar-line / .ar-unit（咒语符文）                depth 1.0
      前景  canvas.ar-dust（光尘 / 火星 / 余烬 / 羽毛 / 水滴 / 风线）   depth 1.4
+
+   ★ 舞台铺满**整个窗口**（.ar-stage 用负 inset 把标题栏 / 底栏补回来），法阵与
+   粒子一直画到 chrome 后面；但歌词、HUD 这些内容只允许落在「安全区」里 ——
+   上方标题栏 + 详情页头部、下方底栏是宿主自己的交互区域，见 §0 的
+   --ar-safe-top / --ar-safe-bottom。
 
    **层与层的相对位移才是「镜头在动」的知觉来源**：所有层都按同一个镜头位移
    乘以各自的 depth 走（JS 每帧写 transform），远景几乎不动、前景动得最多。
@@ -121,6 +125,30 @@
   contain: content;
 }
 
+/* ★ 封面 = 整窗模糊底图。
+   这一版把"法阵中心那颗圆形水晶封面"整个删掉了（见 arcanum.js 的 SHELL_HTML）：
+   封面不再是舞台中间的一件法器，而是垫在最底下的一层氛围底。
+   三层处理缺一不可：
+     · blur(44px)：把封面糊成色块，山、脸、文字都不会跟歌词抢注意力；
+     · brightness(.5) + saturate(1.4)：压暗 + 提饱和，深空的紫蓝调才出得来；
+     · inset: -8%：模糊在图片边缘会向内吃掉一圈（外侧采样是透明的），
+       放大 8% 之后这一圈被裁在窗口之外，看不到虚边。 */
+.app[data-mode="arcanum"] .ar-void__cover {
+  position: absolute;
+  /* ★ 必须显式给宽高：<img> 是替换元素，只写 inset 的话 width/height: auto
+     会退回**图片自身的尺寸**（这里是 1498×1498 的正方形），不会跟着容器拉伸。 */
+  inset: -8%;
+  width: 116%;
+  height: 116%;
+  /* 宿主 base.css 有 img { max-width: 100% }：不放开的话宽度会被夹到容器宽，
+     右侧会缺一条没有图的缝（模糊采样到透明，露出一条背景色）。 */
+  max-width: none;
+  display: block;
+  object-fit: cover;
+  opacity: 0.9;
+  filter: blur(44px) saturate(1.4) brightness(0.5);
+}
+
 .app[data-mode="arcanum"] .ar-void__sky,
 .app[data-mode="arcanum"] .ar-void__stars,
 .app[data-mode="arcanum"] .ar-void__fog,
@@ -129,12 +157,19 @@
   inset: -6%;
 }
 
+/* 深空底色退成一层半透明罩：底层是封面模糊图，这一层负责把它压回"夜里的星阵"。
+   注意最后一层线性渐变换成了带 alpha 的 color-mix —— 不透明的话封面就白糊了。 */
 .app[data-mode="arcanum"] .ar-void__sky {
   background:
-    radial-gradient(120% 90% at 50% 108%, color-mix(in oklab, var(--ar-a2) 26%, transparent) 0, transparent 62%),
-    radial-gradient(90% 70% at 12% -8%, color-mix(in oklab, var(--ar-a1) 12%, transparent) 0, transparent 58%),
-    radial-gradient(80% 80% at 92% 6%, color-mix(in oklab, var(--ar-a3) 14%, transparent) 0, transparent 60%),
-    linear-gradient(180deg, var(--ar-b2) 0%, var(--ar-b1) 46%, var(--ar-b2) 100%);
+    radial-gradient(120% 90% at 50% 108%, color-mix(in oklab, var(--ar-a2) 30%, transparent) 0, transparent 62%),
+    radial-gradient(90% 70% at 12% -8%, color-mix(in oklab, var(--ar-a1) 14%, transparent) 0, transparent 58%),
+    radial-gradient(80% 80% at 92% 6%, color-mix(in oklab, var(--ar-a3) 16%, transparent) 0, transparent 60%),
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--ar-b2) 84%, transparent) 0%,
+      color-mix(in oklab, var(--ar-b1) 62%, transparent) 46%,
+      color-mix(in oklab, var(--ar-b2) 88%, transparent) 100%
+    );
 }
 
 /* 静态星点：24 颗放在两层里（远层小、近层大），由 CSS 直接给背景，
@@ -176,20 +211,38 @@
   );
 }
 
+/* 详情页头部（返回 / 封面 / 样式按钮）在铺满整窗的舞台之上：
+   舞台现在盖住了头部那一块，不把头部提上来的话，返回按钮会被画布压住。 */
+.playerview[data-skin="arcanum"] .playerview__head {
+  position: relative;
+  z-index: 6;
+}
+
 /* --------------------------------------------------------------------------
    3. 舞台（ctx.root = .playerview__stage 内的 .ar-stage）
    -------------------------------------------------------------------------- */
 .playerview[data-skin="arcanum"] {
   background: none;
+  /* 安全区（px）：上 = 标题栏 + 详情页头部（返回 / 样式按钮），下 = 底栏。
+     JS 每次尺寸变化都会重新量并覆盖这两个值（见 arcanum.js#measureSafeArea）；
+     这里的 calc 只是"JS 还没跑"时的首帧兜底。52px = .playerview__head 的高度。
+     舞台的负 inset 与 HUD 的定位都读它们。 */
+  --ar-safe-top: calc(var(--h-titlebar) + 52px);
+  --ar-safe-bottom: var(--h-playerbar);
 }
 
 .playerview[data-skin="arcanum"] .playerview__stage {
   container-type: size;
+  /* 舞台要伸出这一格（铺满整窗），所以不能在网格里被裁掉 */
+  overflow: visible;
 }
 
 .playerview[data-skin="arcanum"] .ar-stage {
   position: absolute;
-  inset: 0;
+  /* ★ 铺满整窗：把"上方的标题栏 + 头部"和"下方的底栏"用负 inset 补回来。
+     用负 inset 而不是 position: fixed —— .playerview 在进出场动画里有
+     transform，fixed 后代会以它为包含块，动画一结束就会跳一下。 */
+  inset: calc(-1 * var(--ar-safe-top)) 0 calc(-1 * var(--ar-safe-bottom)) 0;
   overflow: hidden;
   /* 窗口适配比例（fit.js）：所有尺寸都写成 calc(<设计值> * var(--ar-fit))，
      于是同一套设计值在主窗口与桌面上是同一个比例 */
@@ -210,6 +263,8 @@
 
 .playerview[data-skin="arcanum"] .ar-scene {
   z-index: 1;
+  /* 画布铺满整窗之后会盖住详情页头部：它只是画，不接任何指针事件 */
+  pointer-events: none;
 }
 
 .playerview[data-skin="arcanum"] .ar-dust {
@@ -219,86 +274,12 @@
 }
 
 /* --------------------------------------------------------------------------
-   4. 法器：法阵中心的水晶核心（封面）
+   4. 法器：★ 已移除
+   --------------------------------------------------------------------------
+   这里原本是"法阵中心的水晶核心 = 封面"（圆形封面 + 旋转符文环 + 中心光点）。
+   现在封面改成整窗模糊背景（见 §2 的 .ar-void__cover），舞台里不再有圆形封面：
+   它既是背景就不该再占一块交互热区，"更换封面"由详情页头部那颗按钮负责。
    -------------------------------------------------------------------------- */
-.playerview[data-skin="arcanum"] .ar-core {
-  position: absolute;
-  left: 50%;
-  top: 58%;
-  z-index: 2;
-  width: calc(196px * var(--ar-fit));
-  height: calc(196px * var(--ar-fit));
-  transform: translate(-50%, -50%);
-  border: 0;
-  padding: 0;
-  background: none;
-  opacity: 0.92;
-}
-
-.playerview[data-skin="arcanum"] .ar-core__artwrap {
-  position: absolute;
-  inset: 13%;
-  overflow: hidden;
-  border-radius: 50%;
-  box-shadow:
-    0 0 0 1px color-mix(in oklab, var(--ar-a1) 42%, transparent),
-    0 0 calc(46px * var(--ar-fit)) color-mix(in oklab, var(--ar-a2) 46%, transparent),
-    0 0 calc(120px * var(--ar-fit)) color-mix(in oklab, var(--ar-a2) 22%, transparent);
-}
-
-.playerview[data-skin="arcanum"] .ar-core__art {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 50%;
-  /* 核心是"记忆里的水晶"：比正常封面亮一点、柔一点，不与歌词抢对比 */
-  filter: saturate(1.08) brightness(0.92) contrast(1.04);
-}
-
-/* 旋转的符文环：conic + mask 挖空成环，只用 transform 转（可合成） */
-.playerview[data-skin="arcanum"] .ar-core__ring {
-  position: absolute;
-  inset: -2%;
-  border-radius: 50%;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    color-mix(in oklab, var(--ar-a1) 70%, transparent) 32deg,
-    transparent 74deg,
-    color-mix(in oklab, var(--ar-a3) 62%, transparent) 132deg,
-    transparent 196deg,
-    color-mix(in oklab, var(--ar-a2) 66%, transparent) 268deg,
-    transparent 330deg
-  );
-  -webkit-mask: radial-gradient(circle, transparent 62%, var(--c-black) 66%, var(--c-black) 82%, transparent 86%);
-  mask: radial-gradient(circle, transparent 62%, var(--c-black) 66%, var(--c-black) 82%, transparent 86%);
-  animation: ar-core-spin 26s linear infinite;
-}
-
-.playerview[data-skin="arcanum"] .ar-core__pin {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 13%;
-  height: 13%;
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in oklab, var(--ar-a1) 92%, var(--text-1)) 0 30%, transparent 70%);
-  box-shadow: 0 0 calc(20px * var(--ar-fit)) color-mix(in oklab, var(--ar-a1) 62%, transparent);
-}
-
-.playerview[data-skin="arcanum"] .ar-stage:not([data-passive="1"]) .ar-core {
-  cursor: pointer;
-}
-
-.playerview[data-skin="arcanum"] .ar-stage[data-passive="1"] .ar-core {
-  pointer-events: none;
-}
-
-.playerview[data-skin="arcanum"] .ar-stage:not([data-passive="1"]) .ar-core:focus-visible {
-  outline: 2px solid var(--ar-a1);
-  outline-offset: calc(6px * var(--ar-fit));
-}
 
 /* --------------------------------------------------------------------------
    5. 近景：咒语符文
@@ -718,21 +699,11 @@
   }
 }
 
-@keyframes ar-core-spin {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 /* --------------------------------------------------------------------------
    7. 降级：用户关掉动画 / 系统要求减少动效
    --------------------------------------------------------------------------
    两个钩子同时生效：
-     · data-anim="off"  —— 关掉所有入场动画、核心旋转、法阵 rAF（JS 也停了）；
+     · data-anim="off"  —— 关掉所有入场动画、法阵 rAF（JS 也停了）；
      · data-clear="1"   —— 切成**清晰歌词模式**：不再散落，改成居中竖排三行，
        保证「减少动态效果」的用户读到的仍然是一份正常歌词。
    -------------------------------------------------------------------------- */
@@ -741,8 +712,7 @@
    而"减少动态效果"是用户/系统的显式偏好，它必须赢。
    这是本仓唯一允许出现 !important 的场景（用户偏好 > 装饰性动画）。 */
 .playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-unit,
-.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-line,
-.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-core__ring {
+.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-line {
   animation: none !important;
 }
 
@@ -772,7 +742,7 @@
   justify-content: center;
   gap: calc(14px * var(--ar-fit));
   font-size: calc(var(--ar-lsize) * 1.6 * var(--ar-fit));
-  /* 背后是法阵与法器：给一层很淡的底衬，保证任何主题下都读得清 */
+  /* 背后是法阵与整窗模糊封面：给一层很淡的底衬，保证任何主题下都读得清 */
   background: radial-gradient(
     62% 46% at 50% 50%,
     color-mix(in oklab, var(--bg-app) 78%, transparent) 0,
@@ -808,17 +778,14 @@
   opacity: 1;
 }
 
-.playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-core {
-  opacity: 0.7;
-}
-
 /* --------------------------------------------------------------------------
    8. 空态
    -------------------------------------------------------------------------- */
 .playerview[data-skin="arcanum"] .ar-empty {
   position: absolute;
   left: 50%;
-  top: 42%;
+  /* 舞台铺满整窗了，空态也要落在安全区里（42% 是老舞台里的位置） */
+  top: calc(var(--ar-safe-top) + (100% - var(--ar-safe-top) - var(--ar-safe-bottom)) * 0.42);
   transform: translate(-50%, -50%);
   max-width: 60%;
   color: var(--ar-ink-dim);
@@ -832,7 +799,11 @@
    -------------------------------------------------------------------------- */
 .playerview[data-skin="arcanum"] .ar-hud {
   position: absolute;
-  inset: calc(16px * var(--ar-fit)) calc(26px * var(--ar-fit)) calc(14px * var(--ar-fit));
+  /* HUD 是内容，不进标题栏 / 头部与底栏：上下各让出安全区 */
+  top: calc(var(--ar-safe-top) + 16px * var(--ar-fit));
+  right: calc(26px * var(--ar-fit));
+  bottom: calc(var(--ar-safe-bottom) + 14px * var(--ar-fit));
+  left: calc(26px * var(--ar-fit));
   z-index: 5;
   display: flex;
   flex-direction: column;
@@ -940,7 +911,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   10. 窄窗口：HUD 缩小、法器收一点，构图仍然完整
+   10. 窄窗口：HUD 缩小，构图仍然完整
    -------------------------------------------------------------------------- */
 @media (max-width: 1120px) {
   .playerview[data-skin="arcanum"] .ar-hud__meta {
@@ -952,9 +923,5 @@
   }
 }
 
-@media (max-height: 720px) {
-  .playerview[data-skin="arcanum"] .ar-core {
-    width: calc(150px * var(--ar-fit));
-    height: calc(150px * var(--ar-fit));
-  }
-}
+/* 矮窗口不需要再单独缩法器了（圆形封面已经移除）；这里保留断点位置，
+   以后有需要再往里加窄窗口 / 矮窗口的收敛规则。 */

@@ -243,7 +243,52 @@ export function subscribe(fn) {
   return () => listeners.delete(fn);
 }
 
-let frame = null;
+/**
+ * 「下一帧广播」的句柄：rAF 一条、宏任务兜底一条。
+ *
+ * ★ 为什么不能只认 requestAnimationFrame（真实事故：最小化 / 托盘后播完不切歌）
+ *
+ * 窗口最小化、或收进托盘时，WebView 判定页面不可见，**rAF 会被挂起**
+ * ——不是变慢，是这一帧永远不来。而「自动下一首」这条链路只有一处异步：
+ *
+ *   <audio> 的 ended → playNext() → playSong() → commit() →（rAF）→ notify()
+ *     → runtime.run() → syncAudio() → 给 <audio> 换 src 并起播
+ *
+ * 于是表现成：歌播完了，state.currentId 已经指向下一首，但 rAF 不回调 →
+ * notify 不跑 → 音频元素还停在旧歌上 →「卡住不切」。一旦把主界面打开，
+ * 攒着的那一帧立刻执行，下一首就"自己"接上了 —— 这正是那条反馈的现象。
+ *
+ * 规则：
+ *   · 页面可见 → 走 rAF（保持"合并到一帧"的节流语义），并挂一条 200ms 的
+ *     宏任务兜底（窗口被遮挡但 visibilityState 仍是 visible 时 rAF 同样会停）；
+ *   · 页面不可见 → 直接走宏任务。后台页面的定时器最多被节流到 1s 一次，
+ *     对"切歌"完全够用。
+ */
+const HIDDEN_FLUSH_MS = 200;
+let frame = null; // requestAnimationFrame 的 id
+let frameTimer = null; // 兜底 / 后台用的 setTimeout id
+
+function flushNotify() {
+  if (frame !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
+  if (frameTimer !== null) clearTimeout(frameTimer);
+  frame = null;
+  frameTimer = null;
+  notify();
+}
+
+function scheduleNotify() {
+  if (frame !== null || frameTimer !== null) return;
+  const hidden =
+    typeof document !== "undefined" && typeof document.visibilityState === "string"
+      ? document.visibilityState === "hidden"
+      : false;
+  if (hidden || typeof requestAnimationFrame !== "function") {
+    frameTimer = setTimeout(flushNotify, 0);
+    return;
+  }
+  frame = requestAnimationFrame(flushNotify);
+  frameTimer = setTimeout(flushNotify, HIDDEN_FLUSH_MS);
+}
 
 /** 只通知订阅者（用于高频、无需重算与持久化的更新，如播放进度） */
 export function notify() {
@@ -267,11 +312,8 @@ export function commit(mutator, options = {}) {
     notify();
     return;
   }
-  if (frame) return;
-  frame = requestAnimationFrame(() => {
-    frame = null;
-    notify();
-  });
+  if (frame !== null || frameTimer !== null) return;
+  scheduleNotify();
 }
 
 /* --------------------------------------------------------------------------

@@ -3,7 +3,7 @@
    arcanum.js — 播放界面样式「星阵咏唱」（id: arcanum）
    --------------------------------------------------------------------------
    需求原文（这一版要推翻的东西）：「左封面右歌词」→「一个会运镜的魔法舞台，
-   歌词是咒语，法阵是乐器，封面是法器」。落到实现上是四句话：
+   歌词是咒语，法阵是乐器，封面是背景」。落到实现上是四句话：
 
      · **歌词 = 咒语**：没有滚动列表。当前句被拆成字素散落在舞台空间里，
        每个字按自己的时间轴、用自己的「入场魔法」出现（十种方式见 CSS）；
@@ -13,15 +13,17 @@
        长音立光柱、停顿落暗雾。
      · **镜头 = 观众视线**：镜头跟着最新歌词节点走（提前 0.26s 起步），
        有阻尼、有边界、有速度上限；副歌拉远、长音推近、重拍轻震。
-     · **封面 = 法器**：不再是左栏里的一张图，而是法阵中心的水晶核心，
-       点它就是「更换封面」。
+     · **封面 = 整窗模糊背景**：封面不再占舞台里的任何一块位置
+       （早先那版是"法阵中心的圆形水晶"），而是压在最底下的一层大半径模糊底图。
+       它既然是背景就不再是控件 —— "更换封面"由详情页头部那颗按钮负责。
 
-   为什么舞台在 ctx.root、只有「深空底色」放在整窗背景层：
-   整窗背景层（.skin-bg）是 `pointer-events: none` 的装饰层，而这一版要求
-   歌词与法器都能交互 —— 交互元素必须落在 ctx.root（详情页舞台，它本身就是
-   `position: fixed; inset: 标题栏下方 → 底栏上方`，横向铺满整窗）。
-   背景层只留一层 CSS 深空渐变，这样标题栏与底栏后面也是星空，观感是「一整块
-   深空」，而不是「中间一块画布」。
+   ★ 舞台铺满整窗，但内容只放安全区：
+   法阵画布与粒子一直画到标题栏、详情页头部、底栏后面（观感是「一整块深空」，
+   而不是「中间一块画布」）；歌词与 HUD 这些内容则一律限制在安全区内 ——
+   上下两块 chrome 有自己的交互（返回 / 样式 / 传输控件），不能被歌词压住。
+   安全区是从 .playerview 的盒子与头部高度量出来的（见 measureSafeArea），
+   所以主窗口与桌面背景歌词窗口（那里没有标题栏 / 底栏）会自动得到不同的值。
+   封面只是整窗背景层里的一张模糊底图，不需要交互，因此不必落在 ctx.root。
 
    分工与纪律（与其它内置样式一致，见 README）：
      · 数据、动作全部走 ctx（不 import 应用内部模块、不碰 <audio> 状态）；
@@ -32,7 +34,7 @@
 
 import { defineSkin } from "../contract.js";
 import { EMPTY_TRACK, lyricsEmptyText, setCoverImage, subtitleOf } from "../html.js";
-import { applyFit } from "../fit.js";
+import { fitScale } from "../fit.js";
 import { prefersReducedMotion } from "../fx-camera.js";
 import { ELEMENT_NAME, createElementAnalyzer } from "../arcanum-audio.js";
 import { createStageCamera } from "../arcanum-stage.js";
@@ -163,24 +165,21 @@ function putVars(el, prev, vars) {
    模板
    ========================================================================== */
 
-/** 整窗背景层：只有一层 CSS 深空（静态星星 + 两层雾），不做任何动画循环 */
+/** 整窗背景层：模糊封面 + 一层 CSS 深空（静态星星 + 两层雾），不做任何动画循环 */
 const VOID_HTML =
   '<div class="ar-void" aria-hidden="true">' +
+  // 封面不再是"法阵中心的圆形水晶"，而是这一层整窗模糊底图（见 p5 注释）
+  '<img class="ar-void__cover" alt="" />' +
   '<div class="ar-void__sky"></div>' +
   '<div class="ar-void__stars"></div>' +
   '<div class="ar-void__fog"></div>' +
   '<div class="ar-void__vignette"></div>' +
   "</div>";
 
-/** 舞台：法阵画布 / 法器 / 咒语符文 / 前景粒子 / HUD */
+/** 舞台：法阵画布 / 咒语符文 / 前景粒子 / HUD（圆形封面已移除，见文件头） */
 const SHELL_HTML =
   '<div class="ar-stage" data-anim="on" data-passive="0" data-clear="0" data-lyrics="on" data-section="verse">' +
   '<canvas class="ar-scene" aria-hidden="true"></canvas>' +
-  '<div class="ar-core">' +
-  '<span class="ar-core__ring"></span>' +
-  '<span class="ar-core__artwrap"><img class="ar-core__art" alt="" /></span>' +
-  '<span class="ar-core__pin"></span>' +
-  "</div>" +
   '<div class="ar-runes"></div>' +
   '<canvas class="ar-dust" aria-hidden="true"></canvas>' +
   '<div class="ar-hud">' +
@@ -228,6 +227,59 @@ function paintOnce() {
 }
 
 /* --------------------------------------------------------------------------
+   安全区与适配倍数
+   --------------------------------------------------------------------------
+   舞台铺满整窗之后，"整窗"与"能放交互内容的地方"就不再是同一个矩形了：
+
+     整窗    = 标题栏 + 详情页头部 + 中间舞台 + 底栏（法阵一直画到边）
+     安全区  = 扣掉标题栏 / 头部 / 底栏之后剩下的中间那块
+
+   歌词与 HUD 全部只允许出现在安全区里。这里量的就是安全区的上下留白，
+   量法刻意只用几何信息（.playerview 的盒子 + .playerview__head 的高度），
+   于是主窗口（有标题栏 / 底栏）与桌面背景歌词窗口（两者都没有）都自动正确，
+   皮肤不需要知道"我现在被挂在哪个窗口里"。
+   -------------------------------------------------------------------------- */
+function measureSafeArea() {
+  if (!inst) return;
+  const pv = inst.pvEl;
+  if (!pv) {
+    inst.safeTop = 0;
+    inst.safeBottom = 0;
+  } else {
+    // ★ 用 offsetTop / offsetHeight 而不是 getBoundingClientRect：
+    //   详情页进出场时 .playerview 上有 translateY(38px)，挂载那一刻量到的
+    //   rect 会把这 38px 算进安全区（舞台随之被顶上去、底部露出一条缝）。
+    //   offset* 是布局值，不受 transform 影响。
+    const headH = inst.headEl ? inst.headEl.offsetHeight : 0;
+    const docH =
+      (typeof document !== "undefined" && document.documentElement.clientHeight) ||
+      (typeof window !== "undefined" ? window.innerHeight : 0) ||
+      inst.stageH;
+    const top = pv.offsetTop + headH;
+    const bottomPx = pv.offsetTop + pv.offsetHeight;
+    inst.safeTop = Math.max(0, Math.round(top));
+    inst.safeBottom = Math.max(0, Math.round(docH - bottomPx));
+  }
+  // 同一个值给 CSS：.ar-stage 的负 inset（把舞台撑到整窗）与 .ar-hud 的定位都读它
+  inst.shell.style.setProperty("--ar-safe-top", inst.safeTop + "px");
+  inst.shell.style.setProperty("--ar-safe-bottom", inst.safeBottom + "px");
+}
+
+/**
+ * 窗口适配倍数（见 fit.js）：按**安全区**短边算，写到 --ar-fit。
+ * 舞台铺满整窗只是把画布画到边上，构图的设计尺寸仍然跟安全区走，
+ * 这样同一套设计值不会因为"上下多了标题栏 / 底栏"而整体放大或缩小。
+ */
+function applyStageFit() {
+  if (!inst) return 1;
+  const safeH = Math.max(1, inst.stageH - inst.safeTop - inst.safeBottom);
+  const scale = fitScale(inst.stageW, safeH);
+  inst.fitScale = scale;
+  inst.shell.style.setProperty("--ar-fit", scale.toFixed(4));
+  return scale;
+}
+
+/* --------------------------------------------------------------------------
    歌词计划
    -------------------------------------------------------------------------- */
 
@@ -244,15 +296,26 @@ function nextLineTime(index) {
  *
  * 字号与窗口尺寸都会影响"这一句占多宽、会不会顶到边上"，所以它必须在
  * 字号变化与窗口尺寸变化时重算 —— 重算之后计划缓存整个作废（见 rebuildLines）。
+ *
+ * ★ 行带比例必须落在**安全区**里，而不是整个舞台：
+ *   舞台现在铺满整窗（法阵一直画到标题栏与底栏后面），但歌词是交互内容，
+ *   不许进标题栏 / 详情页头部 / 底栏这三块 —— 那里有返回、样式、传输控件，
+ *   歌词飘进去只会互相抢。所以 BAND_TOP / BAND_BOTTOM 这两个"舞台比例"
+ *   改成"安全区比例"，再换算回舞台坐标（相机用的也是这套舞台坐标）。
  */
 function layoutConfig() {
   const fit = inst.fitScale || 1;
   const fontPx = Math.max(6, (inst.lyricSize || 16) * FONT_MUL * fit);
   const W = Math.max(160, inst.stageW || 160);
+  const H = Math.max(160, inst.stageH || 160);
+  const safeTop = Math.min(Math.max(0, inst.safeTop || 0), H * 0.4);
+  const safeBottom = Math.min(Math.max(0, inst.safeBottom || 0), H * 0.4);
+  const safeH = Math.max(1, H - safeTop - safeBottom);
   return {
     bands: LYRIC_BANDS,
-    top: BAND_TOP,
-    bottom: BAND_BOTTOM,
+    // 安全区比例 → 舞台比例（nodeY 是相对 40% 焦点的偏移，见 arcanum-timing.js）
+    top: (safeTop + BAND_TOP * safeH) / H,
+    bottom: (safeTop + BAND_BOTTOM * safeH) / H,
     // 可用宽度按 86% 舞台宽算（两侧各留 7% 余量）
     availableEm: Math.max(8, (W * 0.86) / fontPx),
     emToStageW: fontPx / W,
@@ -482,7 +545,8 @@ function paintSong() {
   inst.refs.title.textContent = title;
   inst.refs.title.setAttribute("title", title);
   inst.refs.artist.textContent = artist;
-  setCoverImage(inst.refs.art, media.cover, inst.ctx.defaultCover);
+  // 封面只出现在整窗背景层（模糊底图），舞台里不再有圆形封面
+  setCoverImage(inst.refs.voidCover, media.cover, inst.ctx.defaultCover);
 }
 
 function lyricsSignature(lines) {
@@ -773,14 +837,16 @@ export default defineSkin({
     // 模板就在上面，选择器一定命中：把 Element 收窄成 HTMLElement
     const pick = (sel) => /** @type {HTMLElement} */ (shell.querySelector(sel));
 
+    // 详情页外壳：安全区（标题栏 + 头部 / 底栏）要从它身上量，见 measureSafeArea()
+    const pvEl = /** @type {HTMLElement|null} */ (shell.closest(".playerview"));
+
     const refs = {
       shell,
       void: bgRoot ? /** @type {HTMLElement|null} */ (bgRoot.querySelector(".ar-void")) : null,
+      voidCover: /** @type {HTMLImageElement|null} */ (bgRoot ? bgRoot.querySelector(".ar-void__cover") : null),
       scene: pick(".ar-scene"),
       dust: pick(".ar-dust"),
       runes: pick(".ar-runes"),
-      core: pick(".ar-core"),
-      art: /** @type {HTMLImageElement} */ (pick(".ar-core__art")),
       title: pick(".ar-hud__title"),
       artist: pick(".ar-hud__artist"),
       eq: pick(".ar-hud__bars"),
@@ -806,6 +872,9 @@ export default defineSkin({
       ctx,
       bgRoot,
       shell,
+      // 外壳与头部：只用来量"安全区"（标题栏 + 头部 / 底栏），不参与渲染
+      pvEl,
+      headEl: /** @type {HTMLElement|null} */ (pvEl ? pvEl.querySelector(".playerview__head") : null),
       refs,
       scene,
       dust,
@@ -835,6 +904,9 @@ export default defineSkin({
       fitScale: 1,
       stageW: Math.max(1, rect.width),
       stageH: Math.max(1, rect.height),
+      /** 安全区上下留白（px，舞台坐标）：歌词行带 / HUD 不许越过它们 */
+      safeTop: 0,
+      safeBottom: 0,
       raf: 0,
       last: 0,
       idleSince: nowMs(),
@@ -842,22 +914,11 @@ export default defineSkin({
       offFns: [],
     };
 
-    /* —— 交互：一律走 ctx.actions —— */
+    /* —— 交互：一律走 ctx.actions ——
+       ★ 舞台里已经没有"圆形封面"这个可点元素了：封面改成整窗模糊背景之后，
+       它是**背景**不是控件。更换封面仍然走详情页头部那颗按钮
+       （#btn-player-cover，宿主自己的 UI），皮肤不必再复刻一份入口。 */
     if (interactive) {
-      refs.core.setAttribute("role", "button");
-      refs.core.setAttribute("tabindex", "0");
-      refs.core.setAttribute("aria-label", "更换封面");
-      const onCore = () => ctx.actions.openCoverPanel();
-      refs.core.addEventListener("click", onCore);
-      const onCoreKey = (e) => {
-        if (e.key !== "Enter" && e.key !== " ") return;
-        e.preventDefault();
-        ctx.actions.openCoverPanel();
-      };
-      refs.core.addEventListener("keydown", onCoreKey);
-      inst.offFns.push(() => refs.core.removeEventListener("click", onCore));
-      inst.offFns.push(() => refs.core.removeEventListener("keydown", onCoreKey));
-
       const onRunesClick = (e) => {
         const el = e.target && e.target.closest ? e.target.closest(".ar-line") : null;
         if (!el) return;
@@ -881,13 +942,16 @@ export default defineSkin({
       };
       refs.runes.addEventListener("keydown", onRunesKey);
       inst.offFns.push(() => refs.runes.removeEventListener("keydown", onRunesKey));
-    } else {
-      refs.core.setAttribute("aria-hidden", "true");
-      refs.core.setAttribute("tabindex", "-1");
     }
 
-    /* —— 窗口适配比例（见 fit.js）：整窗背景投到桌面时会等比放大 —— */
-    inst.fitScale = applyFit(shell, "--ar-fit");
+    /* —— 安全区 + 窗口适配比例 ——
+       安全区 = 详情页外壳里"被 chrome 占住的那两块"（上：标题栏 + 头部，
+       下：底栏）。它是从 .playerview 的盒子与头部高度量出来的，所以主窗口
+       与桌面背景歌词窗口（没有标题栏 / 底栏）都自动得到正确的值。
+       适配倍数按安全区短边算（而不是整窗）：舞台虽然铺满整窗，构图的"设计
+       尺寸"仍然以安全区为基准，否则同一套设计值会因为窗口变高而整体放大。 */
+    measureSafeArea();
+    applyStageFit();
 
     /* —— 尺寸变化：画布跟上 + 歌词行带 / 落点重算 —— */
     if (typeof ResizeObserver === "function") {
@@ -900,7 +964,9 @@ export default defineSkin({
         cam.resize(inst.stageW, inst.stageH);
         scene.resize();
         dust.resize();
-        inst.fitScale = applyFit(shell, "--ar-fit");
+        // 安全区跟着窗口一起变（底栏在窄窗口下会换高度），先量再算适配倍数
+        measureSafeArea();
+        applyStageFit();
         // 舞台尺寸变了 → 每句的宽度适配与行带落点都要重算（不清缓存会长句子出画）
         if (grew) rebuildLines();
         else
@@ -1018,6 +1084,9 @@ export default defineSkin({
           inst.cam.resize(inst.stageW, inst.stageH);
           inst.scene.resize();
           inst.dust.resize();
+          measureSafeArea();
+          applyStageFit();
+          rebuildLines();
         }
         break;
       default:

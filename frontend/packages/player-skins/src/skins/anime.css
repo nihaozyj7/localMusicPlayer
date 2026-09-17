@@ -20,6 +20,10 @@
   --an-sky: color-mix(in oklab, var(--bg-app) 26%, #8fd0ef);
   --an-hill: color-mix(in oklab, var(--bg-app) 52%, #7fc79a);
   --an-sun: color-mix(in oklab, #ffd76e 78%, var(--bg-app));
+  /* 太阳的尺寸与落点：放射线要按同一组值算圆心，所以提到变量里只写一次 */
+  --an-sun-size: min(20vmin, 210px);
+  --an-sun-right: 9%;
+  --an-sun-top: 9%;
   --an-anim: 1;
   --fxl-accent: var(--an-coral);
   --fxl-glow: color-mix(in oklab, var(--an-coral) 55%, transparent);
@@ -54,9 +58,9 @@
 
 .app[data-mode="anime"] .an-bg__sun {
   position: absolute;
-  right: 9%;
-  top: 9%;
-  width: min(20vmin, 210px);
+  right: var(--an-sun-right);
+  top: var(--an-sun-top);
+  width: var(--an-sun-size);
   aspect-ratio: 1;
   border-radius: 50%;
   background: var(--an-sun);
@@ -132,19 +136,26 @@
   background-size: 9px 9px;
 }
 
-/* 放射速度线 */
+/* 放射速度线：★ 圆心必须落在太阳上。
+   以前它是"整屏斜射线"（圆心写死在 left 34% / top 42%），和太阳毫无关系 ——
+   太阳挂在右上角，射线却从画面中间斜穿出去。现在把圆心算成太阳圆心，
+   整个光轮的大小也跟着太阳走（9 倍直径），于是窗口怎么缩放都是"太阳在放光"。
+   定位用 left/top 指圆心 + 负 margin 退半个身位（与旧实现同一套手法：
+   直接写 right/bottom 的话负 margin 不会生效，元素会贴着角放）。 */
 .app[data-mode="anime"] .an-bg__speed {
   position: absolute;
-  left: 34%;
-  top: 42%;
-  width: 200vmax;
-  height: 200vmax;
-  margin: -100vmax 0 0 -100vmax;
-  opacity: 0.14;
+  left: calc(100% - var(--an-sun-right) - var(--an-sun-size) / 2);
+  top: calc(var(--an-sun-top) + var(--an-sun-size) / 2);
+  width: calc(var(--an-sun-size) * 9);
+  height: calc(var(--an-sun-size) * 9);
+  margin: calc(var(--an-sun-size) * -4.5) 0 0 calc(var(--an-sun-size) * -4.5);
+  opacity: 0.16;
   background: repeating-conic-gradient(from 0deg, var(--an-ink) 0deg 0.35deg, transparent 0.35deg 4.2deg);
   animation: an-spin calc(var(--an-anim) * 240s) linear infinite;
-  mask-image: radial-gradient(closest-side, transparent 12%, #000 46%, transparent 72%);
-  -webkit-mask-image: radial-gradient(closest-side, transparent 12%, #000 46%, transparent 72%);
+  /* closest-side = 半个光轮 = 4.5 倍太阳直径：0.12 → 刚从太阳边缘起步，
+     0.78 → 光线在 3.5 倍直径处消失，正好是一圈"太阳芒" */
+  mask-image: radial-gradient(closest-side, transparent 12%, #000 42%, transparent 78%);
+  -webkit-mask-image: radial-gradient(closest-side, transparent 12%, #000 42%, transparent 78%);
 }
 
 .app[data-mode="anime"] .an-bg__petals {
@@ -274,6 +285,12 @@
   position: relative;
   display: grid;
   place-items: center;
+  /* 「封面 + 标题」整组在左栏里居中。
+     左栏本身约半屏宽、分镜格只有两百多 px，直接按栏居中会把整组按在窗口最左边
+     （1440 宽窗口下封面中心落在 23% 处，左边一片空、右边又离歌词很远）。这里给
+     左栏留一段**左侧内缩**，整组于是居中在缩进后的区域里、更靠窗口中间；
+     右栏（歌词）与它的位置完全不受影响 —— 只动这一格的内容盒，不动网格。 */
+  padding-inline-start: calc(170px * var(--an-fit, 1));
   min-width: 0;
   min-height: 0;
   will-change: transform;
@@ -471,6 +488,11 @@
   --fxl-size-active: calc(var(--fxl-size) * 1.34);
   --fxl-dim: 0.46;
   --fxl-gap: calc(3px * var(--an-fit, 1));
+  /* ★ 取消 fx-lyrics.css 默认的 860px 固定行宽上限。
+     那个上限是**不跟 --an-fit 缩放**的：窗口一变大（尤其投到 1440p / 4K 桌面上），
+     字号跟着 --an-fit 放大、行宽却卡死在 860px，于是出现了"栏宽明显够、歌词还是
+     换行"。歌词栏本身就是半个窗口，把行宽交还给它自己的宽度即可。 */
+  --fxl-measure: 100%;
 }
 
 /* 极淡的一圈纸色描边：不用底色块也能把文字从网点 / 线条里抬出来 */

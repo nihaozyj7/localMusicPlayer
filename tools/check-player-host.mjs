@@ -461,8 +461,9 @@ async function main() {
   await send("Emulation.clearDeviceMetricsOverride");
 
   /* 8b. 「星阵咏唱」：纵深舞台必须真的搭起来 ——
-        中景法阵画布有分辨率、法器核心挂了封面、歌词是散落的符文而不是滚动列表、
-        整窗深空背景层在、镜头位移真的写到了歌词层的 transform 上。 */
+        中景法阵画布有分辨率、封面是整窗模糊底图、歌词是散落的符文而不是滚动列表、
+        整窗深空背景层在、镜头位移真的写到了歌词层的 transform 上；
+        舞台铺满整窗，而歌词 / HUD 只落在安全区（标题栏 + 头部 / 底栏之间）。 */
   await send("Page.navigate", { url: `${BASE}?probe=1&view=player&pv=arcanum&playing=1` });
   await sleep(2200);
   const arcanum = await evaluate(`(() => {
@@ -471,7 +472,8 @@ async function main() {
     const scene = document.querySelector(".ar-scene");
     const dust = document.querySelector(".ar-dust");
     const runes = document.querySelector(".ar-runes");
-    const art = document.querySelector(".ar-core__art");
+    const cover = document.querySelector(".ar-void__cover");
+    const hud = document.querySelector(".ar-hud");
     // ★ 取「当前句」的单元，而不是文档里第一个 .ar-line：窗口里前面还有已经
     // 唱完的句子，它们停在"符文"状态、本来就没有入场动画。
     const line = document.querySelector('.ar-line[data-state="active"]');
@@ -479,11 +481,32 @@ async function main() {
     const bg = document.getElementById("skin-background");
     return {
       skin: pv ? pv.dataset.skin : "",
+      vh: window.innerHeight,
       bgHidden: bg ? bg.hidden : true,
       hasVoid: Boolean(document.querySelector(".ar-void")),
       scenePixels: scene ? scene.width * scene.height : 0,
       dustPixels: dust ? dust.width * dust.height : 0,
-      coreHasCover: Boolean(art && art.getAttribute("src")),
+      // 封面现在只出现在整窗背景层：一张模糊底图，舞台里没有圆形封面
+      bgCover: Boolean(cover && cover.getAttribute("src")),
+      bgCoverFilter: cover ? getComputedStyle(cover).filter : "",
+      hasCore: Boolean(document.querySelector(".ar-core")),
+      // 舞台铺满整窗 + 安全区（歌词 / HUD 不许进标题栏与底栏）
+      stageRect: (() => {
+        const r = stage.getBoundingClientRect();
+        return { t: Math.round(r.top), h: Math.round(r.height) };
+      })(),
+      safe: (() => {
+        const cs = getComputedStyle(stage);
+        return {
+          top: parseFloat(cs.getPropertyValue("--ar-safe-top")) || 0,
+          bottom: parseFloat(cs.getPropertyValue("--ar-safe-bottom")) || 0,
+        };
+      })(),
+      hudTop: hud ? Math.round(hud.getBoundingClientRect().top) : -1,
+      lineCenters: [...document.querySelectorAll(".ar-line")].map((e) => {
+        const r = e.getBoundingClientRect();
+        return Math.round(r.top + r.height / 2);
+      }),
       lineCount: document.querySelectorAll(".ar-line").length,
       activeLines: document.querySelectorAll('.ar-line[data-state="active"]').length,
       unitCount: unit ? line.querySelectorAll(".ar-unit").length : 0,
@@ -494,7 +517,6 @@ async function main() {
       kinds: unit ? [...line.querySelectorAll(".ar-unit")].map((e) => e.dataset.kind) : [],
       runesTransform: runes ? runes.style.transform : "",
       unitAnim: unit ? getComputedStyle(unit).animationName : "",
-      coreSize: Math.round((document.querySelector(".ar-core") || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width),
       fit: stage ? getComputedStyle(stage).getPropertyValue("--ar-fit").trim() : "",
     };
   })()`);
@@ -508,9 +530,26 @@ async function main() {
     JSON.stringify(arcanum)
   );
   check(
-    "星阵咏唱：封面变成法阵中心的法器（不再是左边一栏）",
-    arcanum?.coreHasCover === true && arcanum?.coreSize > 80,
-    JSON.stringify({ cover: arcanum?.coreHasCover, core: arcanum?.coreSize })
+    "星阵咏唱：封面变成整窗模糊底图（圆形封面已移除）",
+    arcanum?.bgCover === true && /blur/.test(arcanum?.bgCoverFilter || "") && arcanum?.hasCore === false,
+    JSON.stringify({ cover: arcanum?.bgCover, filter: arcanum?.bgCoverFilter, core: arcanum?.hasCore })
+  );
+  check(
+    "星阵咏唱：舞台铺满整窗（法阵画到标题栏 / 底栏后面）",
+    arcanum?.stageRect?.t === 0 && Math.abs(Number(arcanum?.stageRect?.h) - arcanum?.vh) <= 1,
+    JSON.stringify({ stage: arcanum?.stageRect, vh: arcanum?.vh })
+  );
+  check(
+    "星阵咏唱：歌词 / HUD 仍留在安全区内（不进标题栏与底栏）",
+    Number(arcanum?.safe?.top) > 0 &&
+      Number(arcanum?.safe?.bottom) > 0 &&
+      arcanum?.hudTop >= Number(arcanum?.safe?.top) &&
+      Array.isArray(arcanum?.lineCenters) &&
+      arcanum.lineCenters.length > 0 &&
+      arcanum.lineCenters.every(
+        (c) => c >= Number(arcanum.safe.top) && c <= arcanum.vh - Number(arcanum.safe.bottom)
+      ),
+    JSON.stringify({ safe: arcanum?.safe, hudTop: arcanum?.hudTop, centers: arcanum?.lineCenters, vh: arcanum?.vh })
   );
   check(
     "星阵咏唱：歌词铺在互不重叠的横带上（同屏没有两行落在同一条带）",
@@ -571,6 +610,38 @@ async function main() {
     JSON.stringify(reducedMotion)
   );
   await send("Emulation.setEmulatedMedia", { features: [] });
+
+  /* 8d. 后台（最小化 / 托盘）时 commit() 仍然必须广播 ——
+         真实事故：窗口不可见时 rAF 被**挂起**（不是变慢，是这一帧永远不来），
+         而"自动下一首"这条链只有这一处异步：
+           ended → playNext → playSong → commit → notify → syncAudio
+         断在 commit 上就表现成「播完不切下一首，点开主界面又自己切过去了」。
+         这里把 rAF 换成空操作、把 visibilityState 伪装成 hidden，
+         验证 commit() 依然能在宏任务里把订阅者跑起来。 */
+  const hiddenFlush = await evaluate(`(async () => {
+    const store = await import("/js/store.js");
+    let hits = 0;
+    const off = store.subscribe(() => { hits += 1; });
+    const realRaf = window.requestAnimationFrame;
+    const realCancel = window.cancelAnimationFrame;
+    const realVisibility = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState");
+    window.requestAnimationFrame = () => 0; // 模拟「rAF 永远不回调」
+    window.cancelAnimationFrame = () => {};
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    store.commit();
+    await new Promise((r) => setTimeout(r, 150));
+    window.requestAnimationFrame = realRaf;
+    window.cancelAnimationFrame = realCancel;
+    if (realVisibility) Object.defineProperty(Document.prototype, "visibilityState", realVisibility);
+    else delete document.visibilityState;
+    off();
+    return { hits };
+  })()`);
+  check(
+    "后台（最小化 / 托盘）时 commit() 仍会广播（自动下一首不会卡住）",
+    Number(hiddenFlush?.hits) > 0,
+    JSON.stringify(hiddenFlush)
+  );
 
   /* 9. 设置里的主题 / 样式卡片：选中热区是卡片内部的按钮，且内置项不出现「移除」
         （删除按钮只能放在按钮外面 —— 嵌套 button 会被解析器拆开，卡片结构会散） */
