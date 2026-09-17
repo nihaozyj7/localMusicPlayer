@@ -488,6 +488,10 @@ async function main() {
       activeLines: document.querySelectorAll('.ar-line[data-state="active"]').length,
       unitCount: unit ? line.querySelectorAll(".ar-unit").length : 0,
       modes: unit ? unit.dataset.mode : "",
+      // 每句话固定落在 index % 6 条横带之一：同屏出现重复的行带 = 歌词压在一起
+      bands: [...document.querySelectorAll(".ar-line")].map((e) => e.dataset.band),
+      // 英文歌应当按词成单元（中文是逐字）
+      kinds: unit ? [...line.querySelectorAll(".ar-unit")].map((e) => e.dataset.kind) : [],
       runesTransform: runes ? runes.style.transform : "",
       unitAnim: unit ? getComputedStyle(unit).animationName : "",
       coreSize: Math.round((document.querySelector(".ar-core") || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width),
@@ -507,6 +511,14 @@ async function main() {
     "星阵咏唱：封面变成法阵中心的法器（不再是左边一栏）",
     arcanum?.coreHasCover === true && arcanum?.coreSize > 80,
     JSON.stringify({ cover: arcanum?.coreHasCover, core: arcanum?.coreSize })
+  );
+  check(
+    "星阵咏唱：歌词铺在互不重叠的横带上（同屏没有两行落在同一条带）",
+    Array.isArray(arcanum?.bands) &&
+      arcanum.bands.length >= 4 &&
+      new Set(arcanum.bands).size === arcanum.bands.length &&
+      arcanum.bands.every((b) => b !== undefined && Number(b) >= 0 && Number(b) < 6),
+    JSON.stringify(arcanum?.bands)
   );
   check(
     "星阵咏唱：歌词是散落的符文，当前句有入场魔法且镜头已经落在它身上",

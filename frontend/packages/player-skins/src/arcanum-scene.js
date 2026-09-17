@@ -188,8 +188,12 @@ export function createScene(canvas) {
   for (let i = 0; i < 4; i += 1) pulses.push({ live: false, t: 0, r0: 0, r1: 0 });
 
   let gradDisc = null;
+  let gradRing = null;
   let gradVignette = null;
   let gradBeam = null;
+  /** 法阵外圈那圈波纹线：72 个采样点，快起慢落地跟着频谱起伏 */
+  const WAVE_N = 72;
+  const wave = new Float32Array(WAVE_N);
   const fog = [];
   for (let i = 0; i < 3; i += 1) fog.push({ ph: i * 2.1, r: 100, grad: null });
 
@@ -249,6 +253,13 @@ export function createScene(canvas) {
     gradDisc.addColorStop(0, rgba(tinted[1], 0.2));
     gradDisc.addColorStop(0.62, rgba(tinted[1], 0.07));
     gradDisc.addColorStop(1, rgba(tinted[1], 0));
+
+    // 波纹环的环形底衬（绝对坐标：填充时不要再 translate 这个 ctx）
+    gradRing = g.createRadialGradient(cx, cy, R * 1.0, cx, cy, R * 1.62);
+    gradRing.addColorStop(0, rgba(tinted[0], 0));
+    gradRing.addColorStop(0.3, rgba(tinted[0], 0.18));
+    gradRing.addColorStop(0.66, rgba(tinted[1], 0.1));
+    gradRing.addColorStop(1, rgba(tinted[1], 0));
 
     gradVignette = g.createRadialGradient(cx, cy, R * 0.5, cx, cy, Math.max(W, H) * 0.78);
     gradVignette.addColorStop(0, "rgba(0,0,0,0)");
@@ -334,7 +345,7 @@ export function createScene(canvas) {
     /**
      * @param {number} t 秒（累计）
      * @param {number} dt 秒
-     * @param {{low:number,bass:number,mid:number,high:number,energy:number,onset:number,thunder:number,arcane:number,voidLevel:number,spin:number,alpha:number,camX:number,camY:number,zoom:number,playing:boolean}} s
+     * @param {{low:number,bass:number,mid:number,high:number,energy:number,onset:number,thunder:number,arcane:number,voidLevel:number,spin:number,alpha:number,camX:number,camY:number,zoom:number,playing:boolean,tempoPulse?:number,bands?:number[]|Float32Array|null,bandsLive?:boolean}} s
      */
     frame(t, dt, s) {
       if (!W || !H) return;
@@ -533,6 +544,88 @@ export function createScene(canvas) {
         }
         g.fill();
       }
+
+      // —— 法阵外圈：一圈随旋律起伏的波纹线 ——
+      // 需求「魔法阵周围可以弄一圈波纹线条随着旋律而起伏」。这里的做法是：
+      // 把整条频谱（不是几个标量）**镜像采样**到圆周上（低频落在左右两侧、
+      // 高频在上下），得到一条闭合的波峰曲线；再把它和一条缩小的内曲线连成
+      // 环带填充。快起慢落（0.5 / 0.12）是为了让它像"声浪"而不是"抖动"。
+      // 拿不到频谱时（fallback）走一条自走的呼吸正弦 + 歌词节拍脉冲，
+      // 于是没有 WebAudio 的宿主里这圈线依然会随句子起伏。
+      const bandCount = s.bands && s.bands.length ? s.bands.length : 0;
+      const bandsLive = Boolean(s.bandsLive && bandCount);
+      const beatPulse = clamp(s.tempoPulse || 0, 0, 1);
+      const waveRot = t * 0.12 * spin;
+      const waveBase = R * 1.18 * breathe;
+      const waveAmp = R * (0.065 + clamp(s.energy || 0, 0, 1) * 0.13 + beatPulse * 0.05);
+      for (let i = 0; i < WAVE_N; i += 1) {
+        const k = i / WAVE_N;
+        let target;
+        if (bandsLive) {
+          const mirror = Math.abs(k * 2 - 1);
+          const bi = Math.min(bandCount - 1, Math.floor(Math.pow(mirror, 1.3) * bandCount));
+          target = s.bands[bi] || 0;
+        } else {
+          // 回退（没有 WebAudio）：自走的呼吸波 + 歌词节拍脉冲，幅度做得和真频谱
+          // 一个量级，免得"没声卡"的宿主里这圈线细得看不见
+          target = 0.22 + 0.24 * Math.sin(k * Math.PI * 6 + t * 1.1) + beatPulse * 0.42;
+        }
+        const prev = wave[i];
+        wave[i] = prev + (target - prev) * (target > prev ? 0.5 : 0.12);
+      }
+
+      // 环带：外圈正向走一圈，再用内圈反向走回来，闭合成一条带状路径
+      g.lineWidth = 1.1;
+      g.beginPath();
+      for (let i = 0; i <= WAVE_N; i += 1) {
+        const idx = i % WAVE_N;
+        const ang = waveRot + (idx / WAVE_N) * TAU;
+        const r = waveBase + waveAmp * wave[idx];
+        const x = arrX + Math.cos(ang) * r;
+        const y = arrY + Math.sin(ang) * r;
+        if (i === 0) g.moveTo(x, y);
+        else g.lineTo(x, y);
+      }
+      for (let i = WAVE_N; i >= 0; i -= 1) {
+        const idx = i % WAVE_N;
+        const ang = waveRot + (idx / WAVE_N) * TAU;
+        const r = waveBase - R * 0.06 + waveAmp * 0.5 * wave[idx];
+        g.lineTo(arrX + Math.cos(ang) * r, arrY + Math.sin(ang) * r);
+      }
+      g.closePath();
+      g.globalAlpha = clamp(alpha, 0, 1);
+      g.fillStyle = gradRing;
+      g.fill();
+      g.globalAlpha = 1;
+
+      // 波峰上的亮线
+      g.strokeStyle = rgba(tinted[0], clamp(alpha * (0.3 + (s.energy || 0) * 0.45 + thunder * 0.35), 0, 1));
+      g.beginPath();
+      for (let i = 0; i <= WAVE_N; i += 1) {
+        const idx = i % WAVE_N;
+        const ang = waveRot + (idx / WAVE_N) * TAU;
+        const r = waveBase + waveAmp * wave[idx];
+        const x = arrX + Math.cos(ang) * r;
+        const y = arrY + Math.sin(ang) * r;
+        if (i === 0) g.moveTo(x, y);
+        else g.lineTo(x, y);
+      }
+      g.stroke();
+
+      // 波峰向外甩出的短线（只在明显起伏的地方画，避免成了一圈毛刺）
+      g.lineWidth = 1;
+      g.strokeStyle = rgba(tinted[2], clamp(alpha * 0.32, 0, 1));
+      g.beginPath();
+      for (let i = 0; i < WAVE_N; i += 2) {
+        const v = wave[i];
+        if (v < 0.28) continue;
+        const ang = waveRot + (i / WAVE_N) * TAU;
+        const r0 = waveBase + waveAmp * v;
+        const r1 = r0 + R * 0.05 * v;
+        g.moveTo(arrX + Math.cos(ang) * r0, arrY + Math.sin(ang) * r0);
+        g.lineTo(arrX + Math.cos(ang) * r1, arrY + Math.sin(ang) * r1);
+      }
+      g.stroke();
 
       // 中心七芒星 + 同心圆（法阵的「机芯」）
       g.save();

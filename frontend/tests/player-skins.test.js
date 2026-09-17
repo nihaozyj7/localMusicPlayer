@@ -36,10 +36,15 @@ import {
   FIT_MAX,
   // 「星阵咏唱」的纯逻辑（字素时间轴 / 段落剧本 / 七元素分析 / 跟随运镜）
   MIN_UNIT_MS,
+  MIN_SING_MS,
+  MAX_SING_MS,
+  LYRIC_BANDS,
   buildGraphemeTimeline,
   detectSections,
+  estimateWidthEm,
   planLine,
   resolveFocus,
+  tokenizeUnits,
   unitWeight,
   bandSplit,
   createElementAnalyzer,
@@ -321,6 +326,70 @@ test("buildGraphemeTimeline：极端短行也不会把标点压成零时长（�
   assert.ok(line.length > 0);
   for (const unit of line) assert.ok(unit.dur >= MIN_UNIT_MS, unit.ch);
   assert.deepEqual(buildGraphemeTimeline("", 0, 1000), []);
+});
+
+test("tokenizeUnits：英文按词切分，中文逐字，空白与标点各自成单元", () => {
+  const units = tokenizeUnits("fly me to the moon 月亮");
+  assert.deepEqual(
+    units.slice(0, 5).map((u) => u.text),
+    ["fly", " ", "me", " ", "to"]
+  );
+  assert.deepEqual(
+    units.slice(-2).map((u) => u.text),
+    ["月", "亮"]
+  );
+  assert.equal(units.find((u) => u.text === "fly").kind, "word");
+  assert.equal(units.find((u) => u.text === "月").kind, "char");
+  assert.equal(units.find((u) => u.text === " ").kind, "space");
+  // 逐字点亮落到英文歌里就是"一个词一个词地亮"
+  const timeline = buildGraphemeTimeline("fly me to the moon", 0, 5000);
+  assert.deepEqual(
+    timeline.map((u) => u.ch),
+    ["fly", " ", "me", " ", "to", " ", "the", " ", "moon"]
+  );
+  assert.equal(timeline.filter((u) => u.kind === "word").length, 5);
+});
+
+test("长间奏不会把一句歌词唱 30 秒：合理时长由字数决定", () => {
+  const text = "夜航西飞星光落在机翼";
+  const total = (line) => line.reduce((a, u) => a + u.dur, 0);
+  const normal = buildGraphemeTimeline(text, 0, 4000);
+  const longGap = buildGraphemeTimeline(text, 0, 30000);
+  // 30 秒的间奏与 4 秒的间隔给出的渲染时长是一样的（都被"字数上限"截住）
+  assert.ok(Math.abs(total(longGap) - total(normal)) < 1, total(longGap) + " vs " + total(normal));
+  assert.ok(total(longGap) < MAX_SING_MS + 1);
+  assert.ok(total(longGap) >= MIN_SING_MS - 1);
+  // 间隔比合理时长还短时（快歌）按间隔走 —— 不能硬拖
+  const fast = buildGraphemeTimeline(text, 0, 1200);
+  assert.ok(total(fast) < total(normal));
+});
+
+test("estimateWidthEm：中文比同字数的英文宽，空格最窄", () => {
+  assert.ok(estimateWidthEm("月亮") > estimateWidthEm("ab"));
+  assert.ok(estimateWidthEm(" ") < estimateWidthEm("a"));
+  assert.equal(estimateWidthEm(""), 0);
+});
+
+test("planLine：同屏 6 句落在 6 条不同横带上（歌词不重叠的结构性保证）", () => {
+  const lines = Array.from({ length: 14 }, (_, i) => ({ time: i * 3000, text: "第" + (i + 1) + "句歌词" }));
+  const endAt = (i) => (lines[i + 1] ? lines[i + 1].time : lines[i].time + 3000);
+  // 窗口 = [active-1, active+4] 共 6 句，行带必须两两不同
+  for (const active of [3, 5, 7, 9]) {
+    const bands = [];
+    for (let i = active - 1; i <= active + 4; i += 1) bands.push(planLine(lines[i], i, "verse", endAt).band);
+    assert.equal(new Set(bands).size, bands.length, "active=" + active + " → " + bands.join(","));
+  }
+  const plans = [...Array(14).keys()].map((i) => planLine(lines[i], i, "verse", endAt));
+  for (const p of plans) assert.ok(p.band >= 0 && p.band < LYRIC_BANDS, "band=" + p.band);
+  // 相邻两句的纵向落点至少差大半个行带（不会挤成一行）
+  assert.ok(Math.abs(plans[0].node.y - plans[1].node.y) > 0.05);
+});
+
+test("planLine：超长的句子会整体缩小，且不可能顶出舞台", () => {
+  const long = { time: 0, text: "这一句真的非常非常长长到几乎要跑出舞台右边去了一共三十多个字" };
+  const p = planLine(long, 0, "verse", () => 4000, { bands: 6, availableEm: 20, emToStageW: 0.03 });
+  assert.ok(p.fit < 1, "fit=" + p.fit);
+  assert.ok(Math.abs(p.node.x) + (p.widthEm * p.fit * 0.03) / 2 <= 0.5 + 1e-6, "x=" + p.node.x);
 });
 
 test("detectSections：重复句判副歌、副歌前判预副歌、最后 12% 判尾奏", () => {

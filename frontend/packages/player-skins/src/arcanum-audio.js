@@ -94,6 +94,14 @@ export function createElementAnalyzer(bandCount = 32) {
     elementSwitched: false,
     /** 频谱不可用时，由调用方写进来的歌词节拍脉冲 */
     tempoPulse: 0,
+    /**
+     * 平滑后的整条频谱（长度 = bandCount）。
+     * 给"法阵外圈那圈随旋律起伏的波纹线"用：它要的是**整条曲线的形状**，
+     * 而不是几个分组能量的标量。已经做过快起慢落，渲染层拿去直接用。
+     */
+    bands: new Float32Array(split.count),
+    /** 这一帧的 bands 是否来自真实频谱（false 时渲染层退回自走的呼吸波形） */
+    bandsLive: false,
 
     // —— 内部状态（下划线开头：渲染层不要读）——
     _lowRaw: 0,
@@ -118,11 +126,20 @@ export function createElementAnalyzer(bandCount = 32) {
   a.update = (bands) => {
     if (!bands || !bands.length) {
       a.live = false;
+      a.bandsLive = false;
       return;
     }
     a.live = true;
+    a.bandsLive = true;
     const n = bands.length;
     const s = a.split;
+
+    // 整条频谱：快起慢落，供波纹环使用（形状比精确值重要）
+    if (a.bands.length !== n) a.bands = new Float32Array(n);
+    for (let i = 0; i < n; i += 1) {
+      const v = clamp(bands[i] || 0, 0, 1);
+      a.bands[i] += (v - a.bands[i]) * (v > a.bands[i] ? 0.55 : 0.16);
+    }
     a._lowRaw = meanOf(bands, 0, Math.min(n, s.lowEnd));
     a._bassRaw = meanOf(bands, Math.min(n, s.lowEnd), Math.min(n, s.bassEnd));
     a._midRaw = meanOf(bands, Math.min(n, s.bassEnd), Math.min(n, s.midEnd));
@@ -176,6 +193,8 @@ export function createElementAnalyzer(bandCount = 32) {
       tHigh = on * 0.12;
       tEnergy = on * (0.16 + pulse * 0.14);
       // 回退模式下不给元素切换，也不给长音 / 停顿（那些只有真频谱才读得准）
+      // 波纹环要让位给"自走的呼吸波"，所以把整条频谱慢慢泄掉
+      for (let i = 0; i < a.bands.length; i += 1) a.bands[i] *= Math.exp(-d / 0.6);
       a.arcane *= Math.exp(-d / 0.5);
       a.voidLevel = on ? 0 : clamp(a.voidLevel + approach(d, 1.2), 0, 1);
       a.thunder *= Math.exp(-d / 0.3);

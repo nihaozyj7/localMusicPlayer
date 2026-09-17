@@ -195,6 +195,8 @@
      于是同一套设计值在主窗口与桌面上是同一个比例 */
   --ar-fit: 1;
   --ar-lsize: 16px;
+  /* 字号倍数：JS 会用 FONT_MUL 写一遍行内值（布局估算与 CSS 必须同源） */
+  --ar-lmul: 1.8;
 }
 
 .playerview[data-skin="arcanum"] .ar-scene,
@@ -311,8 +313,8 @@
   /* 镜头缩放要绕"焦点"发生（焦点在 (50%, 40%)，与计划里的基准点一致） */
   transform-origin: 50% 40%;
   font-family: var(--font-sans);
-  font-size: calc(var(--ar-lsize) * 2.2 * var(--ar-fit));
-  line-height: 1.12;
+  font-size: calc(var(--ar-lsize) * var(--ar-lmul, 1.8) * var(--ar-fit));
+  line-height: 1.15;
   /* 不做过渡：这个 transform 每帧都被 JS 重写 */
 }
 
@@ -344,8 +346,8 @@
   /* 唱完的句子要"飞"到法阵外环上变成符文 —— 这条过渡就是那一飞。
      只过渡 transform / opacity：都在合成器上。 */
   transition:
-    transform 1.8s var(--ease-out),
-    opacity 1s var(--ease);
+    transform 1.5s var(--ease-out),
+    opacity 0.9s var(--ease);
   will-change: auto;
 }
 
@@ -357,15 +359,22 @@
 
 /* 下一句：半透明、轻微模糊 —— 这是景深的"后面一层" */
 .playerview[data-skin="arcanum"] .ar-line[data-state="near"] {
-  opacity: 0.34;
-  filter: blur(1.2px);
+  opacity: 0.44;
+  filter: blur(0.8px);
   z-index: 1;
 }
 
-/* 更后面的句子：更小更暗更模糊 */
+/* 再往后 2~3 句：先"预告"在各自的横带上，更暗更模糊 */
+.playerview[data-skin="arcanum"] .ar-line[data-state="next"] {
+  opacity: 0.26;
+  filter: blur(1.5px);
+  z-index: 1;
+}
+
+/* 最远的 1~2 句：几乎只是一层影，到点了才被点亮 */
 .playerview[data-skin="arcanum"] .ar-line[data-state="far"] {
-  opacity: 0.16;
-  filter: blur(2.6px);
+  opacity: 0.14;
+  filter: blur(2.4px);
   z-index: 0;
 }
 
@@ -375,7 +384,9 @@
   color: var(--ar-ink-dim);
   filter: blur(0.6px);
   z-index: 1;
-  animation: ar-seal 3.4s var(--ease) forwards;
+  /* 2.8s 就走完（0.9s 的 opacity 过渡 + 这条动画）：整段飞行途中"几乎不占视觉"，
+     否则它穿过相邻行带时会短暂地看起来像两句叠在一起 */
+  animation: ar-seal 2.8s var(--ease) forwards;
   pointer-events: none;
 }
 
@@ -691,11 +702,15 @@
 /* 唱完之后缩成符文、淡出 */
 @keyframes ar-seal {
   0% {
-    opacity: 0.72;
+    opacity: 0.62;
   }
 
-  42% {
-    opacity: 0.46;
+  30% {
+    opacity: 0.3;
+  }
+
+  62% {
+    opacity: 0.08;
   }
 
   100% {
@@ -740,8 +755,10 @@
   opacity: 0.24;
 }
 
-.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-line[data-state="far"] {
-  opacity: 0.3;
+.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-line[data-state="next"],
+.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-line[data-state="far"],
+.playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-line[data-state="near"] {
+  opacity: 0.4;
   filter: none;
 }
 
@@ -782,8 +799,9 @@
 }
 
 .playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-line[data-state="past"],
+.playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-line[data-state="next"],
 .playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-line[data-state="far"] {
-  opacity: 0.24;
+  opacity: 0.26;
 }
 
 .playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-line[data-state="active"] {

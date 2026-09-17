@@ -53,14 +53,24 @@ export { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf, lyricsEmptyText } f
 export { applyFit, fitScale, fitScaleOf, FIT_REFERENCE, FIT_MIN, FIT_MAX } from "./fit.js";
 // 「星阵咏唱」用到的三块纯逻辑（零 DOM，可单测）
 export {
+  BAND_BOTTOM,
+  BAND_TOP,
   ENTRANCE_MODES,
-  SECTION_PROGRAMS,
+  FONT_MUL,
+  LYRIC_BANDS,
+  MAX_SING_MS,
+  MIN_SING_MS,
   MIN_UNIT_MS,
+  PER_UNIT_MS,
+  SECTION_PROGRAMS,
   buildGraphemeTimeline,
+  charWidthEm,
   detectSections,
+  estimateWidthEm,
   lineTextKey,
   planLine,
   resolveFocus,
+  tokenizeUnits,
   unitWeight,
 } from "./arcanum-timing.js";
 export { ELEMENT_HUE, ELEMENT_NAME, bandSplit, createElementAnalyzer } from "./arcanum-audio.js";

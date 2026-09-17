@@ -2,32 +2,52 @@
 /* ==========================================================================
    arcanum-timing.js — 「星阵咏唱」的时间轴与舞台剧本（纯计算，零 DOM）
    --------------------------------------------------------------------------
-   这个模块回答三个问题，全部是纯函数，所以可以单测、也可以被别的样式复用：
+   这个模块回答四个问题，全部是纯函数，所以可以单测、也可以被别的样式复用：
 
-     1. **每个字什么时候出现、出现多久？**
-        宿主只给整行歌词（{ time, text }），没有逐字时间。这里按「字素权重」
-        把行时长分配到每个字素上（CJK 满权、拉丁 0.62、标点 0.45、空白 0.35），
-        并保证每个字素至少 MIN_UNIT_MS —— 否则逗号会和后一个字一起入场，
-        把 endTime 也一起拖走（folia 的 tempera README 专门写过这个坑）。
+     1. **每个字/词什么时候出现、出现多久？**
+        宿主只给整行歌词（{ time, text }），没有逐字时间。
+          · 分词：中文逐字，**英文按词**（一个单词一个单元，"fly me to the moon"
+            是 5 个词而不是 14 个字母 —— 逐字母弹出的英文读起来是碎纸机）；
+          · 时长：按「字素权重」把**合理的演唱时长**分配到每个单元上
+            （CJK 满权、拉丁 0.62、标点 0.45、空白 0.35）；
+          · **合理时长由字数决定，不是由到下一句的间隔决定**：
+            中间隔了 30 秒间奏时，"一句歌词唱 30 秒"显然不对，所以
+            span = min(到下一句的间隔, 字数 × PER_UNIT_MS)。
+            唱完就停在那里等下一句（长音/间奏由法阵与粒子负责，不是硬拖文字）。
+          · 每个单元至少 MIN_UNIT_MS —— 否则逗号会和后一个字一起入场。
 
      2. **这一句属于哪个段落？**（主歌 / 预副歌 / 副歌 / 桥段 / 尾奏）
-        判据全部来自歌词本身，不依赖任何外部标记：
-          · 同一句文本第二次出现 → 副歌（副歌就是会重复的那几句）；
-          · 它前面 1~2 句 → 预副歌；
-          · 与上一句的间隔超过中位间隔的 2.2 倍 → 桥段 / 间奏（乐句被拉开）；
-          · 歌曲最后 12% → 尾奏。
-        这样同一首歌每次打开都是同一套剧本（确定性），不需要用户配置。
+        判据全部来自歌词本身：重复句 → 副歌；副歌前 1~2 句 → 预副歌；
+        与上一句的间隔超过中位间隔的 2.2 倍 → 桥段 / 间奏；最后 12% → 尾奏。
 
-     3. **这一句在舞台上怎么摆、每个字用哪种魔法入场？**
-        planLine() 用「行号 + 文本」当种子生成一套确定性布局：节点位置、倾斜、
-        每个字素的散落偏移与入场方式。同一首歌永远同一套（不会每次切歌都换一张
-        构图），不同句之间又足够不同。
+     3. **这一句摆在舞台的哪一个位置？**
+        ★ **按"行带"分配**：第 index 行固定落在第 (index % LYRIC_BANDS) 条横带上。
+        这是"歌词不重叠"的**结构性保证** —— 只要同屏显示的行数 ≤ 行带数，
+        相邻两句就不可能落在同一条带里（也就不可能压在一起），
+        而"下一句在下一行"的阅读顺序天然成立。带内再做一点水平/垂直抖动，
+        看起来仍然是散落在空中的咒语，而不是一张表格。
+
+     4. **每个字用哪种魔法入场？** 用「行号 + 文本」当种子生成确定性布局，
+        同一首歌永远同一套（不会每次切歌都换一张构图）。
    ========================================================================== */
 
 import { splitGraphemes } from "./fx-lyrics.js";
 
-/** 每个字素最短占用的时间（ms）。低于它的字素（标点、空白）会向邻居借时间。 */
+/** 每个单元最短占用的时间（ms）。低于它的单元（标点、空白）会向邻居借时间。 */
 export const MIN_UNIT_MS = 90;
+/** 一个"权重单位"合理唱多久（ms）：CJK 一个字 ≈ 240ms ≈ 4 字/秒 */
+export const PER_UNIT_MS = 240;
+/** 一句歌词的合理演唱时长的上下限（ms） */
+export const MIN_SING_MS = 900;
+export const MAX_SING_MS = 9000;
+/** 歌词字号相对用户设置的倍数（CSS 里读 --ar-lmul，两边必须一致） */
+export const FONT_MUL = 1.8;
+
+/** 歌词行带：同屏最多显示这么多行（= 不可能重叠） */
+export const LYRIC_BANDS = 6;
+/** 行带占舞台高度的范围（比例）：0.15 → 0.66 */
+export const BAND_TOP = 0.15;
+export const BAND_BOTTOM = 0.66;
 
 /** 十种入场方式（对应 arcanum.css 里的十个 @keyframes）。 */
 export const ENTRANCE_MODES = [
@@ -154,6 +174,10 @@ const RE_SPACE = /\s/;
 const RE_PUNCT = /[\u3000-\u303f\uff00-\uffef,.!?;:'"()<>~_—/\\|-]/;
 const RE_CJK = /[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
 const RE_LATIN = /[0-9A-Za-z]/;
+/** 可以连成一个"单词"的字符：拉丁 / 希腊 / 西里尔字母、数字、撇号与连字符 */
+const RE_WORDCHAR = /[0-9A-Za-z\u00c0-\u024f\u0370-\u03ff\u0400-\u04ff'\u2019-]/;
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
 /** 一个字素占多少「时间权重」（不是宽度，是它被唱/读出来的相对时长） */
 export function unitWeight(ch) {
@@ -167,38 +191,105 @@ export function unitWeight(ch) {
 }
 
 /**
- * 把一行文本铺成一条逐字素时间轴。
+ * 大概占多宽（em）。用来：
+ *   · 估出这一行会不会顶到舞台边上（超了就整体缩小一点，而不是让它出画）；
+ *   · 行带内计算水平落点。
+ * 数值是经验值（比 font-size:1em 略小，因为字面通常有侧边空隙）。
+ */
+export function charWidthEm(ch) {
+  const c = String(ch ?? "");
+  if (!c) return 0;
+  if (RE_SPACE.test(c)) return 0.32;
+  if (RE_CJK.test(c)) return 1;
+  if (RE_PUNCT.test(c)) return 0.5;
+  if (RE_LATIN.test(c)) return 0.56;
+  return 0.7;
+}
+
+export function estimateWidthEm(text) {
+  const chars = splitGraphemes(text);
+  let w = 0;
+  for (const ch of chars) w += charWidthEm(ch);
+  return w;
+}
+
+/**
+ * 把一行文本切成「咒语单元」。
+ *
+ * ★ 英文按**词**：连续的可连字符号攒成一个单元（"moon" 是一个单元），
+ *   于是逐字点亮在英文歌里就是"一个词一个词地亮"，而不是一个字母一个字母。
+ *   中文/日文/韩文仍然逐字，空白与标点各自一个单元（保留原位，排版不会走样）。
+ *
+ * @param {string} text
+ * @returns {Array<{ text: string, weight: number, kind: "word"|"char"|"space"|"punct" }>}
+ */
+export function tokenizeUnits(text) {
+  const chars = splitGraphemes(text);
+  /** @type {Array<{ text: string, weight: number, kind: "word"|"char"|"space"|"punct" }>} */
+  const out = [];
+  let buf = "";
+  let weight = 0;
+  const flush = () => {
+    if (!buf) return;
+    out.push({ text: buf, weight, kind: "word" });
+    buf = "";
+    weight = 0;
+  };
+  for (const ch of chars) {
+    if (RE_CJK.test(ch)) {
+      flush();
+      out.push({ text: ch, weight: 1, kind: "char" });
+    } else if (RE_SPACE.test(ch)) {
+      flush();
+      out.push({ text: ch, weight: 0.35, kind: "space" });
+    } else if (RE_WORDCHAR.test(ch)) {
+      buf += ch;
+      weight += unitWeight(ch);
+    } else {
+      flush();
+      out.push({ text: ch, weight: 0.45, kind: "punct" });
+    }
+  }
+  flush();
+  return out;
+}
+
+/**
+ * 把一行文本铺成一条逐单元时间轴。
  *
  * @param {string} text 行文本
  * @param {number} startMs 行起始（宿主给的 time）
  * @param {number} endMs 行结束（下一行的 time；没有下一行时由调用方给一个估计值）
- * @returns {Array<{ ch: string, time: number, dur: number }>}
+ * @returns {Array<{ ch: string, kind: string, time: number, dur: number }>}
  */
 export function buildGraphemeTimeline(text, startMs, endMs) {
-  const chars = splitGraphemes(text);
-  const n = chars.length;
+  const units = tokenizeUnits(text);
+  const n = units.length;
   if (!n) return [];
-  const span = Math.max(240, Number(endMs) - Number(startMs) || 0);
-  const weights = chars.map(unitWeight);
-  const sum = weights.reduce((a, b) => a + b, 0) || 1;
+  const start = Number(startMs) || 0;
+  // 到下一句的间隔（下限 240ms：极短的间奏不让它变成 0 时长）
+  const gap = Math.max(240, (Number(endMs) || 0) - start);
+  const totalWeight = units.reduce((a, u) => a + u.weight, 0) || 1;
+  // 合理演唱时长由字数决定 —— 中间有 30 秒间奏时不会"一句唱 30 秒"
+  const natural = clamp(totalWeight * PER_UNIT_MS, MIN_SING_MS, MAX_SING_MS);
+  const span = Math.min(gap, natural);
 
   /** @type {number[]} */
-  const durs = weights.map((w) => (span * w) / sum);
+  const durs = units.map((u) => (span * u.weight) / totalWeight);
 
-  // 保证最短时长：把低于 MIN_UNIT_MS 的抬上来，多出来的时间从「当前最长」的那几个
-  // 字素里按比例扣回（两轮足够收敛；不做更复杂的求解是因为这里不需要精确）。
+  // 保证最短时长：把低于 MIN_UNIT_MS 的抬上来，多出来的时间从"最长的那几个"
+  // 里按比例扣回（两轮足够收敛；这里不需要精确求解）。
   for (let pass = 0; pass < 2; pass += 1) {
     let deficit = 0;
-    let longest = 0;
+    let stretched = false;
     for (let i = 0; i < n; i += 1) {
       if (durs[i] < MIN_UNIT_MS) {
         deficit += MIN_UNIT_MS - durs[i];
         durs[i] = MIN_UNIT_MS;
-      } else if (durs[i] > longest) {
-        longest = durs[i];
+        stretched = true;
       }
     }
-    if (deficit <= 0 || longest <= 0) break;
+    if (!stretched || deficit <= 0) break;
     let pool = 0;
     for (let i = 0; i < n; i += 1) if (durs[i] > MIN_UNIT_MS) pool += durs[i] - MIN_UNIT_MS;
     if (pool <= 0) break;
@@ -210,9 +301,9 @@ export function buildGraphemeTimeline(text, startMs, endMs) {
   }
 
   const out = [];
-  let cursor = Number(startMs) || 0;
+  let cursor = start;
   for (let i = 0; i < n; i += 1) {
-    out.push({ ch: chars[i], time: cursor, dur: durs[i] });
+    out.push({ ch: units[i].text, kind: units[i].kind, time: cursor, dur: durs[i] });
     cursor += durs[i];
   }
   return out;
@@ -237,7 +328,6 @@ export function detectSections(lines) {
   const out = new Array(src.length).fill("verse");
   if (!src.length) return out;
 
-  // 间隔统计只取「正间隔」的中位数，异常间隔（拖进度条 / 缺行）不会带偏
   const gaps = [];
   for (let i = 1; i < src.length; i += 1) {
     const g = Number(src[i].time) - Number(src[i - 1].time);
@@ -246,7 +336,6 @@ export function detectSections(lines) {
   gaps.sort((a, b) => a - b);
   const median = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
 
-  // 计数：同一句出现第二次就是副歌
   const seen = new Map();
   for (const line of src) {
     const key = lineTextKey(line?.text);
@@ -263,7 +352,6 @@ export function detectSections(lines) {
   for (let i = 0; i < n; i += 1) {
     const pos = n > 1 ? i / (n - 1) : 0;
     const gap = i > 0 ? Number(src[i].time) - Number(src[i - 1].time) : 0;
-    // 长间隔 = 乐句被拉开：桥段 / 间奏
     const stretched = median > 0 && gap > median * 2.2 && gap > 3600;
     if (pos >= 0.88) out[i] = "outro";
     else if (stretched) out[i] = "bridge";
@@ -271,41 +359,38 @@ export function detectSections(lines) {
     else out[i] = "verse";
   }
 
-  // 副歌前面 1~2 句 → 预副歌（情绪爬升段）
   for (let i = 0; i < n; i += 1) {
     if (out[i] !== "verse") continue;
     if (out[i + 1] === "chorus" || out[i + 2] === "chorus") out[i] = "pre";
   }
-
-  // 最后一行如果是副歌就让它继续唱完，不硬切成尾奏
-  if (n > 3 && out[n - 1] === "chorus") out[n - 1] = "chorus";
   return out;
 }
 
-/** 取某个字素这一行里使用的入场方式 / 层级（供 CSS 与自检读取） */
-export function tierOf(ch, keyChance, roll) {
-  const c = String(ch ?? "");
-  if (!c || RE_SPACE.test(c)) return "link";
-  if (RE_PUNCT.test(c)) return "link";
-  if (RE_CJK.test(c)) return roll < keyChance * 2 ? "key" : "main";
-  const len = c.length;
-  if (len >= 2 || /[0-9]/.test(c)) return roll < keyChance ? "key" : "main";
-  return roll < keyChance * 0.6 ? "key" : "main";
+/** 单元层级：关键词大、亮、近；连接词小、暗、远 */
+export function tierOf(kind, text, keyChance, roll) {
+  if (kind === "space" || kind === "punct") return "link";
+  if (kind === "char") return roll < keyChance * 2 ? "key" : "main";
+  // 英文单词：长词当关键词（"forever" 比 "to" 重要）
+  const len = String(text ?? "").length;
+  if (len >= 6) return "key";
+  if (len <= 2) return "link";
+  return roll < keyChance ? "key" : "main";
 }
 
 /**
  * 为一行歌词生成舞台计划（纯数据）。
  *
- * 坐标采用**归一化舞台坐标**：x/y 都是视口宽/高的比例（0 = 正中，
- * 0.12 = 向右 12% 视口宽）。皮肤拿它乘上自己的容器尺寸即可 ——
- * 这样主窗口（1280×820）与桌面背景（2560×1440）上是同一套构图比例。
+ * 坐标是**归一化舞台坐标**：x/y 都是视口宽/高的比例（0 = 正中）。
+ * 皮肤拿它乘上自己的容器尺寸即可 —— 主窗口与桌面背景上是同一套构图比例。
  *
  * @param {{time:number,text:string}} line
  * @param {number} index 行号
  * @param {string} section 段落 id
  * @param {(i:number)=>number} endAtMs 取第 i 行的结束时间（通常是下一行的 time）
+ * @param {{bands?:number, top?:number, bottom?:number, availableEm?:number, emToStageW?:number}} [layout]
  */
-export function planLine(line, index, section, endAtMs) {
+export function planLine(line, index, section, endAtMs, layout) {
+  const opt = layout || {};
   const program = SECTION_PROGRAMS[section] || SECTION_PROGRAMS.verse;
   const text = String(line?.text ?? "");
   const start = Number(line?.time) || 0;
@@ -313,36 +398,57 @@ export function planLine(line, index, section, endAtMs) {
   const rnd = mulberry32(hashStr(index + ":" + text));
   const seed2 = mulberry32(hashStr(text + "@" + (index & 7)));
 
-  // —— 节点：整句在舞台上的落点 ——
-  // 节点偏移刻意收得比较小：镜头只会把节点"拽向"焦点（lean ≈ 0.6），
-  // 偏移太大时当前句会跑到画面边上，读起来就不是"焦点附近"了。
-  const side = hashStr(text) & 1 ? 1 : -1;
-  const nodeX = side * (0.03 + rnd() * 0.08) * program.spread;
-  const nodeY = (rnd() - 0.5) * 0.13 * program.spread;
-  const nodeR = (rnd() - 0.5) * 4.2;
-  const nodeS = program.sizeScale * (0.98 + rnd() * 0.05);
+  // —— 行带：这是"不重叠"的结构性保证（见文件头第 3 条）——
+  const bands = Math.max(2, Math.round(opt.bands || LYRIC_BANDS));
+  const band = ((index % bands) + bands) % bands;
+  const top = typeof opt.top === "number" ? opt.top : BAND_TOP;
+  const bottom = typeof opt.bottom === "number" ? opt.bottom : BAND_BOTTOM;
+  const step = (bottom - top) / (bands - 1);
+  const bandCenter = top + band * step;
+  // node.y 是相对画面焦点（40% 高度）的比例
+  const nodeY = bandCenter - 0.4 + (rnd() - 0.5) * step * 0.22;
 
-  // —— 逐字素：时间 + 层级 + 入场方式 + 散落偏移 ——
+  // —— 宽度估算 → 超宽的句子整体缩一点，并且不许顶出画 ——
+  const widthEm = estimateWidthEm(text) || 1;
+  const availableEm = Math.max(6, Number(opt.availableEm) || 40);
+  const fit = clamp(availableEm / widthEm, 0.42, 1);
+  const emToStageW = Number(opt.emToStageW) || 0.02;
+  const halfW = Math.min(0.46, (widthEm * fit * emToStageW) / 2);
+
+  const side = hashStr(text) & 1 ? 1 : -1;
+  const wantX = side * (0.02 + rnd() * 0.12) * program.spread;
+  const nodeX = clamp(wantX, -0.5 + halfW, 0.5 - halfW);
+  const nodeR = (rnd() - 0.5) * 3.4;
+  const nodeS = program.sizeScale * fit * (0.98 + rnd() * 0.05);
+
+  // —— 逐单元：时间 + 层级 + 入场方式 + 散落偏移 ——
   const timeline = buildGraphemeTimeline(text, start, end);
   const count = timeline.length;
   const half = Math.max(0, (count - 1) / 2);
   const units = timeline.map((u, i) => {
     const roll = seed2();
-    const tier = tierOf(u.ch, program.keyChance, roll);
+    const tier = tierOf(u.kind, u.ch, program.keyChance, roll);
     const mode = program.modes[Math.min(program.modes.length - 1, Math.floor(seed2() * program.modes.length))];
     const wave = Math.sin((i - half) * 0.74) * program.waveY;
-    const baseScale = tier === "key" ? 1.42 : tier === "link" ? 0.74 : 1;
+    // 英文的"关键词"放大要克制：一个单词放大后是往**两侧**长出去的，
+    // 1.34 倍会把后面的空格吃掉，读起来就是"Rooftoprain"。中文逐字放大没这个问题
+    // （字面本身有侧边空隙），所以两种粒度用两套倍数。
+    const keyScale = u.kind === "word" ? 1.1 : 1.34;
+    const baseScale = tier === "key" ? keyScale : tier === "link" ? (u.kind === "word" ? 0.94 : 0.78) : 1;
+    // 空格单元保持中性：它是词与词之间的呼吸，不参与散落 / 放大 / 倾斜
+    const isSpace = u.kind === "space";
     return {
       ch: u.ch,
+      kind: u.kind,
       time: u.time,
       dur: u.dur,
       tier,
       mode,
       // dx/dy 用 em：会跟着字号（以及窗口适配倍数）一起缩放，不需要 JS 换算
-      dx: (seed2() - 0.5) * 0.22,
-      dy: wave + (seed2() - 0.5) * program.jitterY,
-      dr: (seed2() - 0.5) * program.jitterR,
-      ds: baseScale * (0.94 + seed2() * 0.1),
+      dx: isSpace ? 0 : (seed2() - 0.5) * 0.2,
+      dy: isSpace ? 0 : wave + (seed2() - 0.5) * program.jitterY * 0.5,
+      dr: isSpace ? 0 : (seed2() - 0.5) * program.jitterR,
+      ds: isSpace ? 1 : baseScale * (0.95 + seed2() * 0.08),
       delayMs: Math.max(0, Math.round(u.time - start)),
       durMs: Math.round(Math.max(300, Math.min(900, u.dur * 2.6 + 220))),
     };
@@ -351,9 +457,12 @@ export function planLine(line, index, section, endAtMs) {
   return {
     index,
     section,
+    band,
     start,
     end,
     text,
+    fit,
+    widthEm,
     node: { x: nodeX, y: nodeY, r: nodeR, s: nodeS },
     program,
     units,
@@ -363,11 +472,11 @@ export function planLine(line, index, section, endAtMs) {
 }
 
 /**
- * 交汇点：算出「镜头现在该看哪一句」。
+ * 算出「镜头现在该看哪一句」。
  *
  * 规则来自需求：「最新歌词节点，提前 0.2~0.3 秒开始移动」。
  * 所以只要播放位置进入了下一句开始前的 lookahead 窗口，就把焦点交给下一句 ——
- * 镜头先动，字再出现，观感上是「镜头领着观众的视线」而不是被字拽着跑。
+ * 镜头先动，字再出现。
  *
  * @param {Array<{time:number,text:string}>} lines
  * @param {number} positionMs

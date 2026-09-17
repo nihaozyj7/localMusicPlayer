@@ -36,7 +36,17 @@ import { applyFit } from "../fit.js";
 import { prefersReducedMotion } from "../fx-camera.js";
 import { ELEMENT_NAME, createElementAnalyzer } from "../arcanum-audio.js";
 import { createStageCamera } from "../arcanum-stage.js";
-import { SECTION_PROGRAMS, detectSections, hashStr, planLine, resolveFocus } from "../arcanum-timing.js";
+import {
+  BAND_BOTTOM,
+  BAND_TOP,
+  FONT_MUL,
+  LYRIC_BANDS,
+  SECTION_PROGRAMS,
+  detectSections,
+  hashStr,
+  planLine,
+  resolveFocus,
+} from "../arcanum-timing.js";
 import { createDust, createScene } from "../arcanum-scene.js";
 import "./arcanum.css";
 
@@ -56,9 +66,16 @@ const FPS_IDLE = 22;
 const IDLE_STOP_MS = 6000;
 /** 镜头提前量：下一句开始前多久就开始移动（需求给的是 0.2~0.3s） */
 const LEAD_MS = 260;
-/** 歌词窗口：当前句前保留 3 句（要飞出去当符文），后保留 2 句（当"预感"） */
-const BACK = 3;
-const FWD = 2;
+/**
+ * 歌词窗口。
+ *
+ * ★ BACK + FWD + 1 必须 ≤ LYRIC_BANDS（6）：每句话固定落在第 (index % 6) 条
+ * 横行带上，同屏显示的行数不超过行带数时，"任意两句都不可能落在同一条带上"
+ * —— 这就是"歌词永远不重叠"的结构性保证（见 arcanum-timing.js 文件头）。
+ * 前面只留 1 句：上一句正在飞向法阵外环，留 1 句够它飞完。
+ */
+const BACK = 1;
+const FWD = 4;
 
 /* ==========================================================================
    小工具
@@ -222,13 +239,33 @@ function nextLineTime(index) {
   return next ? Number(next.time) : Number(cur.time) + 4200;
 }
 
+/**
+ * 舞台布局参数（交给纯逻辑模块算行带与宽度适配）。
+ *
+ * 字号与窗口尺寸都会影响"这一句占多宽、会不会顶到边上"，所以它必须在
+ * 字号变化与窗口尺寸变化时重算 —— 重算之后计划缓存整个作废（见 rebuildLines）。
+ */
+function layoutConfig() {
+  const fit = inst.fitScale || 1;
+  const fontPx = Math.max(6, (inst.lyricSize || 16) * FONT_MUL * fit);
+  const W = Math.max(160, inst.stageW || 160);
+  return {
+    bands: LYRIC_BANDS,
+    top: BAND_TOP,
+    bottom: BAND_BOTTOM,
+    // 可用宽度按 86% 舞台宽算（两侧各留 7% 余量）
+    availableEm: Math.max(8, (W * 0.86) / fontPx),
+    emToStageW: fontPx / W,
+  };
+}
+
 /** 取（并按需生成）一行的舞台计划；缓存超出上限就清掉离当前太远的 */
 function planFor(index) {
   if (!inst) return null;
   if (!Number.isFinite(index) || index < 0 || index >= inst.lines.length) return null;
   const cached = inst.plans.get(index);
   if (cached) return cached;
-  const plan = planLine(inst.lines[index], index, inst.sections[index] || "verse", nextLineTime);
+  const plan = planLine(inst.lines[index], index, inst.sections[index] || "verse", nextLineTime, layoutConfig());
   inst.plans.set(index, plan);
   if (inst.plans.size > 40) {
     for (const key of [...inst.plans.keys()]) {
@@ -255,7 +292,9 @@ function sealPoint(index) {
     // 行元素的基准点在 (50%, 40%)，所以这里要减掉基准点
     x: ((px - W / 2) / W) * 100,
     y: ((py - H * 0.4) / H) * 100,
-    r: ((angle * 180) / Math.PI) * 0.05,
+    // 倾角夹在 ±24°：早先直接用黄金角换算（index 8 就转到 55°）会横七竖八，
+    // 而且旋转后的外接盒很大，飞行途中容易和相邻行带的矩形相交
+    r: (((angle * 180) / Math.PI) % 48) - 24,
     s: 0.34,
   };
 }
@@ -281,6 +320,8 @@ function createLineEl(index) {
   el.dataset.index = String(index);
   el.dataset.time = String(line.time);
   el.dataset.section = plan.section;
+  // 行带编号：自检脚本用它验证"同屏没有两行落在同一条带上"
+  el.dataset.band = String(plan.band);
   el.dataset.state = "todo";
   el.dataset.enter = "0";
 
@@ -294,6 +335,8 @@ function createLineEl(index) {
     span.textContent = u.ch;
     span.dataset.mode = u.mode;
     span.dataset.tier = u.tier;
+    // 单元种类：char（中/日/韩逐字）| word（英文一个单词一个单元）| space | punct
+    span.dataset.kind = u.kind || "char";
     span.dataset.hold = "todo";
     span.style.setProperty("--ar-dx", u.dx.toFixed(3) + "em");
     span.style.setProperty("--ar-dy", u.dy.toFixed(3) + "em");
@@ -311,10 +354,12 @@ function createLineEl(index) {
 function setLineState(el, index, activeIndex) {
   const plan = planFor(index);
   if (!plan) return;
+  const ahead = index - activeIndex;
   let state = "far";
-  if (index === activeIndex) state = "active";
-  else if (index < activeIndex) state = "past";
-  else if (index === activeIndex + 1) state = "near";
+  if (ahead === 0) state = "active";
+  else if (ahead < 0) state = "past";
+  else if (ahead === 1) state = "near";
+  else if (ahead <= 3) state = "next";
 
   if (el.dataset.state !== state) {
     el.dataset.state = state;
@@ -333,15 +378,31 @@ function setLineState(el, index, activeIndex) {
       return;
     }
   }
-  const scale = state === "active" ? plan.node.s : state === "near" ? plan.node.s * 0.62 : plan.node.s * 0.5;
+  // 越靠后越小：当前句最大最亮，后面 4 句依次退远（景深）
+  const emphasis = state === "active" ? 1 : state === "near" ? 0.74 : state === "next" ? 0.62 : 0.52;
   applyNodeVars(
     el,
     plan.node.x * 100,
     plan.node.y * 100,
-    state === "active" ? plan.node.r : plan.node.r * 0.5,
-    scale
+    state === "active" ? plan.node.r : plan.node.r * 0.45,
+    plan.node.s * emphasis
   );
   if (el.dataset.sealed === "1" && state !== "past") delete el.dataset.sealed;
+}
+
+/**
+ * 布局参数变了（字号 / 窗口尺寸）：把计划缓存整个作废并重建行。
+ * 计划里烘了"占多宽、落在哪条带的哪一段"，不重算的话窗口一改大小，
+ * 长句子就会顶到边上（甚至出画）。
+ */
+function rebuildLines() {
+  if (!inst) return;
+  inst.plans = new Map();
+  const active = inst.activeIndex;
+  for (const el of inst.lineEls.values()) el.remove();
+  inst.lineEls = new Map();
+  inst.activeIndex = -2;
+  setActive(active, true);
 }
 
 /**
@@ -350,6 +411,9 @@ function setLineState(el, index, activeIndex) {
  * 只渲染 [active-BACK, active+FWD] 这几行：一首 60 行的歌没必要在 DOM 里放
  * 60 个绝对定位的句子（每句还有几十个字素）。旧句子的「飞向法阵」是一段 CSS
  * 过渡 + 动画，元素被复用，所以过渡不会因为重建 DOM 而中断。
+ *
+ * ★ 窗口宽度（6 行）≤ 行带数（6）：未唱到的几句被**铺开**在各条横带上
+ * （而不是堆在同一个位置），到点了再依次亮起来。
  */
 function syncWindow(activeIndex) {
   if (!inst) return;
@@ -475,6 +539,14 @@ function applyOptions() {
   inst.shell.dataset.passive = interactive ? "0" : "1";
   inst.shell.dataset.lyrics = showLyrics ? "on" : "off";
   inst.shell.style.setProperty("--ar-lsize", size + "px");
+  // 字号倍数只写一次（JS 与 CSS 必须一致：布局估算用的就是 FONT_MUL）
+  inst.shell.style.setProperty("--ar-lmul", String(FONT_MUL));
+
+  // 字号变了 → 每句的宽度与行带落点都要重算
+  if (inst.lyricSize !== size) {
+    inst.lyricSize = size;
+    rebuildLines();
+  }
 
   if (!anim) {
     stopLoop();
@@ -601,6 +673,10 @@ function paint(now, dt) {
     camY,
     zoom: cs.zoom,
     playing: inst.playing,
+    // 法阵外圈那圈波纹线要的是**整条频谱的形状**，不是几个分组能量
+    bands: A.bands,
+    bandsLive: A.bandsLive,
+    tempoPulse: inst.tempoPulse,
   };
   const t = now / 1000;
   inst.scene.frame(t, dt, st);
@@ -754,6 +830,9 @@ export default defineSkin({
       prog: { alpha: 0.3, spin: 0.5, particles: 0.5, camZoom: 0, camSpeed: 0.85 },
       eqVars: {},
       tempoPulse: 0,
+      /** 用户设置的歌词字号（px）与窗口适配倍数：行带布局要用它们估宽度 */
+      lyricSize: 0,
+      fitScale: 1,
       stageW: Math.max(1, rect.width),
       stageH: Math.max(1, rect.height),
       raf: 0,
@@ -808,23 +887,24 @@ export default defineSkin({
     }
 
     /* —— 窗口适配比例（见 fit.js）：整窗背景投到桌面时会等比放大 —— */
-    applyFit(shell, "--ar-fit");
+    inst.fitScale = applyFit(shell, "--ar-fit");
 
-    /* —— 尺寸变化：画布跟上 + 外环符文落点重算 —— */
+    /* —— 尺寸变化：画布跟上 + 歌词行带 / 落点重算 —— */
     if (typeof ResizeObserver === "function") {
       const ro = new ResizeObserver(() => {
         if (!inst) return;
         const r = shell.getBoundingClientRect();
+        const grew = Math.abs(r.width - inst.stageW) > 8 || Math.abs(r.height - inst.stageH) > 8;
         inst.stageW = Math.max(1, r.width);
         inst.stageH = Math.max(1, r.height);
         cam.resize(inst.stageW, inst.stageH);
         scene.resize();
         dust.resize();
-        applyFit(shell, "--ar-fit");
-        // 已经飞出去的那些句子要按新尺寸重新落点
-        for (const [i, el] of inst.lineEls) {
-          if (el.dataset.state === "past") setLineState(el, i, inst.activeIndex);
-        }
+        inst.fitScale = applyFit(shell, "--ar-fit");
+        // 舞台尺寸变了 → 每句的宽度适配与行带落点都要重算（不清缓存会长句子出画）
+        if (grew) rebuildLines();
+        else
+          for (const [i, el] of inst.lineEls) if (el.dataset.state === "past") setLineState(el, i, inst.activeIndex);
         if (!inst.anim) paintOnce();
       });
       ro.observe(shell);
