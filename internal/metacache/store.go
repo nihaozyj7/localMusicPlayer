@@ -714,6 +714,59 @@ func (s *Store) DeleteLyrics(songID string) (bool, error) {
 	return true, saveErr
 }
 
+// ClearAll 清空某一类缓存（封面或歌词）：删文件 + **只重写一次**索引。
+//
+// 为什么需要它：上层「清空缓存」原来是「逐个 DeleteCover / DeleteLyrics」，
+// 而那两个方法每次都会 saveIndexLocked —— 即重新序列化并原子重写**整个**
+// index.json（还带 fsync）。500 首缓存 ⇒ 500 次全文件写入 + 500 次 fsync，
+// 且每次都短暂持有 store 锁，期间所有封面/歌词读接口都被堵住。
+//
+// 语义与逐个删一致：文件删失败只留下孤儿文件（不影响正确性），索引一定清空。
+// 返回实际删掉的条目数。
+func (s *Store) ClearAll(kind Kind) (int, error) {
+	s.mu.Lock()
+	s.ensureLoadedLocked()
+
+	// 先把「要删哪些文件」摘出来，索引与内存表当场清空，
+	// 这样下面的删文件与写索引都不必再持有锁。
+	var files []string
+	var deleted int
+	switch kind {
+	case KindCover:
+		for id, entry := range s.covers {
+			// 计的是**条目数**（多少首歌），与旧的逐个 DeleteCover 语义一致 ——
+			// 上层把返回值当作「清掉了多少首歌的封面」直接展示给用户，
+			// 如果改成数文件数，一首歌有多张封面就会报出比歌曲数更大的数字。
+			deleted++
+			for _, item := range entry.Items {
+				if item.File != "" {
+					files = append(files, item.File)
+				}
+			}
+			delete(s.covers, id)
+		}
+	case KindLyrics:
+		for id, entry := range s.lyrics {
+			deleted++
+			if entry.File != "" {
+				files = append(files, entry.File)
+			}
+			delete(s.lyrics, id)
+		}
+	default:
+		s.mu.Unlock()
+		return 0, fmt.Errorf("未知缓存类别: %s", kind)
+	}
+	// 索引重写只有这一次（这也是本方法存在的全部理由）。
+	err := s.saveIndexLocked(kind)
+	s.mu.Unlock()
+
+	for _, f := range files {
+		_ = os.Remove(filepath.Join(s.dir, string(kind), f))
+	}
+	return deleted, err
+}
+
 // LyricsIDs 返回所有已缓存歌词的歌曲 id（「把缓存写进文件」要遍历它）。
 func (s *Store) LyricsIDs() []string {
 	s.mu.Lock()

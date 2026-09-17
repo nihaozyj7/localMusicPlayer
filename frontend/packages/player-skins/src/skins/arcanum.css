@@ -36,20 +36,28 @@
    0. 调色板 —— 全部由主题令牌派生，换主题 / 切深浅色 / 封面取色都会跟着变
    -------------------------------------------------------------------------- */
 .app[data-mode="arcanum"] {
-  /* 星辉（主）/ 星尘（副）/ 余烬（点缀） */
-  --ar-a1: color-mix(in oklab, var(--accent) 86%, var(--text-1));
-  --ar-a2: color-mix(in oklab, var(--accent) 52%, var(--heart));
-  --ar-a3: color-mix(in oklab, var(--accent) 20%, var(--heart));
+  /* ★ 本样式**不消费主题令牌**：深空夜阵是一幅固定的画，主题却是多变的。
+     曾经这里全部由 var(--accent) / var(--text-1) / var(--bg-app) 派生，结果
+     内置主题正好是两个极端 —— light-minimal 的 --accent 是近黑 #16161c，
+     dark-minimal 的 --accent 是纯白 #ffffff。于是浅色主题下「星辉」变成一堆
+     近黑的线、「当前句歌词」变成近黑的字，压在深空上等于看不见；深空底色
+     （--bg-app 混出来的）也从「夜」变成了近白 #eceef4 的灰。
+     皮肤的契约**允许**取主题令牌（见 README「CSS 约定」），第三方样式想跟随
+     主题完全可以继续用；但这两个内置样式的美术方向是固定的，跟随主题只会
+     把画面弄坏，所以这里改成写死的常量，风格不再受外界主题影响。 */
+  --ar-a1: #dbe6ff;
+  --ar-a2: #8fa7e8;
+  --ar-a3: #e8c98a;
 
   /* 深空底色：比窗口底色更亮一点点 / 更深一点点，拉开纵深 */
-  --ar-b1: color-mix(in oklab, var(--bg-app) 86%, var(--accent));
-  --ar-b2: color-mix(in oklab, var(--bg-app) 58%, var(--c-black));
+  --ar-b1: #10132a;
+  --ar-b2: #05060f;
 
-  /* 文字层级：当前句用 --text-1，旧句靠透明度退到远处 */
-  --ar-ink: color-mix(in oklab, var(--text-1) 76%, transparent);
-  --ar-ink-dim: color-mix(in oklab, var(--text-1) 34%, transparent);
-  --ar-hair: color-mix(in oklab, var(--accent) 22%, transparent);
-  --ar-scrim: color-mix(in oklab, var(--bg-app) 88%, transparent);
+  /* 文字层级：当前句用 --ar-ink，旧句靠透明度退到远处 */
+  --ar-ink: rgba(244, 246, 255, 0.88);
+  --ar-ink-dim: rgba(244, 246, 255, 0.4);
+  --ar-hair: rgba(143, 167, 232, 0.22);
+  --ar-scrim: rgba(5, 6, 15, 0.88);
 
   /* 由 JS 每帧写入的元素电平（四根柱子）与重拍辉光 */
   --ar-eq0: 0.04;
@@ -94,15 +102,30 @@
 
 /* 底栏必须还能读：传输控件压在星空上不给一层纱是看不清的 */
 .app[data-mode="arcanum"][data-view="player"] .playerbar {
-  background: linear-gradient(
-    0deg,
-    var(--ar-scrim) 0,
-    color-mix(in oklab, var(--bg-app) 44%, transparent) 64%,
-    transparent 100%
-  );
+  background: linear-gradient(0deg, var(--ar-scrim) 0, rgba(5, 6, 15, 0.44) 64%, transparent 100%);
   border-top-color: var(--ar-hair);
   backdrop-filter: blur(calc(var(--glass-blur) * 0.4)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.4)) saturate(var(--glass-saturate));
+}
+
+/* 标题栏 / 侧边栏 / 底栏的文字与图标也压在固定深空上，所以颜色同样写死。
+   不写的话浅色主题下 --text-* 是近黑，落在深空上读不出来（这正是"样式被
+   主题影响"的另一种表现：不只是背景，连 chrome 的字都会跟着变）。
+   chrome 的**尺寸与布局**仍由宿主决定，这里只改颜色。 */
+.app[data-mode="arcanum"][data-view="player"] .titlebar,
+.app[data-mode="arcanum"][data-view="player"] .sidebar,
+.app[data-mode="arcanum"][data-view="player"] .playerbar {
+  color: var(--ar-ink);
+}
+
+.app[data-mode="arcanum"][data-view="player"] .titlebar button,
+.app[data-mode="arcanum"][data-view="player"] .sidebar button {
+  color: var(--ar-ink-dim);
+}
+
+.app[data-mode="arcanum"][data-view="player"] .titlebar button:hover,
+.app[data-mode="arcanum"][data-view="player"] .sidebar button:hover {
+  color: var(--ar-ink);
 }
 
 /* --------------------------------------------------------------------------
@@ -176,22 +199,24 @@
    零 JS 开销、resize 不用重算。 */
 .app[data-mode="arcanum"] .ar-void__stars {
   /* 16 颗静态星点：由 CSS 直接给背景，零 JS 开销、resize 不用重算。
-     尺寸做到 1.5~2.7px：再小在浅色主题下会看不见（深空底色本身就暗）。 */
+     尺寸做到 1.5~2.7px：再小就看不见了（深空底色本身就暗）。
+     白色星点写死 --ar-a1 / 这里的 rgba，不再取 --text-1 —— 浅色主题下
+     --text-1 是近黑 #14141a，星点会变成深空上的黑点。 */
   background-image:
     radial-gradient(2px 2px at 8% 14%, color-mix(in oklab, var(--ar-a1) 84%, transparent) 0, transparent 100%),
-    radial-gradient(1.6px 1.6px at 21% 32%, color-mix(in oklab, var(--text-1) 58%, transparent) 0, transparent 100%),
+    radial-gradient(1.6px 1.6px at 21% 32%, rgba(228, 234, 255, 0.58) 0, transparent 100%),
     radial-gradient(2.4px 2.4px at 34% 8%, color-mix(in oklab, var(--ar-a2) 74%, transparent) 0, transparent 100%),
-    radial-gradient(1.7px 1.7px at 46% 24%, color-mix(in oklab, var(--text-1) 50%, transparent) 0, transparent 100%),
+    radial-gradient(1.7px 1.7px at 46% 24%, rgba(228, 234, 255, 0.5) 0, transparent 100%),
     radial-gradient(2.2px 2.2px at 58% 12%, color-mix(in oklab, var(--ar-a1) 70%, transparent) 0, transparent 100%),
-    radial-gradient(1.5px 1.5px at 67% 30%, color-mix(in oklab, var(--text-1) 56%, transparent) 0, transparent 100%),
+    radial-gradient(1.5px 1.5px at 67% 30%, rgba(228, 234, 255, 0.56) 0, transparent 100%),
     radial-gradient(2.6px 2.6px at 78% 9%, color-mix(in oklab, var(--ar-a3) 70%, transparent) 0, transparent 100%),
-    radial-gradient(1.7px 1.7px at 91% 26%, color-mix(in oklab, var(--text-1) 46%, transparent) 0, transparent 100%),
+    radial-gradient(1.7px 1.7px at 91% 26%, rgba(228, 234, 255, 0.46) 0, transparent 100%),
     radial-gradient(1.9px 1.9px at 14% 58%, color-mix(in oklab, var(--ar-a1) 64%, transparent) 0, transparent 100%),
-    radial-gradient(1.5px 1.5px at 29% 74%, color-mix(in oklab, var(--text-1) 42%, transparent) 0, transparent 100%),
+    radial-gradient(1.5px 1.5px at 29% 74%, rgba(228, 234, 255, 0.42) 0, transparent 100%),
     radial-gradient(2.3px 2.3px at 41% 52%, color-mix(in oklab, var(--ar-a2) 68%, transparent) 0, transparent 100%),
-    radial-gradient(1.6px 1.6px at 55% 80%, color-mix(in oklab, var(--text-1) 48%, transparent) 0, transparent 100%),
+    radial-gradient(1.6px 1.6px at 55% 80%, rgba(228, 234, 255, 0.48) 0, transparent 100%),
     radial-gradient(2.1px 2.1px at 72% 62%, color-mix(in oklab, var(--ar-a1) 60%, transparent) 0, transparent 100%),
-    radial-gradient(1.5px 1.5px at 86% 78%, color-mix(in oklab, var(--text-1) 40%, transparent) 0, transparent 100%),
+    radial-gradient(1.5px 1.5px at 86% 78%, rgba(228, 234, 255, 0.4) 0, transparent 100%),
     radial-gradient(2.7px 2.7px at 96% 52%, color-mix(in oklab, var(--ar-a3) 62%, transparent) 0, transparent 100%),
     radial-gradient(1.7px 1.7px at 5% 88%, color-mix(in oklab, var(--ar-a1) 54%, transparent) 0, transparent 100%);
   opacity: 1;
@@ -204,11 +229,7 @@
 }
 
 .app[data-mode="arcanum"] .ar-void__vignette {
-  background: radial-gradient(
-    86% 78% at 50% 44%,
-    transparent 34%,
-    color-mix(in oklab, var(--c-black) 62%, transparent) 100%
-  );
+  background: radial-gradient(86% 78% at 50% 44%, transparent 34%, rgba(0, 0, 0, 0.62) 100%);
 }
 
 /* 详情页头部（返回 / 封面 / 样式按钮）在铺满整窗的舞台之上：
@@ -222,13 +243,13 @@
    3. 舞台（ctx.root = .playerview__stage 内的 .ar-stage）
    -------------------------------------------------------------------------- */
 .playerview[data-skin="arcanum"] {
-  /* 深空底必须是实色：只写 background: none 的话，宿主 layout.css 的
-     var(--bg-window)（以及封面取色主题下 .app-bg 的封面虚化图）会从
-     .ar-void__sky 的半透明罩里透出来 —— 浅色主题下星阵会变成一片惨白，
-     「夜里的星阵」这个前提就没了。
-     这里铺本样式自己的深空底色 --ar-b2（由 --bg-app 混 --c-black 派生），
-     整窗背景层 .skin-bg 叠在它上面，深空因此不再受主题底色影响。 */
-  background: var(--ar-b2);
+  /* 深空底必须是**写死的实色**：
+     · 写 background: none 的话，宿主 layout.css 的 var(--bg-window) 与封面取色
+       主题下 .app-bg 的封面虚化图会从 .ar-void__sky 的半透明罩里透出来；
+     · 写成 var(--ar-b2) 之类由主题派生的颜色同样不行 —— 浅色主题下那会算出
+       一块近白的中灰，「夜里的星阵」直接变成惨白。
+     这里直接写死深空色，配合上面调色板的固定常量，整页彻底与主题解耦。 */
+  background: #05060f;
   /* 安全区（px）：上 = 标题栏 + 详情页头部（返回 / 样式按钮），下 = 底栏。
      JS 每次尺寸变化都会重新量并覆盖这两个值（见 arcanum.js#measureSafeArea）；
      这里的 calc 只是"JS 还没跑"时的首帧兜底。52px = .playerview__head 的高度。
@@ -340,7 +361,7 @@
 
 /* 当前句：最亮、最清晰、最靠前（大小由 --ar-ns 给，不改字号 → 不重排） */
 .playerview[data-skin="arcanum"] .ar-line[data-state="active"] {
-  color: var(--text-1);
+  color: var(--ar-ink);
   z-index: 2;
 }
 
@@ -393,7 +414,7 @@
 }
 
 .playerview[data-skin="arcanum"] .ar-stage:not([data-passive="1"]) .ar-line:hover {
-  color: var(--text-1);
+  color: var(--ar-ink);
 }
 
 .playerview[data-skin="arcanum"] .ar-stage:not([data-passive="1"]) .ar-line:focus-visible {
@@ -416,13 +437,13 @@
 /* 层级：关键词更大更亮，连接词更小更暗（--ar-ds 已经含了大小，
    这里补颜色与辉光） */
 .playerview[data-skin="arcanum"] .ar-unit[data-tier="key"] {
-  color: color-mix(in oklab, var(--ar-a3) 72%, var(--text-1));
+  color: color-mix(in oklab, var(--ar-a3) 72%, var(--ar-ink));
   text-shadow: 0 0 calc(16px * var(--ar-fit)) color-mix(in oklab, var(--ar-a2) 46%, transparent);
   font-weight: var(--fw-semibold);
 }
 
 .playerview[data-skin="arcanum"] .ar-unit[data-tier="link"] {
-  color: color-mix(in oklab, var(--text-1) 52%, transparent);
+  color: var(--ar-ink-dim);
   font-weight: var(--fw-normal);
 }
 
@@ -432,10 +453,10 @@
 }
 
 .playerview[data-skin="arcanum"] .ar-unit[data-hold="now"] {
-  color: color-mix(in oklab, var(--ar-a1) 70%, var(--text-1));
+  color: color-mix(in oklab, var(--ar-a1) 70%, var(--ar-ink));
   text-shadow:
     0 0 calc((10px + 26px * var(--ar-glow, 0)) * var(--ar-fit)) color-mix(in oklab, var(--ar-a2) 62%, transparent),
-    0 0 calc((3px + 10px * var(--ar-glow, 0)) * var(--ar-fit)) var(--text-1);
+    0 0 calc((3px + 10px * var(--ar-glow, 0)) * var(--ar-fit)) var(--ar-ink);
 }
 
 /* --------------------------------------------------------------------------
@@ -749,11 +770,7 @@
   gap: calc(14px * var(--ar-fit));
   font-size: calc(var(--ar-lsize) * 1.6 * var(--ar-fit));
   /* 背后是法阵与整窗模糊封面：给一层很淡的底衬，保证任何主题下都读得清 */
-  background: radial-gradient(
-    62% 46% at 50% 50%,
-    color-mix(in oklab, var(--bg-app) 78%, transparent) 0,
-    transparent 78%
-  );
+  background: radial-gradient(62% 46% at 50% 50%, rgba(5, 6, 15, 0.78) 0, transparent 78%);
 }
 
 /* 单元也放平：散落偏移、倾斜、大小层级、发光全部取消，
@@ -834,7 +851,7 @@
 
 .playerview[data-skin="arcanum"] .ar-hud__title {
   overflow: hidden;
-  color: var(--text-1);
+  color: var(--ar-ink);
   font-size: calc(20px * var(--ar-fit));
   font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
@@ -910,7 +927,7 @@
   position: absolute;
   right: 0;
   top: 0;
-  color: color-mix(in oklab, var(--text-1) 30%, transparent);
+  color: rgba(244, 246, 255, 0.3);
   font-family: var(--font-sans);
   font-size: calc(11px * var(--ar-fit));
   letter-spacing: 0.42em;

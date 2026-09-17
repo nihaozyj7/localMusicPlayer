@@ -119,6 +119,15 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]Candidate
 		items []Candidate
 		err   error
 	}
+	// ★ 专供 provider goroutine 的 ctx：本函数「强命中提前收工」时会立刻取消它。
+	//
+	// 不能只依赖上面那个 ctx：它是调用方的，可能在整个匹配结束后才被取消。
+	// 于是「提前收工」返回后，慢来源的 goroutine 仍会跑满 providerTimeout，
+	// 期间没人读它的输出、却占着一条到 LRCLIB / 网易云 / QQ 的在途请求。
+	// 自动匹配歌词发生在每次切歌的路径上，快速切歌就会攒下成对的孤儿请求。
+	sctx, scancel := context.WithCancel(ctx)
+	defer scancel()
+
 	ch := make(chan providerResult, len(a.providers))
 	for _, p := range a.providers {
 		go func(p Provider) {
@@ -126,7 +135,7 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]Candidate
 			// 实测 LRCLIB / QQ 都在 1.5s 内返回，网易云被限流时 405 也是毫秒级；
 			// 6s 只用于兜住「某个源彻底卡住」的情况，比原来的 8s 更早给出结果。
 			// 更关键的是下面的「强命中就提前收工」，让慢来源通常根本等不到超时。
-			cctx, cancel := context.WithTimeout(ctx, providerTimeout)
+			cctx, cancel := context.WithTimeout(sctx, providerTimeout)
 			defer cancel()
 			items, err := p.Search(cctx, req)
 			for i := range items {
@@ -170,8 +179,11 @@ func (a *Aggregator) Search(ctx context.Context, req SearchRequest) ([]Candidate
 				grace = graceTimer.C
 			}
 		case <-grace:
+			// 提前收工：立刻掐掉还在跑的来源，别让它们继续占着在途请求。
+			scancel()
 			got = len(a.providers)
 		case <-ctx.Done():
+			scancel()
 			got = len(a.providers)
 		}
 	}

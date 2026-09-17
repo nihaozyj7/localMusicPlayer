@@ -17,20 +17,34 @@
    0. 调色板 —— 由主题令牌派生，换主题/切深浅色自动跟随
    -------------------------------------------------------------------------- */
 .app[data-mode="magia"] {
-  /* 主色 = 强调色；副色 = 强调色与点缀色混合，得到「魔法」的第二色相 */
-  --mg-a1: var(--accent);
-  --mg-a2: color-mix(in oklab, var(--accent) 56%, var(--heart));
-  --mg-a3: color-mix(in oklab, var(--accent) 24%, var(--heart));
+  /* ★ 本样式**不消费主题令牌**：手绘夜景是一幅固定的画，主题却是多变的。
+     曾经这里全部由 var(--accent) / var(--heart) / var(--text-1) / var(--bg-app)
+     派生，结果内置主题正好是两个极端 —— light-minimal 的 --accent 是近黑
+     #16161c、--text-1 也是近黑，dark-minimal 的 --accent 是纯白 #ffffff。
+     于是浅色主题下：魔法阵的线几乎看不见、歌词成了深色底上的黑字、
+     纸面色（--bg-app 混出来的）从「夜色」变成近白 #eceef4 的灰。
+     皮肤的契约**允许**取主题令牌（见 README「CSS 约定」），第三方样式想跟随
+     主题完全可以继续用；但这两个内置样式的美术方向是固定的，跟随主题只会把
+     画面弄坏，所以这里改成写死的常量，风格不再受外界主题影响。 */
+  --mg-a1: #ffe6a8;
+  --mg-a2: #f0a8c8;
+  --mg-a3: #b9a0ea;
 
   /* 线条 / 光晕 / 纸面 */
-  --mg-line: color-mix(in oklab, var(--accent) 40%, transparent);
-  --mg-line-2: color-mix(in oklab, var(--accent) 17%, transparent);
-  --mg-glow: color-mix(in oklab, var(--accent) 46%, transparent);
-  --mg-glow-2: color-mix(in oklab, var(--heart) 32%, transparent);
-  --mg-ink: color-mix(in oklab, var(--text-1) 64%, transparent);
-  --mg-ink-2: color-mix(in oklab, var(--text-1) 26%, transparent);
-  --mg-paper: color-mix(in oklab, var(--bg-app) 70%, var(--text-1));
-  --mg-scrim: color-mix(in oklab, var(--bg-app) 90%, transparent);
+  --mg-line: rgba(255, 230, 168, 0.4);
+  --mg-line-2: rgba(255, 230, 168, 0.17);
+  --mg-glow: rgba(255, 230, 168, 0.46);
+  --mg-glow-2: rgba(240, 168, 200, 0.32);
+  --mg-ink: rgba(240, 240, 250, 0.64);
+  --mg-ink-2: rgba(240, 240, 250, 0.26);
+  --mg-paper: #131024;
+  --mg-scrim: rgba(9, 7, 20, 0.9);
+
+  /* 压在固定夜景上的文字层级（写死，不取 --text-1/2/3：
+     浅色主题下那三个令牌是深色，落在夜色上会变成看不见的黑字） */
+  --mg-text: #f2f2fa;
+  --mg-text-2: rgba(242, 242, 250, 0.72);
+  --mg-text-3: rgba(242, 242, 250, 0.46);
 
   /* 动效总开关：1 = 正常，0 = 关闭（由 JS 按 ctx.options().animations 写行内值）。
      所有关键帧时长都乘上它，关掉动画时动画时长归零、直接停在终态。 */
@@ -84,22 +98,37 @@
 
 /* 底栏保留一层薄纱：传输按钮压在繁复的手绘背景上必须还能读 */
 .app[data-mode="magia"][data-view="player"] .playerbar {
-  background: linear-gradient(
-    0deg,
-    var(--mg-scrim) 0,
-    color-mix(in oklab, var(--bg-app) 46%, transparent) 62%,
-    transparent 100%
-  );
+  background: linear-gradient(0deg, var(--mg-scrim) 0, rgba(9, 7, 20, 0.46) 62%, transparent 100%);
   border-top-color: var(--mg-line-2);
   backdrop-filter: blur(calc(var(--glass-blur) * 0.42)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.42)) saturate(var(--glass-saturate));
+}
+
+/* 标题栏 / 侧边栏 / 底栏的文字与图标也压在固定夜景上，所以颜色同样写死。
+   不写的话浅色主题下 --text-* 是近黑，落在夜色上读不出来（这正是"样式被
+   主题影响"的另一种表现：不只是背景，连 chrome 的字都会跟着变）。
+   chrome 的**尺寸与布局**仍由宿主决定，这里只改颜色。 */
+.app[data-mode="magia"][data-view="player"] .titlebar,
+.app[data-mode="magia"][data-view="player"] .sidebar,
+.app[data-mode="magia"][data-view="player"] .playerbar {
+  color: var(--mg-text);
+}
+
+.app[data-mode="magia"][data-view="player"] .titlebar button,
+.app[data-mode="magia"][data-view="player"] .sidebar button {
+  color: var(--mg-text-2);
+}
+
+.app[data-mode="magia"][data-view="player"] .titlebar button:hover,
+.app[data-mode="magia"][data-view="player"] .sidebar button:hover {
+  color: var(--mg-text);
 }
 
 /* --------------------------------------------------------------------------
    2. 整窗背景层（ctx.backgroundRoot = .skin-bg）
    -------------------------------------------------------------------------- */
 .app[data-mode="magia"] .skin-bg {
-  background: var(--bg-app);
+  background: #131024;
 }
 
 .app[data-mode="magia"] .mg-bg {
@@ -133,9 +162,9 @@
     radial-gradient(90% 70% at 6% 96%, var(--mg-glow-2) 0, transparent 62%),
     linear-gradient(
       180deg,
-      color-mix(in oklab, var(--bg-app) 88%, var(--mg-a2)) 0,
-      var(--bg-app) 62%,
-      color-mix(in oklab, var(--bg-app) 86%, var(--text-1)) 100%
+      color-mix(in oklab, #131024 88%, var(--mg-a2)) 0,
+      #131024 62%,
+      color-mix(in oklab, #131024 86%, #f0f0fa) 100%
     );
   opacity: 0.9;
 }
@@ -225,9 +254,9 @@
 /* 暗角 + 顶部/底部压暗：保证歌词与按钮的对比度 */
 .app[data-mode="magia"] .mg-bg__veil {
   background:
-    radial-gradient(115% 88% at 50% 44%, transparent 34%, color-mix(in oklab, var(--bg-app) 78%, transparent) 100%),
-    linear-gradient(180deg, color-mix(in oklab, var(--bg-app) 62%, transparent) 0, transparent 22%),
-    linear-gradient(0deg, color-mix(in oklab, var(--bg-app) 70%, transparent) 0, transparent 26%);
+    radial-gradient(115% 88% at 50% 44%, transparent 34%, rgba(9, 7, 20, 0.78) 100%),
+    linear-gradient(180deg, rgba(9, 7, 20, 0.62) 0, transparent 22%),
+    linear-gradient(0deg, rgba(9, 7, 20, 0.7) 0, transparent 26%);
 }
 
 /* 飘落的花瓣：二次元场景的固定班底，纯 CSS 逐个动，不占 JS */
@@ -243,11 +272,7 @@
   width: calc(13px * var(--s, 1));
   height: calc(10px * var(--s, 1));
   border-radius: 64% 0 64% 0;
-  background: linear-gradient(
-    140deg,
-    color-mix(in oklab, var(--mg-a2) 82%, transparent),
-    color-mix(in oklab, var(--text-1) 22%, transparent)
-  );
+  background: linear-gradient(140deg, color-mix(in oklab, var(--mg-a2) 82%, transparent), rgba(240, 240, 250, 0.22));
   opacity: 0.5;
   will-change: transform;
   animation: mg-petal calc(var(--mg-anim) * var(--t, 14s)) linear infinite;
@@ -268,58 +293,58 @@
    3. 手绘美术（.mg-art 内的图形）—— 二次元手绘动画背景
    -------------------------------------------------------------------------- */
 .app[data-mode="magia"] .mg-art__moon {
-  fill: color-mix(in oklab, var(--text-1) 17%, transparent);
-  stroke: color-mix(in oklab, var(--text-1) 56%, transparent);
+  fill: rgba(240, 240, 250, 0.17);
+  stroke: rgba(240, 240, 250, 0.56);
   stroke-width: 1.2;
 }
 
 .app[data-mode="magia"] .mg-art__moonloom {
-  fill: color-mix(in oklab, var(--accent) 9%, transparent);
+  fill: color-mix(in oklab, var(--mg-a1) 9%, transparent);
   stroke: none;
   filter: blur(26px);
 }
 
 .app[data-mode="magia"] .mg-art__crater {
-  fill: color-mix(in oklab, var(--text-1) 8%, transparent);
+  fill: rgba(240, 240, 250, 0.08);
   stroke: none;
 }
 
 .app[data-mode="magia"] .mg-art__post {
-  fill: color-mix(in oklab, var(--bg-app) 80%, var(--mg-a1));
-  stroke: color-mix(in oklab, var(--accent) 52%, transparent);
+  fill: color-mix(in oklab, #131024 80%, var(--mg-a1));
+  stroke: color-mix(in oklab, var(--mg-a1) 52%, transparent);
   stroke-width: 1.3;
 }
 
 .app[data-mode="magia"] .mg-art__torii {
-  fill: color-mix(in oklab, var(--bg-app) 80%, var(--mg-a1));
-  stroke: color-mix(in oklab, var(--accent) 58%, transparent);
+  fill: color-mix(in oklab, #131024 80%, var(--mg-a1));
+  stroke: color-mix(in oklab, var(--mg-a1) 58%, transparent);
   stroke-width: 1.4;
 }
 
 .app[data-mode="magia"] .mg-art__ridge {
-  fill: color-mix(in oklab, var(--bg-app) 62%, var(--mg-a2));
-  stroke: color-mix(in oklab, var(--accent) 30%, transparent);
+  fill: color-mix(in oklab, #131024 62%, var(--mg-a2));
+  stroke: color-mix(in oklab, var(--mg-a1) 30%, transparent);
   stroke-width: 1.1;
 }
 
 .app[data-mode="magia"] .mg-art__ridge--far {
-  fill: color-mix(in oklab, var(--bg-app) 82%, var(--mg-a2));
+  fill: color-mix(in oklab, #131024 82%, var(--mg-a2));
   opacity: 0.75;
 }
 
 .app[data-mode="magia"] .mg-art__ridge--near {
-  fill: color-mix(in oklab, var(--bg-app) 92%, var(--mg-a1));
+  fill: color-mix(in oklab, #131024 92%, var(--mg-a1));
 }
 
 .app[data-mode="magia"] .mg-art__tower {
-  fill: color-mix(in oklab, var(--bg-app) 88%, var(--mg-a1));
-  stroke: color-mix(in oklab, var(--accent) 34%, transparent);
+  fill: color-mix(in oklab, #131024 88%, var(--mg-a1));
+  stroke: color-mix(in oklab, var(--mg-a1) 34%, transparent);
   stroke-width: 1;
 }
 
 .app[data-mode="magia"] .mg-art__antenna {
   fill: none;
-  stroke: color-mix(in oklab, var(--accent) 46%, transparent);
+  stroke: color-mix(in oklab, var(--mg-a1) 46%, transparent);
   stroke-width: 1;
 }
 
@@ -330,13 +355,13 @@
 }
 
 .app[data-mode="magia"] .mg-art__cloud {
-  fill: color-mix(in oklab, var(--text-1) 9%, transparent);
-  stroke: color-mix(in oklab, var(--text-1) 30%, transparent);
+  fill: rgba(240, 240, 250, 0.09);
+  stroke: rgba(240, 240, 250, 0.3);
   stroke-width: 1.1;
 }
 
 .app[data-mode="magia"] .mg-art__brush {
-  fill: color-mix(in oklab, var(--accent) 12%, transparent);
+  fill: color-mix(in oklab, var(--mg-a1) 12%, transparent);
   stroke: none;
 }
 
@@ -349,7 +374,7 @@
 }
 
 .app[data-mode="magia"] .mg-art__dot {
-  fill: color-mix(in oklab, var(--accent) 40%, transparent);
+  fill: color-mix(in oklab, var(--mg-a1) 40%, transparent);
 }
 
 .app[data-mode="magia"] .mg-art__tone {
@@ -359,17 +384,17 @@
 .app[data-mode="magia"] .mg-art__frame,
 .app[data-mode="magia"] .mg-art__frame2 {
   fill: none;
-  stroke: color-mix(in oklab, var(--accent) 26%, transparent);
+  stroke: color-mix(in oklab, var(--mg-a1) 26%, transparent);
   stroke-width: 1.2;
 }
 
 .app[data-mode="magia"] .mg-art__frame2 {
-  stroke: color-mix(in oklab, var(--text-1) 16%, transparent);
+  stroke: rgba(240, 240, 250, 0.16);
 }
 
 .app[data-mode="magia"] .mg-art__band {
   fill: none;
-  stroke: color-mix(in oklab, var(--accent) 22%, transparent);
+  stroke: color-mix(in oklab, var(--mg-a1) 22%, transparent);
   stroke-width: 1;
 }
 
@@ -406,7 +431,7 @@
 }
 
 .app[data-mode="magia"] .mg-sig__line--strong {
-  stroke: color-mix(in oklab, var(--accent) 68%, transparent);
+  stroke: color-mix(in oklab, var(--mg-a1) 68%, transparent);
   stroke-width: 1.4;
 }
 
@@ -415,23 +440,23 @@
 }
 
 .app[data-mode="magia"] .mg-sig__star {
-  fill: color-mix(in oklab, var(--accent) 7%, transparent);
-  stroke: color-mix(in oklab, var(--accent) 52%, transparent);
+  fill: color-mix(in oklab, var(--mg-a1) 7%, transparent);
+  stroke: color-mix(in oklab, var(--mg-a1) 52%, transparent);
   stroke-width: 1.2;
   vector-effect: non-scaling-stroke;
 }
 
 .app[data-mode="magia"] .mg-sig__rune {
   fill: none;
-  stroke: color-mix(in oklab, var(--accent) 62%, transparent);
+  stroke: color-mix(in oklab, var(--mg-a1) 62%, transparent);
   stroke-width: 1;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
 
 .app[data-mode="magia"] .mg-sig__core {
-  fill: color-mix(in oklab, var(--accent) 20%, transparent);
-  stroke: color-mix(in oklab, var(--accent) 76%, transparent);
+  fill: color-mix(in oklab, var(--mg-a1) 20%, transparent);
+  stroke: color-mix(in oklab, var(--mg-a1) 76%, transparent);
   stroke-width: 1.3;
   vector-effect: non-scaling-stroke;
 }
@@ -440,12 +465,12 @@
    5. 舞台骨架（ctx.root = #playerview-stage 内的 .mg-shell）
    -------------------------------------------------------------------------- */
 .playerview[data-skin="magia"] {
-  /* 详情页自己就是一块不透明的手绘夜景：不跟随主题、不吃底层封面虚化。
-     只写 background: none 的话，宿主 layout.css 给的 var(--bg-window) 会被
-     本皮肤的 .mg-bg__sky / .mg-bg__veil 等半透明层透出来 —— 浅色主题下
-     手绘夜景会糊成一片灰白，封面取色主题下还会混进封面的颜色。
-     这里铺的是本样式自己的「纸面色」（--mg-paper 由 --bg-app 派生，
-     深浅色主题下都成立），舞台与整窗背景层因此叠在实底上。 */
+  /* 详情页自己就是一块**写死的**不透明夜景：
+     · 写 background: none 的话，宿主 layout.css 的 var(--bg-window) 与封面取色
+       主题下 .app-bg 的封面虚化图会从 .mg-bg__sky / __veil 等半透明层透出来；
+     · 写成由主题派生的颜色同样不行 —— 浅色主题下算出来是近白 #eceef4。
+     这里直接用 --mg-paper（固定夜色），配合上面调色板的固定常量，
+     整页彻底与主题解耦。 */
   background: var(--mg-paper);
 }
 
@@ -461,7 +486,7 @@
   gap: clamp(6px, 1.2vmin, 16px);
   padding: clamp(8px, 1.6vmin, 22px) clamp(14px, 2.6vmin, 38px) clamp(10px, 2vmin, 26px);
   box-sizing: border-box;
-  color: var(--text-1);
+  color: var(--mg-text);
   pointer-events: none;
   isolation: isolate;
   /* 歌词基准字号：由 JS 按 ctx.options().lyricsFontSize 覆盖 */
@@ -708,7 +733,7 @@
   overflow: hidden;
   box-shadow:
     0 0 0 1px var(--mg-line),
-    0 18px 48px color-mix(in oklab, var(--bg-app) 72%, transparent);
+    0 18px 48px rgba(9, 7, 20, 0.72);
   transition: transform var(--dur) var(--ease);
 }
 
@@ -743,7 +768,7 @@
   width: 9%;
   height: 9%;
   border-radius: 50%;
-  background: color-mix(in oklab, var(--bg-app) 82%, var(--accent));
+  background: color-mix(in oklab, #131024 82%, var(--mg-a1));
   box-shadow:
     0 0 0 1px var(--mg-line),
     0 0 14px var(--mg-glow);
@@ -784,7 +809,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-shadow: 0 2px 18px color-mix(in oklab, var(--bg-app) 82%, transparent);
+  text-shadow: 0 2px 18px rgba(9, 7, 20, 0.82);
 }
 
 .playerview[data-skin="magia"] .mg-meta__rule {
@@ -797,7 +822,7 @@
 
 .playerview[data-skin="magia"] .mg-meta__artist {
   font-size: var(--fs-sm);
-  color: var(--text-2);
+  color: var(--mg-text-2);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -929,7 +954,7 @@
   font-family: inherit;
   font-size: calc(var(--mg-lyric-size) * 0.92 * var(--mg-fit, 1));
   line-height: 1.42;
-  color: var(--text-1);
+  color: var(--mg-text);
   text-align: left;
   opacity: 0.34;
   cursor: pointer;
@@ -953,15 +978,15 @@
   filter: none;
   font-size: calc(var(--mg-lyric-size) * 1.16 * var(--mg-fit, 1));
   font-weight: var(--fw-semibold);
-  color: var(--text-1);
+  color: var(--mg-text);
   text-shadow:
     0 0 18px var(--mg-glow),
-    0 2px 14px color-mix(in oklab, var(--bg-app) 74%, transparent);
+    0 2px 14px rgba(9, 7, 20, 0.74);
   transform: translateX(calc(2px + var(--mg-pulse) * 6px));
 }
 
 .playerview[data-skin="magia"] .mg-line[data-kind="interlude"] {
-  color: var(--text-3);
+  color: var(--mg-text-3);
   font-style: italic;
   opacity: 0.5;
 }
@@ -988,7 +1013,7 @@
 }
 
 .playerview[data-skin="magia"] .mg-unit[data-hold="done"] {
-  color: color-mix(in oklab, var(--mg-a2) 72%, var(--text-1));
+  color: color-mix(in oklab, var(--mg-a2) 72%, var(--mg-text));
 }
 
 .playerview[data-skin="magia"] .mg-line:focus-visible {
@@ -1004,7 +1029,7 @@
   gap: var(--sp-2);
   min-height: 46%;
   text-align: center;
-  color: var(--text-3);
+  color: var(--mg-text-3);
 }
 
 .playerview[data-skin="magia"] .mg-empty__glyph {

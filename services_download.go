@@ -266,6 +266,14 @@ func (s *DownloadService) Start(bvid, title string, durationMS int64) (map[strin
 	}
 	s.running[bvid] = true
 	task := s.newTaskLocked(bvid, title, dir, durationMS)
+	// ★ 快照必须在**这一次**持锁区间里取走。
+	//
+	// 以前是 go s.run(...) 之后重新加锁再 snap := *task —— 但 task 就是
+	// append 进 s.tasks 的那个指针，worker goroutine 立刻就开始经 updateTask
+	// 改写它的 Title / Done / Path / State。中间那次「重新加锁」并没有保护这次
+	// 结构体拷贝（拷贝本身就发生在锁外），是标准的 Go 数据竞争：string 头可能
+	// 被撕裂，前端拿到半新半旧的路径，go test -race 也会直接报出来。
+	snap := *task
 	s.mu.Unlock()
 	s.emitTasks()
 
@@ -273,9 +281,6 @@ func (s *DownloadService) Start(bvid, title string, durationMS int64) (map[strin
 	// 不要先给用户一个「开始下载」再失败。
 	go s.run(task.ID, bvid, title, durationMS, dir)
 
-	s.mu.Lock()
-	snap := *task
-	s.mu.Unlock()
 	return map[string]any{"started": true, "dir": dir, "task": snap}, nil
 }
 

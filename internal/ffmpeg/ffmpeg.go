@@ -267,6 +267,47 @@ func findSystem() string {
 
 // ParseLoudnormJSON 从 ffmpeg stderr 里取出 loudnorm 打印的 JSON 对象。
 // loudnorm 会把测量结果以 JSON 形式打印在 stderr，前后可能有其它日志。
+/* --------------------------------------------------------------------------
+   boundedBuffer —— 只保留前 N 字节的 stderr 收集器
+   --------------------------------------------------------------------------
+   为什么需要它：Probe / SoundDurationMS 只需要 ffmpeg stderr 里的容器元信息
+   （ParseDuration 找第一个 "Duration:"、parseStreamLine 找 "Stream #"），
+   都在最前面几百字节。而默认 loglevel 下 ffmpeg 会逐帧打印进度行，
+   10 分钟的音轨就是几千行 / 几百 KB —— 用无上限的 bytes.Buffer 收，
+   每探测一个文件就白分配几百 KB，而 library.enrichDurations 一次要探 48 个。
+
+   只丢尾部是安全的：需要的信息全在头部，而这里要的是「不要无限增长」，
+   不是「保留完整输出」。写满之后丢弃剩余字节即可，不阻塞、不报错。
+   -------------------------------------------------------------------------- */
+type boundedBuffer struct {
+	buf []byte
+	max int
+}
+
+func newBoundedBuffer(max int) *boundedBuffer {
+	return &boundedBuffer{max: max}
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	if len(b.buf) < b.max {
+		room := b.max - len(b.buf)
+		if len(p) < room {
+			room = len(p)
+		}
+		b.buf = append(b.buf, p[:room]...)
+	}
+	// 必须返回 len(p)（而不是实际写入的字节数）：io.Writer 的契约是
+	// 「要么写完全部并返回 len(p)，要么返回 error」。这里主动丢弃超出部分，
+	// 所以对外声明「全都收下了」—— os/exec 的读取 goroutine 才不会因此报错。
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string { return string(b.buf) }
+
+// maxStderrBytes 收集 ffmpeg stderr 的上限。8KB 足够容纳容器头信息与若干条
+// 错误行，同时把单次探测的内存占用从「与音轨长度成正比」压成常数。
+const maxStderrBytes = 8 << 10
+
 func ParseLoudnormJSON(stderr string) (string, bool) {
 	start := strings.Index(stderr, "{")
 	for start >= 0 {
@@ -371,6 +412,9 @@ func Probe(ctx context.Context, ffmpegPath, path string) (ProbeInfo, error) {
 	// 用 executil：Windows 下 ffmpeg 是控制台程序，直接 exec 会闪出命令行窗口
 	cmd := executil.CommandContext(ctx, ffmpegPath,
 		"-hide_banner", "-nostdin",
+		// -nostats 必须留着：不加的话 ffmpeg 会逐帧打印进度行，
+		// 那是每次探测几百 KB 的无用 stderr（见 maxStderrBytes）。
+		"-nostats",
 		"-i", path,
 		// -t 0：只读容器头、不解码音频。探测只需要 stderr 里的元信息，
 		// 少了这个参数就会把整首歌解码到 null —— 耗时与曲目长度成正比，
@@ -380,8 +424,10 @@ func Probe(ctx context.Context, ffmpegPath, path string) (ProbeInfo, error) {
 		"-c:a", "pcm_s16le",
 		"-f", "null", "-",
 	)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	// 用限长收集器而不是 bytes.Buffer：容器元信息全在头部，尾部（逐帧进度）
+	// 对解析毫无用处，却会无上限地吃内存。
+	stderr := newBoundedBuffer(maxStderrBytes)
+	cmd.Stderr = stderr
 	cmd.Stdout = nil
 
 	// 只关心 stderr 里的元信息，退出码不重要（-f null 正常返回 0）
@@ -420,8 +466,8 @@ func SoundDurationMS(ctx context.Context, ffmpegPath, path string) (float64, err
 		"-c:a", "pcm_s16le",
 		"-f", "null", "-",
 	)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr := newBoundedBuffer(maxStderrBytes)
+	cmd.Stderr = stderr
 	_ = cmd.Run()
 
 	if d, ok := ParseDuration(stderr.String()); ok {

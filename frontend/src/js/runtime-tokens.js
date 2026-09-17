@@ -24,12 +24,52 @@ function styleSheet() {
   return el.sheet;
 }
 
+/**
+ * 把 overrides 刷进样式表。
+ *
+ * ★ 已经有一条 :root 规则时**就地改**，不要再 deleteRule + insertRule。
+ *
+ * 这里原来是「删掉全部规则，再重新 insertRule 一条」：setRuntimeTokens 会被
+ * applyResolvedTheme（每次换主题 / 每次封面取色完成）与 applyGlassAlpha
+ *（面板透明度滑条按 pointermove 驱动）高频调用，于是每次都是一轮全量
+ * deleteRule 循环 + 一次 insertRule + 一次全文档样式重算。就地更新走的是
+ * CSSOM 的属性写入，不重建规则对象，样式失效范围也小得多。
+ */
 function flush() {
   const sheet = styleSheet();
   if (!sheet) return;
-  // 清空旧规则（倒序删除，避免索引漂移）
-  for (let i = sheet.cssRules.length - 1; i >= 0; i -= 1) sheet.deleteRule(i);
-  if (!overrides.size) return;
+
+  // 找我们自己的那条 :root 规则（本表只会有这一条）。
+  let rule = null;
+  for (let i = 0; i < sheet.cssRules.length; i += 1) {
+    const r = sheet.cssRules[i];
+    if (r && r.selectorText === ":root") {
+      rule = r;
+      break;
+    }
+  }
+
+  if (!overrides.size) {
+    // 没有覆盖项：把规则删掉（倒序删除，不影响其它规则）
+    for (let i = sheet.cssRules.length - 1; i >= 0; i -= 1) sheet.deleteRule(i);
+    return;
+  }
+
+  if (rule) {
+    // 就地更新：先清掉本表上不再需要的自定义属性，再写当前值。
+    const wanted = new Set(overrides.keys());
+    const stale = [];
+    for (let i = 0; i < rule.style.length; i += 1) {
+      const name = rule.style[i];
+      if (!wanted.has(name)) stale.push(name);
+    }
+    for (const name of stale) rule.style.removeProperty(name);
+    for (const [name, value] of overrides) {
+      rule.style.setProperty(name, String(value), "important");
+    }
+    return;
+  }
+
   const body = [...overrides.entries()].map(([name, value]) => `${name}:${value} !important`).join(";");
   try {
     sheet.insertRule(`:root{${body}}`, 0);

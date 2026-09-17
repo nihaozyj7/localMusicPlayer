@@ -1098,21 +1098,25 @@ func (s *CoverService) OpenCacheDir(kind string) error {
 
 // ClearCache 清空缓存（封面 + 歌词）。已经写回文件的标签不受影响。
 func (s *CoverService) ClearCache() (map[string]any, error) {
-	covers, lyrics := 0, 0
-	for _, id := range s.cache.CoverIDs() {
-		if err := s.cache.DeleteCover(id); err == nil {
-			covers++
-		}
-	}
-	// 歌词走 DeleteLyrics：文件与索引条目（内存 + 磁盘）一起清。
+	// 用 ClearAll 而不是「逐个 DeleteCover / DeleteLyrics」。
+	//
+	// 逐个删的代价是 O(n²) 的磁盘写：每个 Delete* 都会 saveIndexLocked，
+	// 即重新序列化并原子重写**整个** index.json（含 fsync）。500 首缓存就是
+	// 500 次全文件重写 + 500 次 fsync，且每次都短暂持有 metacache 的锁，
+	// 期间所有封面/歌词读接口都被堵住 —— 而这只是设置界面里的一个按钮。
+	// ClearAll 把索引重写收敛成**一次**。
+	covers, coverErr := s.cache.ClearAll(metacache.KindCover)
+	// 歌词同样：文件与索引条目（内存 + 磁盘）一起清。
 	// 以前只 os.Remove 文件，索引条目留在磁盘上，于是设置界面的「已缓存歌词」
 	// 不归零、重启后幽灵条目依旧在，还会被「写入缓存到文件」重新计入。
-	for _, id := range s.cache.LyricsIDs() {
-		if ok, err := s.cache.DeleteLyrics(id); err == nil && ok {
-			lyrics++
-		}
-	}
+	lyrics, lyricErr := s.cache.ClearAll(metacache.KindLyrics)
 	s.emit("cover:changed", map[string]any{"id": "", "source": ""})
+	if coverErr != nil {
+		return map[string]any{"covers": covers, "lyrics": lyrics}, coverErr
+	}
+	if lyricErr != nil {
+		return map[string]any{"covers": covers, "lyrics": lyrics}, lyricErr
+	}
 	return map[string]any{"covers": covers, "lyrics": lyrics}, nil
 }
 

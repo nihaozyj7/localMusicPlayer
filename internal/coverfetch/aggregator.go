@@ -248,14 +248,68 @@ func (a *Aggregator) getCache(key string) (Cover, bool) {
 	return entry.cover, true
 }
 
+// maxCacheEntries 缓存条数上限。512 条 ≈ 512 首不同的歌。
+const maxCacheEntries = 512
+
+// evictBatch 每次淘汰的条数。按批淘汰而不是「一次只挤掉一条」：
+// 否则每来一个新 key 都要做一次 O(n) 找最旧项，插入成本退化成 O(n²)。
+const evictBatch = 64
+
 func (a *Aggregator) setCache(key string, cover Cover, found bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	// 简单的容量保护：超过 512 条就整体丢弃重来（封面缓存不值得做 LRU）
-	if len(a.cache) > 512 {
-		a.cache = map[string]cacheEntry{}
+
+	// ★ 容量保护必须「先淘汰过期、再淘汰最旧」，**绝不能整体清空**。
+	//
+	// 这里原来是 `if len(a.cache) > 512 { a.cache = map[string]cacheEntry{} }`：
+	// 一次清空会把 1 毫秒前刚写入的有效项一起丢掉，而 512 首对一个正常曲库
+	// 就是「浏览一遍就跨过」。清空之后所有查询重新走 5 个来源的网络扇出
+	//（每个来源最坏 6 秒超时），界面表现为「重新搜封面特别慢」。
+	// 淘汰最旧的若干条则只损失本就要过期的那些。
+	if len(a.cache) >= maxCacheEntries {
+		a.evictLocked()
 	}
 	a.cache[key] = cacheEntry{cover: cover, found: found, at: time.Now()}
+}
+
+// evictLocked 腾出容量。调用方必须持有 a.mu。
+//
+// 分两步：先删所有已经过期的条目（它们本来就该走），仍然满再按 at 最旧淘汰一批。
+// 没有引入真正的 LRU 链表：条目量级只有几百，一次 O(n) 扫描的成本远低于
+// 维护链表的复杂度与出错风险（与「封面缓存不值得做 LRU」的原判断一致，
+// 只是「整体丢弃」这个实现方式把代价转嫁到了用户身上）。
+func (a *Aggregator) evictLocked() {
+	now := time.Now()
+	for k, e := range a.cache {
+		ttl := cacheTTL
+		if !e.found {
+			ttl = negativeTTL
+		}
+		if now.Sub(e.at) > ttl {
+			delete(a.cache, k)
+		}
+	}
+	if len(a.cache) < maxCacheEntries {
+		return
+	}
+	// 仍然满：找出最旧的 evictBatch 条删掉。
+	// 用部分选择而不是全排序 —— 只需要「最旧的若干条」，不需要有序。
+	type kv struct {
+		k  string
+		at time.Time
+	}
+	all := make([]kv, 0, len(a.cache))
+	for k, e := range a.cache {
+		all = append(all, kv{k: k, at: e.at})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].at.Before(all[j].at) })
+	n := evictBatch
+	if n > len(all) {
+		n = len(all)
+	}
+	for i := 0; i < n; i++ {
+		delete(a.cache, all[i].k)
+	}
 }
 
 // Invalidate 清空缓存（设置里改了来源或需要重新抓取时用）。

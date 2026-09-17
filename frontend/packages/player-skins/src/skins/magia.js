@@ -1258,11 +1258,14 @@ function applyPlayback(pb) {
   inst.position = Number.isFinite(pb.position) && pb.position > 0 ? pb.position : 0;
 }
 
-function refreshPalette(ctx) {
+function refreshPalette() {
   if (!inst) return;
   inst.particles.setColors(readPalette(inst.bg, inst.canvas));
   if (inst.refs.artLayer) {
-    inst.refs.artLayer.dataset.blend = ctx.mode === "light" ? "plain" : "screen";
+    // 手绘美术层固定用 screen（提亮）叠加：本样式的底永远是夜色。
+    // 以前按 ctx.mode 在 light 下切成 plain（正常混合），那是在迁就浅色主题的
+    // 白底 —— 现在底色写死了，浅色主题下也照旧用 screen，画面才一致。
+    inst.refs.artLayer.dataset.blend = "screen";
   }
   inst.particles.resize();
 }
@@ -1281,7 +1284,8 @@ function applyOptions(ctx) {
     inst.bg.dataset.anim = inst.anim ? "on" : "off";
   }
   if (inst.refs.artLayer) {
-    inst.refs.artLayer.dataset.blend = ctx.mode === "light" ? "plain" : "screen";
+    // 同 refreshPalette：底色固定为夜色，screen 始终成立
+    inst.refs.artLayer.dataset.blend = "screen";
   }
 }
 
@@ -1401,7 +1405,7 @@ export default defineSkin({
 
     /* —— 首次铺数据：宿主随后还会推一次 mount 全量快照 —— */
     applyOptions(ctx);
-    refreshPalette(ctx);
+    refreshPalette();
     paintSong(ctx);
     const media = ctx.media();
     lyrics.setLines(media.lyrics.lines, { emptyText: emptyTextFor(media.lyrics) });
@@ -1447,7 +1451,7 @@ export default defineSkin({
         applyPlayback(pb);
         inst.playing = Boolean(pb.playing);
         inst.refs.shell.dataset.playing = inst.playing ? "true" : "false";
-        refreshPalette(ctx);
+        refreshPalette();
         learnTempo(inst.position);
         break;
       }
@@ -1496,7 +1500,7 @@ export default defineSkin({
         applyOptions(ctx);
         break;
       case "theme":
-        refreshPalette(ctx);
+        refreshPalette();
         break;
       case "resize":
         if (Number(patch.width) > 0) {

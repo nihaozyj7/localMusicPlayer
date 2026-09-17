@@ -46,10 +46,17 @@ import {
 import { coverOf, fmtTime } from "../utils.js";
 
 class MpPlayerbar extends MpElement {
+  // ★ deps 里**刻意没有** s.position。
+  //
+  // 底栏模板里唯一的「位置相关」内容是 #time-current 的文本，而它已经在
+  // updated() 里被直接写入（见那里）。把 position 放进 deps 的代价是：
+  // <audio>.timeupdate 约 4 次/秒 → notify → revalidate → 整个底栏模板重跑一遍
+  // 并让 Lit 对全部 part 做一次 diff，而实际变化的只有那一个数字。
+  // 这个文件开头就写过「迁移后 Lit 只更新变化的 part」，position 是唯一
+  // 违反该设计的字段。移出之后进度刷新只剩「写一个文本节点 + 一次滑块样式」。
   static deps = (s) => [
     s.currentId,
     s.playing,
-    s.position,
     s.duration,
     s.volume,
     s.muted,
@@ -129,6 +136,18 @@ class MpPlayerbar extends MpElement {
     // 进度条：拖动中不抢位置（用户的手指优先）
     const pos = Math.round(state.position);
     const dur = Math.round(state.duration || 0);
+
+    // 左侧时间文本：直接写，不走模板（见 deps 的说明）。
+    //
+    // #time-current 在模板里**没有** Lit 绑定（与 #progress 内部同理：
+    // 外部改写的文本节点会被 Lit 的标记节点覆盖，抛 "Cannot set properties
+    // of null"）。所以这里和 slider.js 一样，是它唯一的写入方。
+    const cur = this.querySelector("#time-current");
+    if (cur) {
+      const text = fmtTime(state.position);
+      if (cur.textContent !== text) cur.textContent = text;
+    }
+
     const bar = this.querySelector("#progress");
     if (bar && bar.dataset.dragging !== "true" && dur > 0) {
       this._progress?.set((pos / dur) * 1000, { silent: true });
@@ -159,7 +178,8 @@ class MpPlayerbar extends MpElement {
     return html`
       <footer class="playerbar" id="playerbar">
         <div class="playerbar__progress">
-          <span class="progress__time" id="time-current">${fmtTime(state.position)}</span>
+          <!-- #time-current 的文本由 updated() 直接写入，这里刻意不绑定（见那里的说明） -->
+          <span class="progress__time" id="time-current"></span>
           <div
             class="slider"
             id="progress"

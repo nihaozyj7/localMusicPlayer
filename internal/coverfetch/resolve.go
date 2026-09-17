@@ -90,11 +90,22 @@ func (a *Aggregator) ResolveAll(ctx context.Context, req Request) ([]Resolved, [
 	perCtx, cancel := context.WithTimeout(ctx, a.downloadOrDefault())
 	defer cancel()
 
+	// ★ 这个 ctx 专供下面的下载 goroutine，并且会在**本函数返回前的第一时间**
+	// 被取消（defer 的顺序：dlCancel 排在 cancel 之后注册 → 先执行）。
+	//
+	// 为什么不能只靠上面的 perCtx：perCtx 的 cancel 由 defer 触发，而 defer 是在
+	// 函数**返回过程中**才跑的 —— 下面对 grace 的 break 会先让函数开始收尾。
+	// 显式再挂一层并让它在 dlCancel 处先取消，能让「提前返回」与「中止在跑的
+	// 下载」之间没有窗口：否则那些 goroutine 会继续持有 HTTP 连接与最多 2MB 的
+	// body，直到调度器轮到它们发现 perCtx 已取消为止。
+	dlCtx, dlCancel := context.WithCancel(perCtx)
+	defer dlCancel()
+
 	outCh := make(chan outcome, len(candidates))
 	firstGood := make(chan struct{}, 1)
 	for i, c := range candidates {
 		go func(i int, c Cover) {
-			dctx, dcancel := context.WithTimeout(perCtx, a.perOrDefault()*2)
+			dctx, dcancel := context.WithTimeout(dlCtx, a.perOrDefault()*2)
 			defer dcancel()
 			img, derr := Download(dctx, c.URL)
 			if derr != nil {
