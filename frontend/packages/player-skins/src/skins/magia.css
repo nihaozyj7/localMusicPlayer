@@ -8,24 +8,66 @@
    因为 .playerview 是 .app 的后代，凡「背景层与舞台都会用到」的公共视觉
    （调色板、魔法阵、手绘图形）只写一次，挂在 .app[data-mode="magia"] 下，
    两边同时命中，避免同一套样式抄两遍后各自漂移。
-
-   所有颜色都由主题令牌派生（--accent / --heart / --text-* / --bg-app），
-   不写死任何一个色值，因此深浅色主题、封面取色主题都会自动跟随。
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
-   0. 调色板 —— 由主题令牌派生，换主题/切深浅色自动跟随
+   0a. 详情页色彩域 —— 把美术常量写回主题令牌
+   --------------------------------------------------------------------------
+   手绘夜景是一幅完整的画，舞台一直铺到窗口边缘，所以详情页这一块画布的
+   底色、文字、玻璃面板都必须落在夜色的色域里。规则见 tokens.css
+   「详情页色彩域」：这里声明的是"详情页这一块画布"的颜色，
+   详情页自己的头部按钮、以及声明了 data-surface-owner="playerview" 的
+   浮层（播放队列等）都会跟着走。
+
+   只覆盖色彩令牌，尺寸 / 圆角 / 动效仍然由主题决定。
+   -------------------------------------------------------------------------- */
+.playerview[data-skin="magia"][data-theme] {
+  color-scheme: dark;
+
+  --bg-app: var(--mg-paper);
+
+  --text-1: var(--mg-text);
+  --text-2: var(--mg-text-2);
+  --text-3: var(--mg-text-3);
+  --text-inverse: #131024;
+
+  --accent: var(--mg-a1);
+  --accent-weak: color-mix(in oklab, var(--mg-a1) 30%, transparent);
+  --accent-weak-hover: color-mix(in oklab, var(--mg-a1) 44%, transparent);
+  --accent-text: #131024;
+  --accent-contrast: #131024;
+
+  --glass-bg: color-mix(in oklab, var(--mg-paper) 82%, transparent);
+  --glass-bg-strong: color-mix(in oklab, var(--mg-paper) 94%, transparent);
+  --glass-bg-weak: color-mix(in oklab, var(--mg-paper) 70%, transparent);
+  --glass-border: var(--mg-line-2);
+
+  --surface-1: rgba(255, 230, 168, 0.06);
+  --surface-2: rgba(255, 230, 168, 0.1);
+  --surface-3: rgba(255, 230, 168, 0.15);
+  --surface-hover: rgba(255, 230, 168, 0.08);
+  --surface-active: rgba(255, 230, 168, 0.13);
+
+  --border-1: var(--mg-line-2);
+  --border-2: var(--mg-line);
+  --divider: rgba(255, 230, 168, 0.12);
+  --focus-ring: 0 0 0 2px color-mix(in oklab, var(--mg-a1) 70%, transparent);
+}
+
+/* --------------------------------------------------------------------------
+   0b. 调色板 —— 手绘夜景的固定美术常量
+   --------------------------------------------------------------------------
+   ★ 为什么写死：这些值曾经由 var(--accent) / var(--heart) / var(--text-1) /
+   var(--bg-app) 派生，而内置主题正好是两个极端 —— light-minimal 的 --accent
+   与 --text-1 都是近黑、dark-minimal 的 --accent 是纯白。浅色主题下：
+   魔法阵的线几乎看不见、歌词成了深色底上的黑字、纸面色从「夜色」变成
+   近白 #eceef4 的灰。
+
+   "写死"与"无视主题"不是一回事：上面 0a 把这套常量反过来写回详情页色彩域，
+   于是详情页内的通用组件（头部按钮、浮层）用的是皮肤的颜色。
+   合起来才是完整的模型：**皮肤管详情页内的一切颜色，主题管之外的一切。**
    -------------------------------------------------------------------------- */
 .app[data-mode="magia"] {
-  /* ★ 本样式**不消费主题令牌**：手绘夜景是一幅固定的画，主题却是多变的。
-     曾经这里全部由 var(--accent) / var(--heart) / var(--text-1) / var(--bg-app)
-     派生，结果内置主题正好是两个极端 —— light-minimal 的 --accent 是近黑
-     #16161c、--text-1 也是近黑，dark-minimal 的 --accent 是纯白 #ffffff。
-     于是浅色主题下：魔法阵的线几乎看不见、歌词成了深色底上的黑字、
-     纸面色（--bg-app 混出来的）从「夜色」变成近白 #eceef4 的灰。
-     皮肤的契约**允许**取主题令牌（见 README「CSS 约定」），第三方样式想跟随
-     主题完全可以继续用；但这两个内置样式的美术方向是固定的，跟随主题只会把
-     画面弄坏，所以这里改成写死的常量，风格不再受外界主题影响。 */
   --mg-a1: #ffe6a8;
   --mg-a2: #f0a8c8;
   --mg-a3: #b9a0ea;

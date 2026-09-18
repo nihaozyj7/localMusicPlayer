@@ -20,6 +20,7 @@ import {
   ensureLyricsLoaded,
   lyricsOffsetOf,
   lyricsSourceLabel,
+  mirrorPlayerSurface,
   setLyricsOffset,
 } from "../playerhost.js";
 import { coverOf, fmtTime } from "../utils.js";
@@ -115,6 +116,9 @@ class MpLyricsPanel extends MpElement {
   updated() {
     const el = this.panelEl;
     if (!el) return;
+    // 与底栏那四个面板同一个道理（见 panels.js#MpPanel.updated）：
+    // 必须在解除 hidden *之前* 把详情页色彩域投影过来，否则会先闪一帧主题色
+    if (this.open && el.hidden) mirrorPlayerSurface();
     el.hidden = !this.open;
     el.dataset.open = this.open ? "true" : "false";
 
@@ -154,6 +158,7 @@ class MpLyricsPanel extends MpElement {
         id="lyrics-panel"
         role="dialog"
         aria-label="歌词工作台"
+        data-surface-owner="playerview"
         data-open=${this.open ? "true" : "false"}
         data-tab=${activeTab}
         hidden
@@ -1023,6 +1028,9 @@ const component = () => document.querySelector("mp-lyrics-panel");
 export function openPanel(tab) {
   if (tab) activeTab = tab;
   state.lyricsOpen = true;
+  // 工作台是从曲目右键菜单打开的，那一刻面板还可能是 Lit 上一次渲染出来的
+  // 隐藏节点（open 变 true 之前不会重建），所以这里也投影一次兜底。
+  mirrorPlayerSurface();
   bumpLyricsPanelTick();
   const el = component();
   if (el) {

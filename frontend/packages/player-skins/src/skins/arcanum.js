@@ -41,12 +41,17 @@ import { createStageCamera } from "../arcanum-stage.js";
 import {
   BAND_BOTTOM,
   BAND_TOP,
+  CORNER_HUD,
+  CORNER_SECTION,
   FONT_MUL,
   LYRIC_BANDS,
   SECTION_PROGRAMS,
   detectSections,
+  estimateWidthEm,
   hashStr,
+  lineBox,
   planLine,
+  planLines,
   resolveFocus,
 } from "../arcanum-timing.js";
 import { createDust, createScene } from "../arcanum-scene.js";
@@ -71,13 +76,21 @@ const LEAD_MS = 260;
 /**
  * 歌词窗口。
  *
- * ★ BACK + FWD + 1 必须 ≤ LYRIC_BANDS（6）：每句话固定落在第 (index % 6) 条
- * 横行带上，同屏显示的行数不超过行带数时，"任意两句都不可能落在同一条带上"
- * —— 这就是"歌词永远不重叠"的结构性保证（见 arcanum-timing.js 文件头）。
+ * ★ BACK + FWD + 1 ≤ LYRIC_BANDS（6）：每句话固定落在第 (index % 6) 条横行带上。
+ * 但"落在不同的带里"只是**垂直顺序**的保证 —— 行与行到底会不会压在一起，
+ * 由布局求解器拿**占位矩形**算出来（见 relayoutWindow）：
+ *   1. 每句按自己的宽度算矩形（arcanum-timing.js#lineBox）；
+ *   2. 先把压在角落 HUD 上的矩形推下去；
+ *   3. 再把互相相交的矩形推开（垂直为主、水平为辅）；
+ *   4. 最后夹回舞台边缘。
+ * 这一切都发生在**写 DOM 之前** —— 渲染之后再发现叠在一起就晚了。
  * 前面只留 1 句：上一句正在飞向法阵外环，留 1 句够它飞完。
  */
 const BACK = 1;
 const FWD = 4;
+/* 求解时给相邻矩形留的余量由 arcanum-timing.js 的求解器自己管（PAD =
+   0.02 视口比例）：两份半透明文字只要挨上，肉眼就已经觉得"叠在一起"了，
+   所以那里宁可多让一点。 */
 
 /* ==========================================================================
    小工具
@@ -263,6 +276,8 @@ function measureSafeArea() {
   // 同一个值给 CSS：.ar-stage 的负 inset（把舞台撑到整窗）与 .ar-hud 的定位都读它
   inst.shell.style.setProperty("--ar-safe-top", inst.safeTop + "px");
   inst.shell.style.setProperty("--ar-safe-bottom", inst.safeBottom + "px");
+  // 也给画布：法阵要摆进安全区正中，并按安全区短边求半径（见 scene.rebuild）
+  inst.scene.setSafeArea(inst.safeTop, inst.safeBottom);
 }
 
 /**
@@ -289,6 +304,41 @@ function nextLineTime(index) {
   if (!cur) return 0;
   const next = inst.lines[index + 1];
   return next ? Number(next.time) : Number(cur.time) + 4200;
+}
+
+/**
+ * 角落留白（舞台比例坐标）：左上角的曲目信息、右上角的段落名。
+ * 它们与歌词同时出现在画面上，长句子扫过去就会压住曲名 —— 求解器要把歌词
+ * 推出这两块之外。坐标由 CSS 里的定位换算而来（.ar-hud__meta 在安全区左上，
+ * .ar-hud__section 在右上角），舞台比例 = (px - 舞台中心) / 舞台边长。
+ */
+function cornerBoxes() {
+  // ★ 返回的是**视口比例**坐标（0~1，左上角为原点）—— 与 planLines 的
+  //   求解器同一套坐标，算出来的矩形直接就能互相比较
+  const W = Math.max(160, inst.stageW || 160);
+  const H = Math.max(160, inst.stageH || 160);
+  const fit = inst.fitScale || 1;
+  // 舞台的左上角 = (0, 0)；HUD 的内边距是 26px * fit（见 arcanum.css §9），
+  // 上边还要让开安全区（标题栏 + 详情页头部）
+  const left = 26 * fit;
+  const top = Math.min(Math.max(0, inst.safeTop || 0), H * 0.4) + 16 * fit;
+  const metaH = 58 * fit;
+  return [
+    // 左上：SPELL STAGE + 曲名 + 艺术家（max-width 52%~68% 舞台宽）
+    {
+      x: (left + (CORNER_HUD.w * W) / 2) / W,
+      y: (top + metaH / 2) / H,
+      w: CORNER_HUD.w,
+      h: metaH / H,
+    },
+    // 右上：段落名（letter-spacing 很宽，按 0.2 舞台宽算）
+    {
+      x: (W - left - (CORNER_SECTION.w * W) / 2) / W,
+      y: (top + (CORNER_SECTION.h * H) / 2) / H,
+      w: CORNER_SECTION.w,
+      h: CORNER_SECTION.h,
+    },
+  ];
 }
 
 /**
@@ -338,6 +388,105 @@ function planFor(index) {
   return plan;
 }
 
+/* --------------------------------------------------------------------------
+   布局求解：在**写 DOM 之前**把"会不会叠在一起"算清楚
+   --------------------------------------------------------------------------
+   需求原文：「渲染之前，可以将文字模拟一个矩形判断他们是否会有重叠的情况，
+   防止渲染之后文字叠在一起很难看」。
+
+   所以顺序永远是「先算、再写」：
+     1. 收集这一屏要出现的每一行 —— 窗口里还没唱完的行，**加上**已经封印到
+        法阵外环上的历史行（它们是 0.34 倍大小的符文，但仍然是看得见的一块，
+        而且正好落在法阵外圈那一带，长句子飞过去就会压上）；
+     2. 每行按自己的宽度算占位矩形（arcanum-timing.js#lineBox），
+        宽度的估算与 planLine 同源，不会"计划说 5em、实际排出来 7em"；
+     3. 把角落 HUD 与舞台边缘之外的部分交给求解器；
+     4. 求解器就地改 node.x / node.y，之后才轮到 syncWindow 写 CSS 变量。
+
+   求解是**幂等且确定性**的：同一组输入永远得到同一组落点，所以窗口
+   （active-1 ~ active+4）滑动时，已经排好的行不会突然跳一下 —— 跳的只有
+   新进窗口的那一行。
+   -------------------------------------------------------------------------- */
+
+/**
+ * 已经封印到外环上的行的落点 → 占位矩形（视口比例坐标）。
+ * 用的是和 setLineState 完全一样的公式，所以"算出来的位置"就是"画出来的位置"。
+ */
+function sealedBox(index) {
+  const seal = sealPoint(index);
+  if (!seal) return null;
+  const plan = planFor(index);
+  const text = plan ? plan.text : String((inst.lines[index] && inst.lines[index].text) || "");
+  // sealPoint 给的是"相对 (50%, 40%) 的百分比"，正是 node 坐标
+  return lineBox(seal.x / 100, seal.y / 100, estimateWidthEm(text) || 1, seal.s, emToStageWidth());
+}
+
+/**
+ * "1em 等于舞台宽度的多少倍"：占位矩形的宽度 = 宽度em × 缩放倍数 × 这个数。
+ *
+ * ★ 与 layoutConfig 里那个 emToStageW 必须**一模一样**（CSS 里
+ *   .ar-runes 的 font-size = --ar-lsize × --ar-lmul × --ar-fit），
+ *   否则"算出来的矩形"和"排出来的文字"对不上：宽估小了就漏判重叠，
+ *   估大了就把本来放得下的句子推开。两份字号只此一处，改要一起改。
+ */
+function emToStageWidth() {
+  const W = Math.max(160, inst.stageW || 160);
+  const fontPx = Math.max(6, (inst.lyricSize || 16) * FONT_MUL * (inst.fitScale || 1));
+  return fontPx / W;
+}
+
+/**
+ * 行带在**视口比例**坐标里的上下边界（求解器据此把歌词夹在安全区内）。
+ * layoutConfig 给的 top / bottom 是"安全区比例"，这里换算到整窗比例。
+ */
+function bandBounds() {
+  const cfg = layoutConfig();
+  return { top: cfg.top, bottom: cfg.bottom };
+}
+
+/**
+ * 重排当前窗口里的行（就地改 node / box）。**必须在写 DOM 之前调用。**
+ *
+ * 参与求解的有两类矩形：
+ *   · 窗口里还"散落在空中"的行（todo / active / near / next / far）；
+ *   · 刚刚唱完、正在飞向法阵外环的行 —— 它们一路上会横穿好几条行带，
+ *     不把它们算进去，飞行途中就会短暂地和邻句压在一起（这是实测出来的
+ *     一条：动画看着像两句叠了一下）。
+ * 已经飞到位、缩成符文的行只留一个很小的矩形（它们在外环上，本来就不占
+ * 中央这块舞台，但长句子扫过去仍然要躲开）。
+ */
+function relayoutWindow(activeIndex) {
+  if (!inst) return;
+  const min = activeIndex - BACK;
+  const max = activeIndex + FWD;
+  const rows = [];
+  const blocked = [];
+  for (const [i, el] of inst.lineEls) {
+    const plan = planFor(i);
+    if (!plan) continue;
+    if (i >= min && i <= max) {
+      // 窗口内的行：封印中的也算进来（尺寸按 0.34 倍的符文算）
+      if (el.dataset.state === "past") blocked.push(sealedBox(i));
+      else rows.push(plan);
+      continue;
+    }
+    // 窗口外、但还没滑出 DOM 的行（BACK 只留 1 句，这里通常也就 1 条）
+    // —— 它们本来就在画面上，得挡住新来的行
+    if (el.dataset.state === "past") blocked.push(sealedBox(i));
+    else blocked.push(plan.box);
+  }
+  const bounds = bandBounds();
+  const cfg = layoutConfig();
+  planLines(rows, {
+    top: bounds.top,
+    bottom: bounds.bottom,
+    edgeX: 0.47,
+    emToStageW: cfg.emToStageW,
+    corners: cornerBoxes(),
+    blocked,
+  });
+}
+
 /**
  * 法阵外环上的落点（归一化到 cqw / cqh 的百分比）。
  * 唱完的句子就飞到这里，缩成一枚刻在环上的符文。
@@ -373,6 +522,67 @@ function applyNodeVars(el, x, y, r, s) {
   el.style.setProperty("--ar-ns", Number(s).toFixed(3));
 }
 
+/* --------------------------------------------------------------------------
+   唱完时的「飞行档案」：从原落点位移到法阵外环
+   --------------------------------------------------------------------------
+   需求：上/下一句切换时，歌词**不要直接消失**，而是从原来的地方位移到目标
+   位置；并且位移方式要随机一点——可以"直接出现在目标位置"（瞬移），也可以
+   "花比较长的时间慢慢飘过去"，甚至"跳跃/绕一小段弧线过去"。
+
+   这段位移的**时长 / 缓动 / 轨迹形状**（淡出写在关键帧里、跟着飞行一起走）：
+     · teleport   瞬移：直接出现在外环上（原来是唯一一种，现在只是其中一种，
+                    靠极短位移 + 淡出看起来像"闪现"）；
+      quick      0.55s：利落的一步到位；
+      drift      1.4~2.3s：慢慢飘过去，这段时间里一直看得见；
+      leap       1.1s：先抬高再落到位（带垂直弧线的"跳"）；
+      overshoot  0.95s：冲过头一点点再回弹到位；
+      spiral     1.9s：带一点旋转地绕过去。
+   时长/缓动/轨迹全部由变量驱动，CSS 只做解释执行；淡出速度随飞行时长走。
+
+   ★ 随机源用行自己的文本做种子（hash），所以**同一句永远抽到同一份档案** 
+     拖进度条来回、窗口重建时不会"这次是瞬移、下次是慢飘"地抖。
+   -------------------------------------------------------------------------- */
+/* 六种档案：name 交给 CSS 挑对应的 animation，dur/ease 是节奏，arc/spin 是轨迹 */
+const FLIGHT_PROFILES = [
+  { name: "teleport", durMs: 1, ease: "linear", arc: 0, spin: 0 },
+  { name: "quick", durMs: 520, ease: "cubic-bezier(0.22, 0.61, 0.36, 1)", arc: 0, spin: 0 },
+  { name: "drift", durMs: 1500, ease: "cubic-bezier(0.37, 0, 0.63, 1)", arc: 6, spin: 0 },
+  { name: "drift-long", durMs: 2300, ease: "cubic-bezier(0.45, 0.05, 0.55, 0.95)", arc: 10, spin: 0 },
+  { name: "leap", durMs: 1100, ease: "cubic-bezier(0.34, 1.56, 0.64, 1)", arc: 16, spin: 0 },
+  { name: "overshoot", durMs: 950, ease: "cubic-bezier(0.34, 1.4, 0.64, 1)", arc: 0, spin: 0 },
+  { name: "spiral", durMs: 1900, ease: "cubic-bezier(0.5, 0, 0.5, 1)", arc: 12, spin: 26 },
+];
+
+/** 用文本做种子抽一份稳定的飞行档案（同一句永远同一份） */
+function flightProfile(text, index) {
+  if (!inst) return FLIGHT_PROFILES[2];
+  // 给每个 (index, text) 算一个稳定的散列，再映射到档案数组
+  const seed = (hashStr(String(text || "")) + index * 2654435761) >>> 0;
+  return FLIGHT_PROFILES[seed % FLIGHT_PROFILES.length];
+}
+
+/** 把飞行档案写成行元素上的 CSS 变量（唱完 .ar-line[data-state="past"] 时读它） */
+function applyFlightVars(el, profile) {
+  //  先快照**此刻**已渲染的落点（--ar-nx/ny/nr/ns），存成飞行的起点 --ar-fpx/...。
+  //   下面 setLineState 紧接着会把 --ar-nx 改成外环的封印落点，若不先快照，
+  //   关键帧的 from 就只能从 0 起步、变成"从舞台中心飞出去"而不是"从字原本
+  //   所在的地方飞出去"。
+  const cs = el.style;
+  const from = (name, fallback) => {
+    const v = cs.getPropertyValue(name);
+    return String(v || fallback).trim() || fallback;
+  };
+  cs.setProperty("--ar-fpx", from("--ar-nx", "0"));
+  cs.setProperty("--ar-fpy", from("--ar-ny", "0"));
+  cs.setProperty("--ar-fpr", from("--ar-nr", "0"));
+  cs.setProperty("--ar-fps", from("--ar-ns", "1"));
+  el.style.setProperty("--ar-fly-dur", profile.durMs + "ms");
+  el.style.setProperty("--ar-fly-ease", profile.ease);
+  el.style.setProperty("--ar-fly-arc", profile.arc.toFixed(2));
+  el.style.setProperty("--ar-fly-spin", profile.spin.toFixed(2));
+  el.dataset.fly = profile.name;
+}
+
 function createLineEl(index) {
   const plan = planFor(index);
   if (!plan) return null;
@@ -388,6 +598,7 @@ function createLineEl(index) {
   el.dataset.state = "todo";
   el.dataset.enter = "0";
 
+  // 落点已经由 relayoutWindow 解好（node.x / node.y 就是占位矩形的中心）
   const frag = document.createDocumentFragment();
   for (let i = 0; i < plan.units.length; i += 1) {
     const u = plan.units[i];
@@ -405,6 +616,9 @@ function createLineEl(index) {
     span.style.setProperty("--ar-dy", u.dy.toFixed(3) + "em");
     span.style.setProperty("--ar-dr", u.dr.toFixed(2) + "deg");
     span.style.setProperty("--ar-ds", u.ds.toFixed(3));
+    // ★ "画多大"与"占多大"用同一个数：--ar-ds 放大出来的那一圈，靠 --ar-pad
+    //   在排版里补回来（transform 不参与布局）。不补的话相邻字素必然叠上。
+    span.style.setProperty("--ar-pad", (Number(u.pad) || 0).toFixed(3) + "em");
     span.style.setProperty("--ar-d", u.delayMs + "ms");
     span.style.setProperty("--ar-du", u.durMs + "ms");
     frag.appendChild(span);
@@ -417,6 +631,7 @@ function createLineEl(index) {
 function setLineState(el, index, activeIndex) {
   const plan = planFor(index);
   if (!plan) return;
+  const previous = el.dataset.state;
   const ahead = index - activeIndex;
   let state = "far";
   if (ahead === 0) state = "active";
@@ -424,7 +639,7 @@ function setLineState(el, index, activeIndex) {
   else if (ahead === 1) state = "near";
   else if (ahead <= 3) state = "next";
 
-  if (el.dataset.state !== state) {
+  if (previous !== state) {
     el.dataset.state = state;
     // 同一句再次成为当前句时（拖进度条来回）要重放入场动画：
     // CSS 只认 [data-state="active"]，状态一变选择器重新匹配、动画自然重放
@@ -432,6 +647,13 @@ function setLineState(el, index, activeIndex) {
   }
 
   if (state === "past") {
+    // 唱完  飞向法阵外环：抽一份「飞行档案」写进 CSS 变量（时长/缓动/轨迹/
+    // 淡出节奏都随它变），CSS 照着它决定这段位移怎么走。只在**刚变成 past 的
+    // 那一次**抽（看之前的状态），否则每次 setLineState 都重新抽一份、
+    // 会把正在飞的动画抖断。
+    if (previous !== "past") {
+      applyFlightVars(el, flightProfile(plan.text, index));
+    }
     // 历史行冻结在"已唱"上：它们不再参与逐字点亮，颜色也不该停在"正在唱"
     for (const unit of el.children) if (unit.dataset.hold !== "done") unit.dataset.hold = "done";
     const seal = sealPoint(index);
@@ -442,7 +664,11 @@ function setLineState(el, index, activeIndex) {
     }
   }
   // 越靠后越小：当前句最大最亮，后面 4 句依次退远（景深）
+  //  落点用 plan.box（求解后的占位矩形中心），**不是**重新按 node 算一遍 
+  //   两者必须同源，否则"算出来不重叠"和"画出来不重叠"就是两回事了。
   const emphasis = state === "active" ? 1 : state === "near" ? 0.74 : state === "next" ? 0.62 : 0.52;
+  // plan.node 已经是求解后的落点（planLines 把 box 换算回 node 再写回），
+  // 这里直接用它  唯一的事实来源，不做第二次换算。
   applyNodeVars(
     el,
     plan.node.x * 100,
@@ -455,8 +681,9 @@ function setLineState(el, index, activeIndex) {
 
 /**
  * 布局参数变了（字号 / 窗口尺寸）：把计划缓存整个作废并重建行。
- * 计划里烘了"占多宽、落在哪条带的哪一段"，不重算的话窗口一改大小，
- * 长句子就会顶到边上（甚至出画）。
+ * 计划里烘了"占多宽、落在哪条带上、占位矩形多大"，不重算的话窗口一改大小，
+ * 长句子就会顶到边上（甚至出画），占位矩形也会跟着失真。
+ * 重建走的是 setActive(active, true) —— 它内部会先跑一次 relayoutWindow。
  */
 function rebuildLines() {
   if (!inst) return;
@@ -477,6 +704,8 @@ function rebuildLines() {
  *
  * ★ 窗口宽度（6 行）≤ 行带数（6）：未唱到的几句被**铺开**在各条横带上
  * （而不是堆在同一个位置），到点了再依次亮起来。
+ * 真正的"不重叠"由 setActive 里先跑的那次 relayoutWindow 保证 ——
+ * 它在建 DOM 之前就把这一屏的落点解好了。
  */
 function syncWindow(activeIndex) {
   if (!inst) return;
@@ -505,6 +734,9 @@ function setActive(activeIndex, force) {
   if (!force && inst.activeIndex === activeIndex) return;
   inst.activeIndex = activeIndex;
   inst.holdCount = -1;
+  // ★ 顺序：先把这一屏的落点解出来（含"和已封印到外环的历史行会不会撞"），
+  //   再建 DOM / 写 CSS 变量。反过来做的话，第一帧就已经叠在一起了。
+  relayoutWindow(activeIndex);
   syncWindow(activeIndex);
   for (const [i, el] of inst.lineEls) setLineState(el, i, activeIndex);
   const plan = activeIndex >= 0 ? planFor(activeIndex) : null;
@@ -652,14 +884,23 @@ function refreshPalette() {
    每帧
    ========================================================================== */
 
+/**
+ * 段落切换时的法阵反应。
+ *
+ * ★ 这里不再触发 "flash" / "shatter"：它们会**从法阵中心扩散出一个圈**，
+ *   而那个圈会横穿整个舞台 —— 歌词正是从中心往外铺的，于是每次段落切换
+ *   （以及换色时的每一次元素切换）都有一道扩散环从歌词身上扫过去，看起来
+ *   就是"文字闪了一下 / 中间冒了个圈"。留白交给粒子（dust.burst）就够了：
+ *   它只在空间里加光点，不会盖住任何一块文字。
+ */
 function onSectionChange(next) {
   if (!inst) return;
   if (next === "bridge") {
-    // 桥段：法阵碎裂重组
+    // 桥段：法阵碎裂重组（涟漪留在法阵内部，不到处乱跑）
     inst.scene.event("shatter");
     inst.dust.burst(10);
   } else if (next === "chorus") {
-    inst.scene.event("flash");
+    // 副歌：光尘变密，法阵整体提亮（提亮由段落剧本给，不需要白闪）
     inst.dust.burst(6);
   } else if (next === "outro") {
     // 尾奏：法阵慢慢停，只剩光尘
@@ -699,10 +940,20 @@ function paint(now, dt) {
   if (A.elementSwitched) {
     inst.scene.setPattern(hashStr(A.element + ":" + inst.activeIndex + ":" + inst.section));
     refs.elName.textContent = ELEMENT_NAME[A.element] || "地";
-    if (inst.anim) inst.scene.event("flash");
+    // 换元素只换符文图案与色相（法阵整体换氛围），不再闪一下 —— 见 onSectionChange
   }
 
   // —— 镜头：先定「该看哪一句」（带提前量），再推进 ——
+  //   ★ 换句时**不再抖一下**：需求是"上下句切换平滑过去即可"。
+  //     早先每换一句都调 cam.pulse()（重拍轻震），而来电/换行本来就频繁，
+  //     于是每句开头镜头都"哆嗦"一下 —— 那不是节奏感，是干扰。
+  //     震动现在只由真正的重拍驱动（见下面的 onset 分支），换句只留节拍脉冲
+  //     （tempoPulse 驱动的是法阵波纹与 HUD 辉光，不动镜头）。
+  // 镜头轻震只由**真正的重拍**驱动：低频起音（onset）且要够强才震，
+  // 幅度也压得很低（0.5 以内）。这样"换句"本身完全不会引起抖动，
+  // 只有音乐里确实有大鼓点时才轻轻一颤 —— 平滑是第一位的。
+  if (inst.anim && A.onset > 0.72 && inst.playing) cam.pulse(0.45);
+
   if (inst.showLyrics && inst.lines.length) {
     const focus = resolveFocus(inst.lines, inst.position, LEAD_MS);
     const plan = planFor(focus.target);
@@ -710,7 +961,6 @@ function paint(now, dt) {
     if (focus.active >= 0 && focus.active !== inst.lastFocusLine) {
       inst.lastFocusLine = focus.active;
       inst.tempoPulse = 1;
-      if (inst.anim) cam.pulse(inst.section === "chorus" ? 0.85 : 0.5);
     }
   }
   cam.zoomTo(1 + inst.prog.camZoom + A.arcane * 0.03 - A.voidLevel * 0.012);
@@ -862,10 +1112,14 @@ export default defineSkin({
       lean: 0.62,
       // 位移上限按舞台短边算：不要太野，但也不能小到"看不出在运镜"
       maxPanRatio: 0.19,
-      followTau: 0.48,
-      maxSpeedRatio: 0.42,
-      driftRatio: 0.009,
-      shakeRatio: 0.007,
+      // ★ 阻尼放长、速度上限压低：换句时镜头是**平滑滑过去**而不是"跟着跳"。
+      //   0.48 → 0.85 让过渡更柔；速度上限 0.42 → 0.30 保证再快的连句也不甩镜头。
+      followTau: 0.85,
+      maxSpeedRatio: 0.3,
+      // 自主漂移压到很小：它是"镜头一直在呼吸"的那一点点，不该看得出来在晃
+      driftRatio: 0.004,
+      // 轻震幅度再压一档（0.007 → 0.0035）：重拍时轻轻一颤就够了
+      shakeRatio: 0.0035,
     });
 
     inst = {
@@ -1044,7 +1298,8 @@ export default defineSkin({
         inst.cam.reset();
         inst.section = "verse";
         inst.prog = { alpha: 0.3, spin: 0.5, particles: 0.5, camZoom: 0, camSpeed: 0.85 };
-        inst.scene.event("flash");
+        // 换歌只撒一把光尘：早先还会 scene.event("flash") 从中心推一个亮环，
+        // 那正是"有时候从中间扩散一个圈圈闪一下"的来源之一
         inst.dust.burst(14);
         break;
       }

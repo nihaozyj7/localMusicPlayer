@@ -59,6 +59,25 @@
   --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 42%);
   --glass-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
 
+  /* —— 浮动面板（播放队列 / 播放选项 / 定时停止 / 歌词工作台…）——
+     这些面板是 #app 之外的 fixed 浮层，但语义上属于**当前界面**而不是窗口：
+     播放详情页打开时它们是"播放界面的浮层"，用户预期它们长成播放界面的样子。
+     于是详情页打开时，宿主把这一组宿主面令牌重绑到皮肤的色彩域上
+     （见下面的「详情页色彩域」与 playerhost.js#mirrorPlayerSurface）。
+     没有皮肤接管时它们就等于全局值，视觉与改动前完全一致。 */
+  --surface-app: var(--bg-app);
+  --surface-app-text: var(--text-1);
+  --surface-app-glass: var(--glass-bg-strong);
+  --surface-app-glass-weak: var(--glass-bg);
+  --surface-app-border: var(--glass-border);
+
+  /* ★ 面板**不允许**再包一层别名（曾经有 --panel-bg / --panel-bg-strong）。
+     自定义属性是"声明处求值、结果继承"的：在 :root 里写
+     --panel-bg-strong: var(--glass-bg-strong) 会在 :root 上就定死成主题的值，
+     之后浮层再重绑 --glass-bg-strong 也不会回流 —— 实测表现是"浮层的文字
+     跟着皮肤走、面板底色却还是主题的白玻璃"，比改之前更糟。
+     所以面板直接消费 --glass-bg / --glass-bg-strong，让它在元素上就解析。 */
+
   /* —— 文字 —— */
   --text-1: #f4f4f6;
   --text-2: rgba(244, 244, 246, 0.66);
@@ -188,7 +207,6 @@
   /* —— 语义映射（组件只认这些，方便主题整体替换风格）—— */
   --panel-radius: var(--r-md);
   --panel-border: 1px solid var(--glass-border);
-  --panel-bg: var(--glass-bg);
   --panel-blur: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   --panel-shadow: var(--glass-shadow);
   --hairline: 1px solid var(--border-1);
@@ -200,4 +218,77 @@
    组件（base.css / layout.css）就只认 --bg-window 一个令牌。 */
 :root[data-backdrop] {
   --bg-window: var(--bg-window-material);
+}
+
+/* ==========================================================================
+   详情页色彩域（data-theme）
+   --------------------------------------------------------------------------
+   背景：主题与播放界面样式（皮肤）各自成立，但两者会拼在同一个窗口里 ——
+   详情页铺满整窗、侧边栏与曲库列表还在它后面。于是"深色皮肤 + 浅色主题"
+   这种组合必然出现两块色调打架的区域，典型是**播放队列**：它是 #app 之外的
+   fixed 浮层，跟的是主题令牌，一打开就是一块白玻璃压在深色舞台上。
+
+   规则只有一条，但要说清楚：
+     · 详情页是**一个自洽的色彩域**，由皮肤声明；皮肤没声明就什么都不生效；
+     · 域内所有基于色彩令牌的东西（含详情页自己的头部按钮）都跟着域走；
+     · **浮层由宿主 JS opt-in 跟随**，见下面的「投影用变量表」与
+       playerhost.js#applyPlayerSurface。
+
+   为什么浮层必须靠 JS 投影，而不是用 CSS 选择器自动继承：
+     这些浮层是 #app 之外的兄弟节点（模板见 ui/app.js），和 .playerview 之间
+     没有 DOM 祖先关系。想用 CSS 表达"跟随详情页"只有两条路，都不成立：
+       · 兄弟选择器方向是反的 —— 模板里浮层排在 <mp-app> 的**前面**，
+         .playerview[data-theme] 之后的兄弟里根本没有浮层；
+       · :has() 方向对得上，但它的条件依赖详情页当前是否打开，于是
+         **打开 / 关闭详情页会让浮层的规则集动态重建**（样式失效重算），
+         对一个"跟当前界面走"的东西来说这是白白的开销与抖动。
+     JS 投影没有这两个问题：谁拥有详情页色彩域，宿主在挂载样式时就已经知道，
+     直接写过去即可 —— 而且这条信息本来就只有宿主有（第三方皮肤是运行时加载的，
+     CSS 说不出它"是谁"）。
+
+   皮肤怎么声明（写在它自己的 CSS 里，宿主一行都不用改）：
+     .playerview[data-skin="xxx"][data-theme] {
+       --bg-app: #05060f;
+       --text-1: #eef1ff;
+       --accent: #dbe6ff;
+     }
+   ========================================================================== */
+.playerview[data-theme] {
+  /* 详情页自己的底：皮肤声明了 --bg-app 就用皮肤的，没声明就等于窗口底色 */
+  background-color: var(--bg-app);
+  color: var(--text-1);
+}
+
+/* 把详情页的颜色域抄一份出来（--pv-* 只在打了 data-theme 时才存在） */
+/* 投影用变量表：把"一个色彩域"拆成固定的一组变量名。
+   宿主按这张表把详情页的色彩域抄到浮层的行内样式上（playerhost.js
+   #applyPlayerSurface），因此这边和那边**必须同时改** —— 表在代码里有一份
+   对应的常量（SURFACE_VARS），并有一条注释指回这里。
+
+   浮层的行内样式里出现的只有 --pv-*（域的值），下面这条规则负责把它们接到
+   浮层真正消费的令牌上。用同一个属性名做中转（--pv-* → 令牌）而不是让宿主
+   直接写 --text-1，是为了让"投影了什么"与"怎么用"分成两步。 */
+[data-surface-owner="playerview"][data-theme] {
+  --surface-app: var(--pv-bg);
+  --surface-app-text: var(--pv-text);
+  --surface-app-glass: var(--pv-glass-strong);
+  --surface-app-glass-weak: var(--pv-glass-weak);
+  --surface-app-border: var(--pv-glass-border);
+
+  --text-1: var(--pv-text);
+  --text-2: var(--pv-text-2);
+  --text-3: var(--pv-text-3);
+  --accent: var(--pv-accent);
+  /* 五个表面层级都要接：选中行用的是 --surface-2 / --surface-3 */
+  --surface-1: var(--pv-surface-1);
+  --surface-2: var(--pv-surface-2);
+  --surface-3: var(--pv-surface-3);
+  --surface-hover: var(--pv-surface-hover);
+  --surface-active: var(--pv-surface-active);
+  --glass-bg-strong: var(--pv-glass-strong);
+  --glass-bg: var(--pv-glass-weak);
+  --glass-border: var(--pv-glass-border);
+  --divider: var(--pv-divider);
+  --border-2: var(--pv-border-2);
+  color: var(--text-1);
 }

@@ -14,7 +14,7 @@
   max-height: min(58vh, 460px);
   border-radius: var(--panel-radius);
   background: var(--glass-bg-strong);
-  border: var(--panel-border);
+  border: 1px solid var(--surface-app-border);
   backdrop-filter: var(--panel-blur);
   -webkit-backdrop-filter: var(--panel-blur);
   box-shadow: var(--panel-shadow);
@@ -249,7 +249,7 @@
   width: min(300px, calc(100vw - var(--sp-6)));
   border-radius: var(--panel-radius);
   background: var(--glass-bg-strong);
-  border: var(--panel-border);
+  border: 1px solid var(--surface-app-border);
   backdrop-filter: var(--panel-blur);
   -webkit-backdrop-filter: var(--panel-blur);
   box-shadow: var(--panel-shadow);
@@ -343,7 +343,7 @@
   width: min(340px, calc(100vw - var(--sp-6)));
   border-radius: var(--panel-radius);
   background: var(--glass-bg-strong);
-  border: var(--panel-border);
+  border: 1px solid var(--surface-app-border);
   backdrop-filter: var(--panel-blur);
   -webkit-backdrop-filter: var(--panel-blur);
   box-shadow: var(--panel-shadow);

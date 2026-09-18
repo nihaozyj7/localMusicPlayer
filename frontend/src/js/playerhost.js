@@ -756,6 +756,11 @@ function mountSkin(id) {
   host.stage.innerHTML = "";
   // data-skin 是给皮肤 CSS 用的作用域钩子（皮肤包里的选择器都写成 [data-skin="xxx"]）
   host.view.dataset.skin = skin.id;
+  // data-theme 是「详情页色彩域」的开关（见 tokens.css 的同名一节）：
+  // 打了它，详情页里的色彩令牌就归皮肤说了算，声明了 data-surface-owner 的
+  // 浮层（播放队列等）也会跟着皮肤走；不打就什么都不会发生。
+  // 之所以由宿主写而不是皮肤自己写：它是宿主与皮肤之间的**约定**，不是皮肤的实现细节。
+  host.view.dataset.theme = skin.id;
   // 这张样式自己会不会铺整窗背景。目前只有主题 CSS 读它：
   // 「封面取色」主题要在**没有背景层**的样式（经典 / 简约）上补一层封面虚化图。
   host.view.dataset.skinBackground = skin.background ? "yes" : "no";
@@ -777,6 +782,10 @@ function mountSkin(id) {
     )}</div>`;
     return;
   }
+
+  // 色彩域跟着皮肤一起换：详情页内的通用组件与"属于播放界面"的浮层
+  // 都要立刻拿到新样式（浮层可能正开着，不能等它下次打开）
+  mirrorPlayerSurface();
 
   // 挂载完成后立刻推一次全量快照：皮肤不需要自己再拉一遍数据
   ctx.push({ type: "mount", ...mediaSnapshot(), ...playbackSnapshot(), options: optionsSnapshot() });
@@ -915,6 +924,92 @@ function pushOptions() {
 }
 
 /* ==========================================================================
+   详情页色彩域 → 浮动面板（把详情页的颜色投影给"属于播放界面"的浮层）
+   --------------------------------------------------------------------------
+   问题：播放队列 / 播放选项 / 定时停止 / 歌词工作台都是 #app 之外的 fixed 浮层
+   （见 ui/app.js 的模板），它们跟的是**主题**令牌。于是"深色皮肤 + 浅色主题"
+   时，一打开队列就是一块白玻璃压在深空舞台上 —— 这就是这次改造要解决的场景。
+
+   做法：宿主把详情页那一块**已经解析好的**色彩令牌抄成 --pv-* 写进浮层的
+   行内样式，tokens.css 里的 [data-surface-owner="playerview"][data-theme]
+   再把它们接到 --text-1 / --glass-bg-strong 这些真正被消费的令牌上。
+
+   为什么由 JS 做而不是纯 CSS：浮层是 .playerview 的**兄弟**（排在 <mp-app>
+   之前），既没有祖先关系、兄弟选择器方向也是反的；而 :has() 的条件依赖
+   "详情页此刻是否打开"，会让打开/关闭详情页变成一次规则集重建。
+   改由宿主投影，两个问题都没有，而且"谁拥有色彩域"本来就只有宿主知道
+   （第三方皮肤是运行时加载的，CSS 说不出它"是谁"）。
+
+   时机很关键：**必须在浮层真的显示之前**写好，否则会先闪一下主题色再跳到
+   皮肤色；而浮层是 Lit 按需渲染出来的（面板关着时根本不重建 DOM），
+   所以"打开面板时"这个时点只有面板自己知道 —— 由 panels.js / lyrics.js
+   在打开前调 mirrorPlayerSurface()，而不是宿主去轮询 DOM。
+   ========================================================================== */
+
+/**
+ * 投影用的令牌表。**这里与 tokens.css「投影用变量表」一节必须同时改**：
+ * 左边是要抄的令牌、右边是浮层上的变量名，两边对不上时浮层会静默地不生效。
+ */
+const SURFACE_VARS = [
+  ["--bg-app", "--pv-bg"],
+  ["--text-1", "--pv-text"],
+  ["--text-2", "--pv-text-2"],
+  ["--text-3", "--pv-text-3"],
+  ["--accent", "--pv-accent"],
+  // 五个表面层级一个都不能少：列表的**选中行**用的是 --surface-2 / --surface-3
+  // （见 overlay.css#.queue-item[aria-current] 与 tracktable.css），
+  // 只投影 1 / hover 的话，深色面板上的选中行会是一块主题的白底 ——
+  // 正是这次实测出来的"列表选择项颜色不对"。
+  ["--surface-1", "--pv-surface-1"],
+  ["--surface-2", "--pv-surface-2"],
+  ["--surface-3", "--pv-surface-3"],
+  ["--surface-hover", "--pv-surface-hover"],
+  ["--surface-active", "--pv-surface-active"],
+  ["--glass-bg-strong", "--pv-glass-strong"],
+  ["--glass-bg", "--pv-glass-weak"],
+  ["--glass-border", "--pv-glass-border"],
+  ["--divider", "--pv-divider"],
+  ["--border-2", "--pv-border-2"],
+];
+
+/**
+ * 把详情页当前的色彩域投影到所有"属于播放界面"的浮层上。
+ *
+ * 幂等、可反复调用（面板每次打开前都会调一次）：值一样时只做一次比较，
+ * 不产生样式写入，因此不会带来额外的样式重算。
+ *
+ * 详情页没打开 / 还没挂载样式时**清除**投影：让浮层干净地回到主题的色域，
+ * 而不是留着上一次那个皮肤的颜色。
+ *
+ * @returns {boolean} 是否处于"跟随详情页"的状态（排障用）
+ */
+export function mirrorPlayerSurface() {
+  const view = host.view || $("#playerview");
+  const themed = Boolean(view?.dataset.theme) && Boolean(state.playerOpen);
+  const panels = document.querySelectorAll('[data-surface-owner="playerview"]');
+  if (!themed) {
+    for (const panel of panels) {
+      for (const [, out] of SURFACE_VARS) panel.style.removeProperty(out);
+      panel.removeAttribute("data-theme");
+    }
+    return false;
+  }
+
+  // 从详情页上读一次就够：所有面板共用同一份值
+  const styles = getComputedStyle(view);
+  const values = SURFACE_VARS.map(([token, out]) => [out, styles.getPropertyValue(token).trim()]);
+
+  for (const panel of panels) {
+    for (const [out, value] of values) {
+      if (panel.style.getPropertyValue(out) !== value) panel.style.setProperty(out, value);
+    }
+    // data-theme 是 CSS 侧的开关（没有它，上面那些 --pv-* 不会被消费）
+    if (panel.dataset.theme !== view.dataset.theme) panel.dataset.theme = view.dataset.theme;
+  }
+  return true;
+}
+
+/* ==========================================================================
    渲染入口（由 main.js 每帧调用）
    ========================================================================== */
 
@@ -937,6 +1032,8 @@ export async function renderPlayerView() {
   if (!open) {
     if (view.dataset.state !== "closed") {
       view.dataset.state = "closed";
+      // 详情页关掉 → 浮层回到主题的色域（mirrorPlayerSurface 在 !playerOpen 时清除投影）
+      mirrorPlayerSurface();
       // 背景层跟着一起向下滑出淡出（它不在 .playerview 里，必须显式同步）
       setSkinBackground("closed");
       if (host.closeTimer) clearTimeout(host.closeTimer);
@@ -978,6 +1075,8 @@ export async function renderPlayerView() {
     void view.offsetHeight;
     view.dataset.state = "opened";
     setSkinBackground("opened");
+    // 详情页真正显示出来了 → 浮层此刻起跟随它的色彩域
+    mirrorPlayerSurface();
   }
 
   if (!host.skin) return;

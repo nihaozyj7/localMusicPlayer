@@ -33,18 +33,76 @@
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
-   0. 调色板 —— 全部由主题令牌派生，换主题 / 切深浅色 / 封面取色都会跟着变
+   0a. 详情页色彩域 —— 主题令牌的重绑定
+   --------------------------------------------------------------------------
+   这一块*就是*「深色皮肤遇上浅色主题」那个问题的答案，规则见
+   tokens.css 的「详情页色彩域」一节：
+
+     · .playerview[data-theme] 上声明的色彩令牌 = 详情页这一块画布的颜色域；
+     · 详情页自己的头部按钮（用的是 --text-2 / --surface-hover）跟着它走；
+     · 声明了 data-surface-owner="playerview" 的浮层（播放队列等）也跟着它走。
+
+   本样式是**整窗舞台**：深空夜阵是一幅完整的美术作品，舞台一直铺到窗口边缘，
+   所以整块画布的底色、文字、玻璃面板都必须落在深空的色域里 ——
+   否则浅色主题下就会出现"近黑的星辉线 + 近白的面板"这种半成品画面
+   （实测：magia / anime / arcanum 三个样式在浅色主题下都踩过这个坑）。
+
+   注意：这里**只覆盖色彩令牌**，不覆盖尺寸 / 圆角 / 动效 —— 那些仍然由主题决定。
    -------------------------------------------------------------------------- */
+.playerview[data-skin="arcanum"][data-theme] {
+  color-scheme: dark;
+
+  /* 浮层底色 = 深空底，且刻意**不透明**：浮层开合时颜色不能跟着变，
+     后面透出来的舞台也不该从面板里穿出来 */
+  --bg-app: var(--ar-b2);
+
+  --text-1: var(--ar-ink);
+  --text-2: rgba(244, 246, 255, 0.62);
+  --text-3: var(--ar-ink-dim);
+  --text-inverse: #05060f;
+
+  --accent: var(--ar-a1);
+  --accent-weak: color-mix(in oklab, var(--ar-a2) 32%, transparent);
+  --accent-weak-hover: color-mix(in oklab, var(--ar-a2) 46%, transparent);
+  --accent-text: #05060f;
+  --accent-contrast: #05060f;
+
+  /* 玻璃面：用深空底 + 半透明，让面板仍然看得出是"浮在星空上"的一层 */
+  --glass-bg: color-mix(in oklab, var(--ar-b1) 82%, transparent);
+  --glass-bg-strong: color-mix(in oklab, var(--ar-b1) 94%, transparent);
+  --glass-bg-weak: color-mix(in oklab, var(--ar-b2) 70%, transparent);
+  --glass-border: var(--ar-hair);
+
+  --surface-1: rgba(219, 230, 255, 0.06);
+  --surface-2: rgba(219, 230, 255, 0.1);
+  --surface-3: rgba(219, 230, 255, 0.15);
+  --surface-hover: rgba(219, 230, 255, 0.08);
+  --surface-active: rgba(219, 230, 255, 0.13);
+
+  --border-1: rgba(143, 167, 232, 0.16);
+  --border-2: var(--ar-hair);
+  --divider: rgba(143, 167, 232, 0.12);
+  --focus-ring: 0 0 0 2px color-mix(in oklab, var(--ar-a1) 70%, transparent);
+}
+
+/* --------------------------------------------------------------------------
+   0b. 调色板 —— 深空夜阵的固定美术常量
+   --------------------------------------------------------------------------
+   ★ 为什么这些是写死的常量，而不是从 --accent / --text-1 派生：
+
+   深空夜阵是一幅固定的画，主题却是多变的。这些色值曾经全部由 var(--accent)
+   / var(--text-1) / var(--bg-app) 派生，结果内置主题正好是两个极端 ——
+   light-minimal 的 --accent 是近黑 #16161c、dark-minimal 的是纯白 #ffffff。
+   于是浅色主题下「星辉」变成一堆近黑的线、「当前句歌词」变成近黑的字，压在
+   深空上等于看不见；深空底色（--bg-app 混出来的）也从「夜」变成近白 #eceef4。
+
+   但**写死不等于"无视主题"** —— 上面 0a 那一段是这条规则的另一半：
+   本样式的美术常量固定，它却把这套常量反过来**写回**详情页的色彩域，
+   于是详情页内的通用组件（头部按钮、浮层）用皮肤的颜色、而不是主题的颜色。
+   合起来才是完整的模型：**皮肤管详情页内的一切颜色，主题管详情页之外的一切。**
+
+   （第三方样式想跟随主题完全可以不写 0a —— 契约允许它们直接用主题令牌。） */
 .app[data-mode="arcanum"] {
-  /* ★ 本样式**不消费主题令牌**：深空夜阵是一幅固定的画，主题却是多变的。
-     曾经这里全部由 var(--accent) / var(--text-1) / var(--bg-app) 派生，结果
-     内置主题正好是两个极端 —— light-minimal 的 --accent 是近黑 #16161c，
-     dark-minimal 的 --accent 是纯白 #ffffff。于是浅色主题下「星辉」变成一堆
-     近黑的线、「当前句歌词」变成近黑的字，压在深空上等于看不见；深空底色
-     （--bg-app 混出来的）也从「夜」变成了近白 #eceef4 的灰。
-     皮肤的契约**允许**取主题令牌（见 README「CSS 约定」），第三方样式想跟随
-     主题完全可以继续用；但这两个内置样式的美术方向是固定的，跟随主题只会
-     把画面弄坏，所以这里改成写死的常量，风格不再受外界主题影响。 */
   --ar-a1: #dbe6ff;
   --ar-a2: #8fa7e8;
   --ar-a3: #e8c98a;
@@ -549,12 +607,27 @@
   transform: translate3d(calc(-50% + var(--ar-nx, 0) * 1cqw), calc(-50% + var(--ar-ny, 0) * 1cqh), 0)
     rotate(calc(var(--ar-nr, 0) * 1deg)) scale(var(--ar-ns, 1));
   transform-origin: 50% 50%;
-  /* 唱完的句子要"飞"到法阵外环上变成符文 —— 这条过渡就是那一飞。
-     只过渡 transform / opacity：都在合成器上。 */
+  /* 位置过渡（用于"还没唱到的几句之间"的切换）。
+     ★ 注意：唱完 → 飞向法阵外环那段位移**不走这里**，它改由下面
+       [data-state="past"] 的飞行关键帧驱动（每句随机一种口味）。
+       这里保留一条较慢的兜底过渡，用于"从 past 被复用回 active"等少数情况，
+       且随后会被更快的 active/near/next/far 过渡覆盖。
+       只过渡 transform / opacity：都在合成器上。 */
   transition:
     transform 1.5s var(--ease-out),
     opacity 0.9s var(--ease);
   will-change: auto;
+}
+
+/* 还没唱到的句子之间来回切换（far / next / near / active）：走一条更快、
+   更平缓的过渡，换句时是"平滑就位"而不是"慢慢飘过去"。 */
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"],
+.playerview[data-skin="arcanum"] .ar-line[data-state="near"],
+.playerview[data-skin="arcanum"] .ar-line[data-state="next"],
+.playerview[data-skin="arcanum"] .ar-line[data-state="far"] {
+  transition:
+    transform 0.5s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.4s var(--ease);
 }
 
 /* 当前句：最亮、最清晰、最靠前（大小由 --ar-ns 给，不改字号 → 不重排） */
@@ -584,20 +657,201 @@
   z-index: 0;
 }
 
-/* 唱完的句子：飞到外环、缩成一枚符文、然后淡出（动画只动 opacity，
-   位移交给上面那条 transform 过渡） */
+/* 唱完的句子：从**原来的地方**位移到法阵外环，缩成一枚符文再淡出。
+    需求：换句时歌词不要直接消失，而是"看得见地从原位挪到目标位"，
+   并且位移方式要随机一点。所以位移不再交给固定的 transform 过渡，而是由
+   「飞行档案」驱动：--ar-fly-dur / --ar-fly-ease 定节奏，
+   --ar-fly-arc / --ar-fly-spin 定轨迹形状。
+   --ar-fpx/fpy/fpr/fps 是"出发那一刻"的快照，关键帧的 0% 用它，
+   所以永远从字**此刻**所在的位置起步，而不是从舞台中心飞出来。
+
+   关于"看得见"与"不叠"的取舍：早先那一版为了怕掠过后一句，让字在位移开始
+   前就淡没了（几乎等于瞬移）。现在按需求反过来  让位移过程看得见，靠两件事
+   控制叠： 飞行终点在外环上（本就离开中央行带）； 淡出贯穿整段飞行，
+   越飞越淡。这样"看着它飞"和"不太碍事"能同时成立。 */
 .playerview[data-skin="arcanum"] .ar-line[data-state="past"] {
   color: var(--ar-ink-dim);
   filter: blur(0.6px);
   z-index: 1;
-  /* 2.8s 就走完（0.9s 的 opacity 过渡 + 这条动画）：整段飞行途中"几乎不占视觉"，
-     否则它穿过相邻行带时会短暂地看起来像两句叠在一起 */
-  animation: ar-seal 2.8s var(--ease) forwards;
+  /* 由 JS 写的变量决定这段飞行的样子；缺省值保证没有 JS 时也能正常淡出 */
+  --ar-fly-dur: 900ms;
+  --ar-fly-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ar-fly-arc: 0;
+  --ar-fly-spin: 0;
+  --ar-fpx: 0;
+  --ar-fpy: 0;
+  --ar-fpr: 0;
+  --ar-fps: 1;
+  /* 位移 + 淡出 + 轨迹合并在一条动画里：transform 交给关键帧，
+     状态自带的 transform 过渡此时被动画覆盖，不会打架。
+     动画名由 data-fly 决定（见下方 ar-fly-* 选择器）；为安全起见这里先给
+     一条直线的缺省动画，没有 data-fly 时也能从原位飞出去并淡出。 */
+  animation: ar-fly-straight var(--ar-fly-dur) var(--ar-fly-ease) forwards;
+  transform: none;
   pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/*  飞行口味选择：JS 把抽到的口味写进 data-fly，这里挑对应的动画 
+   六种口味里，teleport 走"直给"（0ms 到终点，靠淡出看起来像闪现），
+   其余五种走各自的关键帧。多出来的 drift-long 是 drift 的慢速版。 */
+.playerview[data-skin="arcanum"] .ar-line[data-state="past"][data-fly="teleport"] {
+  animation-duration: 1ms;
+  animation-name: ar-fly-teleport;
+}
+.playerview[data-skin="arcanum"] .ar-line[data-state="past"][data-fly="quick"] { animation-name: ar-fly-straight; }
+.playerview[data-skin="arcanum"] .ar-line[data-state="past"][data-fly="drift"] { animation-name: ar-fly-drift; }
+.playerview[data-skin="arcanum"] .ar-line[data-state="past"][data-fly="drift-long"] { animation-name: ar-fly-drift; }
+.playerview[data-skin="arcanum"] .ar-line[data-state="past"][data-fly="leap"] { animation-name: ar-fly-leap; }
+.playerview[data-skin="arcanum"] .ar-line[data-state="past"][data-fly="overshoot"] { animation-name: ar-fly-overshoot; }
+.playerview[data-skin="arcanum"] .ar-line[data-state="past"][data-fly="spiral"] { animation-name: ar-fly-spiral; }
+
+/*  飞行关键帧 
+   每条都从 --ar-fpx/fpy/fpr/fps（出发快照）到 --ar-nx/ny/nr/ns（外环封印点）。
+   写法与 .ar-line 的 transform 同构，靠 CSS 变量把"起点/终点"参数化，
+   所以：换句时字是"从它刚才待的地方"平滑飞走，而不是从某条固定轨道上冒出来。
+   opacity 一并写进关键帧，让淡出贯穿整段飞行（越远越淡）。 */
+@keyframes ar-fly-straight {
+  0% {
+    opacity: 0.9;
+    transform: translate3d(calc(-50% + var(--ar-fpx, 0) * 1cqw), calc(-50% + var(--ar-fpy, 0) * 1cqh), 0)
+      rotate(calc(var(--ar-fpr, 0) * 1deg)) scale(var(--ar-fps, 1));
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(calc(-50% + var(--ar-nx, 0) * 1cqw), calc(-50% + var(--ar-ny, 0) * 1cqh), 0)
+      rotate(calc(var(--ar-nr, 0) * 1deg)) scale(var(--ar-ns, 1));
+  }
+}
+
+/* teleport：几乎不位移，只在原位迅速淡没（"直接不见了"保留为一种口味） */
+@keyframes ar-fly-teleport {
+  0% {
+    opacity: 0.9;
+    transform: translate3d(calc(-50% + var(--ar-fpx, 0) * 1cqw), calc(-50% + var(--ar-fpy, 0) * 1cqh), 0)
+      rotate(calc(var(--ar-fpr, 0) * 1deg)) scale(var(--ar-fps, 1));
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(calc(-50% + var(--ar-nx, 0) * 1cqw), calc(-50% + var(--ar-ny, 0) * 1cqh), 0)
+      rotate(calc(var(--ar-nr, 0) * 1deg)) scale(var(--ar-ns, 1));
+  }
+}
+
+/* drift：慢慢飘过去，中途轻微抬高一点（--ar-fly-arc 是抬升幅度，单位 cqh） */
+@keyframes ar-fly-drift {
+  0% {
+    opacity: 0.85;
+    transform: translate3d(calc(-50% + var(--ar-fpx, 0) * 1cqw), calc(-50% + var(--ar-fpy, 0) * 1cqh), 0)
+      rotate(calc(var(--ar-fpr, 0) * 1deg)) scale(var(--ar-fps, 1));
+  }
+  45% {
+    opacity: 0.5;
+    transform: translate3d(
+        calc(-50% + (var(--ar-fpx, 0) * 0.5 + var(--ar-nx, 0) * 0.5) * 1cqw),
+        calc(-50% + (var(--ar-fpy, 0) * 0.5 + var(--ar-ny, 0) * 0.5 - var(--ar-fly-arc, 0)) * 1cqh),
+        0
+      )
+      rotate(calc(var(--ar-fpr, 0) * 0.5 * 1deg)) scale(calc((var(--ar-fps, 1) + var(--ar-ns, 1)) * 0.5));
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(calc(-50% + var(--ar-nx, 0) * 1cqw), calc(-50% + var(--ar-ny, 0) * 1cqh), 0)
+      rotate(calc(var(--ar-nr, 0) * 1deg)) scale(var(--ar-ns, 1));
+  }
+}
+
+/* leap：先"跳"起来中段明显抬高（--ar-fly-arc 较大），再落到位 */
+@keyframes ar-fly-leap {
+  0% {
+    opacity: 0.9;
+    transform: translate3d(calc(-50% + var(--ar-fpx, 0) * 1cqw), calc(-50% + var(--ar-fpy, 0) * 1cqh), 0)
+      rotate(calc(var(--ar-fpr, 0) * 1deg)) scale(var(--ar-fps, 1));
+  }
+  38% {
+    opacity: 0.7;
+    transform: translate3d(
+        calc(-50% + (var(--ar-fpx, 0) * 0.45 + var(--ar-nx, 0) * 0.55) * 1cqw),
+        calc(-50% + (var(--ar-fpy, 0) * 0.45 + var(--ar-ny, 0) * 0.55 - var(--ar-fly-arc, 0)) * 1cqh),
+        0
+      )
+      rotate(calc((var(--ar-fpr, 0) * 0.4 + var(--ar-nr, 0) * 0.6) * 1deg))
+      scale(calc((var(--ar-fps, 1) + var(--ar-ns, 1)) * 0.5));
+  }
+  62% {
+    opacity: 0.45;
+    transform: translate3d(
+        calc(-50% + (var(--ar-fpx, 0) * 0.18 + var(--ar-nx, 0) * 0.82) * 1cqw),
+        calc(-50% + (var(--ar-fpy, 0) * 0.18 + var(--ar-ny, 0) * 0.82 - var(--ar-fly-arc, 0) * 0.45) * 1cqh),
+        0
+      )
+      rotate(calc((var(--ar-fpr, 0) * 0.2 + var(--ar-nr, 0) * 0.8) * 1deg))
+      scale(calc((var(--ar-fps, 1) * 0.3 + var(--ar-ns, 1) * 0.7)));
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(calc(-50% + var(--ar-nx, 0) * 1cqw), calc(-50% + var(--ar-ny, 0) * 1cqh), 0)
+      rotate(calc(var(--ar-nr, 0) * 1deg)) scale(var(--ar-ns, 1));
+  }
+}
+
+/* overshoot：冲过目标一点点再回弹落定（缓动的 >1 系数本身就在回弹，这里再用
+   一帧"越过"，让回弹更明显） */
+@keyframes ar-fly-overshoot {
+  0% {
+    opacity: 0.9;
+    transform: translate3d(calc(-50% + var(--ar-fpx, 0) * 1cqw), calc(-50% + var(--ar-fpy, 0) * 1cqh), 0)
+      rotate(calc(var(--ar-fpr, 0) * 1deg)) scale(var(--ar-fps, 1));
+  }
+  70% {
+    opacity: 0.4;
+    transform: translate3d(
+        calc(-50% + (var(--ar-nx, 0) + (var(--ar-nx, 0) - var(--ar-fpx, 0)) * 0.16) * 1cqw),
+        calc(-50% + (var(--ar-ny, 0) + (var(--ar-ny, 0) - var(--ar-fpy, 0)) * 0.16) * 1cqh),
+        0
+      )
+      rotate(calc(var(--ar-nr, 0) * 1deg)) scale(calc(var(--ar-ns, 1) * 1.05));
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(calc(-50% + var(--ar-nx, 0) * 1cqw), calc(-50% + var(--ar-ny, 0) * 1cqh), 0)
+      rotate(calc(var(--ar-nr, 0) * 1deg)) scale(var(--ar-ns, 1));
+  }
+}
+
+/* spiral：绕一小段弧线过去，并带一点额外旋转（--ar-fly-spin） */
+@keyframes ar-fly-spiral {
+  0% {
+    opacity: 0.9;
+    transform: translate3d(calc(-50% + var(--ar-fpx, 0) * 1cqw), calc(-50% + var(--ar-fpy, 0) * 1cqh), 0)
+      rotate(calc(var(--ar-fpr, 0) * 1deg)) scale(var(--ar-fps, 1));
+  }
+  50% {
+    opacity: 0.5;
+    transform: translate3d(
+        calc(-50% + (var(--ar-fpx, 0) * 0.5 + var(--ar-nx, 0) * 0.5 + var(--ar-fly-arc, 0) * 0.5) * 1cqw),
+        calc(-50% + (var(--ar-fpy, 0) * 0.5 + var(--ar-ny, 0) * 0.5 - var(--ar-fly-arc, 0)) * 1cqh),
+        0
+      )
+      rotate(calc((var(--ar-fpr, 0) * 0.5 + var(--ar-nr, 0) * 0.5 + var(--ar-fly-spin, 0)) * 1deg))
+      scale(calc((var(--ar-fps, 1) + var(--ar-ns, 1)) * 0.5));
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(calc(-50% + var(--ar-nx, 0) * 1cqw), calc(-50% + var(--ar-ny, 0) * 1cqh), 0)
+      rotate(calc(var(--ar-nr, 0) * 1deg)) scale(var(--ar-ns, 1));
+  }
 }
 
 .playerview[data-skin="arcanum"] .ar-line[data-state="past"] .ar-unit {
   animation: none;
+  /* ★ 封印之后整行要缩成"刻在环上的一枚小符文"：行上的 --ar-ns 给 0.34，
+     但每个字素自己还带着 --ar-ds（0.78~1.34，关键词会被放大）—— 两层缩放
+     相乘，实际是 0.34 × 1.34 ≈ 0.46，而且整行还是**摊开**的十几厘米宽，
+     比一枚符文大得多。实测它因此有 43px 高、横跨 149px，飞过去时正好压在
+     邻句上。这里把字素的散落偏移与自身缩放一并收掉，整行不再是"缩小的一行
+     字"而是"一枚符文"。 */
+  transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
 }
 
 /* 缩到符文大小之后就不该再被读到 —— 屏读器只关心还没唱与正在唱的句子 */
@@ -629,6 +883,13 @@
   display: inline-block;
   white-space: pre;
   transform: var(--ar-rest);
+  /* ★ 给"被放大出来的那一圈"留出格子。
+     transform 不参与布局：--ar-ds 放到 1.3 时，这个字画出来比自己的排版格子
+     宽 30%，必然盖住左右邻居（实测相邻汉字横向重叠 0.8~8px、纵向重叠 28px，
+     一整句 53 处）。--ar-pad 由 JS 按 (--ar-ds - 1) 与倾斜外接盒算好写进行内，
+     于是"画多大"和"占多大"用的是同一个数，字与字之间就不会再叠上。
+     缩放小于 1 的字素 --ar-pad 是 0（缩小不会侵占邻居）。 */
+  padding: 0 var(--ar-pad, 0em);
   /* 刻意不写 will-change（见文件头） */
 }
 
@@ -714,14 +975,17 @@
 @keyframes ar-summon {
   0% {
     opacity: 0;
-    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 1.7em), 0) rotate(-6deg)
+    /* ★ 入场位移统一压在 1em 以内（这里原先是 1.7em，字号 23.6px 时等于 40px，
+       正好是一条行带的高度 —— 入场的字会横穿到上下邻句上，看起来就是"两句
+       叠了一下"。入场是"魔法感"的表达，不需要真的从屏幕外飞进来。 */
+    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 0.85em), 0) rotate(-6deg)
       scale(calc(var(--ar-ds, 1) * 0.28));
   }
 
   62% {
     opacity: 1;
     transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) - 0.06em), 0) rotate(2deg)
-      scale(calc(var(--ar-ds, 1) * 1.12));
+      scale(calc(var(--ar-ds, 1) * 1.08));
   }
 
   100% {
@@ -730,12 +994,16 @@
   }
 }
 
-/* 2 凭空式：从大到小收拢，像从空气里显形 */
+/* 2 凭空式：从大到小收拢，像从空气里显形。
+   ★ 起始倍数刻意压在 1.3 以内：这个字会**同时**往四周长出去，1.85 倍时整行
+     比落定后高出一倍多、直接顶进上下相邻的行带 —— 实测"当前句正在显形的那
+     一两百毫秒"会和邻句叠在一起（需求里说的"渲染之后文字叠在一起"）。
+     显形本来也不需要涨到近两倍，1.3 倍已经完全看得出"从空气里收拢"。 */
 @keyframes ar-appear {
   0% {
     opacity: 0;
     transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotate(var(--ar-dr, 0deg))
-      scale(calc(var(--ar-ds, 1) * 1.85));
+      scale(calc(var(--ar-ds, 1) * 1.28));
   }
 
   70% {
@@ -774,8 +1042,8 @@
 @keyframes ar-fall {
   0% {
     opacity: 0;
-    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) - 2em), 0) rotate(var(--ar-dr, 0deg))
-      scale(calc(var(--ar-ds, 1) * 1.32));
+    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) - 0.9em), 0) rotate(var(--ar-dr, 0deg))
+      scale(calc(var(--ar-ds, 1) * 1.18));
   }
 
   66% {
@@ -794,7 +1062,7 @@
 @keyframes ar-rise {
   0% {
     opacity: 0;
-    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 1.4em), 0)
+    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 0.8em), 0)
       rotate(calc(var(--ar-dr, 0deg) + 9deg)) scale(calc(var(--ar-ds, 1) * 0.55));
   }
 
@@ -808,7 +1076,7 @@
 @keyframes ar-slash {
   0% {
     opacity: 0;
-    transform: translate3d(calc(var(--ar-dx, 0em) - 1.7em), calc(var(--ar-dy, 0em) - 1em), 0)
+    transform: translate3d(calc(var(--ar-dx, 0em) - 1.1em), calc(var(--ar-dy, 0em) - 0.6em), 0)
       rotate(calc(var(--ar-dr, 0deg) - 24deg)) scale(calc(var(--ar-ds, 1) * 0.72));
   }
 
@@ -848,7 +1116,7 @@
 @keyframes ar-mirror {
   0% {
     opacity: 0;
-    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 0.85em), 0) rotateY(180deg)
+    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 0.55em), 0) rotateY(180deg)
       rotate(var(--ar-dr, 0deg)) scale(calc(var(--ar-ds, 1) * 0.78));
   }
 
@@ -870,7 +1138,7 @@
   60% {
     opacity: 1;
     transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotate(calc(var(--ar-dr, 0deg) + 4deg))
-      scale(calc(var(--ar-ds, 1) * 1.22));
+      scale(calc(var(--ar-ds, 1) * 1.16));
   }
 
   100% {
@@ -883,14 +1151,16 @@
 @keyframes ar-burst {
   0% {
     opacity: 0;
-    transform: translate3d(calc(var(--ar-dx, 0em) - 1.2em), calc(var(--ar-dy, 0em) - 0.8em), 0)
+    transform: translate3d(calc(var(--ar-dx, 0em) - 0.9em), calc(var(--ar-dy, 0em) - 0.5em), 0)
       rotate(calc(var(--ar-dr, 0deg) + 20deg)) scale(calc(var(--ar-ds, 1) * 0.2));
   }
 
   35% {
     opacity: 1;
+    /* 峰值同样压在 1.3 以内（见 ar-appear 的说明）—— 爆裂的"炸开"靠位移与
+       旋转表达，不需要靠涨到 1.5 倍去挤邻居 */
     transform: translate3d(calc(var(--ar-dx, 0em) + 0.14em), calc(var(--ar-dy, 0em) + 0.07em), 0)
-      rotate(calc(var(--ar-dr, 0deg) - 5deg)) scale(calc(var(--ar-ds, 1) * 1.5));
+      rotate(calc(var(--ar-dr, 0deg) - 5deg)) scale(calc(var(--ar-ds, 1) * 1.26));
   }
 
   64% {
@@ -902,25 +1172,6 @@
   100% {
     opacity: 1;
     transform: var(--ar-rest);
-  }
-}
-
-/* 唱完之后缩成符文、淡出 */
-@keyframes ar-seal {
-  0% {
-    opacity: 0.62;
-  }
-
-  30% {
-    opacity: 0.3;
-  }
-
-  62% {
-    opacity: 0.08;
-  }
-
-  100% {
-    opacity: 0;
   }
 }
 
@@ -948,6 +1199,10 @@
 
 .playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-line[data-state="past"] {
   opacity: 0.24;
+  /* 关掉动画时飞行关键帧不跑，transform 要手动补上封印落点，
+     否则 [data-state="past"] 的 transform: none 会让所有已唱句堆到舞台中心 */
+  transform: translate3d(calc(-50% + var(--ar-nx, 0) * 1cqw), calc(-50% + var(--ar-ny, 0) * 1cqh), 0)
+    rotate(calc(var(--ar-nr, 0) * 1deg)) scale(var(--ar-ns, 1));
 }
 
 .playerview[data-skin="arcanum"] .ar-stage[data-anim="off"] .ar-line[data-state="next"],
@@ -983,6 +1238,8 @@
   display: block;
   transform: none;
   transition: none;
+  /* 清晰歌词模式不走飞行关键帧：已唱句就地变暗即可，不该再"飞" */
+  animation: none;
   filter: none;
   opacity: 0.42;
   text-align: center;

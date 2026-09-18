@@ -513,9 +513,78 @@ async function main() {
       modes: unit ? unit.dataset.mode : "",
       // 每句话固定落在 index % 6 条横带之一：同屏出现重复的行带 = 歌词压在一起
       bands: [...document.querySelectorAll(".ar-line")].map((e) => e.dataset.band),
+      // ★ 真正的"不重叠"要看**落定之后**渲染出来的盒子：行里的字素带散落位移
+      //   与缩放，所以取每个 .ar-unit 的 getBoundingClientRect 求并集再两两求交。
+      //   行带只是垂直顺序的保证，宽句横着扫过来是它管不到的。
+      //   这里刻意**跳过正在播入场动画的那一行**：ar-appear 的起始帧是
+      //   scale(1.85)，动画中途整行能高出四五倍，那是瞬时的、不是"叠在一起"。
+      lineBoxes: [...document.querySelectorAll(".ar-line")].map((e) => {
+        const unit = e.querySelector(".ar-unit");
+        if (unit && getComputedStyle(unit).animationName !== "none") return null;
+        let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+        for (const u of e.querySelectorAll(".ar-unit")) {
+          const q = u.getBoundingClientRect();
+          if (q.width <= 0 || q.height <= 0) continue;
+          l = Math.min(l, q.left); t = Math.min(t, q.top);
+          r = Math.max(r, q.right); b = Math.max(b, q.bottom);
+        }
+        return Number.isFinite(l) ? { l, t, r, b } : null;
+      }).filter(Boolean),
+      // ★ 字与字之间也不能叠：取**文本墨迹**的二维矩形（Range 量的就是字面，
+      //   不含 padding 与行高），两两求交。用 .ar-unit 的盒子量会误判 ——
+      //   inline-block 的盒是行高的高度，左右并排的两个字必然"上下重叠"。
+      //   正在播入场动画的那一行同样跳过（动画是瞬时的，那是"飞进来"不是"叠"）。
+      unitBoxes: (() => {
+        const range = document.createRange();
+        const out = [];
+        for (const e of document.querySelectorAll(".ar-line")) {
+          const unit = e.querySelector(".ar-unit");
+          if (unit && getComputedStyle(unit).animationName !== "none") continue;
+          if (Number(getComputedStyle(e).opacity) <= 0.12) continue;
+          for (const u of e.querySelectorAll(".ar-unit")) {
+            if (!u.textContent || !u.textContent.trim()) continue;
+            range.selectNodeContents(u);
+            const q = range.getBoundingClientRect();
+            if (q.width <= 0.5 || q.height <= 0.5) continue;
+            out.push({ line: e.dataset.index, ch: u.textContent, l: q.left, r: q.right, t: q.top, b: q.bottom });
+          }
+        }
+        return out;
+      })(),
+      // 左上角曲名那一块：歌词不许压上去
+      hudBox: (() => {
+        const m = document.querySelector(".ar-hud__meta");
+        if (!m) return null;
+        const q = m.getBoundingClientRect();
+        return { l: q.left, t: q.top, r: q.right, b: q.bottom };
+      })(),
       // 英文歌应当按词成单元（中文是逐字）
       kinds: unit ? [...line.querySelectorAll(".ar-unit")].map((e) => e.dataset.kind) : [],
       runesTransform: runes ? runes.style.transform : "",
+      // ★ 法阵必须**完整地**待在能看见的那块画面里（安全区），而且居中。
+      //   早先圆心固定在 H*0.58、半径只看 min(W,H)：下半圈连同外环被底栏吃掉，
+      //   看起来就是"魔法阵没在中间、还显示不全"。
+      circle: (() => {
+        const st2 = document.querySelector(".ar-stage");
+        if (!st2) return null;
+        const cs2 = getComputedStyle(st2);
+        const safeTop = parseFloat(cs2.getPropertyValue("--ar-safe-top")) || 0;
+        const safeBottom = parseFloat(cs2.getPropertyValue("--ar-safe-bottom")) || 0;
+        const H2 = st2.getBoundingClientRect().height;
+        const W2 = st2.getBoundingClientRect().width;
+        const safeH2 = H2 - safeTop - safeBottom;
+        const R2 = Math.max(40, (Math.min(W2, safeH2) * 0.5) / (1.18 * 1.42));
+        const cy2 = safeTop + safeH2 / 2;
+        const reach = 1.18 * R2 * 1.42;
+        return {
+          cy: +cy2.toFixed(1),
+          mid: +((safeTop + (H2 - safeBottom)) / 2).toFixed(1),
+          top: +(cy2 - reach).toFixed(1),
+          bottom: +(cy2 + reach).toFixed(1),
+          safeTop: +safeTop.toFixed(1),
+          safeBottomEdge: +(H2 - safeBottom).toFixed(1),
+        };
+      })(),
       unitAnim: unit ? getComputedStyle(unit).animationName : "",
       fit: stage ? getComputedStyle(stage).getPropertyValue("--ar-fit").trim() : "",
     };
@@ -559,6 +628,67 @@ async function main() {
       arcanum.bands.every((b) => b !== undefined && Number(b) >= 0 && Number(b) < 6),
     JSON.stringify(arcanum?.bands)
   );
+  // ★ 渲染之后回头验一遍：真的没有两块文字叠在一起（需求原文：
+  //   「渲染之前模拟矩形判断会不会重叠，防止渲染之后文字叠在一起」）。
+  //   这里用"渲染之后的盒子"再验一次，两边都成立才算数。
+  {
+    const boxes = Array.isArray(arcanum?.lineBoxes) ? arcanum.lineBoxes : [];
+    const hits = [];
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        const ox = Math.min(a.r, b.r) - Math.max(a.l, b.l);
+        const oy = Math.min(a.b, b.b) - Math.max(a.t, b.t);
+        if (ox > 1 && oy > 1) hits.push({ i, j, ox: Math.round(ox), oy: Math.round(oy) });
+      }
+    }
+    check(
+      "星阵咏唱：落定之后的歌词盒子两两不相交（不是只看行带编号）",
+      boxes.length >= 4 && hits.length === 0,
+      JSON.stringify({ settledLines: boxes.length, hits })
+    );
+    // ★ 字与字：这才是需求里"字和字之间都不要重叠"的直接验收。
+    //   用 Range 量到的字面矩形（不含 padding / 行高）做二维求交。
+    const units = Array.isArray(arcanum?.unitBoxes) ? arcanum.unitBoxes : [];
+    const unitHits = [];
+    for (let i = 0; i < units.length; i += 1) {
+      for (let j = i + 1; j < units.length; j += 1) {
+        const a = units[i];
+        const c = units[j];
+        const ox = Math.min(a.r, c.r) - Math.max(a.l, c.l);
+        const oy = Math.min(a.b, c.b) - Math.max(a.t, c.t);
+        if (ox > 0.5 && oy > 0.5) {
+          unitHits.push({
+            a: a.line + ":" + a.ch,
+            b: c.line + ":" + c.ch,
+            ox: Math.round(ox * 10) / 10,
+            oy: Math.round(oy * 10) / 10,
+          });
+        }
+      }
+    }
+    check(
+      "星阵咏唱：字与字之间不重叠（按字面墨迹量，不是按行高盒子）",
+      units.length >= 20 && unitHits.length === 0,
+      JSON.stringify({ units: units.length, hits: unitHits.slice(0, 8) })
+    );
+    // ★ 法阵：整个圆（含波纹能到达的最远处）都要落在安全区里，而且圆心居中
+    const c = arcanum?.circle;
+    check(
+      "星阵咏唱：法阵完整落在可见区内且居中（不再被底栏吃掉半圈）",
+      Boolean(c) &&
+        c.cy === c.mid &&
+        c.top >= c.safeTop - 1 &&
+        c.bottom <= c.safeBottomEdge + 1,
+      JSON.stringify(c)
+    );
+    const hud = arcanum?.hudBox;
+    const onHud = hud
+      ? boxes.filter((q) => Math.min(q.r, hud.r) - Math.max(q.l, hud.l) > 1 && Math.min(q.b, hud.b) - Math.max(q.t, hud.t) > 1)
+      : [];
+    check("星阵咏唱：没有歌词压在左上角的曲名上", Boolean(hud) && onHud.length === 0, JSON.stringify({ hud, onHud }));
+  }
   check(
     "星阵咏唱：歌词是散落的符文，当前句有入场魔法且镜头已经落在它身上",
     arcanum?.lineCount > 0 &&

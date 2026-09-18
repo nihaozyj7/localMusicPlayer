@@ -7,6 +7,9 @@
      createScene(canvas)  —— 远景 + 中景
        星空（缓慢旋转、随高频闪烁）→ 魔法雾 → 巨大的模糊法阵投影（远景）
        → 主魔法阵（多层同心圆 / 符文环 / 星座线 / 裂纹 / 涟漪 / 脉冲环 / 光柱）。
+       最外面还有一圈**随旋律起伏的声浪**：采样点停在固定角度上，由频谱决定
+       径向位移（不整体旋转 —— 转了圈就没人看得出哪里在起伏，见
+       arcanum-timing.js 的「法阵外圈的那圈波纹」）。
        相机在这里以 depth 0.55 参与（近景动得多、远景动得少，层与层的相对
        位移才是「镜头在动」的知觉来源）。
 
@@ -26,6 +29,8 @@
        去清三千多万像素。
      · 一帧内**只做一次昂贵的重算**（重建静态几何只在 resize 时发生）。
    ========================================================================== */
+
+import { WAVE_GAIN, WAVE_POINTS, ringWaveIntensity, ringWaveTarget, stepWaveValue } from "./arcanum-timing.js";
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const TAU = Math.PI * 2;
@@ -145,6 +150,7 @@ function traceRune(g, glyph, cx, cy, rot, scale) {
 export function createScene(canvas) {
   const noop = {
     resize: () => {},
+    setSafeArea: () => {},
     setPalette: () => {},
     setHue: () => {},
     setPattern: () => {},
@@ -191,9 +197,16 @@ export function createScene(canvas) {
   let gradRing = null;
   let gradVignette = null;
   let gradBeam = null;
-  /** 法阵外圈那圈波纹线：72 个采样点，快起慢落地跟着频谱起伏 */
-  const WAVE_N = 72;
+  /**
+   * 法阵外圈那圈波纹线：72 个采样点，快起慢落地跟着频谱起伏。
+   * ★ 采样点停在固定的角度上（不整体旋转）—— 见 arcanum-timing.js 的
+   *   「法阵外圈的那圈波纹」一节：转了圈就没人看得出哪里在起伏。
+   */
+  const WAVE_N = WAVE_POINTS;
   const wave = new Float32Array(WAVE_N);
+  /** 每个采样点自己的行进包络相位：避免整圈一起张缩（那看起来像在调音量） */
+  const wavePhase = new Float32Array(WAVE_N);
+  for (let i = 0; i < WAVE_N; i += 1) wavePhase[i] = (i * 2.399963) % TAU;
   const fog = [];
   for (let i = 0; i < 3; i += 1) fog.push({ ph: i * 2.1, r: 100, grad: null });
 
@@ -202,14 +215,44 @@ export function createScene(canvas) {
   let rippleCursor = 0;
   let pulseCursor = 0;
   const scatterRnd = mulberry32(20260101);
+  /**
+   * 上下被 chrome（标题栏 / 详情页头部 / 底栏）压住的留白（px）。
+   * 由皮肤在量完安全区之后写进来（见 arcanum.js 的 measureSafeArea），
+   * 法阵据此把自己摆进"真正看得见的那块画面"的正中。
+   */
+  const canvasSafe = { top: 0, bottom: 0 };
 
   function rebuild() {
     const fit = fitCanvas(canvas);
     W = fit.W;
     H = fit.H;
-    R = Math.max(60, Math.min(W, H) * 0.3);
+    /**
+     * ★ 法阵要**整体完整地**待在"能看见的那块画面"里。
+     *
+     * 舞台铺满整窗，上下却被标题栏 / 详情页头部 / 底栏压着（见 --ar-safe-*），
+     * 所以"画面中心"不是 H/2，而是安全区的中点。早先圆心固定在 H * 0.58：
+     * 一来比中点低了 65px（1440×808 时），二来最外那圈波纹的波峰还会再往外
+     * 顶出半径的 42%，于是下半圈连同外环一起被底栏吃掉 —— 看起来就是
+     * "魔法阵没在中间、还显示不全"。
+     *
+     * 现在的做法：先按**安全区**短边求半径（留出波峰那 42% 的余量），
+     * 再把圆心放在安全区正中。
+     */
+    const safeTop = canvasSafe.top;
+    const safeBottom = canvasSafe.bottom;
+    const safeH = Math.max(1, H - safeTop - safeBottom);
+    const safeW = W;
+    // 可见区域的短边：半径按它算，法阵才不会比画面还高
+    const visible = Math.max(1, Math.min(safeW, safeH));
+    // 1.18 是外环半径倍数，1.42 是波峰能到达的最大外扩（见 WAVE_GAIN / 波幅公式）
+    R = Math.max(40, (visible * 0.5) / (1.18 * 1.42));
     cx = W / 2;
-    cy = H * 0.58;
+    cy = safeTop + safeH / 2;
+    // 法阵中心也写给 CSS：HUD / 空态要对齐它
+    if (canvas.parentElement) {
+      canvas.parentElement.style.setProperty("--ar-core-x", cx.toFixed(1) + "px");
+      canvas.parentElement.style.setProperty("--ar-core-y", cy.toFixed(1) + "px");
+    }
 
     const rnd = mulberry32(9182);
     stars = [];
@@ -306,6 +349,21 @@ export function createScene(canvas) {
 
   return {
     resize() {
+      rebuild();
+      applyTint();
+    },
+    /**
+     * 告诉法阵"上下各有多少 px 被 chrome 压住"——它据此把圆心放到安全区正中，
+     * 并按安全区短边求半径，保证整个法阵（连波纹波峰）都完整可见。
+     * @param {number} top px
+     * @param {number} bottom px
+     */
+    setSafeArea(top, bottom) {
+      const t = Math.max(0, Number(top) || 0);
+      const b = Math.max(0, Number(bottom) || 0);
+      if (Math.abs(t - canvasSafe.top) < 0.5 && Math.abs(b - canvasSafe.bottom) < 0.5) return;
+      canvasSafe.top = t;
+      canvasSafe.bottom = b;
       rebuild();
       applyTint();
     },
@@ -545,42 +603,35 @@ export function createScene(canvas) {
         g.fill();
       }
 
-      // —— 法阵外圈：一圈随旋律起伏的波纹线 ——
-      // 需求「魔法阵周围可以弄一圈波纹线条随着旋律而起伏」。这里的做法是：
-      // 把整条频谱（不是几个标量）**镜像采样**到圆周上（低频落在左右两侧、
-      // 高频在上下），得到一条闭合的波峰曲线；再把它和一条缩小的内曲线连成
-      // 环带填充。快起慢落（0.5 / 0.12）是为了让它像"声浪"而不是"抖动"。
-      // 拿不到频谱时（fallback）走一条自走的呼吸正弦 + 歌词节拍脉冲，
-      // 于是没有 WebAudio 的宿主里这圈线依然会随句子起伏。
-      const bandCount = s.bands && s.bands.length ? s.bands.length : 0;
-      const bandsLive = Boolean(s.bandsLive && bandCount);
-      const beatPulse = clamp(s.tempoPulse || 0, 0, 1);
-      const waveRot = t * 0.12 * spin;
+      // —— 法阵外圈：三圈声浪（随旋律起伏，不转圈）——
+      // 需求「魔法阵周围可以弄一圈波纹线条随着旋律而起伏」。做法见
+      // arcanum-timing.js 的「法阵外圈的那圈波纹」一节：把整条频谱按频率轴
+      // 铺在圆周的三段上（首尾都落在安静的两头 → 接缝平滑），采样点停在**固定
+      // 角度**上，于是"哪里在起伏"一眼就看得出来。
+      // ★ 幅度：位移 = 半径 × WAVE_GAIN × 幅度 × 强度。早先只有 6.5%~19% 的
+      //   半径位移，又叠了一层整体旋转，实际只有一条几乎不动的细线 —— 现在满幅
+      //   有 30% 半径，安静段落也留着约三成的持续起伏，肉眼一定能看到。
+      const energy = clamp(s.energy || 0, 0, 1);
+      const intensity = ringWaveIntensity(s);
       const waveBase = R * 1.18 * breathe;
-      const waveAmp = R * (0.065 + clamp(s.energy || 0, 0, 1) * 0.13 + beatPulse * 0.05);
+      const waveAmp = R * WAVE_GAIN * (0.34 + 0.66 * intensity);
       for (let i = 0; i < WAVE_N; i += 1) {
-        const k = i / WAVE_N;
-        let target;
-        if (bandsLive) {
-          const mirror = Math.abs(k * 2 - 1);
-          const bi = Math.min(bandCount - 1, Math.floor(Math.pow(mirror, 1.3) * bandCount));
-          target = s.bands[bi] || 0;
-        } else {
-          // 回退（没有 WebAudio）：自走的呼吸波 + 歌词节拍脉冲，幅度做得和真频谱
-          // 一个量级，免得"没声卡"的宿主里这圈线细得看不见
-          target = 0.22 + 0.24 * Math.sin(k * Math.PI * 6 + t * 1.1) + beatPulse * 0.42;
-        }
-        const prev = wave[i];
-        wave[i] = prev + (target - prev) * (target > prev ? 0.5 : 0.12);
+        stepWaveValue(wave, i, ringWaveTarget(s, i, WAVE_N, t), 0.5, 0.12);
       }
+      /** 某一个采样点的径向位移（含每个点自己的行进包络） */
+      const waveR = (i) => {
+        const idx = i % WAVE_N;
+        const env = 0.82 + 0.18 * Math.sin(t * 1.35 + wavePhase[idx]);
+        return wave[idx] * env;
+      };
 
       // 环带：外圈正向走一圈，再用内圈反向走回来，闭合成一条带状路径
-      g.lineWidth = 1.1;
+      g.lineWidth = 1.15;
       g.beginPath();
       for (let i = 0; i <= WAVE_N; i += 1) {
         const idx = i % WAVE_N;
-        const ang = waveRot + (idx / WAVE_N) * TAU;
-        const r = waveBase + waveAmp * wave[idx];
+        const ang = (idx / WAVE_N) * TAU;
+        const r = waveBase + waveAmp * waveR(idx);
         const x = arrX + Math.cos(ang) * r;
         const y = arrY + Math.sin(ang) * r;
         if (i === 0) g.moveTo(x, y);
@@ -588,8 +639,8 @@ export function createScene(canvas) {
       }
       for (let i = WAVE_N; i >= 0; i -= 1) {
         const idx = i % WAVE_N;
-        const ang = waveRot + (idx / WAVE_N) * TAU;
-        const r = waveBase - R * 0.06 + waveAmp * 0.5 * wave[idx];
+        const ang = (idx / WAVE_N) * TAU;
+        const r = waveBase - R * 0.09 + waveAmp * 0.55 * waveR(idx);
         g.lineTo(arrX + Math.cos(ang) * r, arrY + Math.sin(ang) * r);
       }
       g.closePath();
@@ -599,12 +650,12 @@ export function createScene(canvas) {
       g.globalAlpha = 1;
 
       // 波峰上的亮线
-      g.strokeStyle = rgba(tinted[0], clamp(alpha * (0.3 + (s.energy || 0) * 0.45 + thunder * 0.35), 0, 1));
+      g.strokeStyle = rgba(tinted[0], clamp(alpha * (0.34 + energy * 0.45 + thunder * 0.35), 0, 1));
       g.beginPath();
       for (let i = 0; i <= WAVE_N; i += 1) {
         const idx = i % WAVE_N;
-        const ang = waveRot + (idx / WAVE_N) * TAU;
-        const r = waveBase + waveAmp * wave[idx];
+        const ang = (idx / WAVE_N) * TAU;
+        const r = waveBase + waveAmp * waveR(idx);
         const x = arrX + Math.cos(ang) * r;
         const y = arrY + Math.sin(ang) * r;
         if (i === 0) g.moveTo(x, y);
@@ -612,16 +663,17 @@ export function createScene(canvas) {
       }
       g.stroke();
 
-      // 波峰向外甩出的短线（只在明显起伏的地方画，避免成了一圈毛刺）
+      // 波峰向外甩出的短线：跟着起伏走 —— 谷底没有线、浪尖伸得最长，
+      // 于是"起伏的形状"靠这一圈长短线也能读出来（哪怕色弱 / 小窗口）
       g.lineWidth = 1;
-      g.strokeStyle = rgba(tinted[2], clamp(alpha * 0.32, 0, 1));
+      g.strokeStyle = rgba(tinted[2], clamp(alpha * 0.34, 0, 1));
       g.beginPath();
       for (let i = 0; i < WAVE_N; i += 2) {
-        const v = wave[i];
-        if (v < 0.28) continue;
-        const ang = waveRot + (i / WAVE_N) * TAU;
+        const v = waveR(i);
+        if (v < 0.24) continue;
+        const ang = (i / WAVE_N) * TAU;
         const r0 = waveBase + waveAmp * v;
-        const r1 = r0 + R * 0.05 * v;
+        const r1 = r0 + R * 0.22 * WAVE_GAIN * v * (0.6 + intensity);
         g.moveTo(arrX + Math.cos(ang) * r0, arrY + Math.sin(ang) * r0);
         g.lineTo(arrX + Math.cos(ang) * r1, arrY + Math.sin(ang) * r1);
       }

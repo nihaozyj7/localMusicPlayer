@@ -39,13 +39,29 @@ import {
   MIN_SING_MS,
   MAX_SING_MS,
   LYRIC_BANDS,
+  ENTRANCE_PEAK,
+  ENTRANCE_PEAK_FALLBACK,
+  WAVE_GAIN,
+  WAVE_POINTS,
+  WAVE_SEGMENTS,
+  boxesOverlap,
+  charSlotEm,
+  estimateSlotWidthEm,
+  unitPadEm,
   buildGraphemeTimeline,
   detectSections,
   estimateWidthEm,
+  lineBox,
+  overlapDepth,
   planLine,
+  planLines,
   resolveFocus,
+  ringWaveIntensity,
+  ringWaveTarget,
+  solveOverlaps,
   tokenizeUnits,
   unitWeight,
+  waveBandIndex,
   bandSplit,
   createElementAnalyzer,
   createStageCamera,
@@ -431,6 +447,322 @@ test("planLine：同一句永远生成同一套构图（确定性），十种入
   // 同一句在不同段落里给出不同的剧本（副歌比主歌更大更亮）
   const verse = planLine(line, 3, "verse", endAt);
   assert.ok(a.program.sizeScale > verse.program.sizeScale);
+});
+
+
+/* --------------------------------------------------------------------------
+   占位矩形与「不重叠」求解
+   --------------------------------------------------------------------------
+   这一组是需求「渲染之前先模拟矩形判断会不会重叠」的直接验收：
+   光有"落在不同行带"是不够的 —— 行是 text-align:left 且长度不一的，
+   宽句会横着扫到邻行身上，所以必须有一步**求出互不相交的落点**。
+   -------------------------------------------------------------------------- */
+
+test("estimateWidthEm：按真实字宽估算（全 i 的单词明显窄于全 M 的）", () => {
+  // 早先"一个字母 0.56em"的近似在 i / l 上高估、在 W / M 上低估，
+  // 而占位矩形正是拿这个数去算的 —— 估错就会误判重叠
+  assert.ok(estimateWidthEm("iiiii") < estimateWidthEm("mmmmm"));
+  assert.ok(estimateWidthEm("MM") > estimateWidthEm("ll"));
+  assert.ok(estimateWidthEm("国") > estimateWidthEm("i"));
+  assert.ok(estimateWidthEm("") === 0);
+});
+
+test("lineBox：占位矩形随宽度与缩放变大，中心就是落点（视口比例坐标）", () => {
+  const a = lineBox(0.1, -0.05, 10, 1, 0.02);
+  const wide = lineBox(0.1, -0.05, 20, 1, 0.02);
+  const big = lineBox(0.1, -0.05, 10, 1.5, 0.02);
+  // node 坐标（0 = 正中 / 画面 40% 高）→ 视口比例（0~1，左上角为原点）；
+  // 浮点加法（-0.05 + 0.4）会有 1e-17 级的尾巴，所以用近似比较
+  assert.ok(Math.abs(a.x - 0.6) < 1e-9, "x=" + a.x);
+  assert.ok(Math.abs(a.y - 0.35) < 1e-9, "y=" + a.y);
+  assert.ok(wide.w > a.w);
+  assert.ok(big.w > a.w);
+  // 行高按字号算（与真实文字量出来的高度同源）：
+  //   1em = 0.02 视口宽 → 一行的字面高约 1.18em → ×1.78 折成视口高的比例
+  //   ★ 这个换算走过两次弯路，都记在这里：
+  //     · ÷emToStageW：等于又乘了 1/0.02 = 50 倍，每行高度顶到上限，
+  //       求解器以为整屏每一行都上下重叠；
+  //     · ÷STAGE_ASPECT：比例被压小 3 倍多，盒子比真实文字矮太多，重叠全漏判。
+  //   正确方向是 **× ASPECT**（1em 的高度 = em × 视口宽 ÷ 视口高）。
+  // 1.02em（字面）+ 0.16em（缩放与散落的余量）= 1.18em
+  const expect = 1.18 * 0.02 * 1.78;
+  assert.ok(Math.abs(a.h - expect) < 1e-9, "h=" + a.h + " expect=" + expect);
+  assert.ok(a.h > 0.03 && a.h < 0.05, "量级要落在「一行 ≈ 3~5% 视口高」附近，h=" + a.h);
+});
+
+test("boxesOverlap / overlapDepth：相交才为真，分开就是 0", () => {
+  const a = { x: 0, y: 0, w: 0.4, h: 0.06 };
+  assert.equal(boxesOverlap(a, { x: 0.19, y: 0, w: 0.2, h: 0.06 }), true);
+  assert.equal(boxesOverlap(a, { x: 0.31, y: 0, w: 0.2, h: 0.06 }), false);
+  assert.equal(boxesOverlap(a, { x: 0, y: 0.05, w: 0.2, h: 0.06 }), true);
+  assert.ok(overlapDepth(a, { x: 0.19, y: 0, w: 0.2, h: 0.06 }) > 0);
+  assert.equal(overlapDepth(a, { x: 0.4, y: 0, w: 0.2, h: 0.06 }), 0);
+});
+
+test("solveOverlaps：叠在一起的矩形会被推开，且不会跑出舞台", () => {
+  // 三行原本落在同一个点上（宽度还都不小）—— 求解之后必须两两不相交
+  const items = [
+    { x: 0.5, y: 0.4, w: 0.5, h: 0.06 },
+    { x: 0.52, y: 0.41, w: 0.5, h: 0.06 },
+    { x: 0.48, y: 0.39, w: 0.44, h: 0.06 },
+  ];
+  solveOverlaps(items, { top: 0.16, bottom: 0.64, edgeX: 0.47 });
+  for (let i = 0; i < items.length; i += 1) {
+    for (let j = i + 1; j < items.length; j += 1) {
+      assert.equal(overlapDepth(items[i], items[j]), 0, i + " 与 " + j + " 仍然相交");
+    }
+    // 不出画：矩形整个落在 0~1 的视口里
+    assert.ok(items[i].x - items[i].w / 2 >= 0 && items[i].x + items[i].w / 2 <= 1, "x=" + items[i].x);
+    // 不越出上下行带
+    assert.ok(items[i].y >= 0.16 - 1e-6 && items[i].y <= 0.64 + 1e-6, "y=" + items[i].y);
+  }
+});
+
+test("planLines：同屏的几句解出来两两不相交（含角落 HUD 的留白）", () => {
+  const lines = [
+    { time: 0, text: "夜航西飞星光落在机翼上" },
+    { time: 3000, text: "短句" },
+    { time: 6000, text: "这一句特别特别长几乎要横穿整个舞台的中央部分" },
+    { time: 9000, text: "fly me to the moon" },
+    { time: 12000, text: "第五句" },
+    { time: 15000, text: "第六句也一样要摆得下" },
+  ];
+  const endAt = (i) => (lines[i + 1] ? lines[i + 1].time : lines[i].time + 3000);
+  const plans = lines.map((line, i) => planLine(line, i, "verse", endAt, { bands: 6 }));
+  const layout = {
+    top: 0.16,
+    bottom: 0.64,
+    edgeX: 0.47,
+    emToStageW: 0.02,
+    // 左上角的曲目信息留白（视口比例坐标）
+    corners: [{ x: 0.21, y: 0.24, w: 0.42, h: 0.06 }],
+  };
+  const boxes = planLines(plans, layout);
+  assert.equal(boxes.size, lines.length);
+  for (let i = 0; i < plans.length; i += 1) {
+    for (let j = i + 1; j < plans.length; j += 1) {
+      const d = overlapDepth(plans[i].box, plans[j].box);
+      assert.equal(d, 0, "第 " + i + " 句与第 " + j + " 句仍然相交（depth=" + d + "）");
+    }
+    // 不出画
+    assert.ok(plans[i].box.x - plans[i].box.w / 2 >= -1e-6, "出画: " + plans[i].box.x);
+    assert.ok(plans[i].box.x + plans[i].box.w / 2 <= 1 + 1e-6, "出画: " + plans[i].box.x);
+  }
+  // 求解后的 node 必须与 box 同源 —— 否则"算出来不重叠"和"画出来不重叠"是两回事
+  for (const plan of plans) {
+    assert.ok(Math.abs(plan.node.x - (plan.box.x - 0.5)) < 1e-9, "node.x 与 box 不一致");
+    assert.ok(Math.abs(plan.node.y - (plan.box.y - 0.4)) < 1e-9, "node.y 与 box 不一致");
+    assert.equal(plan.focus.x, plan.node.x);
+  }
+});
+
+test("planLines：会躲开角落留白（曲名 / 段落名）且全部落在行带里", () => {
+  // 左上角的曲名 + 右上角的段落名，故意做成和第一条行带叠在一起
+  const hud = { x: 0.21, y: 0.205, w: 0.42, h: 0.07 };
+  const section = { x: 0.88, y: 0.205, w: 0.19, h: 0.035 };
+  const lines = [
+    // 长句 + 偏左的落点，才会真的伸到左上角曲名那一块去
+    { time: 0, text: "这一句很长很长而且要摆到左边去压在曲名上才肯罢休" },
+    { time: 3000, text: "第二句" },
+    { time: 6000, text: "第三句也一样要摆得下" },
+  ];
+  const plans = lines.map((line, i) => planLine(line, i, "verse", () => 3000, { bands: 3, top: 0.2, bottom: 0.6 }));
+  // 行带第一条落在 y≈0.2，和曲名那块留白是同一条带 —— 这正是
+  // "渲染之后才发现压在一起"的场景
+  assert.ok(plans[0].box.y - hud.y < (plans[0].box.h + hud.h) / 2, "前置条件：第一句与曲名同带");
+  assert.ok(
+    boxesOverlap(plans[0].box, hud, 0),
+    "前置条件：第一句本来就该压着曲名 " + JSON.stringify(plans[0].box)
+  );
+  planLines(plans, {
+    top: 0.2,
+    bottom: 0.6,
+    edgeX: 0.47,
+    emToStageW: 0.02,
+    corners: [hud, section],
+  });
+  for (const plan of plans) {
+    assert.equal(boxesOverlap(plan.box, hud, 0), false, "压在曲名上: " + JSON.stringify(plan.box));
+    assert.equal(boxesOverlap(plan.box, section, 0), false, "压在段落名上");
+    assert.ok(
+      plan.box.x - plan.box.w / 2 >= -1e-6 && plan.box.x + plan.box.w / 2 <= 1 + 1e-6,
+      "出画: x=" + plan.box.x
+    );
+    assert.ok(plan.box.y >= 0.2 - 1e-6 && plan.box.y <= 0.6 + 1e-6, "越出行带: y=" + plan.box.y);
+  }
+  // 躲开曲名之后也不能彼此压上
+  for (let i = 0; i < plans.length; i += 1) {
+    for (let j = i + 1; j < plans.length; j += 1) {
+      assert.equal(overlapDepth(plans[i].box, plans[j].box), 0, "第 " + i + " / " + j + " 句相交");
+    }
+  }
+});
+
+
+/* --------------------------------------------------------------------------
+   字与字之间不重叠
+   --------------------------------------------------------------------------
+   需求原文：「你是使用了缩放和变换的，应该保证变换之后的最终结果不要重叠，
+   歌词和歌词，字和字之间都不要重叠」。
+
+   字素的观感是 transform: translate(dx,dy) rotate(dr) scale(ds)，
+   而 **transform 不参与布局** —— 排版格子仍然只有字面那么宽。于是被放大
+   1.3 倍的汉字画出来比格子宽 30%，必然盖住左右邻居（实测：一整句 53 处、
+   相邻字横向重叠 0.8~8px）。修法是给每个字素补一个 --ar-pad，
+   让"占多大"和"画多大"用同一个数（见 unitPadEm / estimateSlotWidthEm）。
+   -------------------------------------------------------------------------- */
+
+test("unitPadEm：放大的字素会留出额外的格子，缩小的不留", () => {
+  // 落定 1.0 倍、不倾斜：刚好占满字面，不需要额外留
+  assert.equal(unitPadEm("国", 1, 0, 0), 0);
+  // 放大到 1.3 倍：两侧各要多留 (1.3 - 1) / 2 = 0.15em
+  assert.ok(Math.abs(unitPadEm("国", 1.3, 0, 0) - 0.15) < 1e-9, String(unitPadEm("国", 1.3, 0, 0)));
+  // 缩小不会侵占邻居
+  assert.equal(unitPadEm("国", 0.7, 0, 0), 0);
+  // 倾斜要把外接盒算进去
+  assert.ok(unitPadEm("国", 1, 20, 0) > 0);
+  // 横向偏移整体挪，两侧都要留
+  assert.ok(unitPadEm("国", 1, 0, 0.1) >= 0.1 - 1e-9);
+});
+
+test("unitPadEm：入场动画的峰值也要算进格子（动画中途不能压到邻居）", () => {
+  // ar-appear 起始就是 1.28 倍：落定 1.0 也要按峰值留
+  const withPeak = unitPadEm("国", 1, 0, 0, "appear");
+  const without = unitPadEm("国", 1, 0, 0);
+  assert.ok(withPeak > without, withPeak + " vs " + without);
+  // 峰值倍数必须够大，能覆盖 CSS 里那条 keyframes
+  assert.ok(ENTRANCE_PEAK.appear.scale >= 1.2, "ar-appear 的峰值不该小于 1.2");
+  assert.ok(ENTRANCE_PEAK.burst.scale >= 1.2);
+  assert.ok(ENTRANCE_PEAK_FALLBACK.scale >= 1.2, "没登记的入场方式要有兜底");
+  // 十种入场方式都要登记（否则新动画会静默地按兜底算，格子可能不够）
+  const modes = ["summon", "appear", "write", "fall", "rise", "slash", "spiral", "mirror", "unseal", "burst"];
+  for (const m of modes) {
+    assert.ok(ENTRANCE_PEAK[m], "入场方式 " + m + " 没有登记峰值");
+    assert.ok(typeof ENTRANCE_PEAK[m].scale === "number");
+  }
+});
+
+test("charSlotEm：缩放与旋转都会撑宽外接盒", () => {
+  const plain = charSlotEm("国", 1, 0);
+  assert.ok(charSlotEm("国", 1.3, 0) > plain);
+  assert.ok(charSlotEm("国", 1, 30) > plain);
+  assert.ok(charSlotEm("国", 1.3, 30) > charSlotEm("国", 1.3, 0));
+});
+
+test("estimateSlotWidthEm：画出来的宽度 ≥ 字面宽度（放大之后必须更宽）", () => {
+  const units = [
+    { ch: "请", ds: 1, dr: 0, dx: 0, mode: "write" },
+    { ch: "把", ds: 1.3, dr: 5, dx: 0.05, mode: "appear" },
+    { ch: "这", ds: 1.3, dr: -5, dx: -0.05, mode: "burst" },
+  ];
+  const textW = units.reduce((a) => a + 1, 0); // 三个汉字 = 3em 字面
+  const slotW = estimateSlotWidthEm(units);
+  assert.ok(slotW > textW, "slot " + slotW + " 应当比字面 " + textW + " 宽");
+});
+
+test("planLine：占位矩形按'画出来的宽度'算，而不是字面宽度", () => {
+  const p = planLine({ time: 0, text: "请把这些年 都当作一场时差" }, 0, "verse", () => 5000, { bands: 6 });
+  // 这一句全是会被放大的关键词/主字，画出来必然比字面宽
+  assert.ok(p.slotWidthEm > p.widthEm, "slot " + p.slotWidthEm + " vs text " + p.widthEm);
+  assert.ok(p.slotWidthEm / p.widthEm > 1.15, "至少宽一成半，实测比例 " + p.slotWidthEm / p.widthEm);
+  // 每个字素都带上了自己的 pad，而且是有限的非负数
+  for (const u of p.units) {
+    assert.ok(Number.isFinite(u.pad) && u.pad >= 0, JSON.stringify(u));
+  }
+  // 空格不放大，所以它的 pad 是 0
+  const space = p.units.find((u) => u.kind === "space");
+  if (space) assert.equal(space.pad, 0);
+});
+
+test("planLine → planLines：两处用的占位宽度必须同源（否则求解结果会跳）", () => {
+  const lines = [
+    { time: 0, text: "请把这些年 都当作一场时差" },
+    { time: 3000, text: "无线电里 有人说着晚安" },
+  ];
+  const endAt = (i) => (lines[i + 1] ? lines[i + 1].time : lines[i].time + 3000);
+  // ★ emToStageW 必须两边一致：planLine 用它算占位矩形，planLines 也用它。
+  //   测试里少传一边，两处就会用不同的宽，测出来的"不同源"是假的。
+  const layout = { bands: 6, emToStageW: 0.01668 };
+  const plans = lines.map((l, i) => planLine(l, i, "verse", endAt, layout));
+  const before = plans.map((p) => p.box.w);
+  planLines(plans, { top: 0.13, bottom: 0.62, edgeX: 0.47, emToStageW: 0.01668 });
+  // planLines 重新算的宽度要与 planLine 首次落点的宽度一致（同源）
+  for (let i = 0; i < plans.length; i += 1) {
+    assert.ok(
+      Math.abs(plans[i].box.w - before[i]) < 1e-9,
+      "第 " + i + " 句宽度变了：" + before[i] + " → " + plans[i].box.w
+    );
+  }
+  // 而且求解之后仍然互不相交
+  for (let i = 0; i < plans.length; i += 1) {
+    for (let j = i + 1; j < plans.length; j += 1) {
+      assert.equal(overlapDepth(plans[i].box, plans[j].box), 0, i + " / " + j + " 相交");
+    }
+  }
+});
+
+test("planLine：整句不再倾斜（倾斜会把垂直外接盒撑大，也会让字看不清）", () => {
+  for (let i = 0; i < 12; i += 1) {
+    const p = planLine({ time: i * 3000, text: "第" + i + "句" }, i, "chorus", () => 3000);
+    assert.equal(p.node.r, 0, "node.r 应当为 0");
+  }
+});
+
+/* --------------------------------------------------------------------------
+   法阵外圈那圈波纹（随旋律起伏、不转圈）
+   -------------------------------------------------------------------------- */
+
+test("waveBandIndex：整条频谱铺在圆周的三段上，接缝处都落在安静的两头", () => {
+  const n = 72;
+  const bands = 32;
+  const segLen = n / WAVE_SEGMENTS; // 24 个采样点 = 120°
+  // 段的起点与终点都落在低频（0）—— 接缝不会出现断崖
+  assert.equal(waveBandIndex(0, n, bands), 0);
+  assert.equal(waveBandIndex(segLen, n, bands), 0);
+  assert.equal(waveBandIndex(segLen * 2, n, bands), 0);
+  assert.equal(waveBandIndex(n, n, bands), 0);
+  // 段的正中间 = 频谱的正中间（中频），比两头高得多
+  const mid = waveBandIndex(segLen / 2, n, bands);
+  assert.ok(Math.abs(mid - bands / 2) <= 1, "段中间应当是频谱正中间，实际 " + mid);
+  assert.ok(mid > waveBandIndex(2, n, bands), "段中间应当比靠近接缝的地方高");
+  // 一段之内频率只会越走越高
+  assert.ok(waveBandIndex(18, n, bands) > waveBandIndex(6, n, bands), "段内应当单调上升");
+  // 全部下标都在范围内
+  for (let i = 0; i < n; i += 1) {
+    const bi = waveBandIndex(i, n, bands);
+    assert.ok(bi >= 0 && bi < bands, "bi=" + bi);
+  }
+});
+
+test("ringWaveTarget：有频谱时按频率轴取，没频谱时给一条会呼吸的回退波", () => {
+  const bands = Array.from({ length: 32 }, (_, i) => i / 31);
+  const live = { bands, bandsLive: true, tempoPulse: 0 };
+  const quiet = ringWaveTarget(live, 0, 72, 0);
+  const loud = ringWaveTarget(live, 36, 72, 0); // 段中间 = 高频
+  assert.ok(loud > quiet, quiet + " vs " + loud);
+  // 回退：一个标量频谱都没有时，仍然给出 0.2~1 的起伏（否则这圈线会细得看不见）
+  const samples = [];
+  for (let i = 0; i < 72; i += 6) samples.push(ringWaveTarget({ tempoPulse: 0 }, i, 72, 0.4));
+  assert.ok(Math.max(...samples) - Math.min(...samples) > 0.2, samples.join(","));
+});
+
+test("ringWaveIntensity / WAVE_GAIN：起伏强度够大（这正是「看得出来」的那一档）", () => {
+  assert.equal(WAVE_POINTS, 72);
+  const quiet = ringWaveIntensity({ energy: 0, tempoPulse: 0 });
+  const loud = ringWaveIntensity({ energy: 1, tempoPulse: 1 });
+  assert.ok(quiet < 0.6 && loud > 0.9, quiet + " / " + loud);
+  // 安静段落也留着近一半的起伏（否则这圈线看起来"根本不动"）
+  const idleAmp = WAVE_GAIN * (0.34 + 0.66 * quiet);
+  const loudAmp = WAVE_GAIN * (0.34 + 0.66 * loud);
+  assert.ok(idleAmp > 0.2, "安静时振幅 " + idleAmp);
+  assert.ok(loudAmp > idleAmp * 1.4, "响的时候应当明显更大：" + idleAmp + " → " + loudAmp);
+  // ★ 换算成像素：法阵半径 R ≈ 0.3 × 短边 × 1.14，1440×808 时 R ≈ 276px。
+  //   需求要的是"起伏看得出来"，所以安静档也要有 60px 以上。
+  const R = 0.3 * 808 * 1.14;
+  assert.ok(idleAmp * R > 60, "安静档振幅只有 " + (idleAmp * R).toFixed(0) + "px，太细了");
+  assert.ok(loudAmp * R > 100, "最响时振幅 " + (loudAmp * R).toFixed(0) + "px");
+  // 旧实现（镜像映射 + 无底噪）实测只有 18~68px，现在必须明显更大
+  assert.ok(idleAmp * R > 68, "安静档就已经要超过旧实现的最大振幅");
 });
 
 test("resolveFocus：进入下一句前 lookahead 窗口就先看过去（镜头先动、字再出现）", () => {

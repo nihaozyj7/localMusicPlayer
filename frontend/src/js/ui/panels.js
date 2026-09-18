@@ -41,6 +41,7 @@ import {
   openDownloadLocation,
 } from "../downloads.js";
 import { locateCurrentQueueItem } from "../tracks.js";
+import { mirrorPlayerSurface } from "../playerhost.js";
 
 /* ==========================================================================
    基类：浮层开合（hidden + data-state 两段式过渡）
@@ -65,6 +66,11 @@ export class MpPanel extends MpElement {
         this._closeTimer = null;
       }
       if (el.hidden) {
+        // ★ 必须在**解除 hidden 之前**把详情页的色彩域投影过来，否则会先以
+        // 主题色渲染一帧、再跳到皮肤色（面板就是这么"闪"一下的）。
+        // 放在这里而不是各自的 close()/open() 里：四个面板走的都是这条路径，
+        // 基类一处就够（见 playerhost.js#mirrorPlayerSurface 的说明）。
+        mirrorPlayerSurface();
         el.hidden = false;
         // 先解除 hidden 再翻 data-state，保证过渡真的发生
         el.dataset.state = "";
@@ -180,7 +186,14 @@ class MpQueuePanel extends MpPanel {
     // 打开时 state.queueOpen 变化会触发重绘，内容照样是齐的。
     const list = state.queueOpen ? state.queue.map((id) => songById(id)).filter(Boolean) : [];
     return html`
-      <section class="queue-panel" id="queue-panel" hidden data-state="closed" aria-label="播放列表">
+      <section
+        class="queue-panel"
+        id="queue-panel"
+        hidden
+        data-state="closed"
+        data-surface-owner="playerview"
+        aria-label="播放列表"
+      >
         <div class="queue-panel__head">
           <span class="queue-panel__title">播放列表</span>
           <span class="u-spacer"></span>
@@ -376,7 +389,14 @@ class MpOptionsPanel extends MpPanel {
     const alpha = Math.round(state.config.glassAlphaCustom ? state.config.glassAlpha : resolvedGlassAlpha());
     const blur = Math.round(state.config.glassBlurCustom ? state.config.glassBlur : resolvedGlassBlur());
     return html`
-      <section class="options-panel" id="options-panel" hidden data-state="closed" aria-label="播放选项">
+      <section
+        class="options-panel"
+        id="options-panel"
+        hidden
+        data-state="closed"
+        data-surface-owner="playerview"
+        aria-label="播放选项"
+      >
         <div class="options-panel__head">
           <span class="options-panel__title">播放选项</span>
           <span class="u-spacer"></span>
@@ -536,7 +556,14 @@ class MpSleepPanel extends MpPanel {
     const timer = state.sleepTimer;
     const readout = sleepReadout(timer, this._pendingMinutes);
     return html`
-      <section class="sleep-panel" id="sleep-panel" hidden data-state="closed" aria-label="定时停止">
+      <section
+        class="sleep-panel"
+        id="sleep-panel"
+        hidden
+        data-state="closed"
+        data-surface-owner="playerview"
+        aria-label="定时停止"
+      >
         <div class="sleep-panel__head">
           <svg class="sleep-panel__icon" aria-hidden="true"><use href="#i-clock"></use></svg>
           <span class="sleep-panel__title">定时停止</span>

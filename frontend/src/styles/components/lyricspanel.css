@@ -19,7 +19,7 @@
   overflow: hidden;
   border-radius: var(--panel-radius);
   border: var(--panel-border);
-  background: var(--panel-bg);
+  background: var(--glass-bg);
   backdrop-filter: var(--panel-blur);
   box-shadow: var(--panel-shadow);
   color: var(--text-1);
