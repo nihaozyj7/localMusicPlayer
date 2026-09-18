@@ -125,6 +125,204 @@
 }
 
 /* --------------------------------------------------------------------------
+   1b. 详情页头部的控件配色（返回 / 更换封面 / 封面轮播 / 样式按钮组）
+   --------------------------------------------------------------------------
+   上面 §1 处理的是详情页**之外**的 chrome（.titlebar / .sidebar / .playerbar），
+   用的是 .app[data-mode="magia"] 作用域；这一节补的是详情页**之内**的头部 ——
+   它在 .playerview 里，作用域是 .playerview[data-skin="magia"]。
+
+   为什么必须补：头部这些控件读的是**主题令牌** ——
+     .viewmode          → var(--surface-1) / var(--hairline)
+     .viewmode__btn     → var(--text-3)，按下 → var(--accent) + var(--accent-text)
+     .playerview__back  → var(--text-2)，悬停 → var(--surface-hover)
+   而本样式铺的是一幅**写死的夜景**（见 §0 的说明，不消费主题令牌）。
+   于是内置的两个极端主题正好各自坏掉一次：
+     · light-minimal：--text-3 是 rgba(20,20,26,.38)、--accent 是近黑 #16161c
+       → 深灰字压在深夜景上 = 完全看不见（实测被反馈的正是这一条）；
+     · dark-minimal：--accent 是纯白 #ffffff
+       → 按下态在浅色美术层上糊成一片白。
+   根因是「跟随主题的控件」浮在「不跟随主题的画」上，所以修法只有一个：
+   **这张画之上的控件颜色，由这张画自己决定**。
+
+   三条配色纪律（与 §1 一致，只是换到详情页作用域）：
+     · 休息态用最弱的一档（--mg-text-3），否则六个样式按钮看起来全是按下态，
+       按下态就失去意义了；
+     · 悬停/按下的底色不用 --surface-hover —— 它在浅色主题下是「白色低透明」，
+       压在夜色上是一块发白的污渍，改用中性提亮；
+     · 按下态填魔法阵强调色（--mg-a1）配夜色字（#131024），
+       而不是 var(--accent)：表面是固定的，控件也必须是固定的。
+
+   只改颜色。尺寸 / 布局 / 结构 / 图标全部仍由宿主决定。
+   -------------------------------------------------------------------------- */
+
+.playerview[data-skin="magia"] .playerview__back {
+  color: var(--mg-text-2);
+}
+
+.playerview[data-skin="magia"] .playerview__back:hover {
+  color: var(--mg-text);
+  background: rgba(242, 242, 250, 0.12);
+}
+
+/* 按钮组的外壳：夜色薄底 + 魔法阵线条描边（不是主题的 --surface-1 白玻璃） */
+.playerview[data-skin="magia"] .viewmode {
+  background: rgba(9, 7, 20, 0.42);
+  border: 1px solid var(--mg-line-2);
+}
+
+.playerview[data-skin="magia"] .viewmode__btn {
+  color: var(--mg-text-3);
+}
+
+.playerview[data-skin="magia"] .viewmode__btn:hover {
+  color: var(--mg-text);
+  background: rgba(242, 242, 250, 0.12);
+}
+
+.playerview[data-skin="magia"] .viewmode__btn[aria-pressed="true"] {
+  background: var(--mg-a1);
+  color: #131024;
+}
+
+/* 不可用项：宿主原本靠 opacity 置灰，这里再压一档，避免它在夜景上仍显得可点 */
+.playerview[data-skin="magia"] .viewmode__btn:disabled:hover {
+  color: var(--mg-text-3);
+  background: none;
+}
+
+/* --------------------------------------------------------------------------
+   1c. 底栏播放控件的配色（传输按钮 / 音量 / 进度条 / 曲目信息 / 工具按钮）
+   --------------------------------------------------------------------------
+   §1 只给 .playerbar 这个**容器**写了 color，但那远远不够：底栏里的每个控件
+   都自己声明了颜色，容器上的 color 会被它们逐条覆盖：
+     .transport__btn          → var(--text-2)，主按钮 → var(--accent)
+     .playerbar__title        → var(--text-1)，副标题 → var(--text-3)
+     .volume__btn / .mode-btn → var(--text-2)，按下 → var(--accent)
+     .slider__fill / __thumb  → var(--accent)，轨道 → var(--surface-3)
+     .progress__time          → var(--text-3)
+   浅色主题下这些令牌几乎全是近黑（--text-1 是 #14141a、--accent 是 #16161c），
+   压在底栏那层夜色薄纱上 = 播放/上一首/下一首、音量、进度条全都看不见。
+   这正是「样式被主题影响」最严重的一处：不是某一类控件，是整个底栏。
+
+   所以这里按控件逐个覆盖，而不是指望容器 color 能继承下去。
+   配色分三档（与 §1 一致）：
+     · 次要控件（传输/音量/工具）＝ --mg-text-2
+     · 悬停 / 高亮 ＝ --mg-text
+     · 主操作与「已激活」（播放键、进度条、随机/单曲循环）＝ 魔法阵金 --mg-a1
+   进度条轨道用夜色线条色，填充与滑块用金色，压在薄纱上依然读得出来。
+   -------------------------------------------------------------------------- */
+
+/* —— 传输控制：上一首 / 播放暂停 / 下一首 —— */
+.app[data-mode="magia"][data-view="player"] .transport__btn {
+  color: var(--mg-text-2);
+}
+
+.app[data-mode="magia"][data-view="player"] .transport__btn:hover {
+  color: var(--mg-text);
+  background: rgba(242, 242, 250, 0.12);
+}
+
+.app[data-mode="magia"][data-view="player"] .transport__btn[aria-pressed="true"],
+.app[data-mode="magia"][data-view="player"] .transport__btn--main,
+.app[data-mode="magia"][data-view="player"] .transport__btn--main:hover {
+  color: var(--mg-a1);
+}
+
+.app[data-mode="magia"][data-view="player"] .transport__btn--main:hover {
+  background: rgba(242, 242, 250, 0.12);
+}
+
+/* —— 曲目信息 —— */
+.app[data-mode="magia"][data-view="player"] .playerbar__title {
+  color: var(--mg-text);
+}
+
+.app[data-mode="magia"][data-view="player"] .playerbar__sub {
+  color: var(--mg-text-3);
+}
+
+/* —— 进度：已播时间 / 时长 / 轨道 / 填充 / 滑块 —— */
+.app[data-mode="magia"][data-view="player"] .progress__time {
+  color: var(--mg-text-3);
+}
+
+.app[data-mode="magia"][data-view="player"] .playerbar .slider__rail {
+  background: rgba(242, 242, 250, 0.16);
+}
+
+.app[data-mode="magia"][data-view="player"] .playerbar .slider__buffer {
+  background: rgba(242, 242, 250, 0.24);
+}
+
+.app[data-mode="magia"][data-view="player"] .playerbar .slider__fill,
+.app[data-mode="magia"][data-view="player"] .playerbar .slider__thumb {
+  background: var(--mg-a1);
+}
+
+/* 拖动气泡：底色深、字浅，浮在夜色上任何时候都读得清 */
+.app[data-mode="magia"][data-view="player"] .playerbar .slider__bubble {
+  color: var(--mg-text);
+}
+
+/* —— 音量按钮 —— */
+.app[data-mode="magia"][data-view="player"] .volume__btn {
+  color: var(--mg-text-2);
+}
+
+.app[data-mode="magia"][data-view="player"] .volume__btn:hover {
+  color: var(--mg-text);
+  background: rgba(242, 242, 250, 0.12);
+}
+
+/* —— 播放顺序 / 桌面歌词 / 播放列表 等工具按钮 —— */
+.app[data-mode="magia"][data-view="player"] .mode-btn {
+  color: var(--mg-text-2);
+}
+
+.app[data-mode="magia"][data-view="player"] .mode-btn:hover {
+  color: var(--mg-text);
+  background: rgba(242, 242, 250, 0.12);
+}
+
+/* 已激活的（随机 / 单曲循环 / 面板打开）：金色，代表「正在起作用」 */
+.app[data-mode="magia"][data-view="player"] .mode-btn[aria-pressed="true"],
+.app[data-mode="magia"][data-view="player"] .mode-btn[data-mode="shuffle"],
+.app[data-mode="magia"][data-view="player"] .mode-btn[data-mode="loop-one"] {
+  color: var(--mg-a1);
+}
+
+.app[data-mode="magia"][data-view="player"] .mode-btn[aria-pressed="true"] {
+  background: rgba(242, 242, 250, 0.12);
+}
+
+/* 不可用：压到最弱一档（宿主另有 opacity，两者叠加刚好） */
+.app[data-mode="magia"][data-view="player"] .mode-btn[aria-disabled="true"],
+.app[data-mode="magia"][data-view="player"] .mode-btn[aria-disabled="true"]:hover {
+  color: var(--mg-text-3);
+  background: none;
+}
+
+.app[data-mode="magia"][data-view="player"] .mode-btn__badge {
+  background: rgba(242, 242, 250, 0.16);
+  color: var(--mg-text-2);
+}
+
+.app[data-mode="magia"][data-view="player"] .mode-btn[data-mode="loop-one"] .mode-btn__badge {
+  background: rgba(242, 242, 250, 0.16);
+  color: var(--mg-a1);
+}
+
+/* —— 收藏 / 加入歌单 —— */
+.app[data-mode="magia"][data-view="player"] .playerbar__add {
+  color: var(--mg-text-2);
+}
+
+.app[data-mode="magia"][data-view="player"] .playerbar__add:hover {
+  color: var(--mg-text);
+  background: rgba(242, 242, 250, 0.12);
+}
+
+/* --------------------------------------------------------------------------
    2. 整窗背景层（ctx.backgroundRoot = .skin-bg）
    -------------------------------------------------------------------------- */
 .app[data-mode="magia"] .skin-bg {
