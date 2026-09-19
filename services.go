@@ -1253,6 +1253,11 @@ func (s *LoudnessService) emit(name string, payload any) {
 type WindowService struct {
 	app   *application.App
 	store *bootstrap.Store
+	// themeMgr 读主题 CSS 用的管理器（由 main 注入，可能与 nil 比较）。
+	//
+	// 背景歌词窗口的创建底色要按当前主题的首帧底色算（见
+	// desktopWallpaperFirstFrameColour），那个算法需要读主题文件里的 --bg-app。
+	themeMgr *theme.Manager
 
 	// activeBackdrop 创建窗口时实际生效的原生材质（由 main 注入）。
 	// 配置里的值只能等下次创建窗口时才起作用，两者不一致就是「待重启」。
@@ -1326,6 +1331,13 @@ type WindowService struct {
 	// bootCloaked 记录「窗口已经是 WS_VISIBLE 的，只是被 DWM 遮住」这个中间态：
 	// showPrepared 把它置位，ShowMain 负责摘遮罩（见 showPrepared）。
 	bootCloaked atomic.Bool
+	// booted 记录「前端界面已经装配完毕」（由 /boot/booted 置位，见 MarkBooted）。
+	//
+	// 与 shown 的区别：shown 只说明窗口可见（前端模块一跑起来就发了），而启动
+	// 高峰 —— 解析 bundle、解码封面、套主题、建皮肤 —— 恰好落在「可见」与
+	// 「装配完成」之间。桌面背景歌词的启动恢复要等的是后者，否则会和主窗口
+	// 抢 CPU / GPU（见 early_theme.go#waitMainWindowBooted）。
+	booted atomic.Bool
 	// cloakUnsupported 记录「这台机器上遮不住」。只探测一次，之后彻底退回
 	// 旧路径（隐藏创建 + 就绪后显示），不再每 8ms 重试一遍系统调用。
 	cloakUnsupported atomic.Bool
@@ -1354,8 +1366,11 @@ type WindowService struct {
 }
 
 // NewWindowService 构造服务（app 由 main 在创建应用后注入）
-func NewWindowService(store *bootstrap.Store) *WindowService {
-	return &WindowService{store: store, activeBackdrop: "off"}
+//
+// themeMgr 用来算窗口的创建底色（见 desktopWallpaperFirstFrameColour）；
+// 传 nil 也安全 —— 那时一律退回近黑，与改动前一致。
+func NewWindowService(store *bootstrap.Store, themeMgr *theme.Manager) *WindowService {
+	return &WindowService{store: store, themeMgr: themeMgr, activeBackdrop: "off"}
 }
 
 // current 返回主窗口。
@@ -1545,6 +1560,14 @@ func (s *WindowService) applyMainDecorations(w *application.WebviewWindow) {
 	applyWindowDecorations(w.NativeWindow(), mode)
 }
 
+// MainWindowShown 报告主窗口是不是真的显示出来了（ShowMain 里确认可见才置位）。
+//
+// 给启动恢复用：桌面背景歌词要等主窗口露面之后再恢复，免得在启动高峰里和
+// 主窗口抢 CPU / GPU（见 early_theme.go#waitMainWindowShown）。
+func (s *WindowService) MainWindowShown() bool {
+	return s.shown.Load()
+}
+
 // startPreparedBoot 在应用跑起来之后尽早执行 showPrepared。
 //
 // 为什么要轮询：ApplicationStarted 是 Wails 消息循环刚起来时发的，而窗口本身
@@ -1573,9 +1596,37 @@ func (s *WindowService) startPreparedBoot() {
 // 普通 HTTP 请求走网络栈，不受宿主主线程忙不忙影响，实测几十毫秒内到达。
 const bootRevealPath = "/boot/reveal"
 
+// bootBootedPath 是前端「界面已经装配完毕」的 HTTP 信号路径。
+//
+// 它与 bootRevealPath 是两个不同的时刻，差得很远：
+//
+//	· reveal —— 模块刚跑起来就发（过渡画面已经画好，窗口可以露面了）；
+//	· booted —— bootstrap 跑完、主题套好、startRuntime 启动之后才发。
+//
+// 桌面背景歌词的启动恢复要等的是 booted：它要挂一整套播放界面皮肤、
+// 渲染整屏画面，如果跟主窗口的启动高峰（解析 bundle、解码封面、套主题）
+// 撞在一起，两边会真的互相拖慢（见 early_theme.go#waitMainWindowBooted）。
+const bootBootedPath = "/boot/booted"
+
 // MarkReadyAsync 与 MarkReady 等价，但不阻塞调用方（HTTP 处理器用）。
 func (s *WindowService) MarkReadyAsync() {
 	go s.MarkReady()
+}
+
+// MarkBooted 记下「前端界面已经装配完毕」（由 /boot/booted 调用）。
+//
+// 幂等：重复到达（刷新页面、第二个实例）只是再置一次位，没有副作用。
+// 它是一个**一次性**的启动里程碑，不因为后续刷新而复位 —— 启动恢复等的是
+// 「这一次启动已经过了高峰」，而不是「当前这一帧页面刚加载完」。
+func (s *WindowService) MarkBooted() {
+	if s.booted.CompareAndSwap(false, true) {
+		log.Printf("[boot] 前端界面已装配完毕（桌面背景歌词的启动恢复可以从这里开始）")
+	}
+}
+
+// MainWindowBooted 报告前端界面是不是已经装配完毕（见 MarkBooted）。
+func (s *WindowService) MainWindowBooted() bool {
+	return s.booted.Load()
 }
 
 // ShowMain 显示并聚焦主窗口（前端 ready / 兜底定时器 / 托盘点击 / 第二个实例）
@@ -2007,7 +2058,19 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			// 前端（desktop-wallpaper.js）一直在推这个键，但这里以前没有对应分支，
 			// 于是「桌面背景歌词」从未落盘：功能当场可用，重启就没了。
 			// 与 showDesktopLyrics 对称；两者的互斥规范化在 config 层统一处理。
+			//
+			// 注意它只表示**本次运行**开着：要不要在下次启动时自动恢复由
+			// autoStartDesktopWallpaper 决定（见 bootstrap.Config.StartupDesktopMode）。
 			c.ShowDesktopWallpaper = asBool(raw, c.ShowDesktopWallpaper)
+		case "autoStartDesktopWallpaper":
+			// 「启动时自动打开桌面背景歌词」。关掉之后本次仍然可以手动打开，
+			// 只是下次启动不再自动出现 —— 也就是「只在本次启动生效」。
+			c.AutoStartDesktopWallpaper = asBool(raw, c.AutoStartDesktopWallpaper)
+			// 顺手纠正一份自相矛盾的配置：自动启动关着、但「本次开着」却是 true，
+			// 那多半是用户刚刚在设置里关掉自动启动、却又没有关掉当前这个窗口。
+			// 这种状态本身是合法的（本次确实开着），所以**不**在这里改
+			// ShowDesktopWallpaper；只在两者都为 false 时没有任何要做的。
+			// （这里保留成显式的空分支说明，避免以后有人误以为漏写了什么。）
 		case "sleepAfterSong":
 			c.SleepAfterSong = asBool(raw, c.SleepAfterSong)
 		case "aiVendor":

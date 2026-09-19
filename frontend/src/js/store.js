@@ -57,6 +57,12 @@ const DEFAULT_CONFIG = {
   showDesktopLyrics: false,
   // 桌面背景歌词：与桌面歌词是二选一的一组单选按钮（见 desktop-mode.js）
   showDesktopWallpaper: false,
+  // 桌面背景歌词是否在**每次启动时**自动打开。
+  //
+  // showDesktopWallpaper 只表示「本次运行开着」，它不回答「下次启动要不要自动开」——
+  // 后者由这个开关决定（默认开，与加入它之前的行为一致）。关掉它之后仍然可以
+  // 手动打开背景歌词，只是重启后不再自动出现，也就是「只在本次启动生效」。
+  autoStartDesktopWallpaper: true,
   // 定时停止：「歌曲播放完成后停止」= 倒计时到点后等当前这首播完再停（延长到歌曲结束）
   sleepAfterSong: false,
 
@@ -1461,6 +1467,7 @@ const SYNCED_KEYS = [
   "lyricsSources",
   "showDesktopLyrics",
   "showDesktopWallpaper",
+  "autoStartDesktopWallpaper",
   "sleepAfterSong",
   "shuffleMode",
   "aiBaseUrl",

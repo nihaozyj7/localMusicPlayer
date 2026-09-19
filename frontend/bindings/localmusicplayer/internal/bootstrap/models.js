@@ -43,6 +43,7 @@
  * @property {number} desktopLyricsX - DesktopLyricsX / DesktopLyricsY 桌面歌词窗口**上次被拖到哪儿** （DIP 逻辑像素，与窗口 Position() 同一坐标系）。 为什么必须记：这个窗口的拖拽是系统级的（CSS --wails-draggable）， JS 收不到任何拖拽事件，窗口一销毁位置就彻底丢了 —— 表现就是「每次启动都跑回屏幕底部中间，每次都要重拖」。 用 -1 表示「没存过」：0 是合法坐标（副屏在主屏左侧时 X 就是负的， 而 0 是常见位置），不能拿 0 当哨兵值。
  * @property {number} desktopLyricsY
  * @property {boolean} showDesktopWallpaper - ShowDesktopWallpaper 是否显示桌面背景歌词（铺满桌面、压在桌面图标之下的 壁纸层窗口，见 desktop_wallpaper.go）。 与 ShowDesktopLyrics 是**二选一**：两者都在回答同一个问题「歌词放在桌面的 哪儿」，同时开着既是双份资源，视觉上也是两条歌词叠在一起。互斥由 WindowService.setDesktopMode 单点保证，配置里同时为 true 时以 wallpaper 优先 （见 main.go 的启动恢复）。
+ * @property {boolean} autoStartDesktopWallpaper - AutoStartDesktopWallpaper 是否在**每次启动时**自动打开桌面背景歌词。 为什么要有它：ShowDesktopWallpaper 既表示「现在开着」，也曾经隐式表示 「下次启动也开着」—— 用户临时开着看了一会儿、关掉程序，下次启动它又冒出来。 现在把这两件事拆开： · ShowDesktopWallpaper     = 本次运行开不开（随开关实时落盘）； · AutoStartDesktopWallpaper = 启动时要不要自动开。 关掉后者之后，本次仍然可以手动打开背景歌词，只是重启后不再自动出现 —— 这正是「关闭后则桌面背景歌词只在本次启动生效」。 默认 true：与加入这个开关之前的行为一致（开过就会被记住并在下次启动恢复）。 它只在 Windows 上有意义（别的平台 desktopWallpaperSupport 恒为不支持）。
  * @property {boolean} sleepAfterSong - SleepAfterSong 定时停止的「播放完歌曲（延长到歌曲播放结束）」选项。 打开后：倒计时到点时**不立刻暂停**，而是等当前这首播完再停。 这是「睡眠定时」的常见语义 —— 用户想听到正在听的这首结束， 而不是在副歌中间被掐掉。
  * @property {string} shuffleMode - ShuffleMode 随机播放行为：reshuffle | once。
  * @property {boolean} coverCarousel - —— 封面轮播（播放详情页）—— CoverCarousel 是否轮播多张封面。 刻意做成**全局偏好**而不是每首一份：一首歌有几张封面是数据， 「要不要轮着看」是习惯；放进每首歌里会出现「这首开、那首关」， 用户根本记不住自己在哪首开的。

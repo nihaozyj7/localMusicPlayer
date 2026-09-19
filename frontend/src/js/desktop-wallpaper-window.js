@@ -453,6 +453,11 @@ function announcePainted() {
   });
 }
 
+// announcePainted 在「挂载完成 / 收到 song 补丁」两处都会被调用，谁后到谁触发。
+// 走的是同一个 paintedAnnounced 幂等闸门：先到的那次只把条件凑齐，后到的那次
+// 才真的发信号 —— 也就是说，即便两条 IPC 的到达顺序反过来（skinId 那条在
+// song 之后），也不会漏掉信号。
+
 /**
  * 在「这一帧真的已经交给合成器」之后执行 fn。
  *

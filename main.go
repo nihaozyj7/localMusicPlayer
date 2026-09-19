@@ -136,7 +136,9 @@ func main() {
 	}
 
 	state.librarySvc = NewLibraryService(lib, watch, store)
-	state.windowSvc = NewWindowService(store)
+	// themeMgr 传下去是为了算额外窗口的「创建底色」（见
+	// desktop_wallpaper.go#desktopWallpaperFirstFrameColour）；它为 nil 也安全。
+	state.windowSvc = NewWindowService(store, themeMgr)
 	state.appSvc = NewAppService()
 	state.loudnessSvc = NewLoudnessService(loudMgr, lib)
 	state.downloadSvc = NewDownloadService(store, onlineClient)
@@ -209,6 +211,21 @@ func main() {
 					// 表现就是「任务栏图标都出来半天了，窗口才冒出来」。
 					if r.URL.Path == bootRevealPath {
 						state.windowSvc.MarkReadyAsync()
+						w.WriteHeader(http.StatusNoContent)
+						return
+					}
+					// 前端的「界面已经装配完毕」信号（比 boot/reveal 晚得多）。
+					//
+					// 与 bootRevealPath 的分工：那个信号只说明「窗口可以露面了」
+					// （过渡画面已经画出来），模块一跑起来就发；而这个说明
+					// 「bootstrap 跑完、主题套好、运行时同步已启动」。
+					//
+					// 桌面背景歌词的启动恢复等的是**这一个**，因为启动高峰
+					// （解析 bundle、解码封面、套主题、建皮肤）正好落在这两点
+					// 之间 —— 在那之前挂一整套皮肤上去，就会和主窗口抢 CPU / GPU
+					// （见 early_theme.go#waitMainWindowBooted）。
+					if r.URL.Path == bootBootedPath {
+						state.windowSvc.MarkBooted()
 						w.WriteHeader(http.StatusNoContent)
 						return
 					}

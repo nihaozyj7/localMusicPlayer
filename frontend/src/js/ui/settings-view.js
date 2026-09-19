@@ -918,6 +918,15 @@ class MpSettingsLayer extends MpElement {
           control: switchControl("showDesktopWallpaper", state.config.showDesktopWallpaper, "桌面背景歌词"),
         })}
         ${settingRow({
+          label: "启动时自动启用桌面背景歌词",
+          hint: "开启后，只要退出时背景歌词是开着的，下次启动就会自动恢复；关闭则背景歌词只在本次启动生效，重启后不再自动出现（仍可在这里手动打开）",
+          control: switchControl(
+            "autoStartDesktopWallpaper",
+            state.config.autoStartDesktopWallpaper,
+            "启动时自动启用桌面背景歌词"
+          ),
+        })}
+        ${settingRow({
           label: "歌词字号",
           hint: "歌词文字大小，当前播放的那一行会略微放大",
           control: rangeSlider("set-lyric-size", "lyricsFontSize", "歌词字号"),

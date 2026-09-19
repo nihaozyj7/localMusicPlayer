@@ -199,6 +199,19 @@ type Config struct {
 	// WindowService.setDesktopMode 单点保证，配置里同时为 true 时以 wallpaper 优先
 	// （见 main.go 的启动恢复）。
 	ShowDesktopWallpaper bool `json:"showDesktopWallpaper"`
+	// AutoStartDesktopWallpaper 是否在**每次启动时**自动打开桌面背景歌词。
+	//
+	// 为什么要有它：ShowDesktopWallpaper 既表示「现在开着」，也曾经隐式表示
+	// 「下次启动也开着」—— 用户临时开着看了一会儿、关掉程序，下次启动它又冒出来。
+	// 现在把这两件事拆开：
+	//   · ShowDesktopWallpaper     = 本次运行开不开（随开关实时落盘）；
+	//   · AutoStartDesktopWallpaper = 启动时要不要自动开。
+	// 关掉后者之后，本次仍然可以手动打开背景歌词，只是重启后不再自动出现 ——
+	// 这正是「关闭后则桌面背景歌词只在本次启动生效」。
+	//
+	// 默认 true：与加入这个开关之前的行为一致（开过就会被记住并在下次启动恢复）。
+	// 它只在 Windows 上有意义（别的平台 desktopWallpaperSupport 恒为不支持）。
+	AutoStartDesktopWallpaper bool `json:"autoStartDesktopWallpaper"`
 	// SleepAfterSong 定时停止的「播放完歌曲（延长到歌曲播放结束）」选项。
 	//
 	// 打开后：倒计时到点时**不立刻暂停**，而是等当前这首播完再停。
@@ -357,8 +370,11 @@ func DefaultConfig() *Config {
 		DesktopLyricsX:       DesktopLyricsNoPos,
 		DesktopLyricsY:       DesktopLyricsNoPos,
 		ShowDesktopWallpaper: false,
-		SleepAfterSong:       false,
-		ShuffleMode:          "reshuffle",
+		// 默认开启：与加入这个开关之前的行为一致（上次开着的话，启动时自动恢复）。
+		// 关掉它之后，本次仍可手动打开背景歌词，只是重启后不再自动出现。
+		AutoStartDesktopWallpaper: true,
+		SleepAfterSong:            false,
+		ShuffleMode:               "reshuffle",
 
 		// 封面轮播默认关闭：多封面时才会有意义，用户明确打开才动
 		CoverCarousel:         false,
@@ -877,6 +893,30 @@ func normalize(cfg *Config) {
 	// 否则每次启动都会同时恢复两个消费资源的窗口，画面上还是两条歌词叠着。
 	if cfg.ShowDesktopWallpaper && cfg.ShowDesktopLyrics {
 		cfg.ShowDesktopLyrics = false
+	}
+}
+
+// StartupDesktopMode 返回「启动时应该自动恢复哪一个桌面模式」。
+//
+// 取值与 WindowService 的三个模式常量一一对应（off / lyrics / wallpaper），
+// 用字符串而不是两个 bool：这两种模式是一组单选，让配置层直接回答
+// 「启动该开哪个」比让调用方各自比较两个开关更不容易写错。
+//
+// ★ 为什么要看 AutoStartDesktopWallpaper：
+// 需求是「桌面背景歌词在启动时自动启用（如果用户已经启用），关闭后则桌面背景
+// 歌词只在本次启动生效」。也就是说 ShowDesktopWallpaper 这只表示**本次运行**
+// 开着，而不表示「下次启动也自动开」—— 后者由 AutoStartDesktopWallpaper 决定。
+// 只有两者同时为真，启动时才自动恢复背景歌词。
+//
+// 桌面歌词没有这个「仅本次」的语义：它的开关就是持久的，所以只看它自己。
+func (c Config) StartupDesktopMode() string {
+	switch {
+	case c.ShowDesktopWallpaper && c.AutoStartDesktopWallpaper:
+		return "wallpaper"
+	case c.ShowDesktopLyrics:
+		return "lyrics"
+	default:
+		return "off"
 	}
 }
 

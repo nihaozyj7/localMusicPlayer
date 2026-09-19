@@ -274,7 +274,24 @@ func parseHex(v string) (int, int, int, bool) {
 
    两个模式是单选，所以这里只恢复其中一个（配置里的互斥已在
    bootstrap.normalize 收敛过，这里只是不再两件事各写一遍）。
+
+   ★★ 启动恢复的**时机**要分两种模式，不能共用一套：
+   桌面歌词窗口很轻（一行文字、透明小窗），ApplicationStarted 之后立刻建
+   是合适的；而桌面背景歌词要挂一整套播放界面样式、渲染整屏画面，属于
+   重活。它如果和主窗口一起在启动阶段跑，就会和主窗口抢 CPU / GPU ——
+   两边都在解析 JS、解码封面、跑首帧合成，结果主窗口明显变卡、启动也变慢。
+   所以背景歌词改成**等主窗口的界面装配完毕之后再恢复**
+   （见 waitMainWindowBooted），那时启动高峰已经过去，桌面上的画面晚一两秒
+   出现，而用户正在看主窗口，基本无感。
    -------------------------------------------------------------------------- */
+
+// desktopRestoreBootTimeout 是「等主窗口启动完成」的上限。
+//
+// 30 秒是刻意给得很宽的：正常路径根本用不到（前端几百毫秒到一两秒就报
+// booted），它只覆盖「前端信号因为脚本报错 / 非标准资源加载而永远不来」。
+// 超时也照常恢复 —— 宁可桌面上晚一点出现，也不能因为一个信号丢失就让这个
+// 功能永远不出现。
+const desktopRestoreBootTimeout = 30 * time.Second
 
 // restoreDesktopModeOnStartup 注册一次性的启动恢复（配置里开着才注册）。
 func restoreDesktopModeOnStartup(app *application.App, store *bootstrap.Store, svc *WindowService) {
@@ -282,16 +299,15 @@ func restoreDesktopModeOnStartup(app *application.App, store *bootstrap.Store, s
 		return
 	}
 	cfg := store.Get()
-	mode := desktopModeOff
-	switch {
-	case cfg.ShowDesktopWallpaper:
-		mode = desktopModeWallpaper
-	case cfg.ShowDesktopLyrics:
-		mode = desktopModeLyrics
-	}
+	// 「启动该恢复哪个模式」由配置层回答：背景歌词只有在「本次开着 + 允许自动
+	// 启动」时才恢复（见 bootstrap.Config.StartupDesktopMode）。
+	mode := cfg.StartupDesktopMode()
 	if mode == desktopModeOff {
 		return
 	}
+
+	// 背景歌词是重活：先让主窗口启动完再恢复（见文件头说明）。
+	deferWallpaper := mode == desktopModeWallpaper
 
 	started := make(chan struct{})
 	var once bool
@@ -311,11 +327,26 @@ func restoreDesktopModeOnStartup(app *application.App, store *bootstrap.Store, s
 			// 兜底：万一这个平台没派发启动事件，也不能让歌词一直不出现。
 			// 20 秒后主窗口早就显示了，此时再试着建一次是安全的 —— 但如果这期间
 			// 用户已经自己开关过，就必须退让（不能把他刚关掉的又弄出来）。
-			if svc.DesktopLyricsTouched() || svc.DesktopWallpaperTouched() {
+			if desktopModeTouched(svc) {
 				return
 			}
 			log.Printf("[desktop-%s] 未收到启动事件，按超时兜底恢复", mode)
 		}
+
+		// ★ 背景歌词再等一步：主窗口启动完（界面装配完毕）之后才动手。
+		//
+		// 这里等的是 WindowService.booted，不是 shown：shown 只说明窗口可见，
+		// 而前端模块**一跑起来**就发了那个信号，真正的启动高峰（解析 bundle、
+		// 解码封面、套主题、建皮肤）全在它之后。背景歌词要挂一整套皮肤、渲染
+		// 整屏画面，撞在高峰里就会和主窗口抢 CPU / GPU —— 表现正是「主窗口卡顿、
+		// 启动变慢」。
+		//
+		// 等待期间每隔一小段查一次「用户是否已经自己操作过」：用户等不及手动
+		// 打开背景歌词，或者已经把配置改掉，我们就立刻退让，不再多做一次。
+		if deferWallpaper && !waitMainWindowBooted(svc, store, mode) {
+			return
+		}
+
 		// 事件回调跑在 Wails 的事件 goroutine 上，而窗口创建内部走 InvokeSync，
 		// 所以这里必须是独立 goroutine，避免和主线程互相等待。
 		if !stillWanted(store, mode) {
@@ -328,11 +359,67 @@ func restoreDesktopModeOnStartup(app *application.App, store *bootstrap.Store, s
 	}()
 }
 
-// stillWanted 报告启动过程中配置是否仍然要求这个模式（用户可能已经改过）
-func stillWanted(store *bootstrap.Store, mode string) bool {
-	cfg := store.Get()
-	if mode == desktopModeWallpaper {
-		return cfg.ShowDesktopWallpaper
+// desktopModeTouched 报告用户是否已经自己操作过（任一）桌面模式开关。
+//
+// 两个开关是一组单选，所以「碰过任意一个」都该让启动恢复退让：用户已经
+// 表达过自己的选择，恢复逻辑再自作主张就会把他刚关掉的又弄出来。
+// 刻意不看 mode：无论这次要恢复哪个，只要用户碰过这一组里的任意一个，
+// 本次启动恢复就都不该再动手。
+func desktopModeTouched(svc *WindowService) bool {
+	return svc.DesktopLyricsTouched() || svc.DesktopWallpaperTouched()
+}
+
+// waitMainWindowBooted 等主窗口的界面装配完毕，返回 false 表示这次恢复应当放弃。
+//
+// 判据是 WindowService.booted（前端在 bootstrap 跑完后走 /boot/booted 置位，
+// 见 services.go#MarkBooted）。它是启动高峰的**结束点**：
+//
+//	模块执行 ──/boot/reveal──► 窗口可见 ──bootstrap/主题/封面……──► /boot/booted
+//	                            ↑ shown                              ↑ booted
+//	                            └──── 这一段就是会被抢性能的高峰 ────┘
+//
+// 为什么不干脆用固定延时：启动耗时在不同机器上差好几倍（杀毒软件扫描、
+// 冷启动读盘、曲库大小都会影响）。固定延时要么短了（还在高峰里，性能问题
+// 照旧），要么长了（用户白等）。等这个信号则是「主窗口一准备好就立刻动手」，
+// 既不抢性能也不拖拉。
+//
+// 放弃的三种情形（都必须在「还没动手建窗口」的时候判掉）：
+//   - 用户已经自己操作过桌面模式开关 —— 他的选择优先；
+//   - 配置已经不再要求这个模式（用户关了自动启动、或切到了别的模式）；
+//   - 等超时了 —— 这时启动高峰无论如何都过去了，照常恢复。
+//
+// 用轮询而不是注册回调：booted 可能在前端信号到达前就已经置位（刷新页面、
+// 第二个实例），也可能是兜底路径下永远不来，轮询天然覆盖这两种情况，
+// 而且不会漏掉「等待期间用户改配置」这个并发条件。
+func waitMainWindowBooted(svc *WindowService, store *bootstrap.Store, mode string) bool {
+	deadline := time.Now().Add(desktopRestoreBootTimeout)
+	for {
+		if svc.MainWindowBooted() {
+			return true
+		}
+		if desktopModeTouched(svc) || !stillWanted(store, mode) {
+			return false
+		}
+		if time.Now().After(deadline) {
+			// 前端信号没来（脚本报错 / 非标准资源加载）：不能再等了。
+			// 这时主窗口早该显示了，启动高峰无论如何都过去了。
+			log.Printf("[desktop-%s] 等待主窗口启动完成超时，仍按恢复流程继续", mode)
+			return true
+		}
+		time.Sleep(desktopRestorePollInterval)
 	}
-	return cfg.ShowDesktopLyrics && !cfg.ShowDesktopWallpaper
+}
+
+// desktopRestorePollInterval 是「等主窗口启动完成」的轮询间隔。
+//
+// 主窗口从启动到装配完成的量级是几百毫秒到一两秒，100ms 一档足够跟得上；
+// 再密只是空转（每次轮询只是读一个 atomic）。
+const desktopRestorePollInterval = 100 * time.Millisecond
+
+// stillWanted 报告启动过程中配置是否仍然要求这个模式（用户可能已经改过）
+//
+// 直接比 StartupDesktopMode 的结果：它已经把「本次是否开着」「是否允许自动
+// 启动」两条规则都算进去了，这里再逐字段判断等于把同一套规则写第二遍。
+func stillWanted(store *bootstrap.Store, mode string) bool {
+	return store.Get().StartupDesktopMode() == mode
 }

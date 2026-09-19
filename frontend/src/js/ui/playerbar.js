@@ -69,6 +69,8 @@ class MpPlayerbar extends MpElement {
     s.sleepTimer,
     s.config.showDesktopLyrics,
     s.config.showDesktopWallpaper,
+    // 提示语里会说明「重启后是否会自动出现」，所以它也参与依赖
+    s.config.autoStartDesktopWallpaper,
     s.desktopWallpaperSupport,
     s.lyricsOpen,
     coverVersion(),
@@ -362,7 +364,9 @@ class MpPlayerbar extends MpElement {
               data-tip=${
                 state.desktopWallpaperSupport?.supported === false
                   ? state.desktopWallpaperSupport.reason
-                  : "桌面背景歌词"
+                  : state.config.autoStartDesktopWallpaper === false
+                    ? "桌面背景歌词（未开启「启动时自动启用」，重启后不会自动出现）"
+                    : "桌面背景歌词"
               }
               aria-label="桌面背景歌词"
               @click=${() => toggleDesktopWallpaper()}

@@ -102,6 +102,37 @@ export function IsMaximized() {
 }
 
 /**
+ * MainWindowBooted 报告前端界面是不是已经装配完毕（见 MarkBooted）。
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function MainWindowBooted() {
+    return $Call.ByID(2092630049);
+}
+
+/**
+ * MainWindowShown 报告主窗口是不是真的显示出来了（ShowMain 里确认可见才置位）。
+ * 
+ * 给启动恢复用：桌面背景歌词要等主窗口露面之后再恢复，免得在启动高峰里和
+ * 主窗口抢 CPU / GPU（见 early_theme.go#waitMainWindowShown）。
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function MainWindowShown() {
+    return $Call.ByID(3471018829);
+}
+
+/**
+ * MarkBooted 记下「前端界面已经装配完毕」（由 /boot/booted 调用）。
+ * 
+ * 幂等：重复到达（刷新页面、第二个实例）只是再置一次位，没有副作用。
+ * 它是一个**一次性**的启动里程碑，不因为后续刷新而复位 —— 启动恢复等的是
+ * 「这一次启动已经过了高峰」，而不是「当前这一帧页面刚加载完」。
+ * @returns {$CancellablePromise<void>}
+ */
+export function MarkBooted() {
+    return $Call.ByID(2258956389);
+}
+
+/**
  * MarkDesktopLyricsReady 由歌词窗口在加载完成后调用，立刻把状态推给自己。
  * 
  * 页面加载完成与窗口创建之间有时序差：创建时推的那一次事件页面可能还没

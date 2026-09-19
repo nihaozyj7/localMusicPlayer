@@ -274,6 +274,11 @@ func (s *WindowService) ensureDesktopWallpaper() (*application.WebviewWindow, st
 //
 // 所以宁可多等几秒（这时用户正在看主窗口，桌面上晚一点出现无所谓），也不要
 // 抢在主窗口前面显示一块空画面。页面真的坏了时它仍然保证了窗口最终可见。
+//
+// ★ 与「启动恢复推迟到主窗口露面之后」的关系（见 early_theme.go）：
+// 恢复现在本来就发生在主窗口露面之后，那时主窗口的媒体数据早就推过来了，
+// 页面通常几十毫秒内就会报 painted。这条兜底因此只在「页面真的坏了」时生效，
+// 不会成为启动路径上那条「先黑一下」的来源。
 const wallpaperShowFallback = 5 * time.Second
 
 // armDesktopWallpaperShow 给「刚创建的背景歌词窗口」安排显示时机。
@@ -379,8 +384,13 @@ func (s *WindowService) desktopWallpaperOptions() application.WebviewWindowOptio
 		// 用 Solid 而不是 Transparent：这个窗口整块都是不透明画面
 		// （它自己就是那张壁纸），逐像素透明在这里没有意义；
 		// 而且透明走的是 WS_EX_NOREDIRECTIONBITMAP，与 WS_CHILD 的壁纸层不合。
-		BackgroundType:   application.BackgroundTypeSolid,
-		BackgroundColour: application.NewRGB(8, 8, 10),
+		BackgroundType: application.BackgroundTypeSolid,
+		// BackgroundColour 是 WebView2 吐出第一帧之前露出来的东西，也就是遮不住
+		// 时那一下「黑」的颜色。用当前主题的首帧底色（与主窗口同一个算法，
+		// 见 early_theme.go#firstFrameWindowColour）：于是即便本机遮不住、
+		// 真的露出了一帧，露出来的也是与桌面画面同色系的底色，而不是一块近黑。
+		// 取不到主题底色时它会自己退回近黑，与改动前完全一致。
+		BackgroundColour: s.desktopWallpaperFirstFrameColour(),
 		// 绝对不能置顶：它要待在桌面图标下面
 		AlwaysOnTop: false,
 		// 先隐藏创建，挂进壁纸层之后再显示 —— 否则会先在屏幕中间闪一下
@@ -398,6 +408,21 @@ func (s *WindowService) desktopWallpaperOptions() application.WebviewWindowOptio
 			DisableMenu:                       true,
 		},
 	}
+}
+
+// desktopWallpaperFirstFrameColour 算出背景歌词窗口的创建底色。
+//
+// 与主窗口走**同一个**算法（early_theme.go#firstFrameWindowColour），这样两个
+// 窗口在「WebView2 还没出帧」那一段露出来的颜色是一致的 —— 否则遮罩失效时
+// 桌面上会先出现一块与主窗口色调不同的底。
+//
+// 拿不到配置 / 主题时它自己返回近黑（application.NewRGB(8, 8, 10)），
+// 也就是这个字段以前写死的那个值，行为不会比改动前更差。
+func (s *WindowService) desktopWallpaperFirstFrameColour() application.RGBA {
+	if s.store == nil {
+		return application.NewRGB(8, 8, 10)
+	}
+	return firstFrameWindowColour(s.store, s.themeMgr)
 }
 
 /* --------------------------------------------------------------------------

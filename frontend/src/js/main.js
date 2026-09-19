@@ -516,6 +516,17 @@ async function main() {
 
   document.body.dataset.ready = "true";
 
+  // 告诉 Go 侧「界面已经装配完毕」——这是启动高峰的结束点，桌面背景歌词的
+  // 启动恢复就等它（见 services.go#MarkBooted 与 early_theme.go#waitMainWindowBooted）。
+  //
+  // 必须排在这里，而不是上面 markWindowReady() 那里：那个信号只说明「过渡画面
+  // 画好了、窗口可以露面」，而解析 bundle / 解码封面 / 套主题 / 建皮肤这一大段
+  // 都还在它之后。背景歌词在那段时间里挂皮肤会真的和主窗口抢性能。
+  //
+  // 与 markWindowReady 同一套走法（普通 HTTP 请求，不走 Wails 绑定）：绑定那条
+  // 链路在启动阶段会被积压，而这条信号越早到，桌面上的歌词就越早出现。
+  fetch("/boot/booted", { cache: "no-store", keepalive: true }).catch(() => {});
+
   // 界面自检：?probe=1 时输出布局体检报告（供无头浏览器 dump-dom 读取）
   if (new URLSearchParams(location.search).get("probe") === "1") {
     const { runProbe } = await import("./probe.js");
