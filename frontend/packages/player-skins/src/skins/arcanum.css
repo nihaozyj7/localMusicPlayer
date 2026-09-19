@@ -928,64 +928,122 @@
   animation-duration: var(--ar-du, 520ms);
   animation-delay: var(--ar-d, 0ms);
   animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
-  animation-fill-mode: both;
+  /* ★ fill-mode 必须是 forwards 而不是 both。
+     both 会让**延迟期间**也吃 0% 关键帧（十个入场魔法都以 opacity: 0 开头），
+     于是整句在切到 active 的那一刻集体隐形，只有轮到自己的那个字才亮起来 ——
+     观感就是"待播放的那几个字先整片消失，再一个一个长出来"。
+     需求要的是反过来：**没唱到的字以"待播放"的暗色留在原地**，唱到谁谁才
+     从它的入场起点变幻过来。forwards 让延迟期间保持元素自己的常态样式
+     （即 data-hold="todo" 的暗色静止态），动画真正开始后才接管 opacity。 */
+  animation-fill-mode: forwards;
 }
 
+/* 延迟期间那一段"还没轮到"的时间：显式钉住静止态的可见性与位置。
+   入场动画一旦开始（animation-play-state 仍是 running）这里不会干扰它 ——
+   关键帧自己的 opacity / transform 优先级高于这条规则。
+   只有 todo 需要钉：now / done 的字已经"唱到"了，本该走入场动画。
+
+   ★ 作用域排除 [data-clear="1"]（清晰歌词模式）：那条降级规则要把散落与倾斜
+     全部拉平（transform: none），而这条规则的优先级比它高 —— 不排除的话，
+     打开「减少动态效果」之后，还没唱到的字又会歪着散在舞台上了。 */
+.playerview[data-skin="arcanum"] .ar-stage:not([data-clear="1"]) .ar-line[data-state="active"] .ar-unit[data-hold="todo"] {
+  opacity: 1;
+  transform: var(--ar-rest);
+}
+
+/* —— 入场方式选择 ——
+   JS 给每个字素抽一个 data-enter-mode（见 arcanum.js#applyEnterVars），
+   这里按它挑对应的 @keyframes。每个字素还会带上 --ar-ix / --ar-iy /
+   --ar-is / --ar-ir（它这次"从哪个起点、多大、多斜"出发），所以**同一套魔法、
+   每个字的来向都不一样**，"从别处位移到目标位置"才看得出来。
+   目标位置永远是 --ar-rest（布局求解器算好的落点），关键帧 100% 都回它。 */
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="summon"],
 .playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="summon"] {
   animation-name: ar-summon;
 }
-
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="appear"],
 .playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="appear"] {
   animation-name: ar-appear;
 }
-
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="write"],
 .playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="write"] {
   animation-name: ar-write;
 }
-
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="fall"],
 .playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="fall"] {
   animation-name: ar-fall;
 }
-
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="rise"],
 .playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="rise"] {
   animation-name: ar-rise;
 }
-
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="slash"],
 .playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="slash"] {
   animation-name: ar-slash;
 }
-
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="spiral"],
 .playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="spiral"] {
   animation-name: ar-spiral;
 }
-
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="mirror"],
 .playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="mirror"] {
   animation-name: ar-mirror;
 }
-
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="unseal"],
 .playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="unseal"] {
   animation-name: ar-unseal;
 }
-
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="burst"],
 .playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-mode="burst"] {
   animation-name: ar-burst;
 }
 
-/* 1 召唤式：从法阵中心的光柱里升起来 */
+/* —— 新增的四种入场方式 ——
+   transmit：传送/闪现——从起点**瞬移**就位，前半段极短，随后在原位轻轻一亮；
+   dissolve：溶解/聚拢——从一侧的模糊散点里聚成清晰的字；
+   blink：闪现——在原地闪烁两三下后才稳定下来；
+   hop：跳跃——走着一条上凸的弧线"跳"到目标位置；
+   warp：折跃——像翻面一样从远处卷进来（rotateY）。 */
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="transmit"] {
+  animation-name: ar-transmit;
+}
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="dissolve"] {
+  animation-name: ar-dissolve;
+}
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="blink"] {
+  animation-name: ar-blink;
+}
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="hop"] {
+  animation-name: ar-hop;
+}
+.playerview[data-skin="arcanum"] .ar-line[data-state="active"] .ar-unit[data-enter-mode="warp"] {
+  animation-name: ar-warp;
+}
+
+/* --------------------------------------------------------------------------
+   入场关键帧（变形 + 位移）
+   --------------------------------------------------------------------------
+   每个关键帧的 100% 都精确回到 --ar-rest —— 那就是布局求解器算好的目标位置。
+   0%（及中间帧）从 --ar-dx/--ar-dy 再叠加 --ar-ix/--ar-iy 的**起点偏移**出发，
+   起点由 JS 按字素身份随机给（方向全向、距离 2~7em），所以同一套魔法、
+   每个字从不同地方位移过来。
+
+   ★ --ar-is / --ar-ir 是起点缩放与倾角：入场时可以先小/先大、先歪一下，
+     再"变幻"着落到目标。位移动画全程只改 transform / opacity（合成器上）。
+   -------------------------------------------------------------------------- */
+
+/* 1 召唤式：从起点升起，像从法阵的光柱里被唤出来 */
 @keyframes ar-summon {
   0% {
     opacity: 0;
-    /* ★ 入场位移统一压在 1em 以内（这里原先是 1.7em，字号 23.6px 时等于 40px，
-       正好是一条行带的高度 —— 入场的字会横穿到上下邻句上，看起来就是"两句
-       叠了一下"。入场是"魔法感"的表达，不需要真的从屏幕外飞进来。 */
-    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 0.85em), 0) rotate(-6deg)
-      scale(calc(var(--ar-ds, 1) * 0.28));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em)), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em)), 0)
+      rotate(var(--ar-ir, 0deg)) scale(calc(var(--ar-ds, 1) * var(--ar-is, 1) * 0.6));
   }
 
   62% {
     opacity: 1;
-    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) - 0.06em), 0) rotate(2deg)
-      scale(calc(var(--ar-ds, 1) * 1.08));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em) * 0.12), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em) * 0.12 - 0.06em), 0)
+      rotate(calc(var(--ar-dr, 0deg) + 2deg)) scale(calc(var(--ar-ds, 1) * 1.08));
   }
 
   100% {
@@ -994,22 +1052,18 @@
   }
 }
 
-/* 2 凭空式：从大到小收拢，像从空气里显形。
-   ★ 起始倍数刻意压在 1.3 以内：这个字会**同时**往四周长出去，1.85 倍时整行
-     比落定后高出一倍多、直接顶进上下相邻的行带 —— 实测"当前句正在显形的那
-     一两百毫秒"会和邻句叠在一起（需求里说的"渲染之后文字叠在一起"）。
-     显形本来也不需要涨到近两倍，1.3 倍已经完全看得出"从空气里收拢"。 */
+/* 2 凭空式：从起点由大到小/由小到大收拢，像从空气里显形 */
 @keyframes ar-appear {
   0% {
     opacity: 0;
-    transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotate(var(--ar-dr, 0deg))
-      scale(calc(var(--ar-ds, 1) * 1.28));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em)), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em)), 0)
+      rotate(calc(var(--ar-dr, 0deg) + var(--ar-ir, 0deg))) scale(calc(var(--ar-ds, 1) * var(--ar-is, 1) * 1.24));
   }
 
   70% {
     opacity: 1;
-    transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotate(var(--ar-dr, 0deg))
-      scale(calc(var(--ar-ds, 1) * 0.95));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em) * 0.08), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em) * 0.08), 0)
+      rotate(var(--ar-dr, 0deg)) scale(calc(var(--ar-ds, 1) * 0.96));
   }
 
   100% {
@@ -1018,18 +1072,18 @@
   }
 }
 
-/* 3 书写式：像被光笔从左往右写出来 */
+/* 3 书写式：从起点横着被"写"进来 */
 @keyframes ar-write {
   0% {
     opacity: 0;
-    transform: translate3d(calc(var(--ar-dx, 0em) - 0.9em), var(--ar-dy, 0em), 0) rotate(var(--ar-dr, 0deg))
-      scale(calc(var(--ar-ds, 1) * 0.62));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em) - 0.6em), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em)), 0)
+      rotate(calc(var(--ar-dr, 0deg) + var(--ar-ir, 0deg))) scale(calc(var(--ar-ds, 1) * var(--ar-is, 1) * 0.7));
   }
 
   60% {
     opacity: 1;
-    transform: translate3d(calc(var(--ar-dx, 0em) + 0.05em), var(--ar-dy, 0em), 0) rotate(var(--ar-dr, 0deg))
-      scale(calc(var(--ar-ds, 1) * 1.06));
+    transform: translate3d(calc(var(--ar-dx, 0em) + 0.05em), calc(var(--ar-dy, 0em)), 0)
+      rotate(var(--ar-dr, 0deg)) scale(calc(var(--ar-ds, 1) * 1.06));
   }
 
   100% {
@@ -1038,17 +1092,17 @@
   }
 }
 
-/* 4 坠落式：从上方落下，落地弹一下 */
+/* 4 坠落式：从起点落下，落地弹一下 */
 @keyframes ar-fall {
   0% {
     opacity: 0;
-    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) - 0.9em), 0) rotate(var(--ar-dr, 0deg))
-      scale(calc(var(--ar-ds, 1) * 1.18));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em)), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em)), 0)
+      rotate(calc(var(--ar-dr, 0deg) + var(--ar-ir, 0deg))) scale(calc(var(--ar-ds, 1) * var(--ar-is, 1)));
   }
 
   66% {
     opacity: 1;
-    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 0.13em), 0)
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em) * 0.06), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em) * 0.06 + 0.13em), 0)
       rotate(calc(var(--ar-dr, 0deg) + 3deg)) scale(calc(var(--ar-ds, 1) * 0.92));
   }
 
@@ -1058,12 +1112,12 @@
   }
 }
 
-/* 5 升腾式：从下方浮起来，像气泡 / 灵魂 */
+/* 5 升腾式：从起点浮起来，像气泡 / 灵魂 */
 @keyframes ar-rise {
   0% {
     opacity: 0;
-    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 0.8em), 0)
-      rotate(calc(var(--ar-dr, 0deg) + 9deg)) scale(calc(var(--ar-ds, 1) * 0.55));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em)), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em)), 0)
+      rotate(calc(var(--ar-dr, 0deg) + var(--ar-ir, 0deg) + 9deg)) scale(calc(var(--ar-ds, 1) * var(--ar-is, 1) * 0.7));
   }
 
   100% {
@@ -1072,12 +1126,12 @@
   }
 }
 
-/* 6 斜切式：从左上飞来，带一点回弹 */
+/* 6 斜切式：从起点斜着飞来，带一点回弹 */
 @keyframes ar-slash {
   0% {
     opacity: 0;
-    transform: translate3d(calc(var(--ar-dx, 0em) - 1.1em), calc(var(--ar-dy, 0em) - 0.6em), 0)
-      rotate(calc(var(--ar-dr, 0deg) - 24deg)) scale(calc(var(--ar-ds, 1) * 0.72));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em) - 0.4em), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em) - 0.4em), 0)
+      rotate(calc(var(--ar-dr, 0deg) - 24deg)) scale(calc(var(--ar-ds, 1) * var(--ar-is, 1) * 0.72));
   }
 
   70% {
@@ -1092,17 +1146,17 @@
   }
 }
 
-/* 7 螺旋式：绕着中心转小半圈再定格 */
+/* 7 螺旋式：从起点绕着中心转进来再定格 */
 @keyframes ar-spiral {
   0% {
     opacity: 0;
-    transform: translate3d(calc(var(--ar-dx, 0em) - 0.2em), calc(var(--ar-dy, 0em) + 0.1em), 0)
-      rotate(calc(var(--ar-dr, 0deg) - 220deg)) scale(calc(var(--ar-ds, 1) * 0.3));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em)), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em)), 0)
+      rotate(calc(var(--ar-dr, 0deg) + var(--ar-ir, 0deg) - 200deg)) scale(calc(var(--ar-ds, 1) * var(--ar-is, 1) * 0.4));
   }
 
   55% {
     opacity: 1;
-    transform: translate3d(calc(var(--ar-dx, 0em) + 0.5em), calc(var(--ar-dy, 0em) - 0.3em), 0)
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em) * 0.14), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em) * 0.14), 0)
       rotate(calc(var(--ar-dr, 0deg) + 42deg)) scale(calc(var(--ar-ds, 1) * 1.1));
   }
 
@@ -1112,12 +1166,12 @@
   }
 }
 
-/* 8 镜像式：从法阵的倒影里翻上来（rotateY 在两个关键帧里都在，保证可插值） */
+/* 8 镜像式：从起点的倒影里翻上来（rotateY 在两个关键帧里都在，保证可插值） */
 @keyframes ar-mirror {
   0% {
     opacity: 0;
-    transform: translate3d(var(--ar-dx, 0em), calc(var(--ar-dy, 0em) + 0.55em), 0) rotateY(180deg)
-      rotate(var(--ar-dr, 0deg)) scale(calc(var(--ar-ds, 1) * 0.78));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em)), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em)), 0)
+      rotateY(180deg) rotate(calc(var(--ar-dr, 0deg) + var(--ar-ir, 0deg))) scale(calc(var(--ar-ds, 1) * var(--ar-is, 1)));
   }
 
   100% {
@@ -1127,18 +1181,18 @@
   }
 }
 
-/* 9 解封式：从符文 / 卡页里展开 */
+/* 9 解封式：从起点的一枚小结里展开 */
 @keyframes ar-unseal {
   0% {
     opacity: 0;
-    transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotate(calc(var(--ar-dr, 0deg) - 14deg))
-      scale(calc(var(--ar-ds, 1) * 0.12));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em)), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em)), 0)
+      rotate(calc(var(--ar-dr, 0deg) + var(--ar-ir, 0deg) - 14deg)) scale(calc(var(--ar-ds, 1) * var(--ar-is, 1) * 0.3));
   }
 
   60% {
     opacity: 1;
-    transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotate(calc(var(--ar-dr, 0deg) + 4deg))
-      scale(calc(var(--ar-ds, 1) * 1.16));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em) * 0.1), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em) * 0.1), 0)
+      rotate(calc(var(--ar-dr, 0deg) + 4deg)) scale(calc(var(--ar-ds, 1) * 1.16));
   }
 
   100% {
@@ -1147,20 +1201,18 @@
   }
 }
 
-/* 10 爆裂式：重拍上炸开，再聚成一个字 */
+/* 10 爆裂式：从起点炸开，再聚成一个字 */
 @keyframes ar-burst {
   0% {
     opacity: 0;
-    transform: translate3d(calc(var(--ar-dx, 0em) - 0.9em), calc(var(--ar-dy, 0em) - 0.5em), 0)
-      rotate(calc(var(--ar-dr, 0deg) + 20deg)) scale(calc(var(--ar-ds, 1) * 0.2));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em)), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em)), 0)
+      rotate(calc(var(--ar-dr, 0deg) + var(--ar-ir, 0deg) + 20deg)) scale(calc(var(--ar-ds, 1) * var(--ar-is, 1) * 0.5));
   }
 
   35% {
     opacity: 1;
-    /* 峰值同样压在 1.3 以内（见 ar-appear 的说明）—— 爆裂的"炸开"靠位移与
-       旋转表达，不需要靠涨到 1.5 倍去挤邻居 */
     transform: translate3d(calc(var(--ar-dx, 0em) + 0.14em), calc(var(--ar-dy, 0em) + 0.07em), 0)
-      rotate(calc(var(--ar-dr, 0deg) - 5deg)) scale(calc(var(--ar-ds, 1) * 1.26));
+      rotate(calc(var(--ar-dr, 0deg) - 5deg)) scale(calc(var(--ar-ds, 1) * 1.2));
   }
 
   64% {
@@ -1172,6 +1224,150 @@
   100% {
     opacity: 1;
     transform: var(--ar-rest);
+  }
+}
+
+/* —— 新增入场方式 —— */
+
+/* transmit 传送 / 闪现：起点一闪即逝，几乎"出现"在目标位置（位移被压到极短），
+   后半段在原位轻轻一亮。适合"啪地一下就到了"的干脆感。 */
+@keyframes ar-transmit {
+  0% {
+    opacity: 0;
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em)), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em)), 0)
+      scale(calc(var(--ar-ds, 1) * 1.02));
+  }
+
+  12% {
+    opacity: 1;
+    /* 头 12% 就把位移走完 —— 视觉上是"瞬移到位" */
+    transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) scale(calc(var(--ar-ds, 1) * 1.12));
+  }
+
+  34% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+
+  50% {
+    opacity: 0.72;
+    transform: var(--ar-rest);
+  }
+
+  100% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+}
+
+/* dissolve 溶解 / 聚拢：从起点处的模糊散点里聚成清晰的字 */
+@keyframes ar-dissolve {
+  0% {
+    opacity: 0;
+    filter: blur(calc(10px * var(--ar-fit, 1)));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em) * 0.5), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em) * 0.5), 0)
+      scale(calc(var(--ar-ds, 1) * var(--ar-is, 1) * 1.3));
+  }
+
+  55% {
+    opacity: 0.7;
+    filter: blur(calc(3px * var(--ar-fit, 1)));
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em) * 0.1), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em) * 0.1), 0)
+      scale(calc(var(--ar-ds, 1) * 0.98));
+  }
+
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: var(--ar-rest);
+  }
+}
+
+/* blink 闪现：在原地（目标位置附近）快速闪烁两三下后稳定 */
+@keyframes ar-blink {
+  0% {
+    opacity: 0;
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em) * 0.12), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em) * 0.12), 0)
+      scale(calc(var(--ar-ds, 1) * 0.9));
+  }
+
+  20% {
+    opacity: 0.9;
+  }
+
+  30% {
+    opacity: 0.1;
+  }
+
+  45% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+
+  58% {
+    opacity: 0.25;
+  }
+
+  72% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+
+  82% {
+    opacity: 0.5;
+  }
+
+  100% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+}
+
+/* hop 跳跃：走着一条上凸的弧线"跳"到目标位置 */
+@keyframes ar-hop {
+  0% {
+    opacity: 0;
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em)), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em)), 0)
+      rotate(calc(var(--ar-dr, 0deg) + var(--ar-ir, 0deg))) scale(calc(var(--ar-ds, 1) * var(--ar-is, 1) * 0.8));
+  }
+
+  42% {
+    opacity: 1;
+    /* 弧顶：横向走到一半，纵向再抬高一截 */
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em) * 0.42), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em) * 0.42 - 1.3em), 0)
+      rotate(calc(var(--ar-dr, 0deg) + 6deg)) scale(calc(var(--ar-ds, 1) * 1.06));
+  }
+
+  78% {
+    opacity: 1;
+    /* 落地：越过一点点再收住 */
+    transform: translate3d(calc(var(--ar-dx, 0em) - var(--ar-ix, 0em) * 0.06), calc(var(--ar-dy, 0em) - var(--ar-iy, 0em) * 0.06 + 0.16em), 0)
+      rotate(calc(var(--ar-dr, 0deg) - 3deg)) scale(calc(var(--ar-ds, 1) * 0.94));
+  }
+
+  100% {
+    opacity: 1;
+    transform: var(--ar-rest);
+  }
+}
+
+/* warp 折跃：像翻面一样从远处卷进来（rotateY + 缩放） */
+@keyframes ar-warp {
+  0% {
+    opacity: 0;
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em)), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em)), 0)
+      rotateY(-160deg) scale(calc(var(--ar-ds, 1) * var(--ar-is, 1) * 0.6));
+  }
+
+  65% {
+    opacity: 1;
+    transform: translate3d(calc(var(--ar-dx, 0em) + var(--ar-ix, 0em) * 0.08), calc(var(--ar-dy, 0em) + var(--ar-iy, 0em) * 0.08), 0)
+      rotateY(12deg) scale(calc(var(--ar-ds, 1) * 1.04));
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(var(--ar-dx, 0em), var(--ar-dy, 0em), 0) rotateY(0deg) scale(var(--ar-ds, 1));
   }
 }
 
@@ -1231,6 +1427,8 @@
 .playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-unit {
   transform: none;
   text-shadow: none;
+  /* 清晰歌词模式不走入场位移动画：文字就地排好，不飞来飞去 */
+  animation: none;
 }
 
 .playerview[data-skin="arcanum"] .ar-stage[data-clear="1"] .ar-line {

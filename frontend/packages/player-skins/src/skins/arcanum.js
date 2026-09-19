@@ -583,6 +583,56 @@ function applyFlightVars(el, profile) {
   el.dataset.fly = profile.name;
 }
 
+/* --------------------------------------------------------------------------
+   入场起点（"从**哪里**入场并位移到已经算好的目标位置"）
+   --------------------------------------------------------------------------
+   目标位置（--ar-rest = --ar-dx/dy/dr/ds）在切句时就已经被布局求解器算好了。
+   这里为每个字素再抽一份"入场档案"：它从**哪个起点**出发、用**哪种方式**
+   （闪现 / 传送 / 渐变 / 溶解 / 变幻 / 跳跃……）位移到那个目标位置。
+
+   起点写成 --ar-ix / --ar-iy（相对目标位置的偏移，em，会跟着字号缩放），
+   幅度比原来的"0.85em 微移"大得多（2~7em，方向随机），这样"从别处入场"
+   才看得出来；原来的十种入场形态（summon / fall / slash …）改为读这些变量，
+   于是同一套魔法有了千变万化的来向。
+
+   ★ 用 (文本, 行号, 字素序号) 做种子：同一句的同一个字每次入场方式与来向
+     都稳定，拖进度条来回不会"这次从左飞、下次从下飞"地抖。
+   -------------------------------------------------------------------------- */
+
+/** 新增的几种入场方式：与 arcanum-timing.js 的十种并存，按概率抽用 */
+const EXTRA_ENTER_MODES = ["transmit", "dissolve", "blink", "hop", "warp"];
+
+/** [0,1) 伪随机：用字素身份做种子，稳定可复现 */
+function unitSeed(text, index, i, salt) {
+  const h = hashStr(String(text || "") + ":" + index + ":" + i + ":" + salt);
+  return (h % 100000) / 100000;
+}
+
+/** 为一个字素抽入场起点与方式，写回它的 CSS 变量与 data 属性 */
+function applyEnterVars(span, unit, text, index, i) {
+  const rnd = (salt) => unitSeed(text, index, i, salt);
+  // 方向：全向随机（0~2π），但整体偏"从舞台外围涌进来"
+  const ang = rnd("ang") * Math.PI * 2;
+  // 距离分两档：近场微动（约 1/5 概率）与远场入场（大多数）
+  const far = rnd("far") < 0.78;
+  const dist = far ? 1.8 + rnd("dist") * 3.4 : 0.5 + rnd("dist") * 1.1;
+  const ix = Math.cos(ang) * dist;
+  const iy = Math.sin(ang) * dist * 0.7; // 纵向略收，避免整句被拉得太高
+  // 起点缩放：闪现/传送类接近 1（几乎不缩放），其余随机放大或缩小
+  const scaleRoll = rnd("s");
+  const is = 0.35 + scaleRoll * 1.15; // 0.35 ~ 1.5
+  const ir = (rnd("r") - 0.5) * 40; // ±20°
+  span.style.setProperty("--ar-ix", ix.toFixed(3) + "em");
+  span.style.setProperty("--ar-iy", iy.toFixed(3) + "em");
+  span.style.setProperty("--ar-is", is.toFixed(3));
+  span.style.setProperty("--ar-ir", ir.toFixed(2) + "deg");
+  // 入场方式：约 45% 概率用新增的花样，其余用段落给的原方式（十种魔法）
+  const useExtra = rnd("mode") < 0.45;
+  span.dataset.enterMode = useExtra
+    ? EXTRA_ENTER_MODES[Math.min(EXTRA_ENTER_MODES.length - 1, Math.floor(rnd("mode2") * EXTRA_ENTER_MODES.length))]
+    : unit.mode;
+}
+
 function createLineEl(index) {
   const plan = planFor(index);
   if (!plan) return null;
@@ -621,6 +671,8 @@ function createLineEl(index) {
     span.style.setProperty("--ar-pad", (Number(u.pad) || 0).toFixed(3) + "em");
     span.style.setProperty("--ar-d", u.delayMs + "ms");
     span.style.setProperty("--ar-du", u.durMs + "ms");
+    // 抽入场起点与方式：从"某个起点"变幻位移到上面那套已经算好的目标位置
+    applyEnterVars(span, u, line.text, index, i);
     frag.appendChild(span);
   }
   el.appendChild(frag);

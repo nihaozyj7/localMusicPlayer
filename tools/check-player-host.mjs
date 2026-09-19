@@ -587,6 +587,54 @@ async function main() {
       })(),
       unitAnim: unit ? getComputedStyle(unit).animationName : "",
       fit: stage ? getComputedStyle(stage).getPropertyValue("--ar-fit").trim() : "",
+      // ★ 「待播放」的字必须留在原地，而不是被入场动画的延迟整片吃掉。
+      //   十个入场关键帧都以 opacity: 0 开头，若 fill-mode 是 both，延迟期间
+      //   浏览器会拿 0% 帧去填 —— 换到当前句的一瞬间整句集体隐形，只有轮到
+      //   自己的那个字才亮起来。需求要的是"没唱到的字保留暗色待播放态"。
+      //   fillMode: forwards + 显式的 todo 静止态规则才是对的组合。
+      unitFillMode: unit ? getComputedStyle(unit).animationFillMode : "",
+      // 每个字素的延迟与当前不透明度：延迟还没走完的字必须是看得见的（> 0）。
+      unitDelayed: line
+        ? [...line.querySelectorAll(".ar-unit")].map((u) => ({
+            hold: u.dataset.hold,
+            delay: parseFloat(getComputedStyle(u).animationDelay) || 0,
+            opacity: Number(getComputedStyle(u).opacity),
+          }))
+        : [],
+      // ★ 上面那一份是"真实播放中"的快照：探针跑到这里时歌已经播了一会儿，
+      //   字多半都 done 了，延迟为 0 —— 拿它验不了"待播放"这件事。
+      //   这里再**造一行**：3 个字、延迟很长（4s / 4.9s / 5.8s），并且把
+      //   第 1 个标成 now、后两个标成 todo（正是"正在唱 1、2 和 3 还在等着"）。
+      //   立刻读它们的计算样式：后两个必须是可见的。
+      todoProbe: (() => {
+        const host = document.querySelector(".ar-runes");
+        if (!host || !line) return null;
+        const el = line.cloneNode(false);
+        el.dataset.state = "active";
+        el.dataset.enter = "999";
+        el.innerHTML = "";
+        ["1", "2", "3"].forEach((ch, i) => {
+          const s = document.createElement("span");
+          s.className = "ar-unit";
+          s.dataset.hold = i === 0 ? "now" : "todo";
+          s.dataset.mode = "appear";
+          s.dataset.enterMode = "appear";
+          s.dataset.tier = "main";
+          s.dataset.kind = "char";
+          s.textContent = ch;
+          s.style.setProperty("--ar-d", 4000 + i * 900 + "ms");
+          s.style.setProperty("--ar-du", "600ms");
+          el.appendChild(s);
+        });
+        host.appendChild(el);
+        const out = [...el.querySelectorAll(".ar-unit")].map((u) => ({
+          hold: u.dataset.hold,
+          delay: parseFloat(getComputedStyle(u).animationDelay) || 0,
+          opacity: Number(getComputedStyle(u).opacity),
+        }));
+        el.remove();
+        return out;
+      })(),
     };
   })()`);
   check(
@@ -707,6 +755,21 @@ async function main() {
       anim: arcanum?.unitAnim,
     })
   );
+  // ★ 「待播放」的字要留着，不能被入场动画的延迟提前吃掉。
+  //   这条规则只有渲染出来才验得了：它取决于 fill-mode 与延迟的组合语义，
+  //   源码里读到 forwards 不代表浏览器真的没有拿 0% 帧去填延迟。
+  {
+    // 造出来的那一行：3 个字，延迟 4s 起，后两个是 todo —— 它们此刻都还没到
+    // 自己的入场时间，所以必须已经看得见（这正是"待播放的 23 保留"）。
+    const probe = Array.isArray(arcanum?.todoProbe) ? arcanum.todoProbe : [];
+    const waiting = probe.filter((u) => u.hold === "todo" && u.delay > 0.05);
+    const invisible = waiting.filter((u) => !(u.opacity > 0.05));
+    check(
+      "星阵咏唱：待播放的字保留在原地（入场延迟期间不清空整句）",
+      arcanum?.unitFillMode === "forwards" && waiting.length === 2 && invisible.length === 0,
+      JSON.stringify({ fillMode: arcanum?.unitFillMode, probe, invisible })
+    );
+  }
 
   /* 8c. 减少动态效果：切成"清晰歌词模式"（居中竖排、没有入场魔法、没有散落位移）——
         这是可访问性要求里最容易做假的一条（"把动效调慢"不等于"看得清"）。 */
