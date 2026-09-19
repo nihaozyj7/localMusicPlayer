@@ -1,0 +1,77 @@
+# ============================================================================
+#  CI — 代码质量门禁
+# ----------------------------------------------------------------------------
+#  为什么必须有这个文件：在本仓库里，所有「检查」在此之前都只是**口头约定**。
+#  于是发生过这些事：
+#    · gofmt 门禁（tools/check-gofmt.mjs）在 Windows 上对所有人恒红
+#      —— 因为 .gitattributes 没给 *.go 指定 eol=lf，工作区是 CRLF 而 gofmt 要 LF；
+#    · npm run check（lint + tsc + test）悄悄变成退出码 2，而文档里仍记着「通过」；
+#    · mock 假数据被打进生产包，长期没人发现。
+#  这三件都不是「有人写错了代码」，而是「没有东西在跑检查」。
+#
+#  门禁内容与本地开发者跑的命令**完全一致**，避免出现「CI 绿、本地红」的分裂：
+#    npm run check        → eslint + tsc + node:test
+#    node tools/check-gofmt.mjs
+#    go vet / go test -race
+# ============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支的新推送取消上一轮未完成的运行，省额度也更快拿到结果
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: 前端（lint / 类型 / 单测）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.19"
+          cache: npm
+
+      # 用 npm ci 而不是 install：锁文件是唯一真相，避免 CI 上偷偷升级依赖
+      - run: npm ci
+
+      # lint && typecheck && test —— 与 package.json 的 check 脚本同一套
+      - name: 工程化检查
+        run: npm run check
+
+      # 构建前端产物：这一步能抓到「只在构建期暴露」的问题
+      # （例如 mock 被 statically import 进产物、入口文件缺失）
+      - name: 构建前端
+        run: npm run build
+
+  go:
+    name: 后端（gofmt / vet / race 测试）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # gofmt 门禁。注意：仓库里 *.go 已显式 eol=lf，因此 Linux 上不存在
+      # 行尾符造成的假红灯（这才是这个检查能长期有效的前提）。
+      - name: gofmt
+        run: node tools/check-gofmt.mjs
+
+      - name: go vet
+        run: go vet . ./internal/... ./tools/...
+
+      # -race 是这个项目最重要的后端质量门禁之一：
+      # 库里有多处并发扫描 / 缓存落盘路径，历史上有过真实竞态。
+      - name: go test -race
+        run: go test -race . ./internal/... ./tools/...

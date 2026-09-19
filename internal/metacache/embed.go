@@ -4,9 +4,19 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+)
+
+// renameAttempts / renameBackoffBase 与 internal/atomicfile 保持同一套退避参数。
+// Windows 上 os.Rename 会因为目标被瞬时占用（杀软、索引器、另一个写者）而失败，
+// 返回 ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION，退避重试即可成功。
+const (
+	renameAttempts    = 8
+	renameBackoffBase = 5 * time.Millisecond
 )
 
 // EmbedResult 一次「写回歌曲元数据」的结果。
@@ -77,7 +87,26 @@ func EmbedMeta(path, mime string, cover []byte, lyrics string) (EmbedResult, err
 // MP4 的第一个 covr）。重复写入是**替换**语义而不是堆叠：
 // 写之前先把文件里旧的 covr / PICTURE 全部丢掉，再按这里的顺序写回去，
 // 否则用户换几次封面，文件里就会攒下一串再也删不掉的旧图。
-func EmbedCovers(path string, covers []CoverImage, lyrics string) (EmbedResult, error) {
+//
+// ★ 这个函数外面套了 recover：它处理的输入是**用户磁盘上的任意音频文件**，
+// 而文件里那些 box / block 长度字段完全不可信。历史上这里出过
+// 「畸形 udta/meta 长度 → slice 越界 panic」，而调用链
+// （services_cover.go 的写回封面）没有 recover，于是坏标签能让整个应用崩溃。
+// 现在两层防护：boxSizeAt 做全量边界校验（正面拦），recover 兜底（背面拦）。
+// 任何解析异常都退化成「返回错误、不写文件」，绝不崩进程、绝不写坏文件。
+func EmbedCovers(path string, covers []CoverImage, lyrics string) (res EmbedResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			// 不带堆栈地转成错误：这里的目标是「不崩 + 不写文件」，
+			// 排查细节由上层日志与 .bak 现场负责。
+			res = EmbedResult{Message: fmt.Sprintf("解析音频文件结构时出错，已放弃写入以免损坏文件: %v", r)}
+			err = fmt.Errorf("写入元数据失败（文件结构异常）: %v", r)
+		}
+	}()
+	return embedCovers(path, covers, lyrics)
+}
+
+func embedCovers(path string, covers []CoverImage, lyrics string) (EmbedResult, error) {
 	if strings.TrimSpace(path) == "" {
 		return EmbedResult{}, errors.New("文件路径为空")
 	}
@@ -187,8 +216,18 @@ func embedMetaMP4(path string, covers []CoverImage, lyrics string) (EmbedResult,
 		return EmbedResult{OK: true, Message: note, Bytes: len(out)}, nil
 	}
 
-	udtaSize := int(binary.BigEndian.Uint32(raw[udta : udta+4]))
-	udtaEnd := udta + udtaSize
+	// ★ 这里必须用 boxSizeAt 而不是裸读 4 字节再加法。
+	//
+	// 原实现是 `udtaEnd := udta + int(binary.BigEndian.Uint32(raw[udta:udta+4]))`，
+	// 长度字段直接采信、**没有任何上界检查**，紧接着就 `raw[udta+8:udtaEnd]`。
+	// 一个损坏（或被人为构造）的文件把长度写成 0x7FFFFFF0，
+	// 就会得到 `slice bounds out of range [:2147483632] with capacity N` —— panic。
+	// 而这条调用链（services_cover.go 的写回封面）全程没有 recover()，
+	// 于是一个坏标签就能让整个应用崩掉。boxSizeAt 内部已做全量边界校验。
+	_, udtaEnd, ok := boxSizeAt(raw, udta, moovEnd, "udta")
+	if !ok {
+		return EmbedResult{}, errors.New("udta box 长度非法，已放弃写入以免损坏文件")
+	}
 	meta := findChildAbs(raw, udta+8, udtaEnd, "meta")
 	if meta < 0 {
 		newMeta := boxFull("meta", box("ilst", atoms))
@@ -200,12 +239,22 @@ func embedMetaMP4(path string, covers []CoverImage, lyrics string) (EmbedResult,
 		return EmbedResult{OK: true, Message: note, Bytes: len(out)}, nil
 	}
 
-	// meta 是「完整 box」：4 字节版本/标志 + 子 box
-	metaSize := int(binary.BigEndian.Uint32(raw[meta : meta+4]))
-	metaEnd := meta + metaSize
-	ilst := findChildAbs(raw, meta+12, metaEnd, "ilst")
+	// meta 是「完整 box」：4 字节版本/标志 + 子 box。
+	// 同样走 boxSizeAt，理由与上面一致（防越界 panic）。
+	metaBody, metaEnd, ok := boxSizeAt(raw, meta, udtaEnd, "meta")
+	if !ok {
+		return EmbedResult{}, errors.New("meta box 长度非法，已放弃写入以免损坏文件")
+	}
+	// meta 头是 12 字节（8 字节 box 头 + 4 字节版本/标志）。boxSizeAt 返回的
+	// metaBody 是按 8 字节头算的，且 size==1 时头是 16 —— 这里只接受 8/16 两种
+	// 形态，否则说明结构不是我们能安全改写的布局。
+	metaInner := metaBody + 4
+	if metaInner > metaEnd {
+		return EmbedResult{}, errors.New("meta box 结构异常，已放弃写入以免损坏文件")
+	}
+	ilst := findChildAbs(raw, metaInner, metaEnd, "ilst")
 	if ilst < 0 {
-		inner := append(append([]byte{}, raw[meta+12:metaEnd]...), box("ilst", atoms)...)
+		inner := append(append([]byte{}, raw[metaInner:metaEnd]...), box("ilst", atoms)...)
 		newMeta := append(boxHeader("meta", len(inner)+12), 0, 0, 0, 0)
 		newMeta = append(newMeta, inner...)
 		out := spliceBox(raw, meta, metaEnd, newMeta)
@@ -367,41 +416,73 @@ func spliceBox(raw []byte, start, end int, replacement []byte) []byte {
 // findTopLevelBoxAbs 返回指定顶层 box 的绝对 [start, end)。
 func findTopLevelBoxAbs(raw []byte, boxType string) (int, int, bool) {
 	for off := 0; off+8 <= len(raw); {
-		size := int(binary.BigEndian.Uint32(raw[off : off+4]))
-		kind := string(raw[off+4 : off+8])
-		header := 8
-		if size == 1 {
-			if off+16 > len(raw) {
-				return 0, 0, false
-			}
-			size = int(binary.BigEndian.Uint64(raw[off+8 : off+16]))
-			header = 16
-		} else if size == 0 {
-			size = len(raw) - off
-		}
-		if size < header || off+size > len(raw) {
+		_, end, ok := boxSizeAt(raw, off, len(raw), boxType)
+		if !ok {
 			return 0, 0, false
 		}
-		if kind == boxType {
-			return off, off + size, true
+		if string(raw[off+4:off+8]) == boxType {
+			return off, end, true
 		}
-		off += size
+		off = end
 	}
 	return 0, 0, false
+}
+
+// boxSizeAt 解析位于 off 的 box 头，返回 (载荷起点, box 结束偏移, kind)。
+//
+// ok=false 表示这个 box 头不可信（越界 / 长度非法 / 64 位长度读不出来），
+// 调用方必须**立即停止**遍历，绝不能拿这个 size 去切片。
+//
+// ★ 为什么必须集中到一处：这里曾经有两份实现（findTopLevelBoxAbs 与
+// findChildAbs），而只有前者处理了 size==0 / size==1 两种 MP4 规范里的合法
+// 特殊长度。后者漏了，于是「size 字段为 0 的 meta box」被判定成
+// 「找不到 meta」，代码转而走「追加一个新 meta」的分支 —— 在已经存在 meta 的
+// 文件里再塞一个，stco 记录的绝对偏移全部失效，**用户的音乐文件被永久写坏**。
+// （size==1 表示真正的长度是紧随其后的 8 字节；size==0 表示「本 box 一直延伸到
+// 容器末尾」。两种都是规范允许的形态，不是畸形数据。）
+//
+// 现在两份实现共用这一个函数，避免子集实现再次漂移。
+func boxSizeAt(raw []byte, off, limit int, kind string) (payloadAt, end int, ok bool) {
+	if off < 0 || off+8 > limit || off+8 > len(raw) {
+		return 0, 0, false
+	}
+	size := int(binary.BigEndian.Uint32(raw[off : off+4]))
+	header := 8
+	switch size {
+	case 0:
+		// 延伸到容器末尾。这里是**唯一的**合法「无限长」形态，
+		// 必须显式处理，否则会被下面的 size < 8 当成非法而提前放弃遍历。
+		size = limit - off
+	case 1:
+		// 64 位长度：紧随 box 头之后 8 字节。
+		if off+16 > limit || off+16 > len(raw) {
+			return 0, 0, false
+		}
+		big := binary.BigEndian.Uint64(raw[off+8 : off+16])
+		// int 在 32 位平台上会溢出，且超大值必然越界，统一按不可信处理。
+		if big > uint64(limit-off) {
+			return 0, 0, false
+		}
+		size = int(big)
+		header = 16
+	}
+	if size < header || off+size > limit || off+size > len(raw) {
+		return 0, 0, false
+	}
+	return off + header, off + size, true
 }
 
 // findChildAbs 在 [from,to) 里找直接的子 box，返回其绝对起始偏移；找不到返回 -1。
 func findChildAbs(raw []byte, from, to int, kind string) int {
 	for off := from; off+8 <= to; {
-		size := int(binary.BigEndian.Uint32(raw[off : off+4]))
-		name := string(raw[off+4 : off+8])
-		if size < 8 || off+size > to {
+		_, end, ok := boxSizeAt(raw, off, to, kind)
+		if !ok {
 			return -1
 		}
-		if name == kind {
+		if string(raw[off+4:off+8]) == kind {
 			return off
 		}
-		off += size
+		off = end
 	}
 	return -1
 }
@@ -479,6 +560,8 @@ func embedMetaFLAC(path string, covers []CoverImage, lyrics string) (EmbedResult
 	}
 	var blocks []block
 	var comments [][2]string // 保留原有的 VORBIS_COMMENT 字段
+	vendor := ""             // 原有的 vendor 标识，写回时原样保留
+	seenComment := false     // 是否已经遇到过 VORBIS_COMMENT 块
 	off := 4
 	for {
 		if off+4 > len(raw) {
@@ -500,8 +583,19 @@ func embedMetaFLAC(path string, covers []CoverImage, lyrics string) (EmbedResult
 			// 丢掉旧的 PICTURE（同一张封面重复写入时不堆叠），
 			// 稍后按 cover 是否有内容决定要不要重新加回去
 		case kind == flacBlockVorbisComment:
-			// 记下原有注释（TITLE / ARTIST…），稍后与新的 LYRICS 合并重写
-			comments = parseVorbisComment(body)
+			// 记下原有注释（TITLE / ARTIST…），稍后与新的 LYRICS 合并重写。
+			//
+			// ★ 必须是**追加**而不是赋值。规范允许文件里存在多个
+			// VORBIS_COMMENT 块，原实现写的是 `comments = parse(...)`，
+			// 于是遇到第二个块时会把第一个块里已经读到的 TITLE / ARTIST
+			// **静默丢掉** —— 用户只需一次「写回歌词」，标签就少了一批。
+			// vendor 只认第一个非空的（多块时后续块的 vendor 是次要信息）。
+			fields, v := parseVorbisComment(body)
+			comments = append(comments, fields...)
+			if !seenComment || vendor == "" {
+				vendor = v
+			}
+			seenComment = true
 		default:
 			blocks = append(blocks, block{kind: kind, body: body})
 		}
@@ -517,7 +611,10 @@ func embedMetaFLAC(path string, covers []CoverImage, lyrics string) (EmbedResult
 			merged = setVorbisField(merged, "LYRICS", lyrics)
 		}
 		if len(merged) > 0 {
-			blocks = append(blocks, block{kind: flacBlockVorbisComment, body: buildVorbisComment(merged)})
+			blocks = append(blocks, block{
+				kind: flacBlockVorbisComment,
+				body: buildVorbisCommentWithVendor(merged, vendor),
+			})
 		}
 	}
 	// 每张封面一个独立的 PICTURE block（一张一个 block 才是规范做法；
@@ -559,7 +656,9 @@ func embedMetaFLAC(path string, covers []CoverImage, lyrics string) (EmbedResult
    注意协议里所有长度都是**小端**，写反了播放器会把整个块读成垃圾。
    -------------------------------------------------------------------------- */
 
-func parseVorbisComment(body []byte) [][2]string {
+// parseVorbisComment 解析 VORBIS_COMMENT 块体，返回 (字段列表, vendor)。
+// vendor 供写回时原样保留（见 buildVorbisCommentWithVendor）。
+func parseVorbisComment(body []byte) ([][2]string, string) {
 	out := [][2]string{}
 	pos := 0
 	readU32 := func() (int, bool) {
@@ -572,18 +671,19 @@ func parseVorbisComment(body []byte) [][2]string {
 	}
 
 	vendorLen, ok := readU32()
-	if !ok || pos+vendorLen > len(body) {
-		return out
+	if !ok || vendorLen < 0 || pos+vendorLen > len(body) {
+		return out, ""
 	}
+	vendor := string(body[pos : pos+vendorLen])
 	pos += vendorLen
 	count, ok := readU32()
 	if !ok {
-		return out
+		return out, vendor
 	}
 	for i := 0; i < count; i++ {
 		length, ok := readU32()
-		if !ok || pos+length > len(body) {
-			return out
+		if !ok || length < 0 || pos+length > len(body) {
+			return out, vendor
 		}
 		text := string(body[pos : pos+length])
 		pos += length
@@ -593,7 +693,7 @@ func parseVorbisComment(body []byte) [][2]string {
 		}
 		out = append(out, [2]string{text[:eq], text[eq+1:]})
 	}
-	return out
+	return out, vendor
 }
 
 // setVorbisField 覆盖/新增一个字段（同名旧值先去掉，避免重复）。
@@ -607,8 +707,21 @@ func setVorbisField(comments [][2]string, key, value string) [][2]string {
 	return append(out, [2]string{key, value})
 }
 
+// vendorString 是写入 VORBIS_COMMENT 的编码器标识。
+// 只在**原文件没有 vendor**（或解析不出来）时才用它，否则保留原值 ——
+// 强行改写会把「这个文件是谁写的 / 被谁处理过」的线索抹掉。
+const vendorString = "LMPlayer"
+
 func buildVorbisComment(comments [][2]string) []byte {
-	const vendor = "LMPlayer"
+	return buildVorbisCommentWithVendor(comments, "")
+}
+
+// buildVorbisCommentWithVendor 拼 VORBIS_COMMENT 块体。
+// vendor 为空时使用本项目的标识。
+func buildVorbisCommentWithVendor(comments [][2]string, vendor string) []byte {
+	if strings.TrimSpace(vendor) == "" {
+		vendor = vendorString
+	}
 	var out []byte
 	be := func(v uint32) {
 		out = append(out, byte(v), byte(v>>8), byte(v>>16), byte(v>>24))
@@ -651,8 +764,31 @@ func flacPictureBlock(mime string, cover []byte) []byte {
    -------------------------------------------------------------------------- */
 
 // writeFileAtomic 写临时文件再改名，尽量保留原文件权限。
+//
+// ★ 与 atomicfile.Write 的关键区别：**没有「直接覆盖写」的回退**。
+//
+// atomicfile.Write 在 rename 连续失败后会退回 os.WriteFile(path, ...)，
+// 那是 O_TRUNC 的非原子覆盖 —— 对配置文件可以接受，但这里的 path 是
+// **用户的音乐文件**：一旦在覆盖过程中失败（断电、磁盘满、进程被杀），
+// 用户得到的是一个被截断的、无法播放的文件，且原内容不可恢复。
+// 「宁可这次写不进去」远比「可能把用户的歌毁掉」正确。
+//
+// 因此这里保留的是 atomicfile 的**退避重试**（Windows 上杀软 / 索引器 /
+// 另一个写者会瞬时占用目标文件，返回 ERROR_ACCESS_DENIED /
+// ERROR_SHARING_VIOLATION，重试几次即可成功），但**去掉**非原子回退。
+//
+// 另外两点修复：
+//   - path 是符号链接时（用户用 symlink 管理音乐库），rename 会把链接本身
+//     替换成普通文件、切断链接；现在先 EvalSymlinks 解析出真实目标再写。
+//   - 覆盖前先留一份 <name>.bak：写坏了还能让用户捞回来。
 func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
+	// 符号链接：写真实目标，别把链接替换掉
+	target := path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != "" {
+		target = resolved
+	}
+
+	dir := filepath.Dir(target)
 	tmp, err := os.CreateTemp(dir, ".mp-embed-*")
 	if err != nil {
 		return fmt.Errorf("创建临时文件失败: %w", err)
@@ -671,11 +807,58 @@ func writeFileAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("关闭临时文件失败: %w", err)
 	}
-	if info, err := os.Stat(path); err == nil {
+	if info, err := os.Stat(target); err == nil {
 		_ = os.Chmod(tmpName, info.Mode())
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("替换原文件失败: %w", err)
+
+	// 覆盖前留备份。只在第一次覆盖时留（不覆盖已有 .bak），
+	// 这样用户拿到的永远是「改动之前的那一份原始文件」。
+	backup := target + ".bak"
+	if _, err := os.Stat(backup); os.IsNotExist(err) {
+		if err := copyFile(target, backup); err != nil {
+			// 备份失败就不写：宁可这次不写回标签，也不能在没有退路的情况下改用户文件
+			return fmt.Errorf("创建备份失败，已放弃写入以免损坏文件: %w", err)
+		}
 	}
-	return nil
+
+	// rename 的退避重试（与 internal/atomicfile 同一套参数：5,10,…,40ms，
+	// 累计约 180ms）。**注意：重试全部失败后直接返回错误，不做非原子覆盖。**
+	var lastErr error
+	for attempt := 0; attempt < renameAttempts; attempt++ {
+		if err := os.Rename(tmpName, target); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		time.Sleep(time.Duration(attempt+1) * renameBackoffBase)
+	}
+	return fmt.Errorf("替换原文件失败（已保留备份 %s）: %w", filepath.Base(backup), lastErr)
+}
+
+// copyFile 复制文件（备份用）。读失败 / 写失败都算失败。
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		_ = out.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	return out.Close()
 }

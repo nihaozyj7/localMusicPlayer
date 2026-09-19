@@ -392,7 +392,8 @@ func readFirstVorbisComment(t *testing.T, raw []byte) ([][2]string, bool) {
 			t.Fatal("metadata 越界")
 		}
 		if kind == flacBlockVorbisComment {
-			return parseVorbisComment(raw[off : off+length]), true
+			fields, _ := parseVorbisComment(raw[off : off+length])
+			return fields, true
 		}
 		off += length
 		if last {

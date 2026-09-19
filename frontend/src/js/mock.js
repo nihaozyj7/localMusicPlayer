@@ -1,8 +1,24 @@
 /* ==========================================================================
-   mock.js — 界面预览用的假数据（接入 Go 后端后可整文件删除）
+   mock.js — 界面预览用的假数据
+   --------------------------------------------------------------------------
+   ★ 这些数据只在**预览构建**里存在。
+
+   背景：它们原本被静态 import 进正式构建，而 Rollup 摇不掉一个「有副作用
+   的常量导出」—— 于是用户拿到的 exe 里就带着「导航到别人的音乐库」这类
+   内容（实测在 dist/assets/base-*.js 里能直接搜到歌名字面量）。
+
+   做法：`__LM_PREVIEW__` 是 vite.config.js 用 define 注入的**编译期常量**
+   （正式构建为 false）。`!PREVIEW ? [] : [ ...真实数据... ]` 这种写法让
+   正式构建下的三元分支恒为真，另一侧的字面量成为不可达代码并被 tree-shake。
+
+   注意这里必须用三元而不是「先算好再判断」：只有字面量直接出现在被摇掉的
+   那个分支里，压缩器才能安全地删掉它们。
    ========================================================================== */
 
 import { placeholderCover, stableId } from "./utils.js";
+
+/** 编译期常量：预览为 true，正式构建为 false（见 vite.config.js 的 define）。 */
+const PREVIEW = typeof __LM_PREVIEW__ !== "undefined" && __LM_PREVIEW__;
 
 const RAW = [
   ["夜航西飞", "陈默", "静默频率", "flac", 268_400, 38_420_000],
@@ -85,104 +101,114 @@ function build(rows, baseDir, seedBase) {
   });
 }
 
-export const MOCK_FOLDERS = [
-  {
-    id: "folder_1",
-    path: "D:\\Music\\音乐库",
-    trackCount: 40,
-    status: "ok",
-    watching: true,
-    addedAt: Date.now() - 86_400_000 * 30,
-  },
-  {
-    id: "folder_2",
-    path: "E:\\Backup\\FLAC\\2024",
-    trackCount: 0,
-    status: "missing",
-    watching: false,
-    addedAt: Date.now() - 86_400_000 * 12,
-  },
-  {
-    id: "folder_3",
-    path: "D:\\Music\\Downloads",
-    trackCount: 0,
-    status: "ok",
-    watching: true,
-    addedAt: Date.now() - 86_400_000 * 3,
-  },
-];
+export const MOCK_FOLDERS = !PREVIEW
+  ? []
+  : [
+      {
+        id: "folder_1",
+        path: "D:\\Music\\音乐库",
+        trackCount: 40,
+        status: "ok",
+        watching: true,
+        addedAt: Date.now() - 86_400_000 * 30,
+      },
+      {
+        id: "folder_2",
+        path: "E:\\Backup\\FLAC\\2024",
+        trackCount: 0,
+        status: "missing",
+        watching: false,
+        addedAt: Date.now() - 86_400_000 * 12,
+      },
+      {
+        id: "folder_3",
+        path: "D:\\Music\\Downloads",
+        trackCount: 0,
+        status: "ok",
+        watching: true,
+        addedAt: Date.now() - 86_400_000 * 3,
+      },
+    ];
 
-export const MOCK_SONGS = [
-  ...build(RAW.slice(0, 24), "D:\\Music\\音乐库", 1),
-  ...build(RAW.slice(24), "D:\\Music\\Downloads", 13),
-  ...build(JUNK, "D:\\Music\\音乐库", 21),
-];
+export const MOCK_SONGS = !PREVIEW
+  ? []
+  : [
+      ...build(RAW.slice(0, 24), "D:\\Music\\音乐库", 1),
+      ...build(RAW.slice(24), "D:\\Music\\Downloads", 13),
+      ...build(JUNK, "D:\\Music\\音乐库", 21),
+    ];
 
-export const MOCK_PLAYLISTS = [
-  {
-    id: "liked",
-    name: "我喜欢",
-    locked: true,
-    builtin: true,
-    icon: "heart",
-    songIds: MOCK_SONGS.slice(0, 6).map((s) => s.id),
-    createdAt: Date.now() - 86_400_000 * 60,
-  },
-  {
-    id: "pl_late_night",
-    name: "深夜循环",
-    locked: false,
-    builtin: false,
-    songIds: MOCK_SONGS.slice(6, 11).map((s) => s.id),
-    createdAt: Date.now() - 86_400_000 * 20,
-  },
-  {
-    id: "pl_focus",
-    name: "工作专注",
-    locked: false,
-    builtin: false,
-    songIds: MOCK_SONGS.slice(11, 16).map((s) => s.id),
-    createdAt: Date.now() - 86_400_000 * 9,
-  },
-  {
-    id: "pl_road",
-    name: "开车路上",
-    locked: false,
-    builtin: false,
-    songIds: MOCK_SONGS.slice(16, 19).map((s) => s.id),
-    createdAt: Date.now() - 86_400_000 * 4,
-  },
-];
+export const MOCK_PLAYLISTS = !PREVIEW
+  ? []
+  : [
+      {
+        id: "liked",
+        name: "我喜欢",
+        locked: true,
+        builtin: true,
+        icon: "heart",
+        songIds: MOCK_SONGS.slice(0, 6).map((s) => s.id),
+        createdAt: Date.now() - 86_400_000 * 60,
+      },
+      {
+        id: "pl_late_night",
+        name: "深夜循环",
+        locked: false,
+        builtin: false,
+        songIds: MOCK_SONGS.slice(6, 11).map((s) => s.id),
+        createdAt: Date.now() - 86_400_000 * 20,
+      },
+      {
+        id: "pl_focus",
+        name: "工作专注",
+        locked: false,
+        builtin: false,
+        songIds: MOCK_SONGS.slice(11, 16).map((s) => s.id),
+        createdAt: Date.now() - 86_400_000 * 9,
+      },
+      {
+        id: "pl_road",
+        name: "开车路上",
+        locked: false,
+        builtin: false,
+        songIds: MOCK_SONGS.slice(16, 19).map((s) => s.id),
+        createdAt: Date.now() - 86_400_000 * 4,
+      },
+    ];
 
-export const MOCK_FILTER_RULES = [
-  {
-    id: "rule_size",
-    type: "size",
-    op: "lt",
-    value: "10240",
-    unit: "B",
-    scope: "exclude",
-    enabled: true,
-  },
-  {
-    id: "rule_ext",
-    type: "regex",
-    op: "match",
-    value: "\\.mp4$",
-    scope: "exclude",
-    enabled: true,
-  },
-  {
-    id: "rule_tmp",
-    type: "regex",
-    op: "match",
-    value: "(^|[\\\\/])_tmp|^\\.|~$",
-    scope: "exclude",
-    enabled: false,
-  },
-];
+export const MOCK_FILTER_RULES = !PREVIEW
+  ? []
+  : [
+      {
+        id: "rule_size",
+        type: "size",
+        op: "lt",
+        value: "10240",
+        unit: "B",
+        scope: "exclude",
+        enabled: true,
+      },
+      {
+        id: "rule_ext",
+        type: "regex",
+        op: "match",
+        value: "\\.mp4$",
+        scope: "exclude",
+        enabled: true,
+      },
+      {
+        id: "rule_tmp",
+        type: "regex",
+        op: "match",
+        value: "(^|[\\\\/])_tmp|^\\.|~$",
+        scope: "exclude",
+        enabled: false,
+      },
+    ];
 
-export const MOCK_LYRICS = `[00:00.00]夜航西飞
+export const MOCK_LYRICS = !PREVIEW
+  ? ""
+  : `[00:00.00]夜航西飞
 [00:04.50]作词：陈默
 [00:08.00]作曲：陈默
 [00:12.00]
@@ -216,7 +242,9 @@ export const MOCK_LYRICS = `[00:00.00]夜航西飞
 [03:38.00]
 `;
 
-export const MOCK_LYRICS_ALT = `[00:00.00]Rooftop Rain
+export const MOCK_LYRICS_ALT = !PREVIEW
+  ? ""
+  : `[00:00.00]Rooftop Rain
 [00:03.80](Instrumental)
 [00:18.00]Rain on the rooftop, counting every drop
 [00:25.50]The city keeps its secrets, I keep mine

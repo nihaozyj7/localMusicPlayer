@@ -289,9 +289,49 @@ func doGet(h http.Handler, target string, method string) *httptest.ResponseRecor
 	return rec
 }
 
-func TestHandlerServesFiles(t *testing.T) {
+// authGet 带上合法 token 请求（/skins/ 现在要求鉴权，见 Manager.token）。
+func authGet(t *testing.T, m *Manager, target, method string) *httptest.ResponseRecorder {
+	t.Helper()
+	sep := "?"
+	if strings.Contains(target, "?") {
+		sep = "&"
+	}
+	return doGet(m.Handler(), target+sep+"t="+m.Token(), method)
+}
+
+// withToken 给已经带了查询串的路径补上 token。
+func withToken(m *Manager, target string) string {
+	sep := "?"
+	if strings.Contains(target, "?") {
+		sep = "&"
+	}
+	return target + sep + "t=" + m.Token()
+}
+
+// TestHandlerRequiresToken /skins/ 是唯一能读到用户数据目录内容的路由，
+// 必须有鉴权：无 token / 错 token 一律 403。
+func TestHandlerRequiresToken(t *testing.T) {
 	m := newTestManagerWithFiles(t)
 	h := m.Handler()
+
+	for _, target := range []string{
+		"/skins/neon/skin.js",
+		"/skins/neon/skin.js?t=wrong-token",
+		"/skins/neon/skin.js?t=",
+	} {
+		if rec := doGet(h, target, http.MethodGet); rec.Code != http.StatusForbidden {
+			t.Errorf("%s: 状态码 = %d，期望 403（无鉴权不得读取用户目录内容）", target, rec.Code)
+		}
+	}
+
+	// 带正确 token 才放行
+	if rec := authGet(t, m, "/skins/neon/skin.js", http.MethodGet); rec.Code != http.StatusOK {
+		t.Errorf("带正确 token 应当放行，实际 %d", rec.Code)
+	}
+}
+
+func TestHandlerServesFiles(t *testing.T) {
+	m := newTestManagerWithFiles(t)
 
 	cases := []struct {
 		path string
@@ -304,7 +344,7 @@ func TestHandlerServesFiles(t *testing.T) {
 		{"/skins/neon/icon.svg", "<svg/>", "image/svg+xml"},
 	}
 	for _, c := range cases {
-		rec := doGet(h, c.path, http.MethodGet)
+		rec := authGet(t, m, c.path, http.MethodGet)
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s: 状态码 = %d，期望 200", c.path, rec.Code)
 			continue
@@ -322,17 +362,15 @@ func TestHandlerServesFiles(t *testing.T) {
 	}
 
 	// HEAD 允许（只需要头）
-	if rec := doGet(h, "/skins/neon/skin.js", http.MethodHead); rec.Code != http.StatusOK {
+	if rec := authGet(t, m, "/skins/neon/skin.js", http.MethodHead); rec.Code != http.StatusOK {
 		t.Errorf("HEAD 应允许，实际 %d", rec.Code)
 	}
 }
 
 func TestHandlerRejectsWrites(t *testing.T) {
 	m := newTestManagerWithFiles(t)
-	h := m.Handler()
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
-		rec := doGet(h, "/skins/neon/skin.js", method)
-		if rec.Code != http.StatusMethodNotAllowed {
+		if rec := authGet(t, m, "/skins/neon/skin.js", method); rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s 应被拒绝，实际 %d", method, rec.Code)
 		}
 	}
@@ -340,7 +378,6 @@ func TestHandlerRejectsWrites(t *testing.T) {
 
 func TestHandlerNotFound(t *testing.T) {
 	m := newTestManagerWithFiles(t)
-	h := m.Handler()
 	for _, p := range []string{
 		"/skins/neon/missing.js",
 		"/skins/nosuchskin/skin.js",
@@ -349,7 +386,7 @@ func TestHandlerNotFound(t *testing.T) {
 		"/skins/neon/",     // 目录不列
 		"/skins/neon/sub/", // 不存在的子目录
 	} {
-		if rec := doGet(h, p, http.MethodGet); rec.Code != http.StatusNotFound {
+		if rec := authGet(t, m, p, http.MethodGet); rec.Code != http.StatusNotFound {
 			t.Errorf("%s: 状态码 = %d，期望 404", p, rec.Code)
 		}
 	}
@@ -358,10 +395,10 @@ func TestHandlerNotFound(t *testing.T) {
 // 路径穿越必须被挡住。
 func TestHandlerBlocksTraversal(t *testing.T) {
 	m := newTestManagerWithFiles(t)
-	h := m.Handler()
 
 	// 注意：真实服务器会在解析 URL 之前就拒绝裸 `../`（400），
 	// 所以这里用**编码后**的形式，确保请求真的进到我们的 handler。
+	// 全部带上合法 token —— 否则 403 会掩盖穿越检查到底有没有生效。
 	paths := []string{
 		"/skins/../outside.txt",
 		"/skins/%2e%2e/outside.txt",
@@ -370,7 +407,7 @@ func TestHandlerBlocksTraversal(t *testing.T) {
 		"/skins/....//outside.txt",
 	}
 	for _, p := range paths {
-		rec := doGet(h, p, http.MethodGet)
+		rec := authGet(t, m, p, http.MethodGet)
 		if rec.Code == http.StatusOK {
 			t.Errorf("%s: 不应返回 200（内容 %q）", p, rec.Body.String())
 		}
@@ -383,13 +420,12 @@ func TestHandlerBlocksTraversal(t *testing.T) {
 // 以点开头的文件/目录一律拒绝。
 func TestHandlerBlocksHidden(t *testing.T) {
 	m := newTestManagerWithFiles(t)
-	h := m.Handler()
 	for _, p := range []string{
 		"/skins/neon/.secret",
 		"/skins/.hidden/skin.js",
 		"/skins/neon/.git/config",
 	} {
-		rec := doGet(h, p, http.MethodGet)
+		rec := authGet(t, m, p, http.MethodGet)
 		if rec.Code == http.StatusOK {
 			t.Errorf("%s: 隐藏文件不该可访问", p)
 		}

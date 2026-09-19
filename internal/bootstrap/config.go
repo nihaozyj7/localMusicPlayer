@@ -231,10 +231,17 @@ type Config struct {
 	CoverCarouselInterval int `json:"coverCarouselInterval"`
 
 	// —— AI 元数据清洗（设置 → AI 元数据）——
-	AIBaseURL  string `json:"aiBaseUrl"`
-	AIAPIKey   string `json:"aiApiKey"`
-	AIThinking bool   `json:"aiThinking"`
-	AIModelID  string `json:"aiModelId"`
+	AIBaseURL string `json:"aiBaseUrl"`
+	// AIAPIKey 是密钥本身。**只用于持久化与后端调用，不原样交给前端**：
+	// ConfigService.Get 会把它打码（见 services.go#maskSecret）。
+	// 前端判断「配没配」应当看下面的 AIAPIKeySet。
+	AIAPIKey string `json:"aiApiKey"`
+	// AIAPIKeySet 是派生字段：只在序列化给前端时被填充，不落盘。
+	// 为什么单独给一个布尔位：密钥被打码之后前端无法再区分
+	// 「没配」与「配了但我不告诉你」，没有它 AI 卡片的状态提示会失真。
+	AIAPIKeySet bool   `json:"aiApiKeySet,omitempty"`
+	AIThinking  bool   `json:"aiThinking"`
+	AIModelID   string `json:"aiModelId"`
 	// AIVendor 模型类型（厂商）。思考模式的开关字段各家不同
 	// （reasoning_effort / thinking / enable_thinking / reasoning …），
 	// 必须知道调的是哪家才能发出正确的请求体；auto = 按接口地址与模型名猜。

@@ -36,6 +36,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"localmusicplayer/internal/bootstrap"
 )
 
 // templateFS 示例样式（随二进制分发，首次启动写进用户皮肤目录）。
@@ -71,6 +73,11 @@ type Manager struct {
 	dir   string
 	byID  map[string]SkinInfo
 	order []string
+	// token 是访问 /skins/ 资源所需的随机令牌（与 /audio/、/cover/ 同一套口径）。
+	// 皮肤文件在**用户数据目录**里，虽然里面只有用户自己放的东西，
+	// 但没有鉴权就意味着同机任何进程都能枚举/读取用户的皮肤源码与资源，
+	// 且这是唯一一条能读到用户目录内容的无鉴权路由。
+	token string
 }
 
 // manifest 是 skin.json 的结构。
@@ -87,7 +94,7 @@ func NewManager(dataDir string) (*Manager, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建皮肤目录失败: %w", err)
 	}
-	m := &Manager{dir: dir, byID: map[string]SkinInfo{}}
+	m := &Manager{dir: dir, byID: map[string]SkinInfo{}, token: bootstrap.RandomID("sk")}
 	if err := m.syncTemplate(); err != nil {
 		return nil, err
 	}
@@ -421,6 +428,16 @@ func fileExists(path string) bool {
 // Handler 内部的前缀裁剪必须是同一个值，两处各写一遍迟早会漂移。
 const Prefix = "/skins/"
 
+// Token 返回访问皮肤资源所需的令牌（供前端拼 URL）。
+// 与 /audio/、/cover/ 一样：进程启动时随机生成，不落盘、不跨进程复用。
+func (m *Manager) Token() string { return m.token }
+
+// URLFor 拼出某个皮肤文件的完整请求路径（含 token）。
+// 前端拿到 dir 前缀后自行拼文件名，这个函数给出带鉴权的基地址。
+func (m *Manager) URLFor(skinID string) string {
+	return Prefix + skinID + "/?t=" + m.token
+}
+
 // 需要显式指定的 MIME。
 //
 // 为什么不能只靠 http.ServeFile 的自动嗅探：Windows 注册表会把 .js 映射成
@@ -450,6 +467,13 @@ func (m *Manager) Handler() http.Handler {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "只支持 GET / HEAD", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// 鉴权：与 /audio/、/cover/ 同一套口径（本机随机 token，随进程变化）。
+		// 皮肤资源位于用户数据目录，不加这一道的话同机任何进程都能直接读。
+		if r.URL.Query().Get("t") != m.token {
+			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 

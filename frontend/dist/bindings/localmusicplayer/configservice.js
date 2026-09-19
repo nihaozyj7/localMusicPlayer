@@ -16,7 +16,17 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails
 import * as bootstrap$0 from "./internal/bootstrap/models.js";
 
 /**
- * Get 读取当前配置
+ * Get 读取当前配置。
+ * 
+ * ★ 返回前会把 AIAPIKey 打码：这个结构体会被序列化后交给前端，
+ * 而前端的运行环境里可以加载**用户数据目录中的任意第三方皮肤 JS**
+ * （见 packages/player-skins 的动态 import），密钥一旦进入前端就等于
+ * 「任何能跑代码的界面组件都能读到它」。
+ * 
+ * 前端真正需要的只是「配没配」（见 settings-view.js 的 configured 判断），
+ * 所以这里把密钥替换成固定占位串，另给一个 aiApiKeySet 布尔位。
+ * 写回路径不受影响：Set 收到占位串时会忽略（见 applyPatch），
+ * 用户不改密钥时原值保留。
  * @returns {$CancellablePromise<bootstrap$0.Config>}
  */
 export function Get() {

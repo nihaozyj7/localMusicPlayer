@@ -425,7 +425,7 @@ func (s *OnlineService) proxyStream(w http.ResponseWriter, r *http.Request, stre
 		req.Header.Set("Referer", "https://www.bilibili.com/")
 		req.Header.Set("Origin", "https://www.bilibili.com")
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := streamClient.Do(req)
 		if err != nil {
 			continue
 		}
@@ -435,7 +435,13 @@ func (s *OnlineService) proxyStream(w http.ResponseWriter, r *http.Request, stre
 		}
 		defer resp.Body.Close()
 		h := w.Header()
-		h.Set("Access-Control-Allow-Origin", "*")
+		// ★ 不要把在线音频代理设成 Access-Control-Allow-Origin: *。
+		//
+		// 这条响应是**带 token 鉴权**的本机代理（页面同源取用，本就不需要 CORS）。
+		// 写成 `*` 的意义只有一个：允许任意网页用 JS 读取本机代理返回的音频流 ——
+		// 而代理的目标 URL 由 bvid 决定，等于把一个「能按 id 取任意 B 站音频」的
+		// 能力开放给浏览器里的任何站点（配合 r.URL.Query().Get("t") 泄露即可滥用）。
+		// 同源请求不读这个头，删掉它不影响任何正常功能。
 		h.Set("Accept-Ranges", "bytes")
 		h.Set("Cache-Control", "no-store")
 		if ct := resp.Header.Get("Content-Type"); ct != "" {
@@ -456,7 +462,9 @@ func (s *OnlineService) proxyStream(w http.ResponseWriter, r *http.Request, stre
 			h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".m4a"))
 		}
 		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
+		// 用限长拷贝而不是裸 io.Copy：试听代理同样是「远端给多少就转发多少」，
+		// 没有上限时一个异常响应可以把内存/磁盘/带宽拖垮。
+		_, _ = io.Copy(w, io.LimitReader(resp.Body, maxRemoteAudioBytes))
 		return
 	}
 	http.Error(w, "online audio unavailable", http.StatusBadGateway)

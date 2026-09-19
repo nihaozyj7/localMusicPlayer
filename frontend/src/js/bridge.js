@@ -318,6 +318,9 @@ const backendImpl = {
   /* ---- 播放界面皮肤（样式包） ---- */
   // 用户数据目录里的第三方样式；文件由后端托管在 /skins/<id>/<file>
   listSkins: () => call(bindings?.Skins?.List),
+  // /skins/ 与 /audio/、/cover/ 同一套口径：需要进程随机 token，
+  // 否则同机任何进程都能直接读取用户数据目录里的皮肤源码。
+  skinsToken: () => call(bindings?.Skins?.Token),
   reloadSkins: () => call(bindings?.Skins?.Reload),
   skinDir: () => call(bindings?.Skins?.Dir),
   revealSkinDir: () => call(bindings?.Skins?.RevealDir),

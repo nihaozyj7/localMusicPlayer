@@ -1499,6 +1499,25 @@ function scheduleConfigSync() {
   syncTimer = setTimeout(flushConfigSync, 400);
 }
 
+/**
+ * 返回「后端回传的密钥占位串」。
+ *
+ * 后端不会把真密钥交给前端（services.go#maskSecret），而是回一个固定的
+ * 占位串。前端的责任是：把这个值当成「这里本来有值，但我不该看到它」，
+ * 既不显示、也不推回后端。
+ *
+ * 为什么不去硬编码那个占位串：它是 Go 侧的实现细节，前端复制一份常量
+ * 就会在两处之间产生隐式耦合（改了一边忘另一边）。这里改用「配了密钥
+ * 但值明显不是用户输入」的判断 —— 后端用 aiApiKeySet 明确告知「配了」，
+ * 而 UI 的输入框永远是空的（用户不输入就没有新值），
+ * 因此只要 aiApiKeySet 为真且当前值非空，就说明这个值来自后端回传。
+ */
+function keyPlaceholderOf(config) {
+  if (!config || !config.aiApiKeySet) return null;
+  const v = config.aiApiKey;
+  return typeof v === "string" && v !== "" ? v : null;
+}
+
 /** 立即把需要落盘的配置推给后端 */
 export async function flushConfigSync() {
   // 先把去抖中的快照写掉：这个函数是「立即落盘」的入口，
@@ -1512,6 +1531,21 @@ export async function flushConfigSync() {
   const patch = {};
   for (const key of SYNCED_KEYS) {
     if (key in state.config) patch[key] = state.config[key];
+  }
+  // ★ 绝不把密钥占位串推回后端。
+  //
+  // 后端 Get() 回传的 aiApiKey 是打码占位串（services.go#maskSecret），
+  // 不是真密钥。正常情况下 UI 不会把它写进 state.config（见 settings.js
+  // 的 ai-field 分支），但这里再加一道兜底：只要值不是用户**真正输入**的
+  // 新密钥，就不推 —— 漏了这一道，用户在设置里改任何一个开关都可能
+  // 顺手把自己的密钥覆盖成占位串。
+  // 用户想清除密钥时 UI 会传空串，属于有效操作，因此只拦「非空且未变更」。
+  if (
+    typeof patch.aiApiKey === "string" &&
+    patch.aiApiKey !== "" &&
+    patch.aiApiKey === keyPlaceholderOf(state.config)
+  ) {
+    delete patch.aiApiKey;
   }
   patch.playMode = state.playMode;
   // 关闭「记忆音量」时不把音量推给后端，避免下次启动又被旧值覆盖
@@ -1694,7 +1728,14 @@ export async function hydrateFromBackend() {
 
 /** 首次装载数据（真实后端优先，失败回退 mock） */
 export async function bootstrap() {
-  seedFromMock();
+  // ★ 只在预览模式播种假数据。
+  //
+  // 原实现无条件 seedFromMock()，于是真后端下启动瞬间会把 40 首假歌填进
+  // state.songs 并渲染一帧 —— 用户看得见「别人的歌单」闪一下；
+  // 更糟的是若 hydrateFromBackend() 拿不到数据（后端慢/抛错），
+  // 这些假数据会一直留在界面上，看起来就像「我的曲库变成了别人的」。
+  // 真后端下正确的初始状态是「空 + 加载中」，由空态/扫描遮罩负责表达。
+  if (!isWails()) seedFromMock();
   const saved = loadPersisted();
   applyPersisted(saved);
   if (state.view === "playlist" && !playlistById(state.playlistId)) {
@@ -1743,7 +1784,15 @@ async function runRescan({ silent }) {
     }
   }
   if (!raw) {
-    // 预览模式：模拟一次耗时扫描
+    // ★ 真后端（Wails）下**绝不能**回落到假数据。
+    //
+    // 这里原来是无条件 `raw = MOCK_SONGS.slice()`。后果不只是「预览里看到假歌」：
+    // 真实后端下如果这次扫描返回空（所有文件夹都被拔掉 / 路径全失效 /
+    // scan 返回了 started=false 且 songs() 为空），整个曲库会被
+    // **40 首假歌覆盖**，用户以为自己的歌全没了。
+    // 真正的「后端说这次没有歌」应当原样保留空结果，让界面显示空态。
+    if (isWails()) return state.lastScan;
+    // 预览模式（浏览器、无 Go 后端）：模拟一次耗时扫描
     await new Promise((r) => setTimeout(r, silent ? 400 : 1500));
     raw = MOCK_SONGS.slice();
   }
@@ -1779,10 +1828,21 @@ function waitForScanDone() {
       10 * 60 * 1000
     );
 
+    // ★ 只等信号，**不再自己拉一次 songs()**。
+    //
+    // main.js 的全局 `scan:done` 处理器（main.js:250）已经在同一个事件里做过
+    // 「拉全库 + 重算 + commit」。这里原来又 `await backend.songs()` 拉了一遍 ——
+    // 也就是用户点一次「重新扫描」要传两遍整个曲库（10 万首就是两倍 IPC 载荷），
+    // 而且两次结果可能落在不同的时序上、互相覆盖 state.allSongsRaw。
+    //
+    // 现在这里等一小段让 main.js 的处理器把数据落好，再从 state 里取 ——
+    // 单次 IPC，且两条路径不会打架。
     off = on("scan:done", async () => {
       clearTimeout(timer);
       off();
-      resolve(await backend.songs());
+      // 让出一次微/宏任务，确保 main.js 的处理器（同样监听 scan:done）已完成 commit
+      await new Promise((r) => setTimeout(r, 0));
+      resolve(Array.isArray(state.allSongsRaw) ? state.allSongsRaw : null);
     });
   });
 }

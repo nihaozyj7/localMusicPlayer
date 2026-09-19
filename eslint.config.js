@@ -49,7 +49,12 @@ export default [
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: "module",
-      globals: { ...globals.browser },
+      globals: {
+        ...globals.browser,
+        // 构建期常量：由 frontend/vite.config.js 的 define 注入。
+        // 声明成全局是为了让 mock.js 能用它把假数据整块摇掉（见那里的说明）。
+        __LM_PREVIEW__: "readonly",
+      },
     },
     rules: { ...js.configs.recommended.rules, ...COMMON_RULES },
   },

@@ -88,13 +88,28 @@ class MpDesktopLyrics extends LitElement {
       this.requestUpdate();
       return;
     }
-    on("desktop:lyrics", (state) => this.render2(state));
+    // ★ 保存取消订阅句柄。
+    //
+    // on() 返回的是 off()，原实现直接丢弃了它，而这个类只有 connectedCallback、
+    // 没有 disconnectedCallback —— 订阅永远无法解除。
+    // 本组件位于常驻的独立桌面歌词窗口（不是反复挂卸的列表项），
+    // 所以影响面有限，但「注册了就必须能注销」是这里的硬约定：
+    // 窗口重建 / 组件被移动时，旧实例仍会被事件回调持有，无法回收。
+    this._offLyrics = on("desktop:lyrics", (state) => this.render2(state));
     try {
       // 主动拉一次当前状态：创建窗口与页面注册监听之间有先后差，
       // 只等事件的话新窗口会一直空着，直到下一次换行。
       this.render2(await backend.desktopLyricsReady());
     } catch (err) {
       console.info("[desktop-lyrics] 初始状态读取失败", err?.message ?? err);
+    }
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._offLyrics) {
+      this._offLyrics();
+      this._offLyrics = null;
     }
   }
 

@@ -102,12 +102,26 @@ function wailsRuntimeShim() {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   root: srcDir,
   base: "/",
   // 没有额外的原样拷贝目录：绑定与内置主题/皮肤由 tools/build-frontend.mjs 收尾
   publicDir: false,
   plugins: [wailsRuntimeShim()],
+  define: {
+    // ★ 编译期常量：把「预览模式」与「真实构建」彻底分开。
+    //
+    // 为什么需要它：mock.js 里那 8.6KB 假数据（歌名、专辑、路径）是通过
+    // `import { MOCK_SONGS } from "./mock.js"` 静态引入的，Rollup 无法剔除
+    // —— 结果是「导航到别人的音乐库」这种内容被打进正式 exe，
+    // 用户翻 dist 就能看到。更糟的是它掩盖了真后端路径的问题
+    // （假数据一直在，就不会有人发现真数据没渲染）。
+    //
+    // 有了这个常量，mock.js 在正式构建里整个模块被摇掉：
+    // `if (!__LM_PREVIEW__) return {}` 让下面的字面量成为不可达代码。
+    // 预览（npm run dev / preview / dev-server.js）时置 true，行为不变。
+    __LM_PREVIEW__: JSON.stringify(mode !== "production"),
+  },
   resolve: {
     alias: {
       // 皮肤包以工作区包名引入；显式再给一条别名，保证在未跑 npm install 时也能解析
@@ -162,4 +176,4 @@ export default defineConfig({
     reportCompressedSize: true,
     chunkSizeWarningLimit: 320,
   },
-});
+}));

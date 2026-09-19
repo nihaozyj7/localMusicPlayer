@@ -777,7 +777,14 @@ export async function handleSettingsAction(actEl, ctx = {}) {
     case "ai-field": {
       const key = actEl.dataset.key;
       if (!key) return;
-      state.config[key] = actEl.value;
+      // ★ 密钥是**只写**字段：后端 Get() 回传的是打码占位串
+      // （见 services.go#maskSecret），不是真密钥。
+      // 用户没动这个框时就不该把它推回后端 —— 否则「改一次别的设置」
+      // 会顺手把密钥覆盖掉。只有值真的变了才写入；
+      // 清空成 "" 是有效操作（= 删除密钥）。
+      const next = actEl.value;
+      if (key === "aiApiKey" && next === (state.config?.aiApiKey ?? "")) return;
+      state.config[key] = next;
       ctx.commit?.();
       return;
     }

@@ -5,10 +5,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unsafe"
 
 	"localmusicplayer/internal/bootstrap"
 )
+
+// isSameOriginRequest 判断带 Origin 头的请求是否来自本机同源页面。
+//
+// Wails 的页面跑在 http://wails.localhost，而 r.Host 也是 wails.localhost，
+// 因此「Origin 的 host 与请求的 Host 一致」就等于同源。
+// 只用于给无 token 的路由加一道来源收口（见 bootFrameHandler）。
+func isSameOriginRequest(r *http.Request, origin string) bool {
+	if origin == "null" {
+		return false
+	}
+	trimmed := strings.TrimSuffix(strings.TrimPrefix(origin, "http://"), "/")
+	trimmed = strings.TrimSuffix(strings.TrimPrefix(trimmed, "https://"), "/")
+	return strings.EqualFold(trimmed, r.Host)
+}
 
 /* ==========================================================================
    启动过渡图（上一帧缓存）
@@ -56,9 +71,30 @@ func bootFrameFile(store *bootstrap.Store) string {
 	return filepath.Join(dir, "boot-frame.jpg")
 }
 
+// bootFrameServeWindow 过渡图只在启动后这段时间内可被请求。
+//
+// 为什么要收口：这张图是**上次退出时整个主窗口的截图**，可能包含用户的曲库、
+// 歌单名等隐私内容，而它原来是无限期挂在同源 asset server 上的无鉴权路由
+// （前端在 index.html 里用静态 <img src="/boot-frame.jpg"> 取，没法带 token）。
+// 过渡图的实际用途只有一个：启动首帧的那一瞬。启动十几秒之后任何请求都不再
+// 是「过渡图」，一律 404 —— 同机其它进程就算扫到这个路由也拿不到东西。
+const bootFrameServeWindow = 30 * time.Second
+
 // bootFrameHandler 提供过渡图；文件不存在时返回 404，页面据此换成加载动画。
 func bootFrameHandler(store *bootstrap.Store) http.Handler {
+	// 进程启动时刻：窗口之外一律拒绝（见 bootFrameServeWindow）
+	startedAt := time.Now()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 只接受同源请求：这个路由是给页面自己的 <img> 用的，
+		// 浏览器发同源图片请求不带 Origin，带了就说明是跨源（其它进程/网页）。
+		if origin := r.Header.Get("Origin"); origin != "" && !isSameOriginRequest(r, origin) {
+			http.NotFound(w, r)
+			return
+		}
+		if time.Since(startedAt) > bootFrameServeWindow {
+			http.NotFound(w, r)
+			return
+		}
 		path := bootFrameFile(store)
 		if path == "" {
 			http.NotFound(w, r)

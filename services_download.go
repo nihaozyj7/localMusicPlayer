@@ -423,10 +423,20 @@ func (s *DownloadService) run(taskID, bvid, title string, durationMS int64, dir 
 	if name == "" {
 		name = bvid
 	}
-	target, err := uniquePath(dir, name, "."+ext)
+	target, reserved, err := uniquePath(dir, name, "."+ext)
 	if err != nil {
 		s.failTask(taskID, bvid, err.Error())
 		return
+	}
+	// 占位文件是 uniquePath 用 O_EXCL 建的，用来「预定」这个名字。
+	// 必须立刻关掉句柄（Windows 上不关会影响后续 Rename），
+	// 失败路径上还要把占位一起清掉，别在用户目录里留空文件。
+	if reserved != nil {
+		_ = reserved.Close()
+	}
+	cleanupPlaceholder := func() {
+		_ = os.Remove(target)
+		_ = os.Remove(target + ".part")
 	}
 	// 解析出真实标题后同步到任务上（用户点下载时标题可能还是空的）。
 	s.updateTask(taskID, func(t *DownloadTask) {
@@ -438,8 +448,8 @@ func (s *DownloadService) run(taskID, bvid, title string, durationMS int64, dir 
 
 	size, err := s.fetchTo(ctx, stream, target, taskID, bvid, title)
 	if err != nil {
-		// 失败时清掉半成品，别在用户的音乐目录里留垃圾
-		_ = os.Remove(target)
+		// 失败时清掉半成品与占位，别在用户的音乐目录里留垃圾
+		cleanupPlaceholder()
 		s.failTask(taskID, bvid, err.Error())
 		return
 	}
@@ -547,11 +557,13 @@ func (s *DownloadService) copyFrom(ctx context.Context, rawURL string, dst *os.F
 	req.Header.Set("Origin", "https://www.bilibili.com")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := streamClient.Do(req)
 	if err != nil {
 		return 0, err
 	}
+	// 响应体套字节上限（见 http_stream_client.go）：防止异常超大响应把磁盘写满
 	defer resp.Body.Close()
+	body := limitRemoteAudio(resp.Body)
 	if resp.StatusCode >= 400 {
 		return 0, fmt.Errorf("下载失败: HTTP %d", resp.StatusCode)
 	}
@@ -569,12 +581,17 @@ func (s *DownloadService) copyFrom(ctx context.Context, rawURL string, dst *os.F
 	buf := make([]byte, 256<<10)
 	lastReport := time.Now()
 	for {
-		n, readErr := resp.Body.Read(buf)
+		n, readErr := body.Read(buf)
 		if n > 0 {
 			if _, werr := dst.Write(buf[:n]); werr != nil {
 				return written, fmt.Errorf("写入失败: %w", werr)
 			}
 			written += int64(n)
+			// 越过上限就中止并让上层清掉半成品：正常的歌曲不可能有这么大，
+			// 继续写下去只会把用户的磁盘填满。
+			if remoteAudioExceeded(written) {
+				return written, fmt.Errorf("远端文件超过 %d MB 上限，已中止下载", maxRemoteAudioBytes>>20)
+			}
 			// 节流：最多每 400ms 报一次，避免大文件刷爆事件通道
 			if time.Since(lastReport) > 400*time.Millisecond {
 				lastReport = time.Now()
@@ -775,18 +792,47 @@ var windowsReservedNames = func() map[string]bool {
 }()
 
 // uniquePath 避免覆盖同名文件：a.m4a → a (2).m4a → a (3).m4a …
-func uniquePath(dir, base, ext string) (string, error) {
-	candidate := filepath.Join(dir, base+ext)
-	if !fileExists(candidate) {
-		return candidate, nil
+//
+// ★ 用 O_CREATE|O_EXCL **原子地占位**，而不是「先 stat 再返回名字」。
+//
+// 原来只是 fileExists() 检查一下就返回路径，而这个路径要经过**整个下载过程**
+// （可能几分钟）才会被 os.Rename 使用。这中间任何人（用户手动另存、另一个
+// 下载任务、同步软件）在同目录建了同名文件，最后的 Rename 在 Windows 上会
+// **直接把它替换掉** —— 静默销毁一个已存在的文件，而「不覆盖同名文件」恰恰
+// 是这个函数存在的唯一理由。
+//
+// 现在改成：探测到可用的名字就**立刻以独占方式创建**它（占位），
+// 用 EEXIST 作为「这个名字已被占用」的权威判据。
+// 返回的 reserve 是那个已创建的空文件句柄，调用方负责关闭它；
+// 真正的内容仍然写进 <target>.part，成功后 Rename 覆盖这个占位文件
+// （此时覆盖是安全的：占位文件是我们自己刚建的）。
+func uniquePath(dir, base, ext string) (string, *os.File, error) {
+	try := func(name string) (string, *os.File, bool) {
+		candidate := filepath.Join(dir, name)
+		// 连 .part 一起占位：并发任务用同一个 target+".part" 会互相写坏
+		f, err := os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			return candidate, nil, false
+		}
+		if _, partErr := os.OpenFile(candidate+".part", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644); partErr != nil {
+			// .part 已被别人占用 → 放弃这个名字，清掉刚建的占位
+			_ = f.Close()
+			_ = os.Remove(candidate)
+			return candidate, nil, false
+		}
+		return candidate, f, true
+	}
+
+	if target, f, ok := try(base + ext); ok {
+		return target, f, nil
 	}
 	for i := 2; i < 1000; i++ {
-		candidate = filepath.Join(dir, fmt.Sprintf("%s (%d)%s", base, i, ext))
-		if !fileExists(candidate) {
-			return candidate, nil
+		name := fmt.Sprintf("%s (%d)%s", base, i, ext)
+		if target, f, ok := try(name); ok {
+			return target, f, nil
 		}
 	}
-	return "", fmt.Errorf("同名文件过多，无法生成文件名: %s", base)
+	return "", nil, fmt.Errorf("同名文件过多，无法生成文件名: %s", base)
 }
 
 func fileExists(p string) bool {

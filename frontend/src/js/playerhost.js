@@ -442,6 +442,15 @@ async function discoverSkins() {
   try {
     const list = await backend.listSkins();
     const items = Array.isArray(list) ? list : [];
+    // /skins/ 需要 token（见 internal/skins 的 Handler）。
+    // 拿不到时保持旧行为只会得到一堆 403，所以显式记一条日志便于排查。
+    let token = "";
+    try {
+      token = String((await backend.skinsToken()) || "");
+    } catch (err) {
+      console.warn("[skins] 读取皮肤访问令牌失败", err);
+    }
+    const tokenQuery = token ? `?t=${encodeURIComponent(token)}` : "";
     // 失败清单要跟着这次扫描重建：留着上一次的记录会让「已经修好的样式」
     // 一直挂在「加载失败」里（用户改了文件、重扫，提示却不变）。
     skinFailures.length = 0;
@@ -454,8 +463,10 @@ async function discoverSkins() {
         await loadExternalSkin({
           id: info.id,
           name: info.name,
-          module: base + String(info.module).replace(/^\/+/, ""),
-          styles: (Array.isArray(info.styles) ? info.styles : []).map((s) => base + String(s).replace(/^\/+/, "")),
+          module: base + String(info.module).replace(/^\/+/, "") + tokenQuery,
+          styles: (Array.isArray(info.styles) ? info.styles : []).map(
+            (s) => base + String(s).replace(/^\/+/, "") + tokenQuery
+          ),
         });
         externalSkinIds.add(info.id);
         found.add(info.id);
@@ -831,6 +842,30 @@ function unmountSkin() {
     host.resizeObserver.disconnect();
     host.resizeObserver = null;
   }
+  // ★ 轮播定时器必须一起停掉。
+  //
+  // 它原来是 setInterval(…, 1000) 且全文没有一处 clearInterval ——
+  // 卸载皮肤后定时器还在跑，每秒调一次 tickCarousel()，
+  // 而那个函数会去读已经清空的 host.stage / host.ctx（潜在报错源），
+  // 也让「关掉播放页」之后进程里始终挂着一个无用的常驻定时器。
+  if (host.carouselTimer) {
+    clearInterval(host.carouselTimer);
+    host.carouselTimer = null;
+  }
+}
+
+// teardownHost 在窗口/详情页彻底销毁时调用：把宿主持有的**长期**watcher
+// 也一并释放。与 unmountSkin 的分工：unmountSkin 管「换皮肤 / 关详情页」，
+// 这个管「宿主本身不再使用」。
+export function teardownHost() {
+  unmountSkin();
+  if (host.themeObserver) {
+    // themeObserver 观察 document.documentElement，从来没有 disconnect 过 ——
+    // 它挂在 document 上，只要文档还在就永远不会被 GC，
+    // 且每次主题变化都会回调进一个可能已经废弃的宿主。
+    host.themeObserver.disconnect();
+    host.themeObserver = null;
+  }
 }
 
 function watchResize() {
@@ -984,9 +1019,14 @@ const SURFACE_VARS = [
  * @returns {boolean} 是否处于"跟随详情页"的状态（排障用）
  */
 export function mirrorPlayerSurface() {
-  const view = host.view || $("#playerview");
+  const view = /** @type {HTMLElement|null} */ (host.view || $("#playerview"));
   const themed = Boolean(view?.dataset.theme) && Boolean(state.playerOpen);
-  const panels = document.querySelectorAll('[data-surface-owner="playerview"]');
+  // querySelectorAll 的静态类型是 NodeListOf<Element>，而 Element 上没有
+  // .style / .dataset（它们在 HTMLElement 上）。这里选择器保证命中的都是元素，
+  // 但 tsc --checkJs 只认类型 —— 不收窄的话会报 TS2339（曾经让 npm run check 红掉）。
+  const panels = /** @type {NodeListOf<HTMLElement>} */ (
+    document.querySelectorAll('[data-surface-owner="playerview"]')
+  );
   if (!themed) {
     for (const panel of panels) {
       for (const [, out] of SURFACE_VARS) panel.style.removeProperty(out);

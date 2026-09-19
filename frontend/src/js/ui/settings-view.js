@@ -1139,7 +1139,10 @@ class MpSettingsLayer extends MpElement {
      ======================================================================== */
   aiCard() {
     const cfg = state.config || {};
-    const configured = Boolean(String(cfg.aiBaseUrl || "").trim() && String(cfg.aiApiKey || "").trim());
+    // 后端回传的密钥是打码占位串（见 services.go#maskSecret），
+    // 所以「配没配」看的是本地记录的布尔位，而不是拿占位串当真值比较。
+    const keySet = Boolean(cfg.aiApiKeySet) || Boolean(String(cfg.aiApiKey || "").trim());
+    const configured = Boolean(String(cfg.aiBaseUrl || "").trim() && keySet);
     const field = (label, hint, key, placeholder, type = "text") =>
       html` <div class="setting setting--stack">
         <div class="setting__main">
@@ -1151,8 +1154,8 @@ class MpSettingsLayer extends MpElement {
           type=${type}
           data-act="ai-field"
           data-key=${key}
-          .value=${cfg[key] || ""}
-          placeholder=${placeholder}
+          .value=${key === "aiApiKey" ? "" : cfg[key] || ""}
+          placeholder=${key === "aiApiKey" && keySet ? "已保存（留空则保持不变，输入新值可替换）" : placeholder}
           autocomplete="off"
           spellcheck="false"
         />

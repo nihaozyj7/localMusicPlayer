@@ -895,10 +895,39 @@ func NewConfigService(store *bootstrap.Store) *ConfigService {
 	return &ConfigService{store: store}
 }
 
-// Get 读取当前配置
+// Get 读取当前配置。
+//
+// ★ 返回前会把 AIAPIKey 打码：这个结构体会被序列化后交给前端，
+// 而前端的运行环境里可以加载**用户数据目录中的任意第三方皮肤 JS**
+// （见 packages/player-skins 的动态 import），密钥一旦进入前端就等于
+// 「任何能跑代码的界面组件都能读到它」。
+//
+// 前端真正需要的只是「配没配」（见 settings-view.js 的 configured 判断），
+// 所以这里把密钥替换成固定占位串，另给一个 aiApiKeySet 布尔位。
+// 写回路径不受影响：Set 收到占位串时会忽略（见 applyPatch），
+// 用户不改密钥时原值保留。
 func (s *ConfigService) Get() bootstrap.Config {
-	return s.store.Get()
+	cfg := s.store.Get()
+	// 先算出「有没有配密钥」，再打码 —— 顺序反了会让布尔位永远为 false。
+	cfg.AIAPIKeySet = strings.TrimSpace(cfg.AIAPIKey) != ""
+	cfg.AIAPIKey = maskSecret(cfg.AIAPIKey)
+	return cfg
 }
+
+// secretPlaceholder 是回传给前端的密钥占位串。前端不会把它写回
+// （applyPatch 会识别并忽略），因此它只是一个「这里本来有值」的标记。
+const secretPlaceholder = "\x00SET\x00"
+
+// maskSecret 把非空密钥替换成占位串；空值保持空。
+func maskSecret(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return ""
+	}
+	return secretPlaceholder
+}
+
+// isMaskedSecret 判断前端回传的值是不是占位串（是则应当忽略、保留原值）。
+func isMaskedSecret(v string) bool { return v == secretPlaceholder }
 
 // Set 增量写入配置（只覆盖传入的键）
 func (s *ConfigService) Set(patch map[string]any) (bootstrap.Config, error) {
@@ -908,7 +937,7 @@ func (s *ConfigService) Set(patch map[string]any) (bootstrap.Config, error) {
 	if err != nil {
 		return bootstrap.Config{}, err
 	}
-	return s.store.Get(), nil
+	return s.Get(), nil
 }
 
 // Path 配置文件路径
@@ -2092,7 +2121,16 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 		case "aiBaseUrl":
 			c.AIBaseURL = strings.TrimSpace(asString(raw, c.AIBaseURL))
 		case "aiApiKey":
-			c.AIAPIKey = strings.TrimSpace(asString(raw, c.AIAPIKey))
+			// ★ 忽略回传的占位串。
+			//
+			// Get() 交给前端的密钥是打码过的（见 maskSecret），前端在用户
+			// 没改这个字段时会把占位串原样推回来。若这里照写，用户每改一次
+			// 别的设置都会把自己的密钥抹成占位串 —— 属于静默的数据丢失。
+			v := strings.TrimSpace(asString(raw, ""))
+			if isMaskedSecret(v) {
+				break
+			}
+			c.AIAPIKey = v
 		case "aiThinking":
 			c.AIThinking = asBool(raw, c.AIThinking)
 		case "aiModelId":

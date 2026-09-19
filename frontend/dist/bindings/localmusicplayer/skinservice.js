@@ -89,3 +89,14 @@ export function Reload() {
 export function RevealDir() {
     return $Call.ByID(1838209424);
 }
+
+/**
+ * Token 返回访问 /skins/ 资源所需的令牌。
+ * 
+ * 前端需要它才能拼出带动鉴权的皮肤 URL（见 playerhost.js 的 discoverSkins）。
+ * 与 /audio/、/cover/ 同一套口径：进程启动时随机生成，只在本机同源页面里流转。
+ * @returns {$CancellablePromise<string>}
+ */
+export function Token() {
+    return $Call.ByID(585721353);
+}

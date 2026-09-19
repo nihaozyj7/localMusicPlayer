@@ -49,7 +49,8 @@
  * @property {boolean} coverCarousel - —— 封面轮播（播放详情页）—— CoverCarousel 是否轮播多张封面。 刻意做成**全局偏好**而不是每首一份：一首歌有几张封面是数据， 「要不要轮着看」是习惯；放进每首歌里会出现「这首开、那首关」， 用户根本记不住自己在哪首开的。
  * @property {number} coverCarouselInterval - CoverCarouselInterval 轮播间隔（秒），下限 2 秒，默认 10 秒。
  * @property {string} aiBaseUrl - —— AI 元数据清洗（设置 → AI 元数据）——
- * @property {string} aiApiKey
+ * @property {string} aiApiKey - AIAPIKey 是密钥本身。**只用于持久化与后端调用，不原样交给前端**： ConfigService.Get 会把它打码（见 services.go#maskSecret）。 前端判断「配没配」应当看下面的 AIAPIKeySet。
+ * @property {boolean} [aiApiKeySet] - AIAPIKeySet 是派生字段：只在序列化给前端时被填充，不落盘。 为什么单独给一个布尔位：密钥被打码之后前端无法再区分 「没配」与「配了但我不告诉你」，没有它 AI 卡片的状态提示会失真。
  * @property {boolean} aiThinking
  * @property {string} aiModelId
  * @property {string} aiVendor - AIVendor 模型类型（厂商）。思考模式的开关字段各家不同 （reasoning_effort / thinking / enable_thinking / reasoning …）， 必须知道调的是哪家才能发出正确的请求体；auto = 按接口地址与模型名猜。 取值见 ai_vendor.go 的 aiVendorCatalog。

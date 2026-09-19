@@ -55,6 +55,17 @@ func (s *SkinService) Dir() string {
 	return s.mgr.Dir()
 }
 
+// Token 返回访问 /skins/ 资源所需的令牌。
+//
+// 前端需要它才能拼出带动鉴权的皮肤 URL（见 playerhost.js 的 discoverSkins）。
+// 与 /audio/、/cover/ 同一套口径：进程启动时随机生成，只在本机同源页面里流转。
+func (s *SkinService) Token() string {
+	if s == nil || s.mgr == nil {
+		return ""
+	}
+	return s.mgr.Token()
+}
+
 // RevealDir 在资源管理器中打开皮肤目录
 func (s *SkinService) RevealDir() error {
 	if s == nil || s.mgr == nil {

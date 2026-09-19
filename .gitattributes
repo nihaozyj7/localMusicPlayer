@@ -10,12 +10,23 @@
 
 * text=auto
 
+# ★ *.go 必须显式 eol=lf。
+#
+# 为什么：gofmt 只认 LF。Windows 上 core.autocrlf=true 会把工作区的 .go
+# 检出成 CRLF，于是 gofmt -l 会把**每一个** .go 文件都报成「未格式化」，
+# 而 tools/check-gofmt.mjs 是本仓库唯一的后端格式门禁 —— 结果是这道门禁
+# 在项目的主力平台上对所有人恒红，久而久之没人再看它，等于没有门禁。
+# 指定 eol=lf 之后，工作区与仓库都是 LF，门禁才真正可用。
+*.go   text eol=lf
+
 *.sh   text eol=lf
 *.mjs  text eol=lf
 *.js   text eol=lf
 *.css  text eol=lf
 *.yml  text eol=lf
 *.yaml text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
 
 *.png  binary
 *.jpg  binary

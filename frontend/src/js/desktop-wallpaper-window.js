@@ -272,6 +272,14 @@ async function loadExternalSkins() {
     console.info("[desktop-wallpaper] 第三方样式清单读取失败", err?.message ?? err);
     return;
   }
+  // 与主窗口一致：/skins/ 需要 token（见 internal/skins 的 Handler）
+  let token = "";
+  try {
+    token = String((await backend.skinsToken()) || "");
+  } catch (err) {
+    console.info("[desktop-wallpaper] 皮肤访问令牌读取失败", err?.message ?? err);
+  }
+  const tokenQuery = token ? `?t=${encodeURIComponent(token)}` : "";
   for (const info of Array.isArray(list) ? list : []) {
     if (!info?.id || !info?.module) continue;
     const base = `${SKINS_PREFIX}${encodeURIComponent(info.id)}/`;
@@ -279,8 +287,10 @@ async function loadExternalSkins() {
       await loadExternalSkin({
         id: info.id,
         name: info.name,
-        module: base + String(info.module).replace(/^\/+/, ""),
-        styles: (Array.isArray(info.styles) ? info.styles : []).map((s) => base + String(s).replace(/^\/+/, "")),
+        module: base + String(info.module).replace(/^\/+/, "") + tokenQuery,
+        styles: (Array.isArray(info.styles) ? info.styles : []).map(
+          (s) => base + String(s).replace(/^\/+/, "") + tokenQuery
+        ),
       });
     } catch (err) {
       console.warn(`[desktop-wallpaper] 样式「${info.id}」加载失败：`, err);
