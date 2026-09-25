@@ -271,6 +271,64 @@ func TestGainClampsNegative(t *testing.T) {
 	}
 }
 
+// TestGainSetIsRamped 确认普通 SetGain（拖音量条 / 静音）**必须**走斜坡。
+// 波形连续时硬切就是一个阶跃，听感是「咔」。
+func TestGainSetIsRamped(t *testing.T) {
+	var g gainState
+	g.current = 1
+	g.target = 1
+	g.set(0.25)
+
+	// set 只改 target，current 应保持不动，等回调逐步逼近
+	if g.current != 1 {
+		t.Fatalf("set 不该立刻改 current，实际 %v", g.current)
+	}
+	if g.target != 0.25 {
+		t.Fatalf("set 应把 target 设成 0.25，实际 %v", g.target)
+	}
+
+	// 推进一小步：应只走了一部分，而不是一步到位
+	v := g.valueFor(64)
+	if v >= 1 || v <= 0.25 {
+		t.Fatalf("斜坡应处于 (0.25, 1) 之间，实际 %v", v)
+	}
+}
+
+// TestGainSetHardIsInstant 确认换歌用的 setHard 一步到位（current 与 target 同时变）。
+//
+// 这是「A 切 B 时 A 结尾突然变响」的另一半修法：装载新歌时环形缓冲刚被清空，
+// 下一个回调读到的是新歌的第一个样本，没有波形连续性可言 —— 此时若还走 15ms
+// 斜坡，新歌开头就会带上上一首的增益（上一首很响时那一声就是爆响）。
+func TestGainSetHardIsInstant(t *testing.T) {
+	var g gainState
+	g.current = 1
+	g.target = 1
+	g.setHard(0.4)
+
+	if g.current != 0.4 {
+		t.Fatalf("setHard 应立刻改 current，实际 %v", g.current)
+	}
+	if g.target != 0.4 {
+		t.Fatalf("setHard 应立刻改 target，实际 %v", g.target)
+	}
+	// 再取一次值不应再变化（斜坡已经收敛）
+	if v := g.valueFor(1024); v != 0.4 {
+		t.Fatalf("setHard 之后 valueFor 应为 0.4，实际 %v", v)
+	}
+}
+
+// TestGainSetHardClampsNegative setHard 同样要挡住负增益（负值会反相并放大）。
+func TestGainSetHardClampsNegative(t *testing.T) {
+	var g gainState
+	g.current = 1
+	g.target = 1
+	g.setHard(-2)
+
+	if g.current != 0 || g.target != 0 {
+		t.Fatalf("负增益应被钳到 0，实际 current=%v target=%v", g.current, g.target)
+	}
+}
+
 /* --------------------------------------------------------------------------
    定点缩放
    -------------------------------------------------------------------------- */

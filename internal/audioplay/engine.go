@@ -225,6 +225,24 @@ func (g *gainState) set(target float64) {
 	g.mu.Unlock()
 }
 
+// setHard 直接把 current 与 target 一起设成目标值，**不做斜坡**。
+//
+// 只用于「换歌」这一种场景：那时环形缓冲刚被 reset，下一个回调读到的是新歌
+// 的第一个样本，波形上本来就没有连续性可言 —— 此时插值毫无意义，反而会让
+// 新歌开头带上一小段上一首的增益（15ms 的斜坡）。
+//
+// 反过来，**绝不能**用它来实现普通音量变化（拖动音量条 / 静音）：那里波形是
+// 连续的，硬切就是一个阶跃，听感是「咔」。那种场景必须走 set + 斜坡。
+func (g *gainState) setHard(target float64) {
+	if target < 0 {
+		target = 0
+	}
+	g.mu.Lock()
+	g.current = target
+	g.target = target
+	g.mu.Unlock()
+}
+
 // valueFor 返回「本缓冲处理完毕后」的增益，并把 current 推进过去。
 //
 // 与 value 的区别：这里一次前进 stepFrames 帧，而且要配合
@@ -569,7 +587,12 @@ func (e *Engine) markEOF() {
 
 // Load 装载一个 PCM WAV 文件（44 字节标准头）并准备播放。
 // 会停止当前的 feeder、清空缓冲、把位置重置到 startFrame。
-func (e *Engine) Load(path string, startFrame int64) error {
+//
+// gain 是这首歌应当使用的线性增益（用户音量 × 该曲响度补偿）。**必须**在这里
+// 一起传入，而不是装载完再单独调 SetGain —— 原因见 applyGainForLoad 的注释：
+// 「装载」与「换增益」之间只要有一个音频回调的窗口，那一个缓冲就会用上一首的
+// 增益放出来，听起来正是「切歌瞬间上一首突然变响」。
+func (e *Engine) Load(path string, startFrame int64, gain float64) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("打开音频文件失败: %w", err)
@@ -603,6 +626,8 @@ func (e *Engine) Load(path string, startFrame int64) error {
 	e.ring.reset()
 	e.ring.setClosed(false)
 	e.analyzer.Reset()
+	// 换增益与换音频在同一个「装载」动作里完成，中间不留给音频回调任何窗口
+	e.gain.setHard(gain)
 
 	start := startFrame
 	if start < 0 {

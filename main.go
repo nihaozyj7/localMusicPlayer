@@ -58,6 +58,8 @@ type appState struct {
 	lyricsSvc   *LyricsService
 	playerSvc   *PlayerService
 	metaCache   *metacache.Store
+	// mediaKeySvc 负责键盘媒体键（⏯）的全局热键接管
+	mediaKeySvc *MediaKeyService
 }
 
 var state *appState
@@ -461,6 +463,13 @@ func main() {
 			log.Printf("[player] 后端音频未启动，前端将回退到 <audio>")
 		}
 		startPlayerTick()
+
+		// 键盘媒体键（⏯）：注册成系统级全局热键，所以最小化/失焦/缩托盘都能响应。
+		//
+		// 放在这里而不是 main 的开头：热键回调会去调前端 togglePlay，
+		// 而前端要等界面装配完才挂得上监听（见 main.js#startMediaKeys）——
+		// 注册得太早，早期那几次按键只会走「前端不在线」的退化分支。
+		startMediaKeys(state)
 	})
 
 	// 主窗口关闭 = 退出应用：桌面歌词与桌面背景歌词都是独立的额外窗口，
@@ -488,6 +497,11 @@ func main() {
 		}
 		if state.playerSvc != nil {
 			state.playerSvc.Stop()
+		}
+		// 释放媒体键：RegisterHotKey 是进程级独占，不注销的话
+		// 这台机器上的其它播放器会一直收不到这个键。
+		if state.mediaKeySvc != nil {
+			state.mediaKeySvc.Stop()
 		}
 		if err := state.lib.SaveCache(); err != nil {
 			log.Printf("save cache failed: %v", err)
@@ -566,4 +580,33 @@ func startPlayerTick() {
 			state.playerSvc.Tick()
 		}
 	}()
+}
+
+// startMediaKeys 注册键盘播放/暂停键（⏯）的全局热键。
+//
+// 为什么是全局热键而不是网页的 MediaSession：本项目的播放跑在 Go 进程里，
+// 后端接管时页面上根本没有 <audio> 元素，而 MediaSession 只有在有媒体元素
+// 播放时才会把媒体键回调下来 —— 那条路在本项目里不成立。详见
+// services_mediakey.go 文件顶部的完整说明。
+//
+// 注册失败（被别的播放器独占、平台不支持）只记日志，不影响程序启动。
+func startMediaKeys(st *appState) {
+	if st == nil {
+		return
+	}
+	svc := NewMediaKeyService(func() {
+		// 退化路径：前端还没挂上监听时，至少让按键直接作用于引擎。
+		// 正常情况走不到这里 —— 前端在线时是按「发事件让它 toggle」处理的。
+		if st.playerSvc == nil {
+			return
+		}
+		if st.playerSvc.Playing() {
+			st.playerSvc.Pause()
+		} else {
+			st.playerSvc.Play()
+		}
+	})
+	svc.setEmitter(emit)
+	st.mediaKeySvc = svc
+	svc.Start()
 }

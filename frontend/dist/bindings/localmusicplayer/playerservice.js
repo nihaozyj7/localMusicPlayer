@@ -61,6 +61,21 @@ export function Play() {
 }
 
 /**
+ * Playing 报告引擎当前是否在出声。
+ * 
+ * 给媒体键的退化路径用：前端还没挂上监听时，按键直接在这里做「在放就停、
+ * 停了就放」的翻转，至少不让按键静默丢掉。
+ * 
+ * 注意它问的是**引擎**而不是前端 store 的播放意图 —— 两者在切歌途中
+ * 会短暂不一致（后端还要把环形缓冲里的旧音频吐完）。对「退化的兜底行为」
+ * 而言，引擎的真实状态才是该依据的那个。
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function Playing() {
+    return $Call.ByID(2882669630);
+}
+
+/**
  * Seek 跳到指定毫秒。会做范围钳制，非法值不会让播放错乱。
  * @param {number} positionMs
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}

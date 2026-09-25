@@ -256,7 +256,18 @@ func (s *PlayerService) Load(songID string) (map[string]any, error) {
 	}
 
 	// 换歌前记录：竞态下如果已经切到别的歌了，就别覆盖状态
-	if err := s.engine.Load(path, 0); err != nil {
+	//
+	// 增益与音频在同一个 Load 里一起换（见 audioplay.Engine.Load 的说明）：
+	// 如果先 Load 再 SetGain，两者之间会插进至少一个音频回调，那个缓冲就会
+	// 用**上一首**的增益放出来。上一首若被明显压低（很响的歌），那一段就是
+	// 一次爆响 —— 也就是用户报的「切歌瞬间上一首突然变响」。
+	//
+	// 这里传 0 dB 而不是 composeGainLocked()：进入 Load 时 s.loudnessGainDB
+	// 记的还是**上一首**的补偿（换歌后前端才会把新歌的推过来），拿它去配新歌
+	// 就是张冠李戴。新歌没测过时它的补偿本来就是 0，所以「不补偿」既是最安全
+	// 的起点，也是未测量时的正确值；前端在装载返回后会立刻推真实补偿。
+	s.loudnessGainDB = 0
+	if err := s.engine.Load(path, 0, s.composeGainLocked()); err != nil {
 		s.lastErr = err.Error()
 		s.mu.Unlock()
 		s.fail(songID, err)
@@ -302,6 +313,23 @@ func (s *PlayerService) Pause() map[string]any {
 		s.pushAnchorLocked("pause")
 	}
 	return s.stateLocked()
+}
+
+// Playing 报告引擎当前是否在出声。
+//
+// 给媒体键的退化路径用：前端还没挂上监听时，按键直接在这里做「在放就停、
+// 停了就放」的翻转，至少不让按键静默丢掉。
+//
+// 注意它问的是**引擎**而不是前端 store 的播放意图 —— 两者在切歌途中
+// 会短暂不一致（后端还要把环形缓冲里的旧音频吐完）。对「退化的兜底行为」
+// 而言，引擎的真实状态才是该依据的那个。
+func (s *PlayerService) Playing() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.engine == nil {
+		return false
+	}
+	return s.engine.Playing()
 }
 
 // Seek 跳到指定毫秒。会做范围钳制，非法值不会让播放错乱。
@@ -460,13 +488,25 @@ func (s *PlayerService) applyGainLocked() {
 	if s.engine == nil {
 		return
 	}
+	s.engine.SetGain(s.composeGainLocked())
+}
+
+// composeGainLocked 算出「用户音量 × 响度补偿」的线性增益，不改引擎状态。
+// 调用方必须持有 s.mu。
+//
+// 单独抽出来是为了给换歌用：换歌时要**先**算出新歌该用的增益，再和音频
+// 一起装进引擎（见 Load），不能在装载后再算 —— 那中间的回调窗口会用错增益。
+func (s *PlayerService) composeGainLocked() float64 {
+	if s.engine == nil {
+		return 0
+	}
 	vol := s.userVolume
 	if s.muted {
 		vol = 0
 	}
 	// 与前端 audio.js#targetGain 同一算法：线性 = 10^(dB/20)
 	linear := math.Pow(10, s.loudnessGainDB/20)
-	s.engine.SetGain(vol * linear)
+	return vol * linear
 }
 
 // stateLocked 组装状态快照。调用方必须持有 s.mu。

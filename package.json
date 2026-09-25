@@ -33,8 +33,9 @@
   "scripts": {
     "dev": "npm run dev --workspace @localmusicplayer/app",
     "preview": "npm run preview --workspace @localmusicplayer/app",
-    "build:assets": "npm run build --workspace @localmusicplayer/app",
+    "build:assets": "node tools/build-frontend.mjs",
     "build": "node tools/build-frontend.mjs",
+    "build:vite-only": "npm run build --workspace @localmusicplayer/app",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

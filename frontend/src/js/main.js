@@ -53,6 +53,7 @@ import { probeDesktopWallpaperSupport } from "./desktop-wallpaper.js";
 import { initSearchPanel } from "./searchpanel.js";
 import { initDownloads } from "./downloads.js";
 import { startRuntime } from "./runtime.js";
+import { startMediaKeys } from "./media-keys.js";
 
 /* --------------------------------------------------------------------------
    启动过渡画面（index.html#boot-splash）
@@ -501,6 +502,10 @@ async function main() {
   // 而 syncAudio 要按「后端是否可用」选链路 —— 探测晚了第一次播放会走错分支。
   await probeBackend();
   startAudioEvents();
+
+  // 键盘媒体键（⏯）：Go 侧用系统级全局热键接管，这里只接它转达的意图。
+  // 必须等 store 就绪之后再挂 —— 处理器里直接调 togglePlay。
+  startMediaKeys();
 
   // 运行时副作用（音频对齐 / 桌面窗口推送 / 封面取色）
   startRuntime();

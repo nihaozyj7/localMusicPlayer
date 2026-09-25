@@ -29,6 +29,7 @@ import {
   playlistById,
   setVolume,
   state,
+  subscribe,
   toggleLike,
   toggleMute,
   togglePlay,
@@ -91,11 +92,56 @@ class MpPlayerbar extends MpElement {
       if (!state.sleepTimer) return;
       this.requestUpdate();
     }, 1000);
+
+    // ★ 进度刷新：必须绕过 deps 比较，直接做「定点更新」。
+    //
+    // 为什么不能靠 subscribe → revalidate：deps 里刻意没有 s.position
+    // （见下面的说明），而 MpElement.revalidate() 只在 deps 变化时
+    // 才 requestUpdate()（base.js:100）。所以播放中位置一直在变，
+    // 却**没有任何一次重绘** —— 表现就是「进度条不走、时间一直是 00:00」。
+    //
+    // 迁移前这个问题被掩盖了：<audio> 的 timeupdate 除了 notify() 还会
+    // 走 store 的 commit()，而 commit 会重算可见列表等，连带让 deps 变化。
+    // 现在进度由后端锚点驱动，只调 notify()，那条路径就断了。
+    //
+    // 这里直接订阅 store 的通知，然后**只更新那两个 DOM 节点**
+    // （不是 requestUpdate()，避免整个底栏模板重跑 + Lit 全量 diff，
+    // 那正是 deps 排除 position 想避免的开销）。
+    this._unsubscribers.push(
+      subscribe(() => {
+        if (!this.isConnected) return;
+        this.paintProgress();
+      }),
+    );
   }
 
   onDisconnected() {
     if (this._tick) clearInterval(this._tick);
     this._tick = null;
+  }
+
+  /**
+   * 只更新「进度相关」的两个节点：左侧时间文本 + 进度条滑块。
+   *
+   * 与 updated() 里的那段是同一套写入逻辑，抽出来是为了让
+   * 「播放中每 250ms 一次」和「其它原因导致的完整重绘」共用一份实现，
+   * 不会出现两处写得不一样。
+   */
+  paintProgress() {
+    const pos = Math.round(state.position);
+    const dur = Math.round(state.duration || 0);
+
+    const cur = this.querySelector("#time-current");
+    if (cur) {
+      const text = fmtTime(state.position);
+      if (cur.textContent !== text) cur.textContent = text;
+    }
+
+    const bar = this.querySelector("#progress");
+    if (bar && bar.dataset.dragging !== "true" && dur > 0) {
+      this._progress?.set((pos / dur) * 1000, { silent: true });
+    }
+    this._progress?.setDisabled(dur <= 0);
   }
 
   firstUpdated() {
@@ -135,26 +181,9 @@ class MpPlayerbar extends MpElement {
   }
 
   updated() {
-    // 进度条：拖动中不抢位置（用户的手指优先）
-    const pos = Math.round(state.position);
-    const dur = Math.round(state.duration || 0);
-
-    // 左侧时间文本：直接写，不走模板（见 deps 的说明）。
-    //
-    // #time-current 在模板里**没有** Lit 绑定（与 #progress 内部同理：
-    // 外部改写的文本节点会被 Lit 的标记节点覆盖，抛 "Cannot set properties
-    // of null"）。所以这里和 slider.js 一样，是它唯一的写入方。
-    const cur = this.querySelector("#time-current");
-    if (cur) {
-      const text = fmtTime(state.position);
-      if (cur.textContent !== text) cur.textContent = text;
-    }
-
-    const bar = this.querySelector("#progress");
-    if (bar && bar.dataset.dragging !== "true" && dur > 0) {
-      this._progress?.set((pos / dur) * 1000, { silent: true });
-    }
-    this._progress?.setDisabled(dur <= 0);
+    // 进度相关（时间文本 + 滑块）与订阅里的定点刷新共用一份实现，
+    // 避免两处写得不一样（见 paintProgress 的说明）。
+    this.paintProgress();
 
     // 音量：静音时滑块落到 0
     const effective = state.muted ? 0 : state.volume;

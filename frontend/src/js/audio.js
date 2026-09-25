@@ -59,8 +59,18 @@ let probed = false;
 /** 探测失败的原因（设置界面显示用） */
 let backendReason = "";
 
-/** 当前已经装载到后端的歌曲 id */
+/** 前端**希望**装载的歌曲 id（发出 playerLoad 时就更新） */
 let loadedFor = null;
+/**
+ * 后端**确实已经装载**的歌曲 id（playerLoad 返回后才更新）。
+ *
+ * 与 loadedFor 分开是必要的：两者在切歌途中会不一致 ——
+ * loadedFor 已指向新歌，而后端仍在放旧歌（它还要把环形缓冲里约 3 秒的
+ * 旧音频吐完）。任何「按歌推增益」的动作都必须认 backendSongId，
+ * 否则就会把新歌的补偿安到正在出声的旧歌头上，听感上就是
+ * 「切歌瞬间上一首突然变响」。
+ */
+let backendSongId = null;
 /** 换源请求序号：切歌竞态时用来丢弃过期的结果 */
 let requestSeq = 0;
 /** 待执行的跳转位置（毫秒），装载完成后消费 */
@@ -340,6 +350,7 @@ export async function syncAudio() {
   if (!song) {
     if (loadedFor !== null) {
       loadedFor = null;
+      backendSongId = null;
       anchor = null;
       try {
         await backend.playerUnload();
@@ -366,9 +377,32 @@ async function loadSong(song) {
   anchor = null;
   lastPushedPosition = -1;
 
+  // 换歌期间先把响度补偿压到 0 dB（不抬升也不压低）。
+  //
+  // 为什么必须做这一步：playerLoad 是异步的，而**后端此刻仍在放上一首**，
+  // 它的环形缓冲里还积压着约 3 秒的音频，会继续吐给声卡。如果这时链路
+  // 上还留着上一首的补偿（比如上一首很响、被压了 −8 dB），那么当下面
+  // 装载完成、我们把新歌的补偿推下去时，缓冲里那一段**旧歌**的电平就会
+  // 从一个已经"过期"的增益跳到另一个，听感上就是「切歌瞬间上一首突然变响」。
+  //
+  // 更糟的是新歌还没测量时增益是 0：旧歌的 −8 dB 会被直接冲成 0，
+  // 旧歌尾部以原始电平放出来 —— 正是用户报的那个现象，也解释了为什么
+  // 它不是每次都触发（只有上一首确实被明显压低、且尾部还在缓冲里时才听得见）。
+  //
+  // 先压到 0 相当于一个「安全的中间态」：旧歌尾巴不再被错误增益修饰，
+  // 新歌起播后再立刻套上它自己的补偿（见下面装载完成后的那一次推送）。
+  //
+  // 去重键也要一起清掉：紧接着的 applyGainForSong（每 tick 都跑）会按
+  // 新歌重新算值，若不清它就可能因为"看起来没变"而跳过推送。
+  lastAppliedGain = null;
+  await pushLoudnessToBackend(null);
+
   try {
     const res = await backend.playerLoad(song.id);
     if (seq !== requestSeq) return; // 期间又切歌了
+
+    // 到这一步后端才真正换成了这首歌，增益的归属也随之切换
+    backendSongId = song.id;
 
     // 装载完成：后端返回准确的时长与起始位置
     if (res?.durationMs > 0) state.duration = res.durationMs;
@@ -379,9 +413,13 @@ async function loadSong(song) {
       await backend.playerSeek(resumeMs);
     }
 
-    // 套用音量与响度补偿，再起播
-    await pushVolumeToBackend();
+    // 套用音量与响度补偿，再起播。
+    // 注意顺序：先响度后音量 —— 两者在后端是相乘合成的一个增益，
+    // 补偿必须在起播前就位，否则新歌的头几十毫秒会以 0 dB 露出来。
     await pushLoudnessToBackend(song.id);
+    await pushVolumeToBackend();
+    // 记下"已经推下去的值"，让随后的 applyGainForSong 不再重复推一遍
+    lastAppliedGain = backendGain();
 
     if (state.playing) {
       await backend.playerPlay();
@@ -392,6 +430,7 @@ async function loadSong(song) {
   } catch (err) {
     if (seq !== requestSeq) return;
     loadedFor = null;
+    backendSongId = null;
     toast(`无法播放：${err?.message ?? "装载失败"}`, { tone: "error", duration: 5000 });
   }
 }
@@ -426,11 +465,21 @@ async function playFrom(ms) {
 
 /** 当前应套用的线性增益（用户音量 × 响度补偿），供设置界面显示 */
 export function currentGain() {
-  const mode = state.config.loudnessMode || "off";
-  let gainDB = 0;
-  if (mode !== "off" && state.currentId) {
-    gainDB = state.loudnessGains?.[state.currentId] ?? 0;
-  }
+  const gainDB = gainDBFor(state.currentId);
+  const linear = 10 ** (gainDB / 20);
+  const volume = state.muted ? 0 : state.volume;
+  return volume * linear;
+}
+
+/**
+ * 后端链路上**此刻实际**该有的线性增益（按后端装载的那首歌算）。
+ *
+ * 与 currentGain 的区别只在于用哪首歌查补偿表：UI 显示要用「用户认为的
+ * 当前歌」（currentGain），而给后端推值必须用「后端真正在放的那首」
+ * （本函数）。切歌那几百毫秒里两者不同，混用就会把新歌的补偿安到旧歌头上。
+ */
+function backendGain() {
+  const gainDB = gainDBFor(backendSongId);
   const linear = 10 ** (gainDB / 20);
   const volume = state.muted ? 0 : state.volume;
   return volume * linear;
@@ -454,13 +503,28 @@ async function pushVolumeToBackend() {
   }
 }
 
-/** 把当前歌曲的响度补偿推给后端（后端负责与用户音量相乘） */
-async function pushLoudnessToBackend(songId) {
+/**
+ * 这首歌当前该用多少 dB 补偿。
+ *
+ * 表里没有这首歌时返回 0（不补偿），而不是沿用上一首的值 ——
+ * 「查不到」的语义是「还没测」，此时唯一安全的做法是不抬升也不压低。
+ */
+function gainDBFor(songId) {
   const mode = state.config.loudnessMode || "off";
-  let gainDB = 0;
-  if (mode !== "off" && songId) {
-    gainDB = state.loudnessGains?.[songId] ?? 0;
-  }
+  if (mode === "off" || !songId) return 0;
+  const g = state.loudnessGains?.[songId];
+  return Number.isFinite(g) ? g : 0;
+}
+
+/**
+ * 把**指定的**这首歌的响度补偿推给后端（后端负责与用户音量相乘）。
+ *
+ * songId 显式传入，而不是在里面读 state.currentId：切歌过程中
+ * 「前端认为的当前歌」与「后端真正装载的歌」会短暂不一致，补偿必须按
+ * 后者推，否则会张冠李戴（详见 loadSong 与下面的长注释）。
+ */
+async function pushLoudnessToBackend(songId) {
+  const gainDB = gainDBFor(songId);
   try {
     await backend.playerSetLoudness(gainDB);
   } catch (err) {
@@ -477,11 +541,17 @@ export function applyGainForSong() {
     applyGainForSongLegacy();
     return;
   }
-  const value = currentGain();
+  // 去重键用的是「后端实际该有的增益」（backendGain），而不是 UI 上的
+  // currentGain：切歌期间后者已经指向新歌，若拿它去重，会出现
+  // 「算出来一样 → 直接 return」而把新歌的补偿漏推给后端的情况。
+  const value = backendGain();
   if (value === lastAppliedGain) return;
   lastAppliedGain = value;
   pushVolumeToBackend();
-  pushLoudnessToBackend(state.currentId);
+  // 这里推的是**后端已装载的那首**的补偿。切歌途中 loadedFor 已经指向新歌、
+  // 但 playerLoad 还没返回，此刻后端仍在放旧歌 —— 推新歌的补偿就会让旧歌
+  // 的尾巴以错误电平出声（loadSong 里会先把增益压到 0 兜住这个窗口）。
+  pushLoudnessToBackend(backendSongId);
 }
 
 /* --------------------------------------------------------------------------
@@ -525,6 +595,7 @@ export function stopAudio() {
     return;
   }
   loadedFor = null;
+  backendSongId = null;
   anchor = null;
   backend.playerUnload().catch(() => {});
 }
@@ -609,8 +680,12 @@ export async function requestLoudness(songId) {
   const mode = state.config.loudnessMode || "off";
   if (mode === "off" || !isWails() || !songId) return;
   if (state.loudnessGains?.[songId] !== undefined) {
-    // 已有补偿：直接推给后端（切歌场景）
-    if (backendReady) pushLoudnessToBackend(songId);
+    // 已有补偿：直接推给后端。
+    //
+    // 但**只有当后端装载的正是这首歌**时才推 —— 否则会把新歌的补偿安到
+    // 当前还在出声的旧歌头上。切歌途中新歌的补偿由 loadSong 在装载完成后
+    // 统一套用（它知道确切的时序），这里只负责"同一首歌内"的更新。
+    if (backendReady && backendSongId === songId) pushLoudnessToBackend(songId);
     return;
   }
   if (pendingMeasure.has(songId)) return pendingMeasure.get(songId);
@@ -652,13 +727,26 @@ export function computeGain(item, targetLUFS) {
   return Math.round(gain * 100) / 100;
 }
 
+/**
+ * 把一首歌测出来的补偿记账，并在「后端正在放这首歌」时立刻套用。
+ *
+ * 判定条件是 backendSongId（后端真正装载的歌）而**不是** state.currentId：
+ * 用户点了切歌之后、playerLoad 返回之前，两者会不一致（state.currentId 已是
+ * 新歌，后端还在放旧歌）。这时若按 currentId 判断，就会把新歌的补偿推给
+ * 仍在出声的旧歌 —— 与 loadSong 里那个"尾部突然变响"是同一类错误。
+ *
+ * 补偿只写进表里（供切歌时查表）也不会丢：loadSong 装载完成后会重新推一次。
+ */
 function setGain(songId, gainDB) {
   if (!state.loudnessGains) state.loudnessGains = {};
   state.loudnessGains[songId] = gainDB;
-  if (songId === state.currentId) {
+  if (songId === backendSongId) {
     if (backendReady) {
-      pushLoudnessToBackend(songId);
-      pushVolumeToBackend();
+      // 走 applyGainForSong 而不是直接推：它顺手维护 lastAppliedGain
+      // 这个去重键，绕过它会让后续 tick 误判"已经推过了"而漏掉这次更新。
+      // 它内部按 backendGain 重算，此处 songId 已确认等于 backendSongId，
+      // 所以推下去的一定是刚记下的这个值。
+      applyGainForSong();
     } else {
       applyVolumeLegacy();
     }

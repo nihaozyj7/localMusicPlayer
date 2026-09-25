@@ -462,6 +462,52 @@ func TestPlayerServiceLoudnessClamped(t *testing.T) {
 	}
 }
 
+// TestPlayerServiceLoadDoesNotCarryGainAcrossSongs 这是用户报过的 bug：
+// A 切 B 的瞬间，A 的结尾会突然变响（且不是每次都触发）。
+//
+// 根因有两层，这里锁住后端这一层：
+//  1. audioplay.Engine.Load 之前只重置环形缓冲，**不碰增益**。于是
+//     「装载新音频」与「前端把新歌补偿推过来」之间的回调窗口里，那一个缓冲
+//     会用**上一首**的增益放出来。上一首若被明显压低（很响的歌），
+//     那一段就是一次爆响。
+//  2. Load 里若拿 s.loudnessGainDB 去合成增益，用的还是**上一首**的值。
+//
+// 修法：换歌时把增益与音频在同一个 Load 里原子地换掉，且新歌的补偿在
+// 前端推过来之前一律按 0 dB（不补偿）处理。
+func TestPlayerServiceLoadDoesNotCarryGainAcrossSongs(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "a.wav")
+	writeServiceTestWAV(t, wav, 2.0)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 2000)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+
+	svc.SetVolume(1.0, false)
+
+	// 第一首很响：被压低 8 dB
+	svc.SetLoudnessGain(-8)
+	if g := svc.engine.GainTarget(); math.Abs(g-math.Pow(10, -8.0/20)) > 0.001 {
+		t.Fatalf("第一首的补偿没生效，实际增益 %v", g)
+	}
+
+	// 切到第二首（此时前端还没推它的补偿）
+	if _, err := svc.Load("song-2"); err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+
+	// 关键：装载完成后绝不能还留着上一首的 −8 dB；
+	// 新歌补偿未知时必须是 1.0（0 dB，不抬升也不压低）
+	got := svc.engine.GainTarget()
+	if math.Abs(got-1.0) > 0.001 {
+		t.Errorf(
+			"换歌后增益 = %.4f，期望 1.0（新歌补偿未知时按 0 dB）—— "+
+				"留着上一首的补偿会让新歌/旧歌尾巴以错误电平出声",
+			got,
+		)
+	}
+}
+
 // TestPlayerServiceLoadAppliesGain 换歌后必须重新套用当前音量/补偿
 // （上一首的补偿不能留在链路上）。
 func TestPlayerServiceLoadAppliesGain(t *testing.T) {
@@ -480,6 +526,8 @@ func TestPlayerServiceLoadAppliesGain(t *testing.T) {
 	if _, err := svc.Load("song-1"); err != nil {
 		t.Fatalf("Load 失败: %v", err)
 	}
+	// 前端装载完成后会推新歌的补偿；这里模拟那次推送
+	svc.SetLoudnessGain(3)
 	if g := svc.engine.GainTarget(); math.Abs(g-want) > 0.01 {
 		t.Errorf("Load 后增益 = %.4f，期望 %.4f（换歌应重新对齐增益）", g, want)
 	}

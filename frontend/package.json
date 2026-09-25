@@ -7,6 +7,7 @@
   "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",
+    "//build": "★ 不要直接用这个构建发行产物：vite.config.js 里 emptyOutDir=true，它会连 dist/bindings 一起清掉（那是 wails3 generate bindings 的产物、由 tools/build-frontend.mjs 拷进去的）。清掉之后前端所有后端调用都会失败，表现为「扫描不到音乐 / 曲库空白」。要用仓库根目录的 `npm run build`。",
     "build": "vite build",
     "preview": "vite preview"
   },
