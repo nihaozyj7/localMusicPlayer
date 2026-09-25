@@ -20,7 +20,7 @@
    皮肤对象的形状（用 defineSkin 定义，会做一次校验）：
 
      export default defineSkin({
-       apiVersion: 1,
+       apiVersion: 2,
        id: "classic",
        name: "经典",
        icon: "disc",              // index.html 里图标 sprite 的 id（可省略）
@@ -36,8 +36,22 @@
      的皮肤；不认识的就跳过并在控制台说明原因（而不是装作没事然后崩在半路）。
    ========================================================================== */
 
-/** 当前宿主实现的皮肤接口版本 */
-export const SKIN_API_VERSION = 1;
+/**
+ * 当前宿主实现的皮肤接口版本。
+ *
+ * v2（本次）：移除了 `ctx.audio`。
+ *   音频的「解码 + 输出」已经搬到 Go 后端（见 frontend/src/js/audio.js 与
+ *   Go 侧的 services_player.go / internal/audioplay），前端不再持有
+ *   <audio> 元素 —— 于是这个字段永远只能是 null，留着它只会让皮肤
+ *   写出「拿不到元素就静默失效」的代码。既然还没有第三方皮肤，直接升版本
+ *   并把字段删掉，比保留一个永远为 null 的契约更干净。
+ *
+ *   皮肤需要的东西没有减少：
+ *     · 播放位置 / 时长 / 播放状态 → ctx.playback() 与 "progress" 补丁（未变）
+ *     · 实时频谱                  → defineSkin 的 spectrum 声明 + "spectrum" 补丁（未变）
+ *     · 跳转 / 播放暂停 / 切歌     → ctx.actions（未变）
+ */
+export const SKIN_API_VERSION = 2;
 
 /**
  * 宿主推给皮肤的更新类型。
@@ -119,7 +133,6 @@ export const PATCH_TYPES = [
  * @typedef {Object} SkinContext 宿主上下文（皮肤拿到的唯一入口）
  * @property {HTMLElement} root 皮肤自己的挂载点（宿主已清空）
  * @property {HTMLElement} backgroundRoot 整窗背景层的容器（宿主已就位，皮肤按需填充）
- * @property {HTMLAudioElement|null} audio 真实音频元素（可直接读 buffered / 挂监听）
  * @property {() => SkinPlayback} playback 播放进度快照
  * @property {() => SkinMedia} media 曲目/封面/歌词快照
  * @property {() => SkinOptions} options 显示相关设置（showLyrics / lyricsFontSize / interactive…）

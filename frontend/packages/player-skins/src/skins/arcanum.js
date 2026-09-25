@@ -1112,7 +1112,7 @@ function onVisibility() {
    ========================================================================== */
 
 export default defineSkin({
-  apiVersion: 1,
+  apiVersion: 2,
   id: ID,
   name: "星阵咏唱",
   icon: "arcanum",

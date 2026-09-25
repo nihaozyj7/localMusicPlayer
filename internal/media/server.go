@@ -558,3 +558,31 @@ func (s *Server) ToolsInfo() map[string]any {
 		"transcodeBudget": transcodeBudgetBytes,
 	}
 }
+
+// PlayableFile 返回一个「后端播放引擎可以直接读」的 PCM WAV 路径。
+//
+// 与 HTTP 路径的区别：HTTP 那条路对 mp3/flac/m4a 是**原样提供**的
+// （交给浏览器的解码器），而后端引擎要的是统一的 16bit/44.1kHz/立体声 PCM
+// —— 所以这里**所有**格式都走转码，包括浏览器本来能直接播的那几种。
+//
+// 代价与收益：
+//   - 代价：首次播放一首未缓存的歌要等转码完成（几秒）。命中转码缓存时零等待。
+//   - 收益：后端只需要一种 PCM 布局，解析逻辑（44 字节头 + 定长帧）
+//     成为硬保证，不必再引入 Go 侧的 mp3/flac/aac 解码器
+//     （那些库的格式兼容性风险远大于复用已经跑通的 ffmpeg 管线）。
+//
+// 缓存是 media.Server 现有的 600MB LRU（与 HTTP 路径共用），
+// 所以「听过的歌」不会被转码两次。
+func (s *Server) PlayableFile(ctx context.Context, songID string) (string, error) {
+	song, ok := s.songs(songID)
+	if !ok {
+		return "", fmt.Errorf("歌曲不存在: %s", songID)
+	}
+	if _, err := os.Stat(song.Path); err != nil {
+		return "", fmt.Errorf("文件不存在: %s", song.Path)
+	}
+	if !s.CanTranscode() {
+		return "", fmt.Errorf("后端播放需要 ffmpeg 转码，但当前没有可用的 ffmpeg")
+	}
+	return s.ensureTranscoded(ctx, song)
+}

@@ -56,6 +56,7 @@ type appState struct {
 	downloadSvc *DownloadService
 	coverSvc    *CoverService
 	lyricsSvc   *LyricsService
+	playerSvc   *PlayerService
 	metaCache   *metacache.Store
 }
 
@@ -96,6 +97,28 @@ func main() {
 	mediaSrv := media.New(songs)
 	mediaSrv.SetCacheDir(filepath.Join(store.DataDir(), "cache", "transcode"))
 	state.media = mediaSrv
+
+	// 后端原生播放：把「解码 + 输出」从 WebView2 搬到 Go 进程。
+	//
+	// resolve 的职责是把歌曲 id 变成引擎能直接读的 PCM WAV 路径。
+	// 走 mediaSrv.PlayableFile 是为了复用现有的转码缓存（600MB LRU）——
+	// 它本来是为「浏览器播不了 ape/wma」建的，现在后端播放也吃同一份缓存，
+	// 于是同一首歌不会被转码两次。
+	playerSvc := NewPlayerService(func(songID string) (string, int64, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		defer cancel()
+		path, err := mediaSrv.PlayableFile(ctx, songID)
+		if err != nil {
+			return "", 0, err
+		}
+		var durMs int64
+		if song, ok := songs(songID); ok {
+			durMs = song.Duration
+		}
+		return path, durMs, nil
+	})
+	state.playerSvc = playerSvc
+
 	if base, err := mediaSrv.Start(); err != nil {
 		log.Printf("media server failed: %v", err)
 	} else {
@@ -168,6 +191,15 @@ func main() {
 	app := application.New(application.Options{
 		Name:        "LMPlayer",
 		Description: "本地音乐播放器（localMusicPlayer）",
+		// Icon 是**窗口类**图标（Windows 下经 WM_SETICON / 窗口类注册生效）。
+		//
+		// 为什么必须显式设置：不设置时 Wails 在 Windows 上退回
+		// LoadIconWithResourceID(0, IDI_APPLICATION) —— 也就是系统默认图标，
+		// 而 WebView2 自己带窗口图标，于是任务栏与**音量合成器**里显示的是
+		// webview2 而不是本程序。音频改成后端输出之后，音是**本进程**发出来的，
+		// 合成器那一栏的图标/名称就直接取自本进程的窗口图标 ——
+		// 这里设对了，合成器里才会显示本程序。
+		Icon: appIconPNG,
 		Services: []application.Service{
 			application.NewService(state.librarySvc),
 			application.NewService(NewPlaylistService(store)),
@@ -177,6 +209,7 @@ func main() {
 			application.NewService(NewConfigService(store)),
 			application.NewService(state.appSvc),
 			application.NewService(NewMediaService(mediaSrv, songs)),
+			application.NewService(playerSvc),
 			application.NewService(state.loudnessSvc),
 			application.NewService(state.windowSvc),
 			application.NewService(onlineSvc),
@@ -347,6 +380,19 @@ func main() {
 	state.window = app.Window.NewWithOptions(winOpts)
 	state.windowSvc.activeBackdrop = backdropMode
 
+	// 把应用图标装到窗口上（任务栏 + 音量合成器都用它）。
+	//
+	// 为什么不能只靠 application.Options.Icon：Wails v3.0.0-beta.14 在
+	// Windows 上那个字段是空实现（windowsApp.setIcon 方法体为空），
+	// 窗口类图标仍是系统通用图标 —— 详见 app_icon_windows.go 的说明。
+	//
+	// 为什么要用「重试」而不是直接调：NewWithOptions 返回时原生窗口
+	// **还没建出来**（窗口实现是在 Wails 自己的 goroutine 里创建的），
+	// 此刻 NativeWindow() 是 nil，直接调等于什么都不做（实测就是这样，
+	// 日志里会看到「拿不到窗口句柄」）。这与启动流程里 cloakNativeWindow
+	// 遇到的是同一个时序问题，处理方式保持一致：轮询到句柄可用为止。
+	go applyWindowIconWithRetry(state.window, appIconPNG)
+
 	// 关闭行为：开着「最小化到托盘」时，把这次关闭拦下来，改成隐藏窗口。
 	//
 	// 必须用 RegisterHook 而不是 OnWindowEvent：Hook 比 Listener 先跑，
@@ -390,6 +436,33 @@ func main() {
 		state.windowSvc.ensureTray()
 	}
 
+	// ---- 后端原生音频启动 ----
+	//
+	// 放在 ApplicationStarted 之后而不是 main 的开头：打开声卡（WASAPI）
+	// 要几十毫秒，而启动阶段最抢时间的是「建窗口 + 出首帧」。
+	// 音频晚一点就绪不影响任何事 —— 前端在此之前本来也没在播放。
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		if state.playerSvc == nil {
+			return
+		}
+		// Wails 的 Emit 是 Emit(name string, data ...any) bool，
+		// 与服务的窄接口（单个 payload、无返回值）不一致，这里包一层。
+		state.playerSvc.setApp(eventBridge{emit: func(name string, payload any) {
+			app.Event.Emit(name, payload)
+		}})
+		// 播完自动下一首：回调跑在音频线程上，必须丢到 goroutine 里 ——
+		// 在音频回调里做 IPC 广播会阻塞输出，直接表现为声音卡顿。
+		state.playerSvc.setEOFHandler(func() {
+			go emit("player:ended", map[string]any{})
+		})
+		if !state.playerSvc.Start() {
+			// 启动失败不是致命错误：前端收到 player:ready{available:false}
+			// 之后会退回用 <audio> 播放（见 audio.js）。
+			log.Printf("[player] 后端音频未启动，前端将回退到 <audio>")
+		}
+		startPlayerTick()
+	})
+
 	// 主窗口关闭 = 退出应用：桌面歌词与桌面背景歌词都是独立的额外窗口，
 	// 不跟着关的话它们会单独留在桌面上，应用也不会退出
 	// （DisableQuitOnLastWindowClosed=false 只在「最后一个窗口」关闭时才退出）。
@@ -412,6 +485,9 @@ func main() {
 		}
 		if state.media != nil {
 			state.media.Stop()
+		}
+		if state.playerSvc != nil {
+			state.playerSvc.Stop()
 		}
 		if err := state.lib.SaveCache(); err != nil {
 			log.Printf("save cache failed: %v", err)
@@ -466,4 +542,28 @@ func emit(name string, payload any) {
 		return
 	}
 	state.app.Event.Emit(name, payload)
+}
+
+// startPlayerTick 起一个低频定时器，让后端在「没有 API 被调用」时也能
+// 补推播放位置锚点。
+//
+// 为什么需要它：播放过程中前端不会调用任何 Player 方法，但它需要持续
+// 重新对齐位置（否则前端用 performance.now 外推的进度会与音频时钟漂移）。
+// 让前端轮询是更差的选择 —— 那会把「界面空闲时也在跑 JS」变成常态，
+// 而这次迁移的全部意义就是让界面少干活。
+//
+// 200ms 的间隔：服务内部还有 500ms 的锚点节流（anchorIntervalMs），
+// 所以这里只是「给节流器一个被触发的机会」，真正的推送频率由服务决定。
+// 比 500ms 密是为了让状态变化（播放→暂停）能更快被发现。
+func startPlayerTick() {
+	go func() {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			if state == nil || state.playerSvc == nil {
+				return
+			}
+			state.playerSvc.Tick()
+		}
+	}()
 }

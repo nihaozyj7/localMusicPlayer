@@ -281,7 +281,7 @@ function skinAiPrompt(ref = null) {
 
 【三、接口契约（必须严格遵守）】
 export default {
-  apiVersion: 1,                // 必需，且必须正好等于 1；其它值会被直接跳过
+  apiVersion: 2,                // 必需，且必须正好等于 2；其它值会被直接跳过
   id: "<样式id>",               // 必需，与目录名一致
   name: "<显示名>",             // 必需，显示在样式按钮的提示里
   icon: "disc",                 // 可选，图标 sprite id，见下
@@ -298,7 +298,6 @@ export default {
 ctx 是皮肤唯一的入口（只读，直接改它不会生效）：
 - ctx.root            你的挂载点（宿主已清空，往这里写 DOM）
 - ctx.backgroundRoot  整窗背景层容器（background: true 时才用于渲染）
-- ctx.audio           真实 <audio> 元素，只读：可以读 currentTime / buffered、挂事件监听；不要 play / pause / 改 src
 - ctx.media()         返回 { song, cover, covers, coverIndex, lyrics }
                       · song：当前曲目对象，可能为 null，字段有 id / title / artist / album / duration / path / online 等
                       · cover：当前生效封面（data URL 或同源 URL）；covers：全部封面（轮播用，至少一张）；coverIndex：轮播下标
@@ -334,7 +333,7 @@ patch 只带与该类型相关的字段；不确定时用 ctx.media() / ctx.play
 
 【六、交付前自检清单】
 1. 目录名 = id = skin.js 里的 id = CSS 选择器里的 data-skin 值；
-2. skin.js 有 export default，且包含 apiVersion: 1、id、name、mount；
+2. skin.js 有 export default，且包含 apiVersion: 2、id、name、mount；
 3. 每条 CSS 选择器都在 .playerview[data-skin="<样式id>"] 作用域内；
 4. 没有裸包名 import、没有 fetch、没有 setInterval 轮询、没有全局选择器、没有 !important；
 5. 换歌、歌词装载、进度更新、深浅色切换、窗口缩放、切走再切回都不会报错，也不留残余节点或监听。

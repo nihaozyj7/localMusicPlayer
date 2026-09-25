@@ -15,7 +15,7 @@ import "./immersive.css";
 let inst = null;
 
 const skin = defineSkin({
-  apiVersion: 1,
+  apiVersion: 2,
   id: "immersive",
   name: "沉浸",
   icon: "immersive",

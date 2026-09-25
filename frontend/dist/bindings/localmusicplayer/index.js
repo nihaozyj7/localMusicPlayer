@@ -11,6 +11,7 @@ import * as LoudnessService from "./loudnessservice.js";
 import * as LyricsService from "./lyricsservice.js";
 import * as MediaService from "./mediaservice.js";
 import * as OnlineService from "./onlineservice.js";
+import * as PlayerService from "./playerservice.js";
 import * as PlaylistService from "./playlistservice.js";
 import * as SkinService from "./skinservice.js";
 import * as ThemeService from "./themeservice.js";
@@ -25,6 +26,7 @@ export {
     LyricsService,
     MediaService,
     OnlineService,
+    PlayerService,
     PlaylistService,
     SkinService,
     ThemeService,

@@ -26,7 +26,7 @@
 //     import { defineSkin } from "@localmusicplayer/player-skins/contract";
 // 并把 id 换成你自己的样式 id（目录名）。
 export default {
-  apiVersion: 1,
+  apiVersion: 2,
   id: "__SKIN_ID__",
   name: "示例样式",
   icon: "disc", // index.html 里图标 sprite 的 id：disc / lyrics / slideshow / palette / refresh …

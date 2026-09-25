@@ -1,0 +1,2 @@
+*endfile:
+%{!shared:%:if-exists(crtend.o%s)} crtend.o%s

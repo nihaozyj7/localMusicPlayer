@@ -143,7 +143,7 @@ const VILLAGE_SVG =
   "</svg>";
 
 const skin = defineSkin({
-  apiVersion: 1,
+  apiVersion: 2,
   id: "anime",
   name: "二次元手绘",
   icon: "anime",

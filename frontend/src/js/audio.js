@@ -1,115 +1,431 @@
 /* ==========================================================================
-   audio.js — 真实音频播放（对接 Go 的本地音频服务）
+   audio.js — 播放控制（后端原生引擎客户端）
    --------------------------------------------------------------------------
-   播放链路：
-     Media.URL(songId) → 带 token 的本地 http 地址 → <audio>
-       → MediaElementSource → GainNode(响度补偿) → AudioContext.destination
+   这里不再是「用 <audio> 出声」，而是**驱动 Go 侧的音频引擎**。
 
-   两个要点：
-   1. CORS：打包后前端在 http://wails.localhost，音频在 http://127.0.0.1:port，
-      属于跨源。若不加 crossorigin="anonymous" 且服务端不给 CORS 头，
-      <audio> 能出声，但 Web Audio 会读到纯静音（实测 peakDeviation=0），
-      响度均衡就完全失效。Go 侧已补齐 CORS 头，这里必须配套设置 crossorigin。
-   2. 增益：响度补偿用静态线性增益（Go 侧 loudnorm 测出的 LUFS 差值），
-      经 GainNode 实时套用，切歌零延迟；用户音量也从这条链路走，
-      避免出现「元素 volume × GainNode」两处相乘导致音量阶跃不一致。
+   为什么迁移（背景，避免以后有人改回去）：
+     <audio> 的解码与输出跑在 WebView2 的渲染进程里。网页一卡（主线程被
+     布局/绘制占满、GPU 进程抖动），音频线程就拿不到时间片，听感上就是
+     「卡顿 / 沙哑」；而且声音从 WebView2 进程发出，Windows 音量合成器里
+     显示的是 webview2 而不是本程序，没法单独调音量。
+     搬到 Go 进程后，音频由独立线程驱动，网页再卡也不影响出声，
+     合成器里也是本程序。
+
+   --------------------------------------------------------------------------
+   进度为什么用「锚点 + 本地外推」，而不是等后端推位置
+
+   后端每 500ms 推一个锚点 { positionMs, atMs }。前端拿到后**自己**按
+   经过的时间外推当前应该显示的位置：
+
+       显示位置 = positionMs + (performance.now() - atMs)
+
+   如果反过来——让后端按帧推位置、前端照单全收——那么 WebView2 一旦卡顿，
+   消息就在队列里积压，恢复后前端会看到一串跳变的位置，歌词会一顿一顿地
+   蹦。那等于把「音频卡顿」换成了「界面卡顿」，而界面流畅正是这次迁移的目标。
+
+   外推的误差来源只有一个：前端的 performance.now() 与音频时钟有微小漂移。
+   锚点每 500ms 重新对齐一次，漂移量级在毫秒级，肉耳与肉眼都看不出。
+
+   --------------------------------------------------------------------------
+   回退
+
+   后端引擎可能因为「声卡打不开」「没有可用的 ffmpeg」而不可用。
+   这时 available=false，本模块会退回原来的 <audio> 播放路径
+   （见下面的 legacy 分支）—— 宁可退化成旧行为，也不能没声音。
    ========================================================================== */
 
-import { backend, isWails } from "./bridge.js";
-import { commit, currentSong, noteProgress, notify, persist, playNext, seek, state } from "./store.js";
+import { backend, isWails, on } from "./bridge.js";
+import {
+  commit,
+  currentSong,
+  noteProgress,
+  notify,
+  persist,
+  playNext,
+  seek,
+  setRealAudioProbe,
+  state,
+} from "./store.js";
 import { toast } from "./dom.js";
 
-let el = null;
-let loadedFor = null; // 已经设置过 src 的歌曲 id
-let requestSeq = 0;
-let pendingSeek = null; // 切歌后待执行的跳转位置（毫秒）
-let lastAppliedGain = null; // 上一次写进链路的增益，避免每帧重复写入
-let srcChangedAt = 0; // 最近一次换 src 的时刻（performance.now），用于识别被 abort 的旧请求
-let lastProgressPersistAt = 0; // 上次把播放进度写进 localStorage 的时刻（5 秒节流）
+/* --------------------------------------------------------------------------
+   模块状态
+   -------------------------------------------------------------------------- */
 
-/** 换 src 之后多久内出现的媒体错误认定为"旧请求被取代"，不提示用户 */
-const LOAD_SETTLE_MS = 1500;
+/** 后端引擎是否可用（由 Player.Available() 决定） */
+let backendReady = false;
+/** 已经探测过后端可用性（避免重复探测） */
+let probed = false;
+/** 探测失败的原因（设置界面显示用） */
+let backendReason = "";
+
+/** 当前已经装载到后端的歌曲 id */
+let loadedFor = null;
+/** 换源请求序号：切歌竞态时用来丢弃过期的结果 */
+let requestSeq = 0;
+/** 待执行的跳转位置（毫秒），装载完成后消费 */
+let pendingSeek = null;
+
+/** 最近一次从后端收到的位置锚点 */
+let anchor = null; // { positionMs, atMs, durationMs, playing, at: performance.now() }
+
+/** 上一次推给 store 的位置，避免每帧都触发渲染 */
+let lastPushedPosition = -1;
+
+/** 上次把进度写进 localStorage 的时刻（5 秒节流） */
+let lastProgressPersistAt = 0;
+
+/** 位置外推的定时器 */
+let tickTimer = null;
+
+/** 取消订阅函数集合 */
+const unsubscribers = [];
 
 /* --------------------------------------------------------------------------
-   换源状态机 —— 「元素事件」与「播放意图」谁说了算
-   --------------------------------------------------------------------------
-   切歌要做 node.src = url + node.load()，而 load() 会把元素置为暂停并派发一个
-   pause 事件；旧播放在换源途中被 abort 时元素也会补发 play/pause。这些事件都
-   不是用户意图，但早期实现把它们当成了用户操作：pause 事件把 state.playing
-   写成 false，而"继续播放"只在 state.playing 为 true 时才会发生 —— 结果是一首
-   歌自然播完后，下一首明明已经加载好却永远停在暂停状态（表现为"播完就停掉"）。
-
-   现在的规则：
-     · 换源期间 switchPhase = "loading"，元素的 play/pause 一律不采信，
-       state.playing 是唯一真源；
-     · 新源 loadedmetadata 之后（endSwitch）再按 state.playing 把元素对齐一次。
+   legacy <audio> 回退路径的状态（后端不可用时才用）
    -------------------------------------------------------------------------- */
+
+let el = null;
+let graphBroken = false;
+let ctx = null;
+let gainNode = null;
+let sourceNode = null;
+let analyserNode = null;
+let analyserData = null;
+let lastAppliedGain = null;
 const SWITCH_IDLE = "idle";
 const SWITCH_LOADING = "loading";
 let switchPhase = SWITCH_IDLE;
 let switchTimer = null;
-/** 我们主动调用 pause() 引起的事件，不是用户暂停 */
 let selfPause = false;
-/** 最近一次自然播完的时刻：紧跟其后的 pause 属于切歌过程，同样不是用户暂停 */
 let endedAt = 0;
-
-/** 换源兜底时长：loadedmetadata 迟迟不来（损坏文件 / 卡住的转码）也不能永久锁死 */
+let srcChangedAt = 0;
+const LOAD_SETTLE_MS = 1500;
 const SWITCH_TIMEOUT_MS = 12_000;
 
 /* --------------------------------------------------------------------------
-   Web Audio 图
+   后端可用性探测
    -------------------------------------------------------------------------- */
-let ctx = null;
-let gainNode = null;
-let sourceNode = null;
-let graphBroken = false; // 跨源等原因导致无法建图时退回元素音量
 
-// 频谱分接（只读）：播放界面皮肤用它做「随旋律律动」的可视化。
-// analyser 接在增益之后、**不接** destination，因此对声音没有任何影响。
-let analyserNode = null;
-let analyserData = null;
-
-/** 建立（或复用）Web Audio 链路 */
-function ensureGraph(node) {
-  if (graphBroken) return false;
-  if (ctx && gainNode) return true;
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) {
-    graphBroken = true;
-    return false;
-  }
+/**
+ * 探测后端音频是否可用。启动时调用一次。
+ * 不可用时把 backendReady 置 false，后续所有控制都走 legacy 路径。
+ */
+export async function probeBackend() {
+  if (probed) return backendReady;
+  probed = true;
+  if (!isWails()) return false;
   try {
-    ctx = new AC();
-    gainNode = ctx.createGain();
-    gainNode.gain.value = 1;
-    sourceNode = ctx.createMediaElementSource(node);
-
-    // 链路：source → 增益 → 输出。增益里同时含用户音量与响度补偿
-    sourceNode.connect(gainNode);
-    gainNode.connect(ctx.destination);
-    // 分接一条到 AnalyserNode（可视化用，不接输出）
-    try {
-      analyserNode = ctx.createAnalyser();
-      analyserNode.fftSize = 512;
-      analyserNode.smoothingTimeConstant = 0.76;
-      analyserData = new Uint8Array(analyserNode.frequencyBinCount);
-      gainNode.connect(analyserNode);
-    } catch (err) {
-      analyserNode = null;
-      analyserData = null;
+    const res = await backend.playerAvailable();
+    backendReady = res?.available === true;
+    backendReason = res?.reason || "";
+    if (!backendReady) {
+      console.warn("[audio] 后端音频不可用，回退到 <audio> 播放：", backendReason || "未知原因");
     }
-    // 新建的链路增益是 1，缓存要作废，让下一次 applyGainForSong 真正写进去
-    lastAppliedGain = null;
-    return true;
   } catch (err) {
-    console.warn("[audio] Web Audio 链路建立失败，退回元素音量", err);
-    graphBroken = true;
-    return false;
+    backendReady = false;
+    backendReason = err?.message || String(err);
+    console.warn("[audio] 探测后端音频失败，回退到 <audio> 播放", err);
+  }
+  return backendReady;
+}
+
+/** 后端是否接管了播放（设置界面用来显示当前走的哪条链路） */
+export function isBackendPlayback() {
+  return backendReady;
+}
+
+/**
+ * 告诉 store「真实音频已经接管进度」。
+ *
+ * store 里的模拟时钟（浏览器预览用的那个）在真实播放时必须让位，
+ * 否则它会和这里的锚点外推同时改 state.position —— 两个来源打架，
+ * 进度条会来回抖。判定逻辑注册过去而不是让 store import 本模块，
+ * 是为了避免循环依赖（store 是底层）。
+ */
+setRealAudioProbe(() => {
+  if (backendReady && state.currentId) return true;
+  const node = document.getElementById("audio-engine");
+  return Boolean(node && node.src);
+});
+
+/* --------------------------------------------------------------------------
+   事件订阅
+   -------------------------------------------------------------------------- */
+
+/**
+ * 订阅后端推来的播放事件。启动时调用一次。
+ *
+ * 三个事件：
+ *   · player:state —— 位置锚点 + 播放状态（主链路）
+ *   · player:error —— 播放失败（转码失败 / 文件损坏）
+ *   · player:ended —— 播完（自动下一首）
+ */
+export function startAudioEvents() {
+  if (!isWails()) return;
+
+  unsubscribers.push(
+    on("player:state", (payload) => {
+      if (!payload) return;
+      applyAnchor(payload);
+    }),
+  );
+
+  unsubscribers.push(
+    on("player:error", (payload) => {
+      if (!payload) return;
+      const song = currentSong();
+      const title = song?.title || payload.songId || "当前歌曲";
+      toast(`无法播放：${title}（${payload.reason || "未知原因"}）`, {
+        tone: "error",
+        duration: 5000,
+      });
+    }),
+  );
+
+  unsubscribers.push(
+    on("player:ended", () => {
+      handleEnded();
+    }),
+  );
+
+  // 位置外推的心跳。这里只做「按锚点算出当前应该显示的位置」，
+  // 不向后端请求任何东西 —— 所以即使 WebView2 卡顿，恢复后也不会积压。
+  if (tickTimer) clearInterval(tickTimer);
+  tickTimer = setInterval(extrapolate, 250);
+}
+
+/** 停止事件订阅与外推定时器（退出/热重载用） */
+export function stopAudioEvents() {
+  while (unsubscribers.length) {
+    try {
+      unsubscribers.pop()();
+    } catch {
+      /* 忽略 */
+    }
+  }
+  if (tickTimer) clearInterval(tickTimer);
+  tickTimer = null;
+}
+
+/* --------------------------------------------------------------------------
+   锚点与外推
+   -------------------------------------------------------------------------- */
+
+/**
+ * 收到一个后端锚点：记下来，并立刻把状态对齐一次。
+ *
+ * atMs 是后端的单调时钟（自后端进程启动起的毫秒数），与本地的
+ * performance.now() 起点不同 —— 但外推只用**差值** (now - atMs)，
+ * 所以只要单位一致、各自单调即可。这里记下收到锚点时的本地时刻，
+ * 之后用它做外推基准。
+ */
+function applyAnchor(payload) {
+  const durationMs = Number(payload.durationMs) || 0;
+  const positionMs = Number(payload.positionMs) || 0;
+
+  anchor = {
+    positionMs,
+    atMs: Number(payload.atMs) || 0,
+    durationMs,
+    playing: payload.playing === true,
+    // 记下「本地」收到锚点的时刻，外推以它为基准
+    at: performance.now(),
+  };
+
+  // 播放状态以后端为准：后端是唯一真源（前端不再自己维护 playing）
+  let changed = false;
+  if (durationMs > 0 && state.duration !== durationMs) {
+    state.duration = durationMs;
+    changed = true;
+  }
+  if (state.playing !== anchor.playing) {
+    state.playing = anchor.playing;
+    changed = true;
+  }
+
+  pushPosition(positionMs, true);
+
+  if (changed) {
+    commit();
+    // 停止定时器的判定也要跟着走：播完即停 / 单曲循环都由后端事件驱动，
+    // 这里只需保证 UI 状态一致。
+  } else {
+    notify();
   }
 }
 
-/** 当前应套用的线性增益（用户音量 × 响度补偿） */
-function targetGain() {
+/**
+ * 按锚点外推出「现在」应该显示的位置，并推给 store。
+ *
+ * 只在位置真的变了（按 250ms 量化）时才推，避免每 250ms 都触发一次
+ * 整条渲染链 —— 那正是原来 <audio>.timeupdate 的毛病。
+ */
+function extrapolate() {
+  if (!anchor || !backendReady) return;
+  if (!state.currentId) return;
+
+  let pos = anchor.positionMs;
+  if (anchor.playing) {
+    pos = anchor.positionMs + (performance.now() - anchor.at);
+  }
+  // 不允许越过总时长（后端还没播完时前端不能先跑到头）
+  if (anchor.durationMs > 0) {
+    pos = Math.min(pos, anchor.durationMs);
+  }
+  pushPosition(pos, false);
+}
+
+/**
+ * 把位置写进 store。
+ *
+ * @param {number} pos 毫秒
+ * @param {boolean} force 忽略「位置没变」的去重（锚点到达时必须强制对齐）
+ */
+function pushPosition(pos, force) {
+  if (!Number.isFinite(pos) || pos < 0) return;
+  const rounded = Math.round(pos);
+  // 250ms 量化：与 audio.js 原来 runtime.js 的依赖键频率一致，
+  // 歌词高亮与进度条不需要更细。
+  if (!force && Math.round(rounded / 250) === Math.round(lastPushedPosition / 250)) {
+    return;
+  }
+  lastPushedPosition = rounded;
+  state.position = rounded;
+  noteProgress(rounded);
+
+  if (state.config.resumeProgress === true && performance.now() - lastProgressPersistAt > 5000) {
+    lastProgressPersistAt = performance.now();
+    persist();
+  }
+  notify();
+}
+
+/** 播完：交给 store 的 playNext（与原来 <audio> 的 ended 分支同一逻辑） */
+function handleEnded() {
+  // 定时停止优先：本首结束即停，即使处于单曲循环也不重播。
+  if (state.sleepTimer?.type === "after-song") {
+    playNext(true);
+    return;
+  }
+  if (state.playMode === "loop-one") {
+    // 单曲循环：重新从 0 播这一首
+    playFrom(0);
+    return;
+  }
+  playNext(true);
+}
+
+/* --------------------------------------------------------------------------
+   播放控制（对外的唯一入口）
+   -------------------------------------------------------------------------- */
+
+/**
+ * 播放状态变化时被 runtime 的 tick 调用。
+ *
+ * 现在的职责变成了「把前端的意图同步给后端」：换歌时装载新曲目，
+ * 播放/暂停状态变化时通知后端。位置**不**在这里推（那是锚点的事）。
+ */
+export async function syncAudio() {
+  if (!isWails()) return;
+
+  // 后端不可用：走原来的 <audio> 路径
+  if (!backendReady) {
+    await syncLegacy();
+    return;
+  }
+
+  const song = currentSong();
+
+  if (!song) {
+    if (loadedFor !== null) {
+      loadedFor = null;
+      anchor = null;
+      try {
+        await backend.playerUnload();
+      } catch {
+        /* 卸载失败不影响后续装载 */
+      }
+    }
+    return;
+  }
+
+  if (loadedFor !== song.id) {
+    await loadSong(song);
+    return;
+  }
+
+  // 同一首歌：把播放/暂停意图同步给后端（幂等，后端自己判重）
+  syncPlayState();
+}
+
+/** 装载一首歌并起播 */
+async function loadSong(song) {
+  loadedFor = song.id;
+  const seq = ++requestSeq;
+  anchor = null;
+  lastPushedPosition = -1;
+
+  try {
+    const res = await backend.playerLoad(song.id);
+    if (seq !== requestSeq) return; // 期间又切歌了
+
+    // 装载完成：后端返回准确的时长与起始位置
+    if (res?.durationMs > 0) state.duration = res.durationMs;
+
+    // 恢复上次的播放位置（仅启动时那一首）
+    const resumeMs = consumeResumeSeek(song);
+    if (resumeMs > 0) {
+      await backend.playerSeek(resumeMs);
+    }
+
+    // 套用音量与响度补偿，再起播
+    await pushVolumeToBackend();
+    await pushLoudnessToBackend(song.id);
+
+    if (state.playing) {
+      await backend.playerPlay();
+    }
+    // 立刻拉一次状态：不等下一个锚点，避免刚切歌时进度条停在旧位置
+    const st = await backend.playerState();
+    if (seq === requestSeq && st) applyAnchor(st);
+  } catch (err) {
+    if (seq !== requestSeq) return;
+    loadedFor = null;
+    toast(`无法播放：${err?.message ?? "装载失败"}`, { tone: "error", duration: 5000 });
+  }
+}
+
+/** 把「该播还是该停」同步给后端 */
+async function syncPlayState() {
+  try {
+    if (state.playing) {
+      await backend.playerPlay();
+    } else {
+      await backend.playerPause();
+    }
+  } catch (err) {
+    console.warn("[audio] 同步播放状态失败", err);
+  }
+}
+
+/** 从某个位置开始播放当前曲目 */
+async function playFrom(ms) {
+  if (!backendReady) return;
+  try {
+    await backend.playerSeek(ms);
+    await backend.playerPlay();
+  } catch (err) {
+    console.warn("[audio] 重新起播失败", err);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   音量与响度补偿
+   -------------------------------------------------------------------------- */
+
+/** 当前应套用的线性增益（用户音量 × 响度补偿），供设置界面显示 */
+export function currentGain() {
   const mode = state.config.loudnessMode || "off";
   let gainDB = 0;
   if (mode !== "off" && state.currentId) {
@@ -122,368 +438,192 @@ function targetGain() {
 
 /** 把音量/补偿写进音频链路 */
 export function applyVolume() {
-  const node = el;
-  const value = targetGain();
-  if (ctx && gainNode && !graphBroken) {
-    // 用短斜坡避免拖动音量时出现爆音
-    const now = ctx.currentTime;
-    try {
-      gainNode.gain.cancelScheduledValues(now);
-      gainNode.gain.setTargetAtTime(value, now, 0.015);
-    } catch {
-      gainNode.gain.value = value;
-    }
-    // 元素音量固定为 1，全部交给 GainNode
-    if (node) node.volume = 1;
-    lastAppliedGain = value;
+  if (!backendReady) {
+    applyVolumeLegacy();
     return;
   }
-  if (node) node.volume = Math.max(0, Math.min(1, value));
-  lastAppliedGain = value;
+  pushVolumeToBackend();
+}
+
+/** 把用户音量与静音状态推给后端 */
+async function pushVolumeToBackend() {
+  try {
+    await backend.playerSetVolume(state.volume ?? 1, state.muted === true);
+  } catch (err) {
+    console.warn("[audio] 同步音量失败", err);
+  }
+}
+
+/** 把当前歌曲的响度补偿推给后端（后端负责与用户音量相乘） */
+async function pushLoudnessToBackend(songId) {
+  const mode = state.config.loudnessMode || "off";
+  let gainDB = 0;
+  if (mode !== "off" && songId) {
+    gainDB = state.loudnessGains?.[songId] ?? 0;
+  }
+  try {
+    await backend.playerSetLoudness(gainDB);
+  } catch (err) {
+    console.warn("[audio] 同步响度补偿失败", err);
+  }
 }
 
 /**
  * 歌曲切换后重新套用补偿增益。
- *
- * main 的 tick 每帧都会调用它，所以这里必须做去重：否则每帧都往
- * AudioParam 上排一次斜坡，白白占 CPU，也让音量变化的手感变钝。
+ * main 的 tick 每帧都会调用它，所以这里做去重。
  */
 export function applyGainForSong() {
-  const value = targetGain();
+  if (!backendReady) {
+    applyGainForSongLegacy();
+    return;
+  }
+  const value = currentGain();
   if (value === lastAppliedGain) return;
-  applyVolume();
+  lastAppliedGain = value;
+  pushVolumeToBackend();
+  pushLoudnessToBackend(state.currentId);
 }
 
 /* --------------------------------------------------------------------------
-   播放对齐：state.playing 是唯一真源，元素跟着它走
+   跳转
    -------------------------------------------------------------------------- */
 
-/** 启动播放（含 AudioContext 唤醒与良性错误过滤） */
-function startPlayback(node) {
-  if (!node) return Promise.resolve();
-  if (ctx?.state === "suspended") ctx.resume().catch(() => {});
-  return node.play().catch((err) => {
-    // play() 的 promise 会因为「被新的 load() 打断」而 reject（AbortError），
-    // 这在自动切歌时每次都会发生，并不是播放失败 —— 只有真正的失败才提示。
-    if (isBenignPlayError(err)) return;
-    toast(`播放失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
+/**
+ * 跳转到指定位置（毫秒）—— 界面上的所有跳转都必须走这里。
+ *
+ * 先写状态（UI 立即响应），再让后端跟上来；同时把本地锚点前移，
+ * 否则外推会在跳转后的下一次 tick 里把位置又拉回旧值（进度条会弹回去）。
+ */
+export function seekTo(ms) {
+  seek(ms);
+  seekAudio(ms);
+}
+
+/** 把位置作用到真实的播放链路上 */
+export function seekAudio(ms) {
+  if (!isWails()) return;
+  const target = Math.max(0, Math.min(ms, state.duration || 0));
+
+  // 先移动本地锚点：让外推立刻从新位置继续，而不是等后端回包
+  if (anchor) {
+    anchor = { ...anchor, positionMs: target, at: performance.now() };
+  }
+  lastPushedPosition = target;
+
+  if (!backendReady) {
+    seekAudioLegacy(ms);
+    return;
+  }
+  backend.playerSeek(target).catch((err) => {
+    console.warn("[audio] 跳转失败", err);
   });
 }
 
-/** 把元素对齐到 state.playing（不采信元素自己的事件） */
-function reconcilePlayback(node) {
-  if (!node) return;
-  if (state.playing && node.paused) {
-    startPlayback(node);
+export function stopAudio() {
+  if (!backendReady) {
+    stopAudioLegacy();
     return;
   }
-  if (!state.playing && !node.paused) {
-    selfPause = true; // 这是我们按下的暂停，别把它当成用户操作回写状态
-    node.pause();
-  }
-}
-
-/** 元素是否已经播到尽头（有的浏览器在 ended 之前就派发 pause，且此时 ended 还是 false） */
-function atEndOfMedia(node) {
-  const durMs = Number.isFinite(node.duration) && node.duration > 0 ? node.duration * 1000 : state.duration || 0;
-  if (!durMs) return false;
-  const posMs = Number.isFinite(node.currentTime) ? node.currentTime * 1000 : state.position;
-  return posMs >= durMs - 300;
-}
-
-/** 开始换源：此后元素自发的事件都不代表用户意图 */
-function beginSwitch() {
-  switchPhase = SWITCH_LOADING;
-  selfPause = false;
-  if (switchTimer) clearTimeout(switchTimer);
-  switchTimer = setTimeout(() => {
-    switchTimer = null;
-    if (switchPhase === SWITCH_LOADING) endSwitch(el);
-  }, SWITCH_TIMEOUT_MS);
-}
-
-/** 换源收尾：新源元数据已就绪，从这一刻起元素的事件才代表真实播放状态 */
-function endSwitch(node) {
-  if (switchTimer) {
-    clearTimeout(switchTimer);
-    switchTimer = null;
-  }
-  if (switchPhase !== SWITCH_LOADING) return;
-  switchPhase = SWITCH_IDLE;
-  reconcilePlayback(node || el);
+  loadedFor = null;
+  anchor = null;
+  backend.playerUnload().catch(() => {});
 }
 
 /* --------------------------------------------------------------------------
-   <audio> 元素
+   频谱
    -------------------------------------------------------------------------- */
 
-function audioEl() {
-  if (el) return el;
-  el = document.getElementById("audio-engine");
-  if (!el) {
-    el = document.createElement("audio");
-    el.id = "audio-engine";
-    el.preload = "auto";
-    el.hidden = true;
-    document.body.appendChild(el);
+/**
+ * 取当前频谱（0..1 的归一化幅度数组）。
+ *
+ * 后端可用时由 Go 侧算（internal/audioplay 的 Analyzer，逐语义复刻了原来
+ * 前端 AnalyserNode 的算法：同样的对数分桶、同样的字节域平滑），
+ * 所以皮肤的观感与迁移前一致。
+ *
+ * 这是**同步**接口（皮肤在 rAF 里直接调），所以这里返回的是最近一次
+ * 异步拉取的缓存值 —— 真正的数据由 refreshSpectrum() 按需刷新。
+ *
+ * @param {number} [bands] 想要的频段数（1..128）
+ * @returns {Float32Array|null}
+ */
+let spectrumCache = null;
+let spectrumBands = 0;
+
+export function spectrum(bands = 32) {
+  if (!backendReady) {
+    // 回退路径：仍然用 Web Audio 的 AnalyserNode
+    return spectrumLegacy(bands);
   }
-  // 跨源媒体：必须显式声明，否则 Web Audio 拿不到可用样本
-  el.crossOrigin = "anonymous";
-  bindEvents(el);
-  return el;
+  const n = Math.max(1, Math.min(128, Math.floor(bands) || 32));
+  if (!spectrumCache || spectrumBands !== n) return null;
+  return spectrumCache;
 }
 
 /**
- * 真实音频元素（播放界面皮肤通过 ctx.audio 拿到它）。
+ * 向后端拉一次频谱并更新缓存。由需要频谱的调用方按自己的节奏调
+ * （桌面背景歌词是 30Hz，详情页皮肤由宿主每帧调）。
  *
- * 需求里说「提供音频本身和播放进度」——皮肤可能想读 buffered（画缓冲条）、
- * 挂自己的 timeupdate 监听，或做可视化，所以这里把元素本身交出去，
- * 而不是只给一个进度快照。元素由本模块独占管理：皮肤只读、不要改 src/播放状态。
+ * 用「拉」而不是「推」：频谱是 30Hz 的高频数据，推给前端意味着每秒
+ * 30 次 web message 编解码；而它只在「详情页打开 + 皮肤声明了 spectrum」
+ * 时才有用。拉的方式让不需要时完全没有开销。
  */
-export function audioElement() {
+export async function refreshSpectrum(bands = 32) {
+  if (!backendReady) return null;
+  const n = Math.max(1, Math.min(128, Math.floor(bands) || 32));
   try {
-    return audioEl();
-  } catch (err) {
-    console.warn("[audio] 音频元素不可用", err);
+    const res = await backend.playerSpectrum(n);
+    const arr = res?.bands;
+    if (!arr || !arr.length) {
+      spectrumCache = null;
+      return null;
+    }
+    // 复用同一个 Float32Array，避免每帧分配
+    if (!spectrumCache || spectrumCache.length !== arr.length) {
+      spectrumCache = new Float32Array(arr.length);
+      spectrumBands = n;
+    }
+    for (let i = 0; i < arr.length; i += 1) spectrumCache[i] = arr[i];
+    return spectrumCache;
+  } catch {
     return null;
   }
 }
 
-function bindEvents(node) {
-  if (node.dataset.bound === "1") return;
-  node.dataset.bound = "1";
-
-  node.addEventListener("loadedmetadata", () => {
-    if (Number.isFinite(node.duration) && node.duration > 0) {
-      state.duration = node.duration * 1000;
-      notify();
-      commit();
-    }
-    if (pendingSeek != null) {
-      const target = pendingSeek;
-      pendingSeek = null;
-      try {
-        node.currentTime = Math.max(0, Math.min(target, state.duration || 0) / 1000);
-      } catch {
-        /* 转码流不支持精确定位时忽略 */
-      }
-    }
-    // 新源就绪：换源结束，按 state.playing 把元素对齐（该播就补一次 play）
-    endSwitch(node);
-  });
-
-  node.addEventListener("timeupdate", () => {
-    const bar = document.getElementById("progress");
-    if (bar?.dataset.dragging === "true") return;
-    state.position = node.currentTime * 1000;
-    // 记下这一首播到哪儿了；落盘做 5 秒节流（timeupdate 每秒约 4 次，
-    // 每次都写 localStorage 会明显拖慢主线程）。退出前由 main.js 的
-    // beforeunload → flushConfigSync() 把最后一帧写进去。
-    noteProgress(state.position);
-    if (state.config.resumeProgress === true && performance.now() - lastProgressPersistAt > 5000) {
-      lastProgressPersistAt = performance.now();
-      persist();
-    }
-    notify();
-  });
-
-  node.addEventListener("play", () => {
-    // 换源期间元素的状态由我们驱动，不采信：否则"刚点下暂停又被打回播放"
-    if (switchPhase === SWITCH_LOADING) return;
-    selfPause = false;
-    state.playing = true;
-    if (ctx?.state === "suspended") ctx.resume().catch(() => {});
-    notify();
-  });
-
-  node.addEventListener("pause", () => {
-    if (selfPause) {
-      selfPause = false;
-      return;
-    }
-    // load() 造成的暂停：换源期间不采信
-    if (switchPhase === SWITCH_LOADING) return;
-    if (node.ended) return;
-    // 自然播完：有的浏览器先派发 pause（此时 ended 还没置位），交给 ended 处理
-    if (atEndOfMedia(node)) return;
-    // 播完之后的这一小段时间里，元素的暂停都是切歌引起的（旧实现就是被这条
-    // 事件把 state.playing 打成 false，导致下一首加载完也不会开始播）
-    if (endedAt && performance.now() - endedAt < LOAD_SETTLE_MS) return;
-    state.playing = false;
-    notify();
-  });
-
-  node.addEventListener("ended", () => {
-    endedAt = performance.now();
-    // 定时停止优先：本首结束即停，即使处于单曲循环也不重播。
-    if (state.sleepTimer?.type === "after-song") {
-      playNext(true);
-      return;
-    }
-    if (state.playMode === "loop-one") {
-      node.currentTime = 0;
-      node.play().catch(() => {});
-      return;
-    }
-    playNext(true);
-  });
-
-  node.addEventListener("error", () => {
-    // 换源失败：不要卡在 loading，否则之后再也无法把元素对齐回 state
-    switchPhase = SWITCH_IDLE;
-    selfPause = false;
-    const song = currentSong();
-    if (!song) return;
-    // 切歌时上一次的请求必然被 abort，浏览器同样会在元素上派发 error。
-    // 被后来的加载取代的报错不是播放失败，不能弹给用户看。
-    if (wasSuperseded(node.error)) return;
-    const code = node.error?.code;
-    const reason =
-      code === 4
-        ? "格式无法播放（解码失败）"
-        : code === 3
-          ? "音频数据损坏"
-          : code === 2
-            ? "网络中断"
-            : "音频加载失败";
-    toast(`${reason}：${song.title}`, { tone: "error", duration: 4000 });
-  });
-}
-
-/**
- * 本次启动要恢复的播放位置（毫秒）。取值后立刻清零 —— 只恢复「启动时那一首」，
- * 之后用户主动点播或切歌都从头开始，不会出现「点了歌却从中间放」的意外。
- */
-function consumeResumeSeek(song) {
-  const saved = Number(state.pendingResumeMs) || 0;
-  state.pendingResumeMs = 0;
-  if (!saved || state.config.resumeProgress !== true) return 0;
-  const dur = song?.duration || state.duration || 0;
-  if (dur && saved >= dur - 3000) return 0;
-  return saved;
-}
-
-/**
- * 这次媒体错误是不是"被新的加载取代"导致的？
- * 典型场景：一首歌播完 → 自动切下一首 → 旧请求被 abort。
- * 判定：src 刚被换掉（1.5 秒内），或浏览器没给出错误码（abort 就是这个样子）。
- */
-function wasSuperseded(mediaError) {
-  if (srcChangedAt && performance.now() - srcChangedAt < LOAD_SETTLE_MS) return true;
-  return !mediaError || !mediaError.code;
+/** 低频能量（0..1）：给「整体随鼓点放大」这类效果用 */
+export function bassLevel() {
+  const bands = spectrum(8);
+  if (!bands) return null;
+  let sum = 0;
+  for (let i = 0; i < 3; i += 1) sum += bands[i];
+  return sum / 3;
 }
 
 /* --------------------------------------------------------------------------
-   播放同步
+   响度补偿（与后端响度服务对接，逻辑未变）
    -------------------------------------------------------------------------- */
-
-/** 播放状态变化时被 main 的 tick 调用 */
-export async function syncAudio() {
-  if (!isWails()) return;
-  const node = audioEl();
-  const song = currentSong();
-
-  if (!song) {
-    if (loadedFor !== null) {
-      node.pause();
-      node.removeAttribute("src");
-      node.load();
-      loadedFor = null;
-      switchPhase = SWITCH_IDLE;
-      selfPause = false;
-    }
-    return;
-  }
-
-  if (loadedFor !== song.id) {
-    loadedFor = song.id;
-    // 从这一刻起（含 await 取地址的这段时间）元素的事件都是我们造成的，一概不采信
-    beginSwitch();
-    const seq = ++requestSeq;
-    let url = null;
-    try {
-      url = song.streamUrl || (await backend.mediaUrl(song.id));
-    } catch (err) {
-      switchPhase = SWITCH_IDLE;
-      toast(`无法播放：${err?.message ?? "取播放地址失败"}`, { tone: "error", duration: 5000 });
-      return;
-    }
-    if (seq !== requestSeq) return; // 期间又切歌了（新的 syncAudio 会接管换源状态）
-    if (!url) {
-      switchPhase = SWITCH_IDLE;
-      toast("无法播放：没有取到可播放的地址", { tone: "error", duration: 5000 });
-      return;
-    }
-
-    pendingSeek = consumeResumeSeek(song);
-    node.src = url;
-    srcChangedAt = performance.now();
-    node.load();
-
-    // 建立音频图（失败也不影响出声，只是没有响度均衡）
-    ensureGraph(node);
-    applyVolume();
-
-    // 顺带把这首歌的响度补偿准备好（后续切回来就零延迟）
-    if (!song.online) requestLoudness(song.id);
-
-    // 立刻尝试起播（元素会自己等缓冲）：load() 引发的 pause 已被 switchPhase 挡住，
-    // 之后 loadedmetadata 会再对齐一次
-    reconcilePlayback(node);
-    // 关键：本次不要再走下面的对齐逻辑 —— 旧实现就是在取地址期间用旧源调了
-    // play()，把上一首歌重新播了出来，并引发一串 play/pause 事件风暴
-    return;
-  }
-
-  // 换源还没结束：不要拿元素做播放/暂停对齐
-  if (switchPhase === SWITCH_LOADING) return;
-
-  reconcilePlayback(node);
-}
-
-/**
- * play() 的哪些 rejection 不该报给用户：
- *   · AbortError —— 新的 load()/src 取代了这次播放（自动切歌必现）
- *   · NotAllowedError —— 自动播放策略拦下的第一次播放，用户点一下就好
- */
-function isBenignPlayError(err) {
-  const name = err?.name || "";
-  if (name === "AbortError" || name === "NotAllowedError") return true;
-  const msg = String(err?.message || "");
-  return /abort|interrupted by a new load|play\(\) request was interrupted/i.test(msg);
-}
 
 /** 正在进行的按需测量：同一首歌被反复触发时合并成一次 */
 const pendingMeasure = new Map();
 
-/**
- * 按需获取某首歌的响度补偿 —— 这是常规路径。
- *
- * 不预先扫描全库：用户播到哪首就算哪首。若缓存命中（后端已经算过且补偿标准
- * 没变）就直接套用，零延迟；否则后台算一次，算完立刻作用到当前播放。
- * 测量很慢（要完整解码一遍），所以绝不能让播放等它 —— 先按原音量放，
- * 算好后再平滑过渡。
- */
 export async function requestLoudness(songId) {
   const mode = state.config.loudnessMode || "off";
   if (mode === "off" || !isWails() || !songId) return;
-  if (state.loudnessGains?.[songId] !== undefined) return;
-  // 同一首歌可能被反复触发（切歌来回、界面重绘），做一个去重
+  if (state.loudnessGains?.[songId] !== undefined) {
+    // 已有补偿：直接推给后端（切歌场景）
+    if (backendReady) pushLoudnessToBackend(songId);
+    return;
+  }
   if (pendingMeasure.has(songId)) return pendingMeasure.get(songId);
 
   const job = (async () => {
     try {
       const target = state.config.loudnessTarget ?? -16;
-
-      // 1) 先查缓存：这是「播放时零延迟」的关键
       const res = await backend.loudnessLookup(songId, target);
       if (res?.measured) {
         setGain(songId, res.gainDB);
         return;
       }
-
-      // 2) 没算过（或补偿标准变了导致缓存失效）→ 后台按需测量
-      if (mode === "album") return; // 专辑模式要整张一起算，交给 refreshLoudnessGains
+      if (mode === "album") return;
       const m = await backend.loudnessMeasure(songId, target);
       if (m?.measured) {
         setGain(songId, m.gainDB ?? computeGain(m, target));
@@ -515,7 +655,14 @@ export function computeGain(item, targetLUFS) {
 function setGain(songId, gainDB) {
   if (!state.loudnessGains) state.loudnessGains = {};
   state.loudnessGains[songId] = gainDB;
-  if (songId === state.currentId) applyVolume();
+  if (songId === state.currentId) {
+    if (backendReady) {
+      pushLoudnessToBackend(songId);
+      pushVolumeToBackend();
+    } else {
+      applyVolumeLegacy();
+    }
+  }
   notify();
 }
 
@@ -523,17 +670,10 @@ function setGain(songId, gainDB) {
 export function applyGainMap(map) {
   if (!map) return;
   state.loudnessGains = { ...(state.loudnessGains || {}), ...map };
-  applyVolume();
+  applyGainForSong();
   notify();
 }
 
-/**
- * 补偿标准（目标响度）变了 —— 之前算好的补偿全部作废。
- *
- * 这是用户明确要求的行为：改了标准，缓存就得失效并按新标准重算。
- * 后端按「文件 + 算法版本 + 目标响度」判有效性，所以这里先让后端清掉
- * 不匹配的记录，再清空前端的增益表，之后播放时会自动按新标准按需测量。
- */
 export async function invalidateLoudnessForTarget() {
   const target = state.config.loudnessTarget ?? -16;
   state.loudnessGains = {};
@@ -547,11 +687,6 @@ export async function invalidateLoudnessForTarget() {
   }
 }
 
-/**
- * 按当前模式重新拉取补偿增益表。
- * 放在 audio.js 而不是 main.js：main → shell → settings 已有依赖链，
- * settings 反过来引 main 会形成循环导入。
- */
 export async function refreshLoudnessGains() {
   if (!isWails()) return;
   const mode = state.config.loudnessMode || "off";
@@ -563,15 +698,9 @@ export async function refreshLoudnessGains() {
   const target = state.config.loudnessTarget ?? -16;
   try {
     const map = mode === "album" ? await backend.loudnessAlbumGains(target) : await backend.loudnessGainMap(target);
-    // 后端返回的是当前标准下有效的补偿；直接替换（不要 merge，
-    // 否则换标准后旧的补偿会残留下来）
     state.loudnessGains = map || {};
     applyGainForSong();
     notify();
-
-    // 关键：上面只拿到「已经算过」的补偿。正在播放的这首歌可能还没测过，
-    // 此时必须按需补测一次 —— 否则用户在播放中途打开逐曲均衡，
-    // 当前这首歌会一直按原音量放，要等切歌才生效。
     if (mode === "track" && state.currentId) {
       requestLoudness(state.currentId);
     }
@@ -580,7 +709,6 @@ export async function refreshLoudnessGains() {
   }
 }
 
-/** 拉取后端响度能力/进度快照 */
 export async function refreshLoudnessState() {
   if (!isWails()) return null;
   try {
@@ -592,22 +720,317 @@ export async function refreshLoudnessState() {
   }
 }
 
+/* --------------------------------------------------------------------------
+   启动恢复
+   -------------------------------------------------------------------------- */
+
 /**
- * 跳转到指定位置（毫秒）—— 界面上的所有跳转都必须走这里。
- *
- * 只调 store 的 seek() 会只改状态，进度条会"闪一下又弹回原位"：
- * 元素没有真的 seek，下一次 timeupdate 立刻用真实播放位置把状态覆盖回去。
- * 进度条拖动 / 点击歌词 / 方向键都是同一个需求，所以统一收在这里：
- * 先写状态（UI 立即响应），再让 <audio> 跟上来。
+ * 本次启动要恢复的播放位置（毫秒）。取值后立刻清零 —— 只恢复「启动时那一首」。
  */
-export function seekTo(ms) {
-  seek(ms);
-  seekAudio(ms);
+function consumeResumeSeek(song) {
+  const saved = Number(state.pendingResumeMs) || 0;
+  state.pendingResumeMs = 0;
+  if (!saved || state.config.resumeProgress !== true) return 0;
+  const dur = song?.duration || state.duration || 0;
+  if (dur && saved >= dur - 3000) return 0;
+  return saved;
 }
 
-/** 把位置作用到真实的 <audio> 元素上 */
-export function seekAudio(ms) {
-  if (!isWails()) return;
+/* --------------------------------------------------------------------------
+   状态查询（设置界面）
+   -------------------------------------------------------------------------- */
+
+/** 供设置界面显示当前走的是哪条音频链路 */
+export function audioGraphState() {
+  if (backendReady) {
+    return {
+      graph: true,
+      contextState: "native",
+      element: false,
+      currentSrc: loadedFor ? "后端引擎已装载" : "未装载",
+      backend: true,
+      reason: backendReason,
+    };
+  }
+  return {
+    graph: Boolean(ctx && gainNode) && !graphBroken,
+    contextState: ctx?.state ?? "none",
+    element: Boolean(el),
+    currentSrc: el?.currentSrc ? "已加载" : "未加载",
+    backend: false,
+    reason: backendReason,
+  };
+}
+
+/** 后端诊断信息（设置界面排查「声音断续」） */
+export async function backendDiagnostics() {
+  if (!backendReady) return null;
+  try {
+    return await backend.playerDiagnostics();
+  } catch {
+    return null;
+  }
+}
+
+/** 真实音频元素：后端播放时没有 <audio>，返回 null（皮肤契约已移除这一项） */
+export function audioElement() {
+  if (backendReady) return null;
+  try {
+    return audioEl();
+  } catch {
+    return null;
+  }
+}
+
+/* ==========================================================================
+   legacy <audio> 回退路径
+   --------------------------------------------------------------------------
+   后端不可用（声卡打不开 / 没有 ffmpeg）时用的老路径，逻辑与迁移前一致。
+   保留它而不是直接删掉，是为了「宁可退化成旧行为，也不能没声音」。
+   日常运行不会走到这里，所以这里只维持基本可用（播放/暂停/进度/音量）。
+   ========================================================================== */
+
+function audioEl() {
+  if (el) return el;
+  el = document.getElementById("audio-engine");
+  if (!el) {
+    el = document.createElement("audio");
+    el.id = "audio-engine";
+    el.preload = "auto";
+    el.hidden = true;
+    document.body.appendChild(el);
+  }
+  el.crossOrigin = "anonymous";
+  bindLegacyEvents(el);
+  return el;
+}
+
+function bindLegacyEvents(node) {
+  if (node.dataset.bound === "1") return;
+  node.dataset.bound = "1";
+
+  node.addEventListener("loadedmetadata", () => {
+    if (Number.isFinite(node.duration) && node.duration > 0) {
+      state.duration = node.duration * 1000;
+      notify();
+      commit();
+    }
+    if (pendingSeek != null) {
+      const target = pendingSeek;
+      pendingSeek = null;
+      try {
+        node.currentTime = Math.max(0, Math.min(target, state.duration || 0) / 1000);
+      } catch {
+        /* 转码流不支持精确定位时忽略 */
+      }
+    }
+    endLegacySwitch(node);
+  });
+
+  node.addEventListener("timeupdate", () => {
+    const bar = document.getElementById("progress");
+    if (bar?.dataset.dragging === "true") return;
+    state.position = node.currentTime * 1000;
+    noteProgress(state.position);
+    if (state.config.resumeProgress === true && performance.now() - lastProgressPersistAt > 5000) {
+      lastProgressPersistAt = performance.now();
+      persist();
+    }
+    notify();
+  });
+
+  node.addEventListener("play", () => {
+    if (switchPhase === SWITCH_LOADING) return;
+    selfPause = false;
+    state.playing = true;
+    if (ctx?.state === "suspended") ctx.resume().catch(() => {});
+    notify();
+  });
+
+  node.addEventListener("pause", () => {
+    if (selfPause) {
+      selfPause = false;
+      return;
+    }
+    if (switchPhase === SWITCH_LOADING) return;
+    if (node.ended) return;
+    const durMs = Number.isFinite(node.duration) && node.duration > 0 ? node.duration * 1000 : state.duration || 0;
+    if (durMs) {
+      const posMs = Number.isFinite(node.currentTime) ? node.currentTime * 1000 : state.position;
+      if (posMs >= durMs - 300) return;
+    }
+    if (endedAt && performance.now() - endedAt < LOAD_SETTLE_MS) return;
+    state.playing = false;
+    notify();
+  });
+
+  node.addEventListener("ended", () => {
+    endedAt = performance.now();
+    handleEnded();
+  });
+
+  node.addEventListener("error", () => {
+    switchPhase = SWITCH_IDLE;
+    selfPause = false;
+    const song = currentSong();
+    if (!song) return;
+    if (srcChangedAt && performance.now() - srcChangedAt < LOAD_SETTLE_MS) return;
+    if (!node.error || !node.error.code) return;
+    const code = node.error?.code;
+    const reason =
+      code === 4
+        ? "格式无法播放（解码失败）"
+        : code === 3
+          ? "音频数据损坏"
+          : code === 2
+            ? "网络中断"
+            : "音频加载失败";
+    toast(`${reason}：${song.title}`, { tone: "error", duration: 4000 });
+  });
+}
+
+async function syncLegacy() {
+  const node = audioEl();
+  const song = currentSong();
+
+  if (!song) {
+    if (loadedFor !== null) {
+      node.pause();
+      node.removeAttribute("src");
+      node.load();
+      loadedFor = null;
+      switchPhase = SWITCH_IDLE;
+    }
+    return;
+  }
+
+  if (loadedFor !== song.id) {
+    loadedFor = song.id;
+    switchPhase = SWITCH_LOADING;
+    selfPause = false;
+    if (switchTimer) clearTimeout(switchTimer);
+    switchTimer = setTimeout(() => {
+      switchTimer = null;
+      if (switchPhase === SWITCH_LOADING) endLegacySwitch(el);
+    }, SWITCH_TIMEOUT_MS);
+
+    const seq = ++requestSeq;
+    let url = null;
+    try {
+      url = song.streamUrl || (await backend.mediaUrl(song.id));
+    } catch (err) {
+      switchPhase = SWITCH_IDLE;
+      toast(`无法播放：${err?.message ?? "取播放地址失败"}`, { tone: "error", duration: 5000 });
+      return;
+    }
+    if (seq !== requestSeq) return;
+    if (!url) {
+      switchPhase = SWITCH_IDLE;
+      return;
+    }
+
+    pendingSeek = consumeResumeSeek(song);
+    node.src = url;
+    srcChangedAt = performance.now();
+    node.load();
+    ensureLegacyGraph(node);
+    applyVolumeLegacy();
+    if (!song.online) requestLoudness(song.id);
+    if (state.playing && node.paused) {
+      node.play().catch((err) => {
+        const name = err?.name || "";
+        if (name === "AbortError" || name === "NotAllowedError") return;
+        console.warn("[audio] 播放失败", err);
+      });
+    }
+    return;
+  }
+
+  if (switchPhase === SWITCH_LOADING) return;
+  if (state.playing && node.paused) {
+    node.play().catch(() => {});
+  } else if (!state.playing && !node.paused) {
+    selfPause = true;
+    node.pause();
+  }
+}
+
+function endLegacySwitch(node) {
+  if (switchTimer) {
+    clearTimeout(switchTimer);
+    switchTimer = null;
+  }
+  if (switchPhase !== SWITCH_LOADING) return;
+  switchPhase = SWITCH_IDLE;
+  const n = node || el;
+  if (!n) return;
+  if (state.playing && n.paused) n.play().catch(() => {});
+  else if (!state.playing && !n.paused) {
+    selfPause = true;
+    n.pause();
+  }
+}
+
+function ensureLegacyGraph(node) {
+  if (graphBroken) return false;
+  if (ctx && gainNode) return true;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) {
+    graphBroken = true;
+    return false;
+  }
+  try {
+    ctx = new AC();
+    gainNode = ctx.createGain();
+    gainNode.gain.value = 1;
+    sourceNode = ctx.createMediaElementSource(node);
+    sourceNode.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    try {
+      analyserNode = ctx.createAnalyser();
+      analyserNode.fftSize = 512;
+      analyserNode.smoothingTimeConstant = 0.76;
+      analyserData = new Uint8Array(analyserNode.frequencyBinCount);
+      gainNode.connect(analyserNode);
+    } catch {
+      analyserNode = null;
+      analyserData = null;
+    }
+    lastAppliedGain = null;
+    return true;
+  } catch (err) {
+    console.warn("[audio] Web Audio 链路建立失败，退回元素音量", err);
+    graphBroken = true;
+    return false;
+  }
+}
+
+function applyVolumeLegacy() {
+  const node = el;
+  const value = currentGain();
+  if (ctx && gainNode && !graphBroken) {
+    const now = ctx.currentTime;
+    try {
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.setTargetAtTime(value, now, 0.015);
+    } catch {
+      gainNode.gain.value = value;
+    }
+    if (node) node.volume = 1;
+    lastAppliedGain = value;
+    return;
+  }
+  if (node) node.volume = Math.max(0, Math.min(1, value));
+  lastAppliedGain = value;
+}
+
+function applyGainForSongLegacy() {
+  const value = currentGain();
+  if (value === lastAppliedGain) return;
+  applyVolumeLegacy();
+}
+
+function seekAudioLegacy(ms) {
   const node = audioEl();
   if (!node.src) {
     pendingSeek = ms;
@@ -621,7 +1044,7 @@ export function seekAudio(ms) {
   }
 }
 
-export function stopAudio() {
+function stopAudioLegacy() {
   if (!el) return;
   el.pause();
   el.removeAttribute("src");
@@ -631,19 +1054,7 @@ export function stopAudio() {
   selfPause = false;
 }
 
-/**
- * 取当前频谱（0..1 的归一化幅度数组）。
- *
- * 分桶刻意用**对数刻度**：线性分桶下低频只占一两个桶、高频占一大片，
- * 可视化看起来就是「右边一直在抖、左边几乎不动」；对数分桶才像「一段旋律」。
- *
- * 拿不到频谱时返回 null（浏览器不支持 Web Audio、音频图没建起来、
- * 或者当前根本还没播过任何东西）—— 调用方据此保持静态，而不是拿到一列 0。
- *
- * @param {number} [bands] 想要的频段数（1..128）
- * @returns {Float32Array|null}
- */
-export function spectrum(bands = 32) {
+function spectrumLegacy(bands = 32) {
   if (!analyserNode || !analyserData) return null;
   analyserNode.getByteFrequencyData(analyserData);
   const n = Math.max(1, Math.min(128, Math.floor(bands) || 32));
@@ -657,23 +1068,4 @@ export function spectrum(bands = 32) {
     out[i] = sum / ((hi - lo) * 255);
   }
   return out;
-}
-
-/** 低频能量（0..1）：给「整体随鼓点放大」这类效果用 */
-export function bassLevel() {
-  const bands = spectrum(8);
-  if (!bands) return null;
-  let sum = 0;
-  for (let i = 0; i < 3; i += 1) sum += bands[i];
-  return sum / 3;
-}
-
-/** 供设置界面显示「当前是否在用 Web Audio 增益」 */
-export function audioGraphState() {
-  return {
-    graph: Boolean(ctx && gainNode) && !graphBroken,
-    contextState: ctx?.state ?? "none",
-    element: Boolean(el),
-    currentSrc: el?.currentSrc ? "已加载" : "未加载",
-  };
 }

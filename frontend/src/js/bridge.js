@@ -69,6 +69,11 @@ export async function connect() {
       Themes: mod.ThemeService,
       Config: mod.ConfigService,
       Media: mod.MediaService,
+      // 后端原生播放（见 services_player.go）。
+      // 键名必须与 index.js 的导出名一致（PlayerService），
+      // 而不是下面调用处用的简称 Player —— 这个映射是手写的字符串键，
+      // 拼错不会被构建拦住，只会在运行时变成「XXX is not a function」。
+      Player: mod.PlayerService,
       Loudness: mod.LoudnessService,
       Window: mod.WindowService,
       Online: mod.OnlineService,
@@ -238,6 +243,22 @@ const backendImpl = {
   /* ---- 播放地址 ---- */
   mediaUrl: (songId) => call(bindings?.Media?.URL, songId),
   mediaState: () => call(bindings?.Media?.State),
+
+  /* ---- 后端原生播放（见 services_player.go） ----
+     音频的「解码 + 输出」在 Go 进程里做，前端只发指令、收锚点与频谱。
+     这样网页卡顿不会影响出声，音量合成器里也是本程序的图标。 */
+  playerAvailable: () => call(bindings?.Player?.Available),
+  playerLoad: (songId) => call(bindings?.Player?.Load, songId),
+  playerPlay: () => call(bindings?.Player?.Play),
+  playerPause: () => call(bindings?.Player?.Pause),
+  playerSeek: (positionMs) => call(bindings?.Player?.Seek, positionMs),
+  playerStop: () => call(bindings?.Player?.Unload),
+  playerUnload: () => call(bindings?.Player?.Unload),
+  playerState: () => call(bindings?.Player?.State),
+  playerSetVolume: (volume, muted) => call(bindings?.Player?.SetVolume, volume, Boolean(muted)),
+  playerSetLoudness: (gainDB) => call(bindings?.Player?.SetLoudnessGain, gainDB),
+  playerSpectrum: (bands) => call(bindings?.Player?.Spectrum, bands),
+  playerDiagnostics: () => call(bindings?.Player?.Diagnostics),
 
   /* ---- 响度均衡 ---- */
   loudnessState: () => call(bindings?.Loudness?.State),

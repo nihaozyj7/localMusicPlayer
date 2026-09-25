@@ -36,7 +36,15 @@ import {
   startMockTicker,
 } from "./store.js";
 import { doRescan, navigate, settingsLayerOpen, refreshSettingsLayer } from "./shell.js";
-import { applyVolume, applyGainForSong, refreshLoudnessGains, refreshLoudnessState, seekTo } from "./audio.js";
+import {
+  applyVolume,
+  applyGainForSong,
+  refreshLoudnessGains,
+  refreshLoudnessState,
+  seekTo,
+  probeBackend,
+  startAudioEvents,
+} from "./audio.js";
 import { closePlayer, openPlayer, preloadSkins, setPlayerViewMode, togglePlayer } from "./playerhost.js";
 import { applyResolvedTheme, discoverThemes, getTheme } from "./theme.js";
 import { primeCoverAccent } from "./cover-accent.js";
@@ -486,6 +494,13 @@ async function main() {
   // 在事件绑定后再套用一次预览参数：避免 store 的 commit/persist 把 URL 指定的
   // 视图（歌单 / 播放界面 / 主题）覆盖回默认值。
   applyPreviewParams();
+
+  // 探测后端原生音频是否可用，并订阅它推来的播放事件。
+  //
+  // 必须排在 startRuntime() **之前**：runtime 的第一次 run 就会调 syncAudio()，
+  // 而 syncAudio 要按「后端是否可用」选链路 —— 探测晚了第一次播放会走错分支。
+  await probeBackend();
+  startAudioEvents();
 
   // 运行时副作用（音频对齐 / 桌面窗口推送 / 封面取色）
   startRuntime();

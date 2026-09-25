@@ -1306,8 +1306,30 @@ export function setPlayMode(mode) {
    -------------------------------------------------------------------------- */
 let tickTimer = null;
 
-/** 是否已有真实音频在驱动进度 */
+/**
+ * 「是否已有真实音频在驱动进度」的判定，由 audio.js 在启动时注入。
+ *
+ * 为什么不在这里直接 import audio.js：store 是底层模块，audio.js 依赖
+ * store（要用 commit/notify/seek），反过来 import 会形成循环依赖
+ * （项目里已经因为 main → shell → settings 的链条踩过一次）。
+ * 用一个注入口代替 import，判定逻辑仍然只有一处。
+ */
+let realAudioActiveProbe = null;
+
+/** 由 audio.js 注册「真实音频是否接管了进度」的判定 */
+export function setRealAudioProbe(fn) {
+  realAudioActiveProbe = typeof fn === "function" ? fn : null;
+}
+
+/** 是否已有真实音频在驱动进度（后端引擎或 <audio>） */
 function audioEngineActive() {
+  if (realAudioActiveProbe) {
+    try {
+      if (realAudioActiveProbe()) return true;
+    } catch {
+      /* 判定失败时退回下面的 <audio> 检查 */
+    }
+  }
   const node = document.getElementById("audio-engine");
   return Boolean(node && node.src);
 }

@@ -18,7 +18,7 @@ import "./classic.css";
 let inst = null;
 
 const skin = defineSkin({
-  apiVersion: 1,
+  apiVersion: 2,
   id: "classic",
   name: "经典",
   icon: "disc",

@@ -24,7 +24,7 @@ import { $ } from "./dom.js";
 import { requestAppUpdate } from "./ui/base.js";
 import { MOCK_LYRICS, MOCK_LYRICS_ALT } from "./mock.js";
 import { backend, isWails } from "./bridge.js";
-import { audioElement, seekTo, spectrum } from "./audio.js";
+import { refreshSpectrum, seekTo, spectrum } from "./audio.js";
 import { commit, playNext, playPrev, songById, state, togglePlay } from "./store.js";
 import { DEFAULT_COVER, clamp, coverOf, esc } from "./utils.js";
 import { animationMs } from "./runtime-tokens.js";
@@ -687,7 +687,10 @@ function makeCtx() {
   const ctx = {
     root: host.stage,
     backgroundRoot: host.backgroundRoot,
-    audio: audioElement(),
+    // 注意：契约 v2 起不再有 ctx.audio。
+    // 音频的解码与输出已经搬到 Go 后端，前端没有 <audio> 元素可给了
+    // （见 contract.js 的 SKIN_API_VERSION 说明）。皮肤要位置就用
+    // ctx.playback() / "progress" 补丁，要频谱就用 "spectrum" 补丁。
     // 实时频谱：给「随旋律律动」的样式用（见 audio.js#spectrum）。
     // 拿不到时返回 null，皮肤据此保持静态。
     spectrum,
@@ -1222,6 +1225,12 @@ function pushSpectrum(playing) {
   }
   const at = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
   if (lastSpecAt && at - lastSpecAt < 1000 / SPECTRUM_HZ) return;
+
+  // 后端播放时频谱由 Go 侧算，先异步拉一次再读缓存。
+  // 不等它（fire-and-forget）：本函数在逐帧循环里被调，等异步会让整个
+  // 渲染循环挂住；频谱晚一帧用上完全看不出来。
+  void refreshSpectrum(bands);
+
   const data = spectrum(bands);
   if (!data) {
     // 音频图还没建起来（还没真正播过第一首）：一直不推，等它可用

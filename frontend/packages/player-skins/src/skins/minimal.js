@@ -11,7 +11,7 @@ import "./minimal.css";
 let inst = null;
 
 const skin = defineSkin({
-  apiVersion: 1,
+  apiVersion: 2,
   id: "minimal",
   name: "简约",
   icon: "minimal",

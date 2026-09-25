@@ -1290,7 +1290,7 @@ function applyOptions(ctx) {
 }
 
 export default defineSkin({
-  apiVersion: 1,
+  apiVersion: 2,
   id: ID,
   name: "魔法阵 · 手绘次元",
   icon: "bolt",

@@ -45,7 +45,7 @@
 
 import { backend, isWails } from "./bridge.js";
 import { commit, state } from "./store.js";
-import { spectrum } from "./audio.js";
+import { refreshSpectrum, spectrum } from "./audio.js";
 import { paintFloatingLyricBar } from "./desktop-lyrics.js";
 import { requestAppUpdate } from "./ui/base.js";
 import { getRuntimeTokens } from "./runtime-tokens.js";
@@ -395,6 +395,12 @@ function spectrumPatch(at, playing) {
   }
 
   if (lastSpectrumAt && at - lastSpectrumAt < SPECTRUM_INTERVAL) return null;
+
+  // 频谱在后端播放时由 Go 侧计算，需要先异步拉一次再读缓存。
+  // 拉取本身不阻塞（fire-and-forget）：本函数在 30Hz 的推送循环里被调，
+  // 等它会让整条推送链卡住。拿到的值下一轮才用得上，这是可以接受的 ——
+  // 频谱本来就是「稍微滞后一点也看不出」的数据。
+  void refreshSpectrum(bands);
 
   const data = spectrum(bands);
   if (!data) {

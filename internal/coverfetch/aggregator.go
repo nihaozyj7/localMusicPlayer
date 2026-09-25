@@ -58,6 +58,15 @@ type Aggregator struct {
 	mu      sync.Mutex
 	cache   map[string]cacheEntry
 	breaker map[string]*breakerState
+	// seq 是单调递增的写入序号，用来给淘汰排序提供**确定性**的先后关系。
+	//
+	// 为什么不能只靠 at（time.Now）：Windows 上 time.Now 的分辨率约 0.5~15ms，
+	// 连续写入几百条时大量条目的 at 完全相同。按 at 排序时这些「同刻」条目的
+	// 相对顺序由 map 遍历顺序决定（Go 刻意随机化），于是「淘汰最旧的 64 条」
+	// 会随机删掉刚写进去的新条目 —— 表现为回归测试
+	// TestSetCacheKeepsOlderEntriesInsteadOfWiping 间歇性失败。
+	// 加上自增序号后，「谁更旧」永远是良定义的：序号小的先被淘汰。
+	seq uint64
 }
 
 // breakerState 单个来源的熔断状态。
@@ -76,6 +85,9 @@ type cacheEntry struct {
 	cover Cover
 	found bool
 	at    time.Time
+	// seq 是写入序号（见 Aggregator.seq）。仅用于淘汰排序，
+	// 业务逻辑上的「是否过期」仍然只看 at。
+	seq uint64
 }
 
 // New 创建聚合器；不传来源时使用内置的全部来源。
@@ -269,7 +281,8 @@ func (a *Aggregator) setCache(key string, cover Cover, found bool) {
 	if len(a.cache) >= maxCacheEntries {
 		a.evictLocked()
 	}
-	a.cache[key] = cacheEntry{cover: cover, found: found, at: time.Now()}
+	a.seq++
+	a.cache[key] = cacheEntry{cover: cover, found: found, at: time.Now(), seq: a.seq}
 }
 
 // evictLocked 腾出容量。调用方必须持有 a.mu。
@@ -293,16 +306,32 @@ func (a *Aggregator) evictLocked() {
 		return
 	}
 	// 仍然满：找出最旧的 evictBatch 条删掉。
-	// 用部分选择而不是全排序 —— 只需要「最旧的若干条」，不需要有序。
 	type kv struct {
-		k  string
-		at time.Time
+		k   string
+		at  time.Time
+		seq uint64
 	}
 	all := make([]kv, 0, len(a.cache))
 	for k, e := range a.cache {
-		all = append(all, kv{k: k, at: e.at})
+		all = append(all, kv{k: k, at: e.at, seq: e.seq})
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].at.Before(all[j].at) })
+	// 排序必须**以 seq 为主键**，at 只作兜底（seq 为 0 的老条目）。
+	//
+	// 不能按 at 排：Windows 上 time.Now 的分辨率约 0.5~15ms，批量写入时
+	// 大量条目的 at 完全相同，此时 Slice 的相对顺序取决于 map 的随机遍历序，
+	// 「淘汰最旧」就变成了「随机淘汰」—— 会把刚写进去的新条目删掉，
+	// 也会让回归测试间歇性失败（详见 Aggregator.seq 的说明）。
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].seq != all[j].seq {
+			return all[i].seq < all[j].seq
+		}
+		if !all[i].at.Equal(all[j].at) {
+			return all[i].at.Before(all[j].at)
+		}
+		// seq 与 at 都相同（理论上只可能是同一批写入）时用 key 兜底，
+		// 保证顺序完全确定 —— 否则仍然会退化回 map 的随机顺序。
+		return all[i].k < all[j].k
+	})
 	n := evictBatch
 	if n > len(all) {
 		n = len(all)
