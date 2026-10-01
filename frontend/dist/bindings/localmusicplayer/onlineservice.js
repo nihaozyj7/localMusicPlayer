@@ -11,6 +11,33 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails
 import * as http$0 from "../net/http/models.js";
 
 /**
+ * CacheDir 返回试听缓存目录（供设置界面显示 / 排查）。
+ * @returns {$CancellablePromise<string>}
+ */
+export function CacheDir() {
+    return $Call.ByID(1773896527);
+}
+
+/**
+ * CacheStats 返回试听缓存的占用（文件数 / 字节数）。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function CacheStats() {
+    return $Call.ByID(2100814171);
+}
+
+/**
+ * ClearCache 清空试听缓存（设置界面用）。
+ * 
+ * 清完之后在线歌曲需要重新下载一次才能播放 —— 这是「可丢弃的派生数据」
+ * 应有的语义，缓存目录本来就在临时目录下。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function ClearCache() {
+    return $Call.ByID(3343325943);
+}
+
+/**
  * CoverLookup 返回一首歌的封面地址（同源）。没找到时 available=false，
  * 前端据此「不显示封面」而不是留一个破图。
  * 
@@ -33,6 +60,21 @@ export function CoverLookup(title, artist, album, durationMS, fallback) {
  */
 export function CoverProviders() {
     return $Call.ByID(338792953);
+}
+
+/**
+ * EnsureCached 确保某个 bvid 的音频**已经落在本地**，返回（路径, 扩展名）。
+ * 
+ * 这是后端播放解析（main.go 的 resolve）在曲库里查不到歌曲时走的兜底：
+ *   - 缓存命中 → 直接返回，零网络开销；
+ *   - 未命中   → 现在下载到缓存。注意这一步是**阻塞**的（要等整首歌下来），
+ *     调用方通常在前端已经显示「加载中」的切歌路径上，可以接受；
+ *     接口本身也有超时兜底。
+ * @param {string} bvid
+ * @returns {$CancellablePromise<[string, string]>}
+ */
+export function EnsureCached(bvid) {
+    return $Call.ByID(358676318, bvid);
 }
 
 /**
@@ -118,4 +160,13 @@ export function Search(keyword, page, pageSize) {
  */
 export function SearchLyrics(keyword, title, artist, duration) {
     return $Call.ByID(3637869574, keyword, title, artist, duration);
+}
+
+/**
+ * SetCacheDir 覆盖试听缓存目录（测试 / 设置界面用；空串落回默认位置）。
+ * @param {string} dir
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetCacheDir(dir) {
+    return $Call.ByID(2647159887, dir);
 }

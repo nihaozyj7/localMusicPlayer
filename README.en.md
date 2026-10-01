@@ -83,6 +83,9 @@ library, cover art and lyric cache all live on your own disk.
 - **Player skins**: classic / immersive / minimal / per-character entry / karaoke / camera-FX — six built-in
   styles. Third-party packs are loaded from the data directory; the contract lives in
   [`packages/player-skins`](frontend/packages/player-skins);
+- **Sorting**: one toolbar button opens a floating panel where the field (date added / title / artist /
+  album / duration / file size / play count) and the direction (ascending / descending) are chosen
+  separately. The button always shows the active sort, and clicking a column header still toggles it;
 - List density, visible columns and animation speed are all configurable; turning animations off zeroes out
   every transition at once.
 
@@ -90,6 +93,9 @@ library, cover art and lyric cache all live on your own disk.
 
 - Search → preview → download to your machine (the download folder is configurable and migratable, and
   finished downloads are added to the library automatically);
+- **Previews are cached on disk**: audio is saved locally as it streams, which is what lets an online track
+  in your queue decode and play exactly like a local one. Hitting download then simply moves that cached
+  file into your download folder instead of fetching it twice;
 - **AI metadata cleanup** (optional): point it at any OpenAI-compatible endpoint and it will recover the
   real title / artist from messy file names before online matching runs.
 
@@ -120,6 +126,10 @@ On first launch the embedded FFmpeg is unpacked into your data directory:
 %APPDATA%\LocalMusicPlayer\          config, library cache, lyrics and cover cache
 %LOCALAPPDATA%\LocalMusicPlayer\bin\  the unpacked ffmpeg.exe (you may replace it)
 ```
+
+Previewed online audio is cached in the system temp directory (`%TEMP%\LocalMusicPlayer\online\`).
+It deliberately stays **out** of your download folder and out of the library scan — it is disposable
+derived data, so if the system clears it, the next preview simply downloads again.
 
 ### Requirements
 
@@ -211,6 +221,7 @@ internal/
   library/               scanning, metadata cache, incremental rescans, fsnotify watching
   meta/  lyrics/         tag, cover and lyric parsing
   media/                 local audio HTTP server (CORS / Range / transcode cache)
+  onlinecache/           preview audio cache (temp dir, atomic writes, moved on download)
   loudness/              EBU R128 measurement and gain compensation
   ffmpeg/                locating and unpacking the embedded ffmpeg (bin/ is not committed)
   coverfetch/ lyricsfetch/ bilibili/   three volatile third-party APIs, each isolated
