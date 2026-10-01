@@ -116,6 +116,16 @@ type PlayerService struct {
 	// lastErr 记录最近一次失败原因，供设置界面显示
 	lastErr string
 
+	// lastFailSong / lastFailMsg 是「同一个失败只广播一次」的抑制键。
+	//
+	// 为什么需要：解析/装载失败后服务不会进入「已装载」状态，前端若恰好
+	// 因为别的原因再发一次 Load（同一首歌），就会再走一遍失败的解析（比如
+	// 再跑一次 ffmpeg 转码并再失败一次），每次都会 Emit 一条 player:error。
+	// 前端那边已经用 failedSongId 做了闸门，这里再兜一层：事件风暴不该
+	// 从后端发起 —— 排查日志时「同一条错误刷了几十遍」会淹没真正有用的行。
+	lastFailSong string
+	lastFailMsg  string
+
 	// onEOF 播完时的回调（由 main 注入，用于自动切下一首）
 	onEOF func()
 }
@@ -278,6 +288,9 @@ func (s *PlayerService) Load(songID string) (map[string]any, error) {
 	s.currentSongID = songID
 	s.loaded = true
 	s.lastErr = ""
+	// 装载成功：清掉失败抑制键，让这首歌下次真出问题还能正常报出来
+	s.lastFailSong = ""
+	s.lastFailMsg = ""
 	// 换歌后立刻对齐增益（响度补偿是按歌算的，上一首的值要作废）
 	s.applyGainLocked()
 	// 位置回到 0，强制下一次推送不被节流吃掉
@@ -572,15 +585,30 @@ func (s *PlayerService) emitLocked(name string, payload any) {
 }
 
 // fail 记录并广播一次播放失败。失败不改变 available（声卡本身是好的）。
+//
+// 同一首歌的同一个原因只会广播**一次**：重复的失败报告对用户没有任何新信息，
+// 而前端每个 tick 都可能重新尝试装载（见 services_player.go 里 lastFailSong
+// 的说明）。成功装载会清掉抑制键，所以「修好文件后再试」仍然能收到通知。
 func (s *PlayerService) fail(songID string, err error) {
+	msg := err.Error()
+
 	s.mu.Lock()
-	s.lastErr = err.Error()
+	s.lastErr = msg
+	// 命中抑制键：只记日志，不再广播
+	if songID != "" && songID == s.lastFailSong && msg == s.lastFailMsg {
+		s.mu.Unlock()
+		log.Printf("[player] 重复的播放失败（已抑制广播）：%s —— %s", songID, msg)
+		return
+	}
+	s.lastFailSong = songID
+	s.lastFailMsg = msg
 	app := s.app
 	s.mu.Unlock()
+
 	if app != nil {
 		app.Emit(playerErrorEvent, map[string]any{
 			"songId": songID,
-			"reason": err.Error(),
+			"reason": msg,
 		})
 	}
 }

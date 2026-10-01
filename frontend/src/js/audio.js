@@ -44,6 +44,8 @@ import {
   playNext,
   seek,
   setRealAudioProbe,
+  setUserPlayProbe,
+  songById,
   state,
 } from "./store.js";
 import { toast } from "./dom.js";
@@ -90,6 +92,39 @@ let tickTimer = null;
 
 /** 取消订阅函数集合 */
 const unsubscribers = [];
+
+/* --------------------------------------------------------------------------
+   播放失败的处理状态（见 handlePlaybackFailure）
+   -------------------------------------------------------------------------- */
+
+/**
+ * 已经处理过失败的歌曲 id。
+ *
+ * ★ 为什么必须有它（真实事故：坏文件导致错误提示刷屏）
+ *
+ * 一次装载失败**不是一次事件**，而是一连串：
+ *   · 后端 playerLoad 返回错误（并广播 player:error）；
+ *   · player:error 订阅、loadSong 的 catch 会**分别**收到同一件事；
+ *   · 更糟的是失败后 state.playing 仍是 true、currentId 仍是这首坏歌，
+ *     而 runtime 的依赖键每 250ms 变一次 → 每个 tick 都重跑 syncAudio()
+ *     → 重新 playerLoad → 再失败 → 又弹一条 toast。
+ * 用户看到的就是「疯狂弹错误提示」。
+ *
+ * 记下这个 id，同一首歌的后续失败一律吞掉，直到用户重新点播它为止。
+ */
+let failedSongId = null;
+
+/**
+ * 连续失败次数。装载成功时清零。
+ *
+ * 队列里坏文件一多（比如整库都是损坏的流），「失败就跳下一首」会变成
+ * 一路刷到底、把整个列表弹一遍。超过 FAILURE_STREAK_LIMIT 就停下并说明，
+ * 让用户知道是「一批文件有问题」而不是「播放器坏了」。
+ */
+let consecutiveFailures = 0;
+
+/** 连续失败到这个数就停止自动跳转（避免坏文件刷屏式连跳） */
+const FAILURE_STREAK_LIMIT = 5;
 
 /* --------------------------------------------------------------------------
    legacy <audio> 回退路径的状态（后端不可用时才用）
@@ -159,6 +194,15 @@ setRealAudioProbe(() => {
   return Boolean(node && node.src);
 });
 
+/**
+ * 用户主动点播一首歌时，解除「这首歌已判定放不出来」的闸门。
+ *
+ * 与上面的 probe 同一个理由（避免 store import 本模块）。没有这一步的话，
+ * 用户修好文件（或换了张能读的盘）之后再点这首歌会**完全没反应** ——
+ * syncAudio 会因为闸门而直接 return，连提示都没有。
+ */
+setUserPlayProbe((songId) => resetFailureGate(songId));
+
 /* --------------------------------------------------------------------------
    事件订阅
    -------------------------------------------------------------------------- */
@@ -184,12 +228,7 @@ export function startAudioEvents() {
   unsubscribers.push(
     on("player:error", (payload) => {
       if (!payload) return;
-      const song = currentSong();
-      const title = song?.title || payload.songId || "当前歌曲";
-      toast(`无法播放：${title}（${payload.reason || "未知原因"}）`, {
-        tone: "error",
-        duration: 5000,
-      });
+      handlePlaybackFailure(payload.songId || state.currentId, payload.reason, "backend");
     }),
   );
 
@@ -327,6 +366,118 @@ function handleEnded() {
 }
 
 /* --------------------------------------------------------------------------
+   播放失败：提示一次 + 自动跳下一首
+   -------------------------------------------------------------------------- */
+
+/**
+ * 统一处理「这首放不出来」（转码失败 / 解码失败 / 文件损坏 / 取不到地址）。
+ *
+ * ★ 设计要点
+ *
+ * 1. **只提示一次**。同一首歌的失败会被多个入口重复报告（后端 player:error
+ *    事件、loadSong 的 catch、<audio> 的 error 事件），而且失败后若不改变状态，
+ *    runtime 每 250ms 的 tick 会把同一首歌反复送去装载。这里用 failedSongId
+ *    做闸门：处理过一次就直接返回，toast 不会再弹第二条。
+ *
+ * 2. **自动跳下一首**。坏文件不该让播放停下来 —— 这正是用户的诉求。
+ *    跳转复用 store 的 playNext(true)，随机 / 列表循环 / 定时停止这些
+ *    语义都由它统一处理，不在这里重写一遍。
+ *
+ * 3. **连败要能停**。队列里坏文件多的时候，「失败就跳」会一路刷到底。
+ *    连续失败超过 FAILURE_STREAK_LIMIT 就停止自动跳转并说明原因。
+ *
+ * @param {string|null} songId 出问题的歌（取不到时退回当前曲目）
+ * @param {string} reason      失败原因（后端给的原文，可为空）
+ * @param {string} source      触发来源，仅用于日志排查：backend | load | legacy
+ */
+function handlePlaybackFailure(songId, reason, source = "unknown") {
+  const song = songId ? (songById(songId) || currentSong()) : currentSong();
+  const id = song?.id || songId || null;
+  const title = song?.title || id || "当前歌曲";
+  const why = String(reason || "").trim() || "未知原因";
+
+  // 闸门：这首歌已经处理过失败了，后续重复报告一律吞掉
+  if (id && id === failedSongId) {
+    console.warn(`[audio] 忽略重复的播放失败报告（${source}）：${title}`);
+    return;
+  }
+  if (id) failedSongId = id;
+
+  console.warn(`[audio] 播放失败（${source}）：${title} —— ${why}`);
+
+  // 状态回收：清掉「已装载」的记账，否则 tick 会以为这首歌还在后端
+  if (backendSongId === id) backendSongId = null;
+  if (loadedFor === id) loadedFor = null;
+  anchor = null;
+
+  consecutiveFailures += 1;
+  const giveUp = consecutiveFailures >= FAILURE_STREAK_LIMIT;
+
+  // 先判断这次到底会不会跳 —— 提示文案要与实际行为一致，否则用户会以为
+  // 已经跳过去了，实际却停在原地（暂停 / 单曲循环 / 播完即停这三种情况）。
+  const willSkip =
+    !giveUp && state.playing && state.sleepTimer?.type !== "after-song" && state.playMode !== "loop-one";
+
+  if (giveUp) {
+    // 一批文件都放不出来：停下并说清楚，比一路跳到列表末尾更有用
+    state.playing = false;
+    commit();
+    // 放开闸门：连败已经清零，下一轮不该被卡在最后那首歌上
+    failedSongId = null;
+    consecutiveFailures = 0;
+    toast(`连续 ${FAILURE_STREAK_LIMIT} 首都无法播放（${why}），已停止自动跳过`, {
+      tone: "error",
+      duration: 8000,
+    });
+    return;
+  }
+
+  // 提示一条：说明这首歌放不了、以及接下来是跳过还是停下
+  toast(`无法播放：${title}（${why}）${willSkip ? "，已跳到下一首" : ""}`, {
+    tone: "error",
+    duration: 5000,
+  });
+
+  if (!willSkip) {
+    // 不跳的三种情况：暂停中点的坏歌 / 播完即停 / 单曲循环。
+    // 都就地停下，只是前一种本来就该停着。
+    if (state.playing) {
+      state.playing = false;
+      commit();
+    }
+    return;
+  }
+
+  playNext(true);
+}
+
+/** 装载成功时清零连败计数（坏文件之间夹着能播的歌就不该熔断） */
+function noteLoadSucceeded() {
+  consecutiveFailures = 0;
+  failedSongId = null;
+}
+
+/**
+ * 放开「这首歌已判定放不出来」的闸门。
+ *
+ * 用户**主动**点播一首歌时必须调它：可能是修好了文件、换了外置盘、
+ * 或者上次的失败只是一次偶发的 IO 抖动。不放开的话这首歌会被永久拉黑，
+ * 表现成「点了完全没反应」——那是比弹提示更糟的体验。
+ *
+ * 自动跳转链路（playNext / player:ended）**不**调它：那正是要避免的
+ * 「坏文件被反复重试」。
+ *
+ * 调用时机由 store 的 playSong 经 setUserPlayProbe 注入，避免 store → audio
+ * 的反向 import（store 是底层模块，见上方 setRealAudioProbe 的说明）。
+ */
+export function resetFailureGate(songId) {
+  if (!songId || songId === failedSongId) {
+    failedSongId = null;
+    consecutiveFailures = 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
    播放控制（对外的唯一入口）
    -------------------------------------------------------------------------- */
 
@@ -362,6 +513,13 @@ export async function syncAudio() {
   }
 
   if (loadedFor !== song.id) {
+    // 已经确认放不出来的歌不再重试。
+    //
+    // runtime 的依赖键每 250ms 可能变一次（位置在走），每个 tick 都会走到
+    // 这里。若不拦住，坏文件会被反复送进 playerLoad（每次都要等一次转码
+    // 失败，几秒到几分钟不等），而且每次失败都再弹一条提示。
+    // failedSongId 只在用户主动点播这首歌时才会被清掉（见 resetFailureGate）。
+    if (song.id === failedSongId) return;
     await loadSong(song);
     return;
   }
@@ -401,6 +559,10 @@ async function loadSong(song) {
     const res = await backend.playerLoad(song.id);
     if (seq !== requestSeq) return; // 期间又切歌了
 
+    // 这首歌装载成功：连败计数清零，失败闸门也放开
+    // （否则「坏歌 A、好歌 B、坏歌 A」这种顺序里 A 会被永久拉黑）
+    noteLoadSucceeded();
+
     // 到这一步后端才真正换成了这首歌，增益的归属也随之切换
     backendSongId = song.id;
 
@@ -429,9 +591,12 @@ async function loadSong(song) {
     if (seq === requestSeq && st) applyAnchor(st);
   } catch (err) {
     if (seq !== requestSeq) return;
+    // 装载失败（转码失败 / 文件损坏 / 取不到地址）走统一处理：
+    // 提示一条并自动跳到下一首。这里**不再**自己 toast —— 那条提示由
+    // handlePlaybackFailure 统一发，顺便把去重与熔断一起做了。
     loadedFor = null;
     backendSongId = null;
-    toast(`无法播放：${err?.message ?? "装载失败"}`, { tone: "error", duration: 5000 });
+    handlePlaybackFailure(song.id, err?.message ?? "装载失败", "load");
   }
 }
 
@@ -962,6 +1127,9 @@ function bindLegacyEvents(node) {
     selfPause = false;
     const song = currentSong();
     if (!song) return;
+    // 刚换源后的短暂错误是换源过程中的噪声（旧 src 被中断），不是真的放不了。
+    // 但它必须被**吞掉**而不是放过去 —— 放过去会让 handlePlaybackFailure
+    // 把这首歌拉黑，而它其实马上就能播。
     if (srcChangedAt && performance.now() - srcChangedAt < LOAD_SETTLE_MS) return;
     if (!node.error || !node.error.code) return;
     const code = node.error?.code;
@@ -973,7 +1141,8 @@ function bindLegacyEvents(node) {
           : code === 2
             ? "网络中断"
             : "音频加载失败";
-    toast(`${reason}：${song.title}`, { tone: "error", duration: 4000 });
+    // 与后端链路同一套处理：提示一条 + 自动下一首（不再自己 toast）
+    handlePlaybackFailure(song.id, reason, "legacy");
   });
 }
 
@@ -993,6 +1162,9 @@ async function syncLegacy() {
   }
 
   if (loadedFor !== song.id) {
+    // 已判定放不出来的歌不再重设 src：否则每次 error → 下一 tick 又重新装载
+    // → 再 error，既刷提示也反复起 HTTP 请求（与后端链路的闸门同一目的）。
+    if (song.id === failedSongId) return;
     loadedFor = song.id;
     switchPhase = SWITCH_LOADING;
     selfPause = false;
@@ -1008,7 +1180,8 @@ async function syncLegacy() {
       url = song.streamUrl || (await backend.mediaUrl(song.id));
     } catch (err) {
       switchPhase = SWITCH_IDLE;
-      toast(`无法播放：${err?.message ?? "取播放地址失败"}`, { tone: "error", duration: 5000 });
+      loadedFor = null;
+      handlePlaybackFailure(song.id, err?.message ?? "取播放地址失败", "legacy-url");
       return;
     }
     if (seq !== requestSeq) return;

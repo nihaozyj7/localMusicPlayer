@@ -285,8 +285,19 @@
 }
 
 /* 详情页让出底色：整窗背景层（.skin-bg）在 .playerview 之下，
-   这里不把 .playerview 的底色清掉，背景就永远看不见。 */
-.playerview[data-skin="anime"] {
+   这里不把 .playerview 的底色清掉，背景就永远看不见。
+
+   ★ 这里必须写成 .playerview[data-skin="anime"][data-theme]，不能只写
+   [data-skin="anime"] —— 宿主 tokens.css 里有一条
+     .playerview[data-theme] { background-color: var(--bg-app); }
+   给详情页铺底，而它的选择器权重与 [data-skin="anime"] 完全相同（都是 0,2,0）。
+   权重打平时比的是**出现顺序**，而皮肤包的 CSS 与宿主 CSS 谁先谁后并不由这张
+   样式决定（打包器把皮肤包排在前面时，宿主那条就会后出现并获胜）。
+   于是深色主题下 --bg-app（#0b0c12，近黑）把整窗背景牢牢盖住，
+   只剩标题栏 / 底栏两条缝能看见手绘背景 —— 也就是「二次元手绘背景纯黑」。
+   加上 [data-theme] 后权重变成 0,3,0，无论打包顺序如何都稳定压过宿主那条。
+   （沉浸样式之所以没出事，纯属它的规则恰好排在宿主那条之后，是巧合不是设计。） */
+.playerview[data-skin="anime"][data-theme] {
   background: none;
 }
 

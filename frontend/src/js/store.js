@@ -1103,6 +1103,9 @@ export function playSong(songId, options = {}) {
   } else if (!state.queue.includes(songId)) {
     state.queue = uniq([...state.queue, songId]);
   }
+  // 用户主动点播（不是自动跳下一首）：解除「这首歌放不出来」的闸门，
+  // 允许再试一次。auto 场景由 playNext 直接调 playSong，不会走到这里。
+  if (!options.auto) noteUserPlay(songId);
   state.currentId = songId;
   state.position = 0;
   state.duration = song.duration || 0;
@@ -1319,6 +1322,32 @@ let realAudioActiveProbe = null;
 /** 由 audio.js 注册「真实音频是否接管了进度」的判定 */
 export function setRealAudioProbe(fn) {
   realAudioActiveProbe = typeof fn === "function" ? fn : null;
+}
+
+/**
+ * 「用户主动点播了某首歌」的钩子，由 audio.js 注入（理由同上面的 probe：
+ * 避免 store → audio 的反向依赖）。
+ *
+ * 为什么需要它：audio.js 有一个「这首歌已判定放不出来」的闸门，
+ * 用来防止坏文件被 tick 反复重试、错误提示刷屏。但那个闸门必须能被
+ * **用户的主动点播**打开 —— 否则修好文件后再点它就完全没反应了。
+ * 自动跳下一首（playNext）不触发这个钩子，正是为了不解除闸门。
+ */
+let userPlayHook = null;
+
+/** 由 audio.js 注册「用户主动点播」的钩子 */
+export function setUserPlayProbe(fn) {
+  userPlayHook = typeof fn === "function" ? fn : null;
+}
+
+/** 通知钩子：用户主动点了这首歌（失败时不能影响点播本身） */
+function noteUserPlay(songId) {
+  if (!userPlayHook) return;
+  try {
+    userPlayHook(songId);
+  } catch (err) {
+    console.warn("[store] 用户点播钩子抛出异常（已忽略）", err);
+  }
 }
 
 /** 是否已有真实音频在驱动进度（后端引擎或 <audio>） */

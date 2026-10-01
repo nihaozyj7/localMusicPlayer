@@ -632,6 +632,97 @@ func TestPlayerServiceLoadResolveError(t *testing.T) {
 	}
 }
 
+// TestPlayerServiceFailDedup 同一首歌的同一个失败只广播一次。
+//
+// ★ 为什么必须有这条：失败后服务不会进入「已装载」状态，而前端每个 tick
+// 都可能重新尝试装载同一首歌 —— 每失败一次就 Emit 一条 player:error，
+// 用户看到的就是「疯狂弹错误提示」。这里从后端这一侧掐掉重复广播。
+func TestPlayerServiceFailDedup(t *testing.T) {
+	svc := NewPlayerService(func(songID string) (string, int64, error) {
+		return "", 0, fmt.Errorf("模拟：转码失败")
+	})
+	em := &fakeEmitter{}
+	svc.setApp(em)
+
+	// 同一首歌反复失败：只有第一条该广播出去
+	for i := 0; i < 10; i++ {
+		if _, err := svc.Load("song-x"); err == nil {
+			t.Fatal("resolve 失败时 Load 应当返回错误")
+		}
+	}
+	if n := em.count(playerErrorEvent); n != 1 {
+		t.Errorf("同一首歌反复失败广播了 %d 条 player:error，期望 1", n)
+	}
+
+	// 换一首歌：这是**新的**失败，必须报出来（抑制键是按歌生效的）
+	if _, err := svc.Load("song-y"); err == nil {
+		t.Fatal("resolve 失败时 Load 应当返回错误")
+	}
+	if n := em.count(playerErrorEvent); n != 2 {
+		t.Errorf("换了一首歌后 player:error 总数 = %d，期望 2", n)
+	}
+
+	// 同一首歌但原因变了：也该报出来（原因不同 = 用户能据此做不同的事）
+	svc2 := NewPlayerService(func(songID string) (string, int64, error) {
+		return "", 0, fmt.Errorf("模拟：文件丢失")
+	})
+	em2 := &fakeEmitter{}
+	svc2.setApp(em2)
+	_, _ = svc2.Load("song-z")
+	if n := em2.count(playerErrorEvent); n != 1 {
+		t.Errorf("player:error 事件数 = %d，期望 1", n)
+	}
+}
+
+// TestPlayerServiceFailDedupResetOnSuccess 装载成功后抑制键必须清掉，
+// 否则「修好文件再试」会静默失败（用户看不到任何原因）。
+func TestPlayerServiceFailDedupResetOnSuccess(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "a.wav")
+	writeServiceTestWAV(t, wav, 1.0)
+
+	var failFirst = true
+	svc := NewPlayerService(func(songID string) (string, int64, error) {
+		if songID == "bad" && failFirst {
+			return "", 0, fmt.Errorf("模拟：转码失败")
+		}
+		return wav, 1000, nil
+	})
+	em := &fakeEmitter{}
+	svc.setApp(em)
+	if !svc.Start() {
+		t.Skip("本机没有可用的音频设备，跳过 PlayerService 端到端测试")
+	}
+	defer svc.Stop()
+
+	if _, err := svc.Load("bad"); err == nil {
+		t.Fatal("第一次装载应当失败")
+	}
+	if em.count(playerErrorEvent) != 1 {
+		t.Fatalf("首次失败应广播 1 条，实际 %d", em.count(playerErrorEvent))
+	}
+
+	// 再失败一次：被抑制，仍是 1 条
+	_, _ = svc.Load("bad")
+	if n := em.count(playerErrorEvent); n != 1 {
+		t.Fatalf("重复失败被抑制后应仍是 1 条，实际 %d", n)
+	}
+
+	// 「修好了」：同一首歌现在能装载成功
+	failFirst = false
+	if _, err := svc.Load("bad"); err != nil {
+		t.Fatalf("修好后装载应当成功: %v", err)
+	}
+
+	// 之后同一首歌再坏，必须重新广播（抑制键已被成功装载清掉）
+	failFirst = true
+	_, _ = svc.Load("bad")
+	if n := em.count(playerErrorEvent); n != 2 {
+		t.Errorf("成功装载后抑制键应被清掉，player:error 总数 = %d，期望 2", n)
+	}
+}
+
 /* --------------------------------------------------------------------------
    6. 并发
    -------------------------------------------------------------------------- */

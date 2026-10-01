@@ -170,6 +170,16 @@ import { createLyricsView, createBackgroundLayer, parseLrc, findLyricIndex } fro
 
 - 内置样式的选择器都挂在 `.playerview[data-skin="<id>"]` 下；
   容器外（标题栏/底栏透明化）用 `.app[data-mode="<id>"]`。
+- **想让详情页透出自己的整窗背景层时，必须写 `.playerview[data-skin="<id>"][data-theme]`**，
+  不能只写 `.playerview[data-skin="<id>"]`。宿主 `tokens.css` 有一条
+  `.playerview[data-theme] { background-color: var(--bg-app) }` 给详情页铺底，
+  它与 `[data-skin="<id>"]` 的权重完全相同（都是 0,2,0）；权重打平时比出现顺序，
+  而皮肤包与宿主 CSS 谁先谁后**不由样式自己决定**（打包器把皮肤包排在前面时，
+  宿主那条后出现并获胜）。结果是深色主题下整窗被 `--bg-app` 的近黑色盖死，
+  只在标题栏 / 底栏两条缝里露出手绘背景 —— 「二次元手绘背景纯黑」就是这么来的。
+  补上 `[data-theme]` 变成 0,3,0 后，无论打包顺序如何都稳定压过宿主那条。
+  （铺**自己实色底**的样式不受影响：magia / arcanum 写的 `background: <实色>`
+  同样需要这条更高权重才能生效。）
 - 第三方样式**必须自己限定作用域**，因为所有样式共用一张样式表。
 - 主题令牌（`--accent` / `--text-1` / `--surface-1` / `--glass-bg` / `--lyric-size`…）
   可以直接用，深浅色会自动跟随。
