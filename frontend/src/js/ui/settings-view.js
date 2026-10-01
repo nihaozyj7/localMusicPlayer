@@ -407,7 +407,109 @@ class MpSettingsLayer extends MpElement {
         <span>支持格式：mp3 · flac · wav · m4a · ogg · aac（ape / wma 需转码）</span>
         <span class="u-num">${fmtCount(state.folders.length)} 个文件夹</span>
       </div>
+      ${this.unplayableSection()}
     </section>`;
+  }
+
+  /* ========================================================================
+     放不出来的文件（播放时实测失败的，见 Go 侧 services_unplayable.go）
+     ========================================================================
+     为什么放在「音乐文件夹」卡片里：这份清单回答的正是「扫描到的东西里
+     哪些是不能用的」，与文件夹 / 扫描是同一个语境。
+
+     为什么平时是折叠的：绝大多数用户永远不会看到它（清单是空的）。
+     给它一整张卡片会让设置页常年挂着一个「0 条」的空区块；
+     做成一句摘要 + 点击展开，空的时候只占一行。 */
+  unplayableSection() {
+    const list = state.unplayableFiles || [];
+    const n = list.length;
+    // 还没拉过数据时不能显示「没有放不出来的文件」—— 那会让人误以为
+    // 已经检查过了（其实只是还没问后端）。
+    const loading = !state.unplayableLoaded;
+    const open = state.unplayableOpen === true;
+
+    if (!n && !loading) {
+      // 空态：只留一行安静的说明，不占版面
+      return html` <div class="unplayable unplayable--empty">
+        <span class="unplayable__ok">${icon("check")}</span>
+        <span>没有发现放不出来的文件</span>
+        <span class="unplayable__hint">播放时若某个文件解不出来，会自动记录到这里</span>
+      </div>`;
+    }
+
+    return html` <div class="unplayable">
+      <button
+        class="unplayable__head"
+        type="button"
+        data-act="unplayable-toggle"
+        aria-expanded=${String(open)}
+        ?disabled=${loading}
+      >
+        <span class="unplayable__icon">${icon("info")}</span>
+        <span class="unplayable__label">
+          ${loading ? html`正在读取清单…` : html`发现 <b>${fmtCount(n)}</b> 个无法播放的文件`}
+        </span>
+        ${loading ? nothing : html`<span class="unplayable__cta">${open ? "收起" : "查看是哪些文件"}</span>`}
+        ${loading
+          ? nothing
+          : html`<span class="unplayable__chev" data-open=${String(open)}
+              >${icon(open ? "chevron-down" : "chevron-right")}</span
+            >`}
+      </button>
+      ${open && n ? this.unplayableList(list) : nothing}
+    </div>`;
+  }
+
+  unplayableList(list) {
+    return html` <div class="unplayable__body">
+      <div class="unplayable__rows">
+        ${list.map((f) => {
+          const where = f.path ? f.path : f.songId || "";
+          return html` <div class="unplayable__row">
+            <div class="unplayable__main">
+              <div class="unplayable__title" title=${f.title || ""}>${f.title || f.songId || "（未知文件）"}</div>
+              <div class="unplayable__sub">
+                ${f.artist ? html`<span>${f.artist}</span>` : nothing}
+                ${f.ext ? html`<span class="unplayable__tag">.${f.ext}</span>` : nothing}
+                ${f.attempts > 1 ? html`<span>失败 ${fmtCount(f.attempts)} 次</span>` : nothing}
+                ${f.at ? html`<span>${new Date(f.at).toLocaleString("zh-CN")}</span>` : nothing}
+              </div>
+              <!-- 路径可选中复制：用户要拿它去文件管理器里找 / 重新下载 -->
+              <div class="unplayable__path u-selectable" title=${where}>${where}</div>
+              <div class="unplayable__reason" title=${f.reason || ""}>${f.reason || "未知原因"}</div>
+            </div>
+            <div class="unplayable__acts">
+              <button
+                class="btn btn--ghost btn--sm"
+                type="button"
+                data-act="unplayable-restore"
+                data-id=${f.songId}
+                data-tip="文件已修好，重新扫描并放回曲库"
+              >
+                ${icon("refresh")}<span>已修好</span>
+              </button>
+              <button
+                class="btn btn--ghost btn--sm"
+                type="button"
+                data-act="unplayable-dismiss"
+                data-id=${f.songId}
+                data-tip="只从清单里去掉这条记录"
+              >
+                ${icon("check")}<span>忽略</span>
+              </button>
+            </div>
+          </div>`;
+        })}
+      </div>
+      <div class="unplayable__foot">
+        <span>
+          这些文件在播放时解不出来，已从曲库移除（<b>磁盘文件没有被删除</b>）。 修好文件后点「已修好」重新扫描即可回到曲库。
+        </span>
+        <button class="btn btn--ghost btn--sm" type="button" data-act="unplayable-clear">
+          ${icon("trash")}<span>清空清单</span>
+        </button>
+      </div>
+    </div>`;
   }
 
   ruleRow(rule) {

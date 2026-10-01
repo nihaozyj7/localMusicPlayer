@@ -30,3 +30,11 @@ import * as $models from "./models.js";
  * Song 一首本地歌曲
  * @typedef {$models.Song} Song
  */
+
+/**
+ * UnplayableFile 一个「放不出来」的文件记录。
+ * 
+ * 它记录的是**播放时实测失败**的事实，不是扫描时的猜测 —— 见
+ * services_unplayable.go 顶部关于「为什么不在扫描时校验」的说明。
+ * @typedef {$models.UnplayableFile} UnplayableFile
+ */

@@ -469,6 +469,41 @@ func (m *Manager) SongByID(id string) (bootstrap.Song, bool) {
 	return s, ok
 }
 
+// DropSong 把一首歌从曲库里摘掉（**不动磁盘文件**），返回是否确实移除了。
+//
+// 用途见 services_unplayable.go：播放时确认放不出来的文件不该继续留在
+// 曲库里 —— 留着只会让用户每次点到都再失败一次（那正是错误提示刷屏的来源）。
+//
+// ★ 元数据缓存条目也必须一起清掉，否则摘了等于没摘：
+//
+//	下次扫描会命中缓存 → 认为「这个文件没变，复用旧元数据」→ 这首歌又回到
+//	曲库里。用户看到的现象就是「移除之后一扫描它又回来了」。
+//	清掉条目才会真正重新读文件（而重读时若仍解析失败，扫描本来就会跳过它）。
+//
+// 注意这不改变「扫描以磁盘为准」的原则：文件仍在磁盘上、仍会被遍历到，
+// 只是元数据要重新读一遍。用户修好文件后重新扫描，它就正常回来了。
+func (m *Manager) DropSong(id string) bool {
+	if id == "" {
+		return false
+	}
+	m.mu.Lock()
+	song, ok := m.songs[id]
+	if ok {
+		delete(m.songs, id)
+	}
+	m.mu.Unlock()
+	if !ok {
+		return false
+	}
+
+	if song.Path != "" {
+		m.cacheMu.Lock()
+		delete(m.cache, song.Path)
+		m.cacheMu.Unlock()
+	}
+	return true
+}
+
 // Folders 返回当前文件夹列表（含曲目数统计）
 func (m *Manager) Folders() []bootstrap.Folder {
 	m.mu.RLock()

@@ -167,6 +167,15 @@ function initialState() {
     settingsRev: 0,
     // 扫描进度文案（#scanning 覆盖层由组件按 state.scanning 渲染）
     scanText: "正在扫描音乐文件夹…",
+    /* 「放不出来」的文件清单（播放时实测失败的那些，见 services_unplayable.go）。
+       songId → { songId, path, title, artist, ext, reason, at, attempts }。
+       用数组而不是 Map：清单通常只有几条，组件按顺序渲染，且要能整体替换。 */
+    unplayableFiles: [],
+    /* 清单是否已经拉过一次。没拉过之前不该显示「没有放不出来的文件」——
+       那会让人误以为检查过了（其实只是还没问后端）。 */
+    unplayableLoaded: false,
+    /* 清单面板是否展开（设置页里点「查看是哪些文件」切换）。 */
+    unplayableOpen: false,
     /* 歌单版本号：歌单数组与每首歌单的 songIds 都是**原地改**的，
        引用比较抓不到变化，所以用一个显式版本号让组件声明依赖。 */
     playlistVersion: 0,
@@ -948,6 +957,136 @@ export function clearQueue() {
 export function songById(id) {
   if (!id) return null;
   return songIndex.get(id) || state.onlineSongs.get(id) || null;
+}
+
+/**
+ * 把一首歌从内存曲库里摘掉（**不动磁盘文件**）。
+ *
+ * 场景：播放时确认某个文件放不出来（见 audio.js#reportUnplayable）。
+ * 后端已经把它从曲库摘了，前端这边必须跟上 —— 否则列表里还留着，
+ * 用户再点一次就是同样的失败，而「每次点到都失败」正是要消除的体验。
+ *
+ * 三处都要改，缺一处就会不一致：
+ *   · allSongsRaw —— 过滤引擎的输入（设置页的「共扫描 N 个文件」也读它）
+ *   · songs       —— 过滤后的结果，列表渲染读它
+ *   · queue       —— 播放队列（留着会让「下一首」跳到一首已经没了歌）
+ *
+ * 刻意**不**走 recalcVisible 之外的捷径：改完统一 commit()，
+ * songIndex 会按 songs 引用变化自动重建（见 recalcVisible 的说明）。
+ */
+export function removeSongFromLibrary(songId) {
+  if (!songId) return false;
+  const before = state.allSongsRaw.length;
+  const keptRaw = state.allSongsRaw.filter((s) => s.id !== songId);
+  if (keptRaw.length === before && !state.onlineSongs.has(songId)) return false;
+
+  state.allSongsRaw = keptRaw;
+  state.songs = state.songs.filter((s) => s.id !== songId);
+  state.queue = state.queue.filter((id) => id !== songId);
+  state.onlineSongs.delete(songId);
+
+  // 被摘掉的正好是当前播放的那首：把 currentId 清掉（播放链路自己会处理
+  // 跳转，这里只管状态一致，避免底栏显示一首已经不存在的歌）
+  if (state.currentId === songId) state.currentId = null;
+
+  // 列表重绘不需要额外版本号：commit 里 recalcVisible 会按**内容**算出
+  // 新的可见指纹并自增 visibleVersion（见那里的说明）。这里改的是数组
+  // 引用，所以 songIndex 的重建也会跟着发生。
+  commit();
+  return true;
+}
+
+/* --------------------------------------------------------------------------
+   「放不出来」的文件清单
+   --------------------------------------------------------------------------
+   数据源是后端（见 Go 侧 services_unplayable.go）：只有在**播放时**实测
+   失败的文件才会进这个清单 —— 扫描时逐首校验要为全库每首起一个 ffmpeg
+   进程，而播放失败意味着解码本来就已经发生过了，登记它是零额外成本。
+
+   清单展示在「设置 → 音乐文件夹」里，用户点一下能看到具体是哪些文件、
+   失败原因是什么，并可以逐个忽略或清空。
+   -------------------------------------------------------------------------- */
+
+/** 从后端拉取清单（启动时与收到 library:unplayable 事件时调用） */
+export async function loadUnplayableFiles() {
+  if (!isWails()) {
+    // 预览模式：没有后端，直接标成「已加载」以便界面显示空态
+    state.unplayableLoaded = true;
+    commit();
+    return [];
+  }
+  const list = await backend.unplayableList();
+  state.unplayableFiles = Array.isArray(list) ? list : [];
+  state.unplayableLoaded = true;
+  commit();
+  return state.unplayableFiles;
+}
+
+/** 展开 / 收起清单面板（设置页里点「查看是哪些文件」） */
+export function toggleUnplayableOpen(open = null) {
+  state.unplayableOpen = open === null ? !state.unplayableOpen : Boolean(open);
+  // 首次展开时如果还没拉到数据，顺手拉一次 —— 用户点了就该看到内容，
+  // 而不是一个空面板加一句「加载中」停在那儿。
+  if (state.unplayableOpen && !state.unplayableLoaded) {
+    loadUnplayableFiles().catch(() => {});
+  }
+  commit();
+}
+
+/**
+ * 从清单里移除一条记录（用户在设置页点「忽略」）。
+ *
+ * 语义：**只把提示抹掉，不改曲库**。这首歌仍然不在曲库里（后端登记时
+ * 已经摘掉了）—— 想让它可以重新进曲库要用 restoreUnplayable()。
+ */
+export async function dismissUnplayable(songId) {
+  if (!songId) return false;
+  const before = state.unplayableFiles.length;
+  state.unplayableFiles = state.unplayableFiles.filter((f) => f.songId !== songId);
+  commit();
+  if (!isWails()) return state.unplayableFiles.length !== before;
+
+  try {
+    await backend.unplayableRemove(songId);
+  } catch (err) {
+    // 后端删失败就把本地也还原，避免「界面上没了、重启又回来」
+    console.warn("[store] 移除「放不出来」记录失败", err);
+    await loadUnplayableFiles().catch(() => {});
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 忘掉一首歌的失败记录，**并让它允许重新进曲库**。
+ *
+ * 用户修好了文件（或换了张能读的盘）之后走这条：清掉记录 → 重新扫描，
+ * 这首歌就会正常回到曲库里。
+ */
+export async function restoreUnplayable(songId, { rescan = true } = {}) {
+  if (!songId) return false;
+  const ok = await dismissUnplayable(songId);
+  if (ok && rescan) {
+    // 重新扫描才会重新遍历磁盘、把它重新收进曲库
+    rescan({ silent: false }).catch(() => {});
+  }
+  return ok;
+}
+
+/** 清空整个清单 */
+export async function clearUnplayable() {
+  const n = state.unplayableFiles.length;
+  state.unplayableFiles = [];
+  commit();
+  if (!isWails()) return n;
+  try {
+    await backend.unplayableClear();
+  } catch (err) {
+    console.warn("[store] 清空「放不出来」清单失败", err);
+    await loadUnplayableFiles().catch(() => {});
+    return 0;
+  }
+  return n;
 }
 
 /* --------------------------------------------------------------------------
@@ -1755,6 +1894,10 @@ export async function hydrateFromBackend() {
     if (liked) state.likedIds = new Set(liked.songIds);
     bumpPlaylists();
   }
+
+  // 「放不出来」清单：启动时拉一次（清单本身通常只有几条）。
+  // 不等它 —— 拉失败也不该挡住启动流程（它只是提示性的信息）。
+  loadUnplayableFiles().catch(() => {});
 
   // 队列与当前曲目可能引用了已不存在的 id，做一次清理。
   // 顺序要紧：**先**把本地存档的「上次播到哪儿」落下来（此刻曲库才刚有），

@@ -88,6 +88,30 @@ func (s *LibraryService) Folders() []bootstrap.Folder {
 	return s.lib.Folders()
 }
 
+/* --------------------------------------------------------------------------
+   曲库移除 / 反查（给 UnplayableService 用，见 services_unplayable.go）
+   -------------------------------------------------------------------------- */
+
+// DropSong 把一首歌从曲库里摘掉（不动磁盘文件）。
+//
+// 刻意**不导出**成 Wails 绑定：它是给 UnplayableService 用的内部能力，
+// 前端不该有「凭 id 删任意一首歌」的入口 —— 曲库的增删只应由扫描决定。
+func (s *LibraryService) DropSong(songID string) bool {
+	return s.lib.DropSong(songID)
+}
+
+// LookupSong 按 id 反查路径/标题/歌手/扩展名。
+//
+// 同样刻意不导出：前端拿到的歌曲对象里本来就有这些字段，
+// 这个方法只是让后端服务之间能互相补齐信息。
+func (s *LibraryService) LookupSong(songID string) (path, title, artist, ext string, ok bool) {
+	song, found := s.lib.SongByID(songID)
+	if !found {
+		return "", "", "", "", false
+	}
+	return song.Path, song.Title, song.Artist, song.Ext, true
+}
+
 // Scan 扫描指定文件夹（folderIds 为空表示全部）。
 // 立即返回是否成功启动，实际进度通过 scan:progress / scan:done 事件推送。
 // Scan 启动一次异步全量扫描。

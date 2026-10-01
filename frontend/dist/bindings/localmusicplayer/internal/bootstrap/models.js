@@ -59,6 +59,7 @@
  * @property {FilterRule[] | null} filterRules
  * @property {string[] | null} likedIds
  * @property {Playlist[] | null} playlists
+ * @property {UnplayableFile[] | null} [unplayableFiles] - UnplayableFiles 是「播放时确认放不出来」的文件清单（见 services_unplayable.go）。 为什么落盘而不是只放内存：这些结论是**付过代价**才得到的 —— 每一条都意味着用户真的点过那首歌、等过一次失败。重启就丢的话， 用户下次还会踩同一个坑，而我们又要重新付一次代价。 为什么放在配置里而不是走曲库 IPC：曲库接口是「每首歌几十字节」的 高频大载荷（10 万首时每次 scan:done 都是几 MB），而失败原因是一段 可能上百字符的错误文本，塞进去会显著放大那个载荷。清单本身通常只有 几条，放配置里最合适。
  * @property {string} cacheDir
  */
 
@@ -115,6 +116,22 @@
  * @property {number} playCount
  * @property {string} cover - data URL；无封面时为空字符串
  * @property {string} [coverUrl] - CoverURL 是同源封面地址（形如 /cover/<内容hash>.jpg?t=…），指向封面缓存 目录里的内容寻址文件。 为什么本地歌曲走 URL 而不是 Cover 里的 base64：内嵌封面平均 143KB， base64 后还会膨胀 1/3 —— 整库塞进列表接口意味着 5,000 首约 484MB 的 IPC 载荷（每次 scan:done 都要重来一遍，含文件夹监听触发的增量重扫）。 给 URL 之后列表载荷只剩几十字节/首，图片由浏览器按 immutable 长缓存按需取， 同一张封面只下载一次。Cover 字段保留给仍需要内嵌 data URL 的场景（在线曲目）。
+ */
+
+/**
+ * UnplayableFile 一个「放不出来」的文件记录。
+ * 
+ * 它记录的是**播放时实测失败**的事实，不是扫描时的猜测 —— 见
+ * services_unplayable.go 顶部关于「为什么不在扫描时校验」的说明。
+ * @typedef {Object} UnplayableFile
+ * @property {string} songId
+ * @property {string} path
+ * @property {string} title
+ * @property {string} artist
+ * @property {string} ext
+ * @property {string} reason - Reason 是失败原因原文（例如「转码失败: exit status 69…」 或「格式无法播放（解码失败）」），直接展示给用户。
+ * @property {number} at - At 是最近一次失败的时间（毫秒时间戳）
+ * @property {number} attempts - Attempts 这首歌累计失败了几次。 大于 1 说明用户反复点过它（或者自动跳转踩到过多次）， 可以用来判断「是不是该把它彻底忽略」。
  */
 
 // In interface mode, this file is likely to contain just comments.

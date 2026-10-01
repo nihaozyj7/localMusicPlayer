@@ -273,6 +273,207 @@
   color: var(--text-3);
 }
 
+/* —— 放不出来的文件（播放时实测失败的清单） ——
+   折叠时只占一行，展开后是可滚动的行列表。空态刻意做得非常轻：
+   绝大多数用户永远看不到它，不该让设置页常年挂着一块大方块。 */
+.unplayable {
+  margin: var(--sp-3) var(--sp-4) var(--sp-4);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--surface-1);
+  overflow: hidden;
+}
+
+.unplayable--empty {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  background: transparent;
+  border-color: transparent;
+}
+
+.unplayable__ok {
+  display: inline-flex;
+  color: var(--success);
+}
+
+.unplayable__ok svg {
+  width: 15px;
+  height: 15px;
+}
+
+.unplayable__hint {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  opacity: 0.8;
+}
+
+/* 折叠头（整行可点） */
+.unplayable__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-3);
+  background: transparent;
+  border: 0;
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.unplayable__head:hover {
+  background: var(--surface-2);
+}
+
+.unplayable__head:disabled {
+  cursor: default;
+  color: var(--text-3);
+}
+
+.unplayable__icon {
+  display: inline-flex;
+  color: var(--warning);
+}
+
+.unplayable__icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.unplayable__label {
+  font-size: var(--fs-md);
+}
+
+.unplayable__label b {
+  color: var(--warning);
+}
+
+.unplayable__cta {
+  margin-left: auto;
+  font-size: var(--fs-sm);
+  color: var(--accent);
+}
+
+.unplayable__chev {
+  display: inline-flex;
+  color: var(--text-3);
+  transition: transform var(--dur) var(--ease);
+}
+
+.unplayable__chev svg {
+  width: 14px;
+  height: 14px;
+}
+
+.unplayable__body {
+  border-top: var(--hairline);
+}
+
+/* 行列表：清单可能很长（整库坏文件），限高滚动而不是把设置页撑爆 */
+.unplayable__rows {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.unplayable__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+}
+
+.unplayable__row + .unplayable__row {
+  border-top: var(--hairline);
+}
+
+.unplayable__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.unplayable__title {
+  font-size: var(--fs-md);
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unplayable__sub {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  flex-wrap: wrap;
+}
+
+.unplayable__tag {
+  padding: 0 5px;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+}
+
+/* 路径要能选中复制：用户得拿它去文件管理器里找 / 重新下载 */
+.unplayable__path {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  user-select: text;
+}
+
+/* 失败原因可能很长（ffmpeg 的 stderr），折行显示但限两行 */
+.unplayable__reason {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.unplayable__acts {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex: none;
+}
+
+.unplayable__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border-top: var(--hairline);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+
+.unplayable__foot > span {
+  flex: 1 1 auto;
+}
+
+.unplayable__foot b {
+  color: var(--text-1);
+}
+
 /* —— 状态徽标 —— */
 .chip {
   display: inline-flex;

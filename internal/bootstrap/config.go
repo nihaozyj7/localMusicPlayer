@@ -259,11 +259,44 @@ type Config struct {
 	LikedIDs    []string     `json:"likedIds"`
 	Playlists   []Playlist   `json:"playlists"`
 
+	// UnplayableFiles 是「播放时确认放不出来」的文件清单（见 services_unplayable.go）。
+	//
+	// 为什么落盘而不是只放内存：这些结论是**付过代价**才得到的 ——
+	// 每一条都意味着用户真的点过那首歌、等过一次失败。重启就丢的话，
+	// 用户下次还会踩同一个坑，而我们又要重新付一次代价。
+	//
+	// 为什么放在配置里而不是走曲库 IPC：曲库接口是「每首歌几十字节」的
+	// 高频大载荷（10 万首时每次 scan:done 都是几 MB），而失败原因是一段
+	// 可能上百字符的错误文本，塞进去会显著放大那个载荷。清单本身通常只有
+	// 几条，放配置里最合适。
+	UnplayableFiles []UnplayableFile `json:"unplayableFiles,omitempty"`
+
 	CacheDir string `json:"cacheDir"`
 
 	// 运行时字段，不落盘
 	ConfigPath string `json:"-"`
 	DataDir    string `json:"-"`
+}
+
+// UnplayableFile 一个「放不出来」的文件记录。
+//
+// 它记录的是**播放时实测失败**的事实，不是扫描时的猜测 —— 见
+// services_unplayable.go 顶部关于「为什么不在扫描时校验」的说明。
+type UnplayableFile struct {
+	SongID string `json:"songId"`
+	Path   string `json:"path"`
+	Title  string `json:"title"`
+	Artist string `json:"artist"`
+	Ext    string `json:"ext"`
+	// Reason 是失败原因原文（例如「转码失败: exit status 69…」
+	// 或「格式无法播放（解码失败）」），直接展示给用户。
+	Reason string `json:"reason"`
+	// At 是最近一次失败的时间（毫秒时间戳）
+	At int64 `json:"at"`
+	// Attempts 这首歌累计失败了几次。
+	// 大于 1 说明用户反复点过它（或者自动跳转踩到过多次），
+	// 可以用来判断「是不是该把它彻底忽略」。
+	Attempts int `json:"attempts"`
 }
 
 /* --------------------------------------------------------------------------

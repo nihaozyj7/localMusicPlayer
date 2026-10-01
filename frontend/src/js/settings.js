@@ -6,7 +6,13 @@
 import { openModal, toast } from "./dom.js";
 import { html, nothing } from "./ui/base.js";
 import { requestAppUpdate } from "./ui/base.js";
-import { state } from "./store.js";
+import {
+  clearUnplayable,
+  dismissUnplayable,
+  restoreUnplayable,
+  state,
+  toggleUnplayableOpen,
+} from "./store.js";
 import { backend, isWails, on } from "./bridge.js";
 import { fmtCount, uid } from "./utils.js";
 import { aiVendorHint, aiVendorLabel } from "./ai-vendors.js";
@@ -872,6 +878,48 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       toast("正在重新扫描该文件夹…");
       ctx.rescan?.({ manual: true });
       break;
+
+    /* 放不出来的文件清单（见 store.js 的「放不出来」那一节与
+       Go 侧 services_unplayable.go） */
+    case "unplayable-toggle":
+      toggleUnplayableOpen();
+      break;
+    case "unplayable-dismiss":
+      await dismissUnplayable(id);
+      break;
+    case "unplayable-restore": {
+      // 「已修好」→ 清掉记录并重新扫描，给它一次回到曲库的机会。
+      // 用确认框而不是直接执行：重新扫描是几秒到几十秒的可见动作，
+      // 点错了用户会以为程序卡住。
+      const f = (state.unplayableFiles || []).find((x) => x.songId === id);
+      openModal({
+        title: "重新扫描并放回曲库？",
+        desc: `将清掉「${f?.title || id}」的失败记录，并重新扫描音乐文件夹。\n如果文件确实已经修好，它就会回到曲库里。`,
+        okText: "重新扫描",
+        onOk: async () => {
+          await restoreUnplayable(id);
+          toast("已重新扫描", { tone: "success" });
+          return true;
+        },
+      });
+      break;
+    }
+    case "unplayable-clear": {
+      const n = (state.unplayableFiles || []).length;
+      if (!n) break;
+      openModal({
+        title: `清空这 ${fmtCount(n)} 条记录？`,
+        desc: "只清掉这张清单，不会改动任何文件，也不会让它们回到曲库。",
+        okText: "清空",
+        danger: true,
+        onOk: async () => {
+          const removed = await clearUnplayable();
+          toast(`已清空 ${fmtCount(removed)} 条记录`);
+          return true;
+        },
+      });
+      break;
+    }
 
     /* 规则 */
     case "rule-add":

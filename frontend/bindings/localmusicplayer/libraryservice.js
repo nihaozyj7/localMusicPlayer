@@ -26,11 +26,35 @@ export function AddFolder(manualPath) {
 }
 
 /**
+ * DropSong 把一首歌从曲库里摘掉（不动磁盘文件）。
+ * 
+ * 刻意**不导出**成 Wails 绑定：它是给 UnplayableService 用的内部能力，
+ * 前端不该有「凭 id 删任意一首歌」的入口 —— 曲库的增删只应由扫描决定。
+ * @param {string} songID
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function DropSong(songID) {
+    return $Call.ByID(890492682, songID);
+}
+
+/**
  * Folders 返回已配置的音乐文件夹
  * @returns {$CancellablePromise<bootstrap$0.Folder[] | null>}
  */
 export function Folders() {
     return $Call.ByID(2416607191);
+}
+
+/**
+ * LookupSong 按 id 反查路径/标题/歌手/扩展名。
+ * 
+ * 同样刻意不导出：前端拿到的歌曲对象里本来就有这些字段，
+ * 这个方法只是让后端服务之间能互相补齐信息。
+ * @param {string} songID
+ * @returns {$CancellablePromise<[string, string, string, string, boolean]>}
+ */
+export function LookupSong(songID) {
+    return $Call.ByID(4068286249, songID);
 }
 
 /**

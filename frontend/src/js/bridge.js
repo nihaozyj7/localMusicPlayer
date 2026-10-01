@@ -80,6 +80,11 @@ export async function connect() {
       Download: mod.DownloadService,
       Cover: mod.CoverService,
       Skins: mod.SkinService,
+      // 「放不出来」清单（见 services_unplayable.go）。
+      // 与上面的说明同理：键名必须是 index.js 的导出名（UnplayableService），
+      // 而调用处用的是简称 Unplayable —— 漏了这一行不会有构建错误，
+      // 只会在运行时表现为「清单永远是空的」（call() 拿到 undefined 直接返回 null）。
+      Unplayable: mod.UnplayableService,
     };
     active = true;
     try {
@@ -243,6 +248,17 @@ const backendImpl = {
   /* ---- 播放地址 ---- */
   mediaUrl: (songId) => call(bindings?.Media?.URL, songId),
   mediaState: () => call(bindings?.Media?.State),
+
+  /* ---- 「放不出来」清单（见 Go 侧 services_unplayable.go） ----
+     只在**播放时**登记，不在扫描时校验：播放失败意味着解码本来就已经
+     发生过了，登记它是零额外成本；而扫描时逐首校验要为全库每首起一个
+     ffmpeg 进程（用户的库 8725 首，那是十几分钟起步）。 */
+  unplayableList: () => call(bindings?.Unplayable?.List),
+  unplayableCount: () => call(bindings?.Unplayable?.Count),
+  unplayableReport: (songId, reason, path = "") => call(bindings?.Unplayable?.Report, songId, reason, path),
+  unplayableRemove: (songId) => call(bindings?.Unplayable?.Remove, songId),
+  unplayableForget: (songId) => call(bindings?.Unplayable?.Forget, songId),
+  unplayableClear: () => call(bindings?.Unplayable?.Clear),
 
   /* ---- 后端原生播放（见 services_player.go） ----
      音频的「解码 + 输出」在 Go 进程里做，前端只发指令、收锚点与频谱。

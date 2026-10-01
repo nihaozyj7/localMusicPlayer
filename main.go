@@ -57,7 +57,9 @@ type appState struct {
 	coverSvc    *CoverService
 	lyricsSvc   *LyricsService
 	playerSvc   *PlayerService
-	metaCache   *metacache.Store
+	// unplayableSvc 记录「播放时确认放不出来」的文件（见 services_unplayable.go）
+	unplayableSvc *UnplayableService
+	metaCache     *metacache.Store
 	// mediaKeySvc 负责键盘媒体键（⏯）的全局热键接管
 	mediaKeySvc *MediaKeyService
 }
@@ -161,6 +163,10 @@ func main() {
 	}
 
 	state.librarySvc = NewLibraryService(lib, watch, store)
+	// 「放不出来」清单：登记播放时确认失败的文件，并把它们从曲库摘掉。
+	// 依赖曲库做反查与移除（见 services_unplayable.go）。
+	state.unplayableSvc = NewUnplayableService(store)
+	state.unplayableSvc.setLibrary(state.librarySvc)
 	// themeMgr 传下去是为了算额外窗口的「创建底色」（见
 	// desktop_wallpaper.go#desktopWallpaperFirstFrameColour）；它为 nil 也安全。
 	state.windowSvc = NewWindowService(store, themeMgr)
@@ -217,6 +223,7 @@ func main() {
 			application.NewService(onlineSvc),
 			application.NewService(state.downloadSvc),
 			application.NewService(state.coverSvc),
+			application.NewService(state.unplayableSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -336,6 +343,8 @@ func main() {
 	// 封面服务需要应用句柄来弹「选择本地图片」的文件对话框
 	state.coverSvc.app = app
 	state.coverSvc.setEmitter(emit)
+	// 「放不出来」清单：登记新条目时推一条事件给前端（刷新清单 + 提示用户）
+	state.unplayableSvc.setEmitter(emit)
 	// 下载目录变了要让曲库重载文件夹（下载目录是隐式扫描根）并重扫一次，
 	// 这样刚迁移过去的歌会立刻出现在「本地歌曲」里。
 	state.downloadSvc.onDirChanged = func() {

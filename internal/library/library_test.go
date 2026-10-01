@@ -289,3 +289,99 @@ func TestWatcherPicksUpNewFile(t *testing.T) {
 	}
 	t.Errorf("文件监听未在 5 秒内更新曲库（当前 %d 首）", len(m.Songs()))
 }
+
+/* --------------------------------------------------------------------------
+   DropSong：从曲库里摘掉一首歌（见 services_unplayable.go 的用途）
+   -------------------------------------------------------------------------- */
+
+// ★ 这条测试锁住一个很容易写漏的细节：**元数据缓存条目也必须一起清**。
+//
+// 只摘内存不同步缓存的话，下次扫描会命中缓存 → 认为「这个文件没变，
+// 复用旧元数据」→ 这首歌又回到曲库。用户看到的现象就是
+// 「移除之后一扫描它又回来了」，然后每次点到又失败一次。
+func TestDropSongRemovesSongAndCache(t *testing.T) {
+	m, store, _ := newTestManager(t)
+	music := t.TempDir()
+	path := filepath.Join(music, "bad.wav")
+	writeWAV(t, path, 1)
+	if err := store.Update(func(c *bootstrap.Config) {
+		c.Folders = []bootstrap.Folder{{ID: "f1", Path: music}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m = NewManager(store)
+
+	if _, err := m.Scan(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	songs := m.Songs()
+	if len(songs) != 1 {
+		t.Fatalf("前置条件：应有 1 首，实际 %d", len(songs))
+	}
+	id := songs[0].ID
+
+	// 缓存里确实有这个文件的条目（否则这条测试没有意义）
+	m.cacheMu.RLock()
+	_, cachedBefore := m.cache[path]
+	m.cacheMu.RUnlock()
+	if !cachedBefore {
+		t.Fatal("前置条件：扫描后缓存里应当有这个文件的条目")
+	}
+
+	if !m.DropSong(id) {
+		t.Error("DropSong 应返回 true")
+	}
+	if _, ok := m.SongByID(id); ok {
+		t.Error("DropSong 之后这首歌不该还在曲库里")
+	}
+
+	m.cacheMu.RLock()
+	_, cachedAfter := m.cache[path]
+	m.cacheMu.RUnlock()
+	if cachedAfter {
+		t.Error("DropSong 必须同时清掉元数据缓存条目（否则重扫会让它回来）")
+	}
+
+	// 幂等：重复摘返回 false，不 panic
+	if m.DropSong(id) {
+		t.Error("重复 DropSong 应返回 false")
+	}
+	if m.DropSong("") {
+		t.Error("空 id 应返回 false")
+	}
+}
+
+// DropSong 之后再扫描，文件仍在磁盘上、仍会被重新扫进来 ——
+// 这正是「用户修好文件后重新扫描就能回来」的依据。
+func TestDropSongThenRescanFindsItAgain(t *testing.T) {
+	m, store, _ := newTestManager(t)
+	music := t.TempDir()
+	out := filepath.Join(music, "b.wav")
+	writeWAV(t, out, 1)
+	if err := store.Update(func(c *bootstrap.Config) {
+		c.Folders = []bootstrap.Folder{{ID: "f1", Path: music}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m = NewManager(store)
+	if _, err := m.Scan(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	songs := m.Songs()
+	if len(songs) != 1 {
+		t.Fatalf("应有 1 首，实际 %d", len(songs))
+	}
+
+	m.DropSong(songs[0].ID)
+	if len(m.Songs()) != 0 {
+		t.Fatalf("摘掉后应为 0 首，实际 %d", len(m.Songs()))
+	}
+
+	// 重新扫描：文件还在磁盘上，所以它应当回来（这正是「已修好」按钮的依据）
+	if _, err := m.Scan(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Songs()) != 1 {
+		t.Errorf("重新扫描后文件应重新入库（磁盘文件没被删），实际 %d 首", len(m.Songs()))
+	}
+}

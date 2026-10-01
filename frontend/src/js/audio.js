@@ -42,6 +42,7 @@ import {
   notify,
   persist,
   playNext,
+  removeSongFromLibrary,
   seek,
   setRealAudioProbe,
   setUserPlayProbe,
@@ -405,6 +406,17 @@ function handlePlaybackFailure(songId, reason, source = "unknown") {
 
   console.warn(`[audio] 播放失败（${source}）：${title} —— ${why}`);
 
+  // 报给后端登记进「放不出来」清单（设置 → 音乐文件夹里可查看）。
+  //
+  // 为什么在这里登记而不是扫描时校验：解码本来就已经发生过了，登记它是
+  // 零额外成本；扫描时逐首校验要为全库每首起一个 ffmpeg 进程
+  // （8725 首 = 十几分钟起步），而且那份开销对这个文件是白花的。
+  //
+  // 后端会顺手把这首歌从曲库里摘掉（见 services_unplayable.go#Report）——
+  // 留着它只会让用户每次点到都再失败一次。
+  // 不 await：这里是失败路径，不该让提示与跳转等一次 IPC 往返。
+  reportUnplayable(song, why);
+
   // 状态回收：清掉「已装载」的记账，否则 tick 会以为这首歌还在后端
   if (backendSongId === id) backendSongId = null;
   if (loadedFor === id) loadedFor = null;
@@ -455,6 +467,32 @@ function handlePlaybackFailure(songId, reason, source = "unknown") {
 function noteLoadSucceeded() {
   consecutiveFailures = 0;
   failedSongId = null;
+}
+
+/**
+ * 把一首「放不出来」的歌报给后端登记。
+ *
+ * 后端会把条目写进配置（重启后仍在）并把这首歌从曲库摘掉，
+ * 前端这边同步把它从内存列表里去掉 —— 否则列表里还留着，
+ * 用户再点一次又是同样的失败。
+ *
+ * 失败不影响主流程：这只是「记账」，记不上也不该干扰播放。
+ */
+function reportUnplayable(song, reason) {
+  if (!isWails() || !song?.id) return;
+  try {
+    backend
+      .unplayableReport(song.id, String(reason || ""), song.path || "")
+      .then(() => {
+        // 从内存曲库里摘掉（后端已经摘了，这里保持两边一致）
+        removeSongFromLibrary(song.id);
+      })
+      .catch((err) => {
+        console.warn("[audio] 登记「放不出来」失败（不影响播放）", err);
+      });
+  } catch (err) {
+    console.warn("[audio] 登记「放不出来」失败（不影响播放）", err);
+  }
 }
 
 /**

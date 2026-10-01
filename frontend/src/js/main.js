@@ -23,6 +23,7 @@ import {
   currentSong,
   flushConfigSync,
   isLiked,
+  loadUnplayableFiles,
   nextIndex,
   playNext,
   playPrev,
@@ -33,6 +34,7 @@ import {
   state,
   toggleLike,
   togglePlay,
+  toggleUnplayableOpen,
   startMockTicker,
 } from "./store.js";
 import { doRescan, navigate, settingsLayerOpen, refreshSettingsLayer } from "./shell.js";
@@ -290,6 +292,25 @@ function bindBackendEvents() {
     state.scanning = false;
     commit();
     toast(`扫描失败：${payload?.message ?? "未知错误"}`, { tone: "error", duration: 5000 });
+  });
+
+  /* ---- 播放时发现放不出来的文件 ----
+     后端在登记新条目后会广播这条事件（见 services_unplayable.go#Report）。
+     曲库那条链路由 audio.js 负责（它会顺手把歌从内存列表里摘掉），
+     这里只做两件事：刷新清单缓存 + 给用户一条指向清单的提示。 */
+  on("library:unplayable", (payload) => {
+    if (!payload) return;
+    loadUnplayableFiles().catch(() => {});
+
+    const title = payload.title || payload.songId || "这首歌";
+    // 提示里说明「去哪儿看」，并把清单展开 —— 用户点一下通知（或稍后进设置）
+    // 就能看到具体是哪个文件、什么原因。失败原因不塞进 toast：它可能很长
+    // （ffmpeg 的 stderr），一闪而过的位置既看不完也没法复制。
+    toast(`无法播放：${title}（已记入「音乐文件夹」清单）`, { tone: "error", duration: 6000 });
+    // 同时把设置层的清单标记为展开：用户随后打开设置就是展开状态。
+    // 注意这里**不**强行弹出设置层 —— 用户可能正在做别的事，
+    // 播放器跳出来一个设置界面是打断（切歌本身已经自动继续了）。
+    toggleUnplayableOpen(true);
   });
 
   on("theme:changed", (id) => {

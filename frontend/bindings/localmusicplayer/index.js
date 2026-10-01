@@ -15,6 +15,7 @@ import * as PlayerService from "./playerservice.js";
 import * as PlaylistService from "./playlistservice.js";
 import * as SkinService from "./skinservice.js";
 import * as ThemeService from "./themeservice.js";
+import * as UnplayableService from "./unplayableservice.js";
 import * as WindowService from "./windowservice.js";
 export {
     AppService,
@@ -30,6 +31,7 @@ export {
     PlaylistService,
     SkinService,
     ThemeService,
+    UnplayableService,
     WindowService
 };
 
