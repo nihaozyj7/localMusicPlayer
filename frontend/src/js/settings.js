@@ -7,15 +7,23 @@ import { openModal, toast } from "./dom.js";
 import { html, nothing } from "./ui/base.js";
 import { requestAppUpdate } from "./ui/base.js";
 import {
+  cancelUpdateDownload,
+  checkForUpdate,
   clearUnplayable,
   dismissUnplayable,
+  downloadUpdate,
+  installUpdate,
   restoreUnplayable,
+  setUpdateChannel,
+  setUpdateCheckOnStart,
+  skipUpdateVersion,
   state,
   toggleUnplayableOpen,
 } from "./store.js";
 import { backend, isWails, on } from "./bridge.js";
 import { fmtCount, uid } from "./utils.js";
 import { aiVendorHint, aiVendorLabel } from "./ai-vendors.js";
+import { updateMirror } from "./about-info.js";
 import { applyResolvedTheme, discoverThemes, listThemes, removeTheme } from "./theme.js";
 import { BACKDROP_MODES, backdropLabel } from "./backdrop.js";
 import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
@@ -755,6 +763,119 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       } catch (err) {
         toast(`打开链接失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
       }
+      return;
+    }
+
+    /* ---- 版本更新（见 services_update.go 与 store.js 的对应实现） ----
+       三个动作都委托给 store：状态归 state.update，界面照着它渲染。
+       toast 只用来反馈「动作已发出」，真正的结果由后端事件驱动
+       （update:checked / update:progress / … 见 main.js）。 */
+    case "update-check": {
+      if (!isWails()) {
+        toast("浏览器预览模式无法联网检查更新", { tone: "warning", duration: 3200 });
+        return;
+      }
+      toast("正在检查更新…", { duration: 2200 });
+      try {
+        const res = await checkForUpdate({ force: true });
+        if (!res) return;
+        if (res.error) {
+          toast(`检查失败：${res.error}`, { tone: "error", duration: 7000 });
+        } else if (res.hasUpdate && !res.assetAvailable) {
+          toast(`有新版本 ${res.latest}，但没有当前平台的安装包`, { tone: "warning", duration: 6000 });
+        } else if (res.hasUpdate) {
+          toast(`发现新版本 ${res.latest}`, { tone: "success", duration: 4000 });
+        } else {
+          toast(`已是最新版本（v${res.current}）`, { tone: "success", duration: 3000 });
+        }
+      } catch (err) {
+        toast(`检查失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
+      }
+      return;
+    }
+
+    case "update-download": {
+      if (!isWails()) {
+        toast("浏览器预览模式无法下载更新", { tone: "warning", duration: 3200 });
+        return;
+      }
+      // 不 await：下载可能要几分钟，界面靠 update:progress 事件驱动。
+      // 在这里等的话，用户点完按钮会看到界面「卡住」直到下载结束。
+      downloadUpdate().catch((err) => {
+        toast(`下载失败：${err?.message ?? err}`, { tone: "error", duration: 7000 });
+      });
+      return;
+    }
+
+    case "update-cancel": {
+      const ok = await cancelUpdateDownload();
+      toast(ok ? "已取消下载" : "当前没有正在进行的下载", { duration: 2600 });
+      return;
+    }
+
+    /* 安装：会替换程序文件并重启，所以要用户明确确认一次。
+       不做「点了就装」—— 用户可能只是好奇点了一下，
+       而程序突然关掉再开（哪怕成功了）也是一种惊吓。 */
+    case "update-install": {
+      if (!isWails()) {
+        toast("浏览器预览模式无法安装更新", { tone: "warning", duration: 3200 });
+        return;
+      }
+      const pending = state.update?.pending;
+      if (!pending) {
+        toast("还没有下载好可安装的更新", { tone: "warning", duration: 3200 });
+        return;
+      }
+      openModal({
+        title: "安装更新并重启？",
+        desc:
+          `即将安装 ${pending.name}。程序会先退出，由引导脚本替换文件后自动重启。` +
+          (pending.verified
+            ? "安装包已通过 SHA-256 校验。"
+            : "注意：这一版没有可用的校验值，请确认来源可信。"),
+        okText: "安装并重启",
+        onOk: async () => {
+          const ok = await installUpdate();
+          if (!ok) {
+            toast(`安装失败：${state.update?.error || "未知原因"}`, { tone: "error", duration: 7000 });
+            return false;
+          }
+          // 成功的话程序马上就会退出，这句提示只是覆盖退出前那一小段时间
+          toast("正在安装更新，程序即将重启…", { duration: 4000 });
+          return true;
+        },
+      });
+      return;
+    }
+
+    case "update-skip": {
+      const version = String(actEl.dataset.version || "");
+      await skipUpdateVersion(version);
+      toast(version ? `已跳过 ${version}，之后再提示更新的版本` : "已取消跳过，将重新提示该版本", {
+        duration: 3600,
+      });
+      return;
+    }
+
+    case "update-open-dir": {
+      if (!isWails()) {
+        toast("浏览器预览模式没有文件管理器", { tone: "warning", duration: 3000 });
+        return;
+      }
+      try {
+        await backend.updateOpenDir();
+      } catch (err) {
+        toast(`打开更新目录失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
+      }
+      return;
+    }
+
+    /* 下载通道下拉框（<select> 走 change 事件，所以只能在这里处理） */
+    case "update-channel": {
+      const id = String(actEl.value || "auto");
+      await setUpdateChannel(id);
+      const name = updateMirror(id).name;
+      toast(`下载通道已设为「${name}」`, { duration: 3000 });
       return;
     }
 
@@ -1554,6 +1675,20 @@ export function handleSettingControl(actEl, ctx = {}) {
     }
 
     actEl.setAttribute("aria-checked", String(next));
+
+    // 「启动时自动检查更新」不在 state.config 里（它是 state.update 的一部分，
+    // 由 UpdateService 单独管理）。必须在这里单独处理：
+    // 直接落到下面 `toggleKey in state.config` 的判断上会被静默忽略 ——
+    // 开关能动、看起来生效了，但重启后什么都没变。
+    if (toggleKey === "updateCheckOnStart") {
+      setUpdateCheckOnStart(next)
+        .then(() => ctx.commit?.())
+        .catch((err) => {
+          console.warn("[settings] 设置自动检查失败", err);
+        });
+      return true;
+    }
+
     if (toggleKey in state.config) {
       state.config[toggleKey] = next;
       if (toggleKey === "animations") {

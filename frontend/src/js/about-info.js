@@ -229,6 +229,53 @@ export const DISCLAIMER = [
 ];
 
 /* --------------------------------------------------------------------------
+   版本更新
+   -------------------------------------------------------------------------- */
+
+/**
+ * 更新检查的数据源（GitHub 仓库）。
+ *
+ * 与 package.json 的 repository 字段同源；这里单独列一份是因为更新界面
+ * 要把它作为可点击的链接展示，而 package.json 在运行时读不到。
+ */
+export const UPDATE_REPO = "https://github.com/nihaozyj7/localMusicPlayer";
+
+/** 该仓库的 Releases 页面（手动下载 / 查看全部版本用）。 */
+export const UPDATE_RELEASES_URL = `${UPDATE_REPO}/releases`;
+
+/**
+ * GitHub 下载加速代理。
+ *
+ * 为什么要这份名单：GitHub 的 release 资产走的是
+ * objects.githubusercontent.com，在国内网络下经常慢到不可用甚至完全连不上。
+ * 这些代理只是把原始地址拼在自己域名后面转发，**资产内容不变**，
+ * 所以可以随时切换、互相兜底。
+ *
+ * 注意：**真正执行下载的是 Go 侧**，它的名单在 internal/update/mirror.go，
+ * 两边必须保持一致（id 会被写进配置文件）。这里少了某项只是下拉里看不到；
+ * Go 侧少了，用户选过的通道就会失效。
+ *
+ * @type {{ id: string, name: string, note: string }[]}
+ */
+export const UPDATE_MIRRORS = [
+  { id: "auto", name: "自动选择（推荐）", note: "先试直连，失败自动换下一个代理，直到成功" },
+  { id: "direct", name: "直连 GitHub", note: "不使用代理；网络通畅时最快" },
+  { id: "ghproxy.net", name: "ghproxy.net", note: "通用加速，稳定性较好" },
+  { id: "ghfast.top", name: "ghfast.top", note: "通用加速，速度较快" },
+  { id: "githubproxy.cc", name: "githubproxy.cc", note: "通用加速" },
+  { id: "gh-proxy.com", name: "gh-proxy.com", note: "通用加速，偶有限流" },
+  { id: "ghproxy.homeboyc.cn", name: "ghproxy.homeboyc.cn", note: "对大文件支持较好" },
+  { id: "gh.llkk.cc", name: "gh.llkk.cc", note: "通用加速，可用性波动较大" },
+  { id: "ghp.ci", name: "ghp.ci", note: "老牌代理，部分地区已不可用" },
+];
+
+/** 按 id 取通道定义（界面回显用户的选择时用）。 */
+export function updateMirror(id) {
+  const key = String(id || "").trim();
+  return UPDATE_MIRRORS.find((m) => m.id === key) || UPDATE_MIRRORS[0];
+}
+
+/* --------------------------------------------------------------------------
    小工具
    -------------------------------------------------------------------------- */
 

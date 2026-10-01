@@ -37,9 +37,13 @@ import {
   PROJECT_LINKS,
   TECH_STACK,
   THANKS,
+  UPDATE_MIRRORS,
+  UPDATE_REPO,
+  UPDATE_RELEASES_URL,
   allLibs,
   licenseSummary,
   nameWithVersion,
+  updateMirror,
 } from "../about-info.js";
 import {
   ANIMATION_SPEEDS,
@@ -195,6 +199,15 @@ class MpSettingsLayer extends MpElement {
     s.loudnessState,
     s.ffmpegState,
     s.backdropState,
+    // 版本更新：检查结果 / 下载进度 / 待安装的包都在这里（见 store.js）。
+    //
+    // ★ 这里**不能**只放 `s.update`：那个子对象是被**原地修改**的
+    //   （state.update.check = …），引用从头到尾不变，而 Lit 是按引用
+    //   比较依赖项的 —— 于是事件收到了、state 也改了，界面却一动不动。
+    //   这个坑实测踩到过：后端推 update:checked 之后卡片纹丝不动，
+    //   手动 requestUpdate() 一下内容就对了。所以必须放一个**每次变更都
+    //   会变的数字**（updateRev），而不是那个对象本身。
+    s.updateRev,
     // ★ 刻意**不含** s.volume：音量滑条按 pointermove 触发（一次拖动几十上百次），
     //   而 render() 会无条件重算三处随曲库规模线性增长的派生值
     //   （见 foldersCard 的 startsWith 统计、filtersCard 的 applyRules、
@@ -317,7 +330,7 @@ class MpSettingsLayer extends MpElement {
               </div>
               ${this.foldersCard()} ${this.rulesCard()} ${this.themeCard()} ${this.playerCard()}
               ${this.playbackCard()} ${this.lyricsCard()} ${this.loudnessCard()} ${this.onlineCard()} ${this.aiCard()}
-              ${this.systemCard()} ${this.aboutCard()} ${this.techCard()}
+              ${this.systemCard()} ${this.aboutCard()} ${this.updateCard()} ${this.techCard()}
               ${this.libsCard()} ${this.licenseCard()} ${this.creditsCard()}
             </div>
           </div>
@@ -1380,6 +1393,303 @@ class MpSettingsLayer extends MpElement {
         <span>版本号来自后端常量（services_app.go#appVersion），与安装包元数据同源</span>
       </div>
     </section>`;
+  }
+
+  /* ========================================================================
+     版本更新
+     ========================================================================
+     这一张卡片对应三个后端动作（见 services_update.go）：
+       Check（问 GitHub）→ Download（逐个通道试）→ Install（自替换 + 重启）。
+
+     排版上有意把「状态」放在最上面、动作按钮放在下面：
+     用户最常需要知道的是「现在是什么情况」（已是最新 / 有新版 / 正在下载），
+     而按钮只是针对那个情况的一个动作。
+
+     三种「没有更新」必须分得清清楚楚（它们在旧实现里经常被混成一句
+     「已是最新版」，而网络故障时那句话是**错的**）：
+       · 真的已是最新      → 绿色提示，没有按钮
+       · 检查失败          → 红色提示 + 重试按钮
+       · 有新版但没有本站的包 → 黄色提示 + 「去发布页面」按钮
+     ======================================================================== */
+  updateCard() {
+    const u = state.update || {};
+    const check = u.check;
+    const current = check?.current || state.appVersion || APP_VERSION_FALLBACK;
+    const latest = check?.latest || "";
+    const channel = updateMirror(u.channel);
+    const pending = u.pending;
+    const progress = u.progress;
+
+    return html` <section class="card" data-section="about" id="sec-update">
+      <div class="card__head">
+        <div class="card__icon">${icon("refresh")}</div>
+        <div class="card__titles">
+          <div class="card__title">版本更新</div>
+          <div class="card__desc">从 GitHub Releases 检测新版本；网络不好时可走加速代理下载</div>
+        </div>
+        <span class="u-spacer"></span>
+        <span class="chip ${latest ? "chip--ok" : ""}"><i class="chip__dot"></i>当前 v${current}</span>
+      </div>
+      <div class="card__body">
+        ${this.updateStatusBlock({ check, current, latest, pending, progress })}
+
+        ${u.error && !check?.error
+          ? html`<div class="setting__hint" style="color:var(--danger,#e5484d)">${u.error}</div>`
+          : nothing}
+        ${progress ? this.updateProgressBlock(progress, check) : nothing}
+        ${pending ? this.updatePendingBlock(pending) : nothing}
+        ${check?.notes && check.hasUpdate ? this.updateNotesBlock(check) : nothing}
+
+        <div class="setting">
+          <div class="setting__main">
+            <div class="setting__label">下载通道</div>
+            <div class="setting__hint">
+              下载安装包时使用。选「自动」会先试直连，失败后自动换下一个代理 ——
+              当前：${channel.name}${channel.note ? `（${channel.note}）` : ""}
+            </div>
+          </div>
+          <div class="setting__control">
+            <select class="select" data-act="update-channel" aria-label="下载通道">
+              ${UPDATE_MIRRORS.map(
+                (m) => html`<option value=${m.id} ?selected=${m.id === (u.channel || "auto")}>${m.name}</option>`
+              )}
+            </select>
+          </div>
+        </div>
+
+        ${settingRow({
+          label: "启动时自动检查更新",
+          hint: "只在发现新版本时提示；检查失败不会打扰你（可以随时点上面的「检查更新」）",
+          control: switchControl("updateCheckOnStart", u.checkOnStart !== false, "启动时自动检查更新"),
+        })}
+
+        <div class="setting">
+          <div class="setting__main">
+            <div class="setting__label">仓库</div>
+            <div class="setting__hint">${UPDATE_REPO}</div>
+          </div>
+          <div class="setting__control">
+            <button class="btn btn--ghost btn--sm" type="button" data-act="about-open-url" data-url=${UPDATE_RELEASES_URL}>
+              ${icon("external")}<span>全部版本</span>
+            </button>
+            <button class="btn btn--ghost btn--sm" type="button" data-act="update-open-dir">
+              ${icon("folder")}<span>更新目录</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="card__foot">
+        <span>安装时会退出当前程序，由引导脚本替换文件并自动重启；配置与曲库不受影响</span>
+      </div>
+    </section>`;
+  }
+
+  /* —— 状态区：四种情况各自的提示与动作 —— */
+  updateStatusBlock({ check, current, latest, pending, progress }) {
+    const u = state.update || {};
+
+    // 1) 正在检查
+    if (u.checking) {
+      return html` <div class="about-note">
+        <div class="about-note__title"><span>正在检查…</span></div>
+        <div class="about-note__body">正在向 GitHub 查询最新版本。</div>
+        <button class="btn btn--sm" type="button" disabled>${icon("refresh")}<span>检查中</span></button>
+      </div>`;
+    }
+
+    // 2) 还没检查过
+    if (!check) {
+      return html` <div class="about-note">
+        <div class="about-note__title"><span>尚未检查</span></div>
+        <div class="about-note__body">
+          点右边的按钮查询有没有新版本。检查只读取版本信息，不会下载任何东西。
+        </div>
+        <button class="btn btn--sm" type="button" data-act="update-check">${icon("refresh")}<span>检查更新</span></button>
+      </div>`;
+    }
+
+    // 3) 检查失败（网络 / 限流 / 解析）：必须说清楚，绝不能说成「已是最新」
+    if (check.error) {
+      return html` <div class="about-note">
+        <div class="about-note__title">
+          <span style="color:var(--danger,#e5484d)">检查失败</span>
+        </div>
+        <div class="about-note__body">${check.error}</div>
+        <button class="btn btn--sm" type="button" data-act="update-check">${icon("refresh")}<span>重试</span></button>
+      </div>`;
+    }
+
+    // 4) 有新版本
+    if (check.hasUpdate) {
+      // 4a) 但没有当前平台的安装包 —— 只能去网页手动下载
+      if (!check.assetAvailable) {
+        return html` <div class="about-note">
+          <div class="about-note__title">
+            <span style="color:var(--warn,#d29922)">新版本 ${latest} 没有提供当前平台的安装包</span>
+          </div>
+          <div class="about-note__body">
+            可以到发布页面看看有没有其它形式的分发包，或稍后再试（发行流程可能在补充资产）。
+          </div>
+          <button
+            class="btn btn--sm"
+            type="button"
+            data-act="about-open-url"
+            data-url=${check.releaseUrl || UPDATE_RELEASES_URL}
+          >
+            ${icon("external")}<span>去发布页面</span>
+          </button>
+        </div>`;
+      }
+
+      // 4b) 可以下载
+      const kind = pending ? "已下载，可以安装" : progress ? "正在下载" : "可以更新";
+      return html` <div class="about-note">
+        <div class="about-note__title">
+          <span>发现新版本 ${latest}</span>
+          <span class="chip chip--ok"><i class="chip__dot"></i>${kind}</span>
+          ${check.prerelease ? html`<span class="chip chip--warn"><i class="chip__dot"></i>预发布</span>` : nothing}
+        </div>
+        <div class="about-note__body">
+          ${check.assetName} · ${check.assetSizeText || "体积未知"}
+          ${check.publishedAt ? ` · 发布于 ${new Date(check.publishedAt).toLocaleDateString("zh-CN")}` : ""}
+        </div>
+        <div class="setting__control">
+          ${progress
+            ? html`<button class="btn btn--sm" type="button" data-act="update-cancel">
+                ${icon("close")}<span>取消下载</span>
+              </button>`
+            : pending
+              ? html`<button class="btn btn--sm" type="button" data-act="update-install">
+                  ${icon("refresh")}<span>立即安装并重启</span>
+                </button>`
+              : html`<button class="btn btn--sm" type="button" data-act="update-download">
+                  ${icon("download")}<span>下载更新</span>
+                </button>`}
+          <button
+            class="btn btn--ghost btn--sm"
+            type="button"
+            data-act="about-open-url"
+            data-url=${check.releaseUrl || UPDATE_RELEASES_URL}
+          >
+            ${icon("external")}<span>说明</span>
+          </button>
+          <button class="btn btn--ghost btn--sm" type="button" data-act="update-skip" data-version=${latest}>
+            <span>跳过此版本</span>
+          </button>
+        </div>
+      </div>`;
+    }
+
+    // 5) 已是最新
+    const skipped = u.skippedVersion && latest && u.skippedVersion === latest;
+    return html` <div class="about-note">
+      <div class="about-note__title">
+        <span>已是最新版本（v${current}）</span>
+        ${skipped ? html`<span class="chip chip--warn"><i class="chip__dot"></i>已跳过 ${latest}</span>` : nothing}
+      </div>
+      <div class="about-note__body">
+        ${check.checkedAt ? `上次检查：${new Date(check.checkedAt).toLocaleString("zh-CN")}` : ""}
+      </div>
+      ${skipped
+        ? html`<button class="btn btn--sm" type="button" data-act="update-skip" data-version="">
+            ${icon("refresh")}<span>不再跳过</span>
+          </button>`
+        : nothing}
+      <button class="btn btn--ghost btn--sm" type="button" data-act="update-check">
+        ${icon("refresh")}<span>重新检查</span>
+      </button>
+    </div>`;
+  }
+
+  /* —— 下载进度 —— */
+  updateProgressBlock(progress, check) {
+    const total = Number(progress.total) || 0;
+    const done = Number(progress.done) || 0;
+    // Percent 由后端算（total 未知时是 -1）。这里只在后端没给的时候自己兜底算，
+    // 避免出现「后端说 42%、界面显示 41%」这种两套算法打架。
+    const pct =
+      typeof progress.percent === "number" && progress.percent >= 0
+        ? progress.percent
+        : total > 0
+          ? Math.round((done / total) * 100)
+          : 0;
+    // 换通道时后端会推一条 percent=-1 的「说明」事件：那不是一次真实进度，
+    // 进度条要保留上一次的百分比（否则会看到进度条忽然归零）。
+    const indeterminate = !total && pct === 0;
+
+    return html` <div class="about-note">
+      <div class="about-note__title">
+        <span>${progress.message || "正在下载…"}</span>
+        ${progress.mirrorName ? html`<span class="chip"><i class="chip__dot"></i>${progress.mirrorName}</span>` : nothing}
+        ${progress.attempt > 1 ? html`<span class="chip chip--warn">第 ${progress.attempt} 次尝试</span>` : nothing}
+      </div>
+      <div
+        class="progress"
+        role="progressbar"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow=${indeterminate ? 0 : pct}
+        style="height:6px;border-radius:3px;background:var(--surface-2,#2a2a2e);overflow:hidden"
+      >
+        <div
+          style="height:100%;background:var(--accent,#4c8dff);transition:width .2s ease;width:${indeterminate
+            ? 100
+            : pct}%;opacity:${indeterminate ? 0.35 : 1}"
+        ></div>
+      </div>
+      <div class="about-note__body">
+        ${indeterminate
+          ? "正在连接…"
+          : total > 0
+            ? `${pct}% · ${fmtSize(done)} / ${fmtSize(total)}${progress.speedText ? ` · ${progress.speedText}` : ""}`
+            : fmtSize(done)}
+        ${check?.assetSizeText ? html` <span>（共 ${check.assetSizeText}）</span>` : nothing}
+      </div>
+    </div>`;
+  }
+
+  /* —— 下载完成、等待安装 —— */
+  updatePendingBlock(pending) {
+    return html` <div class="about-note">
+      <div class="about-note__title">
+        <span>更新包已就绪</span>
+        ${pending.verified
+          ? html`<span class="chip chip--ok"><i class="chip__dot"></i>SHA-256 已校验</span>`
+          : html`<span class="chip chip--warn"><i class="chip__dot"></i>未能校验</span>`}
+      </div>
+      <div class="about-note__body">
+        ${pending.name} · ${fmtSize(pending.bytes || 0)}
+        ${pending.mirrorId ? ` · 来自 ${updateMirror(pending.mirrorId).name}` : ""}
+      </div>
+      ${pending.verified
+        ? nothing
+        : html`<div class="setting__hint">
+            这一版没有找到可用的 SHA-256 校验值，安装前请自行确认来源可信。
+          </div>`}
+      <div class="setting__control">
+        <button class="btn btn--sm" type="button" data-act="update-install">
+          ${icon("refresh")}<span>立即安装并重启</span>
+        </button>
+        <button class="btn btn--ghost btn--sm" type="button" data-act="update-check">
+          <span>重新检查</span>
+        </button>
+      </div>
+    </div>`;
+  }
+
+  /* —— 更新说明（release notes） ——
+     按纯文本渲染，不做 Markdown 解析：这份文本来自远端的 release body，
+     解析它意味着要把一份不受控的内容变成 DOM。纯文本 + 保留换行就够读了。 */
+  updateNotesBlock(check) {
+    // 太长的话截断 —— 完整内容在发布页面上（那里有「说明」按钮）。
+    const MAX = 1200;
+    const raw = String(check.notes || "").trim();
+    const text = raw.length > MAX ? `${raw.slice(0, MAX)}…` : raw;
+    if (!text) return nothing;
+    return html` <details class="about-note">
+      <summary class="about-note__title" style="cursor:pointer">更新说明</summary>
+      <div class="about-note__body" style="white-space:pre-wrap">${text}</div>
+    </details>`;
   }
 
   /* —— 技术栈 —— */

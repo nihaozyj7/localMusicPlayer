@@ -24,6 +24,7 @@ import {
   flushConfigSync,
   isLiked,
   loadUnplayableFiles,
+  loadUpdateState,
   nextIndex,
   playNext,
   playPrev,
@@ -411,6 +412,64 @@ function bindBackendEvents() {
     else toast(text, { tone: "error", duration: 6000 });
     setTimeout(() => item?.close(), 6000);
   });
+
+  /* ---- 版本更新（见 Go 侧 services_update.go） ----
+     这些事件全部由后端推：检查结果、下载进度、下载完成、失败、正在安装。
+     界面（设置 → 关于）照着 state.update 渲染，这里只负责把事件落进 state。
+
+     为什么要走事件而不是让界面轮询：下载可能持续几分钟，
+     轮询要么太密（白耗 IPC）要么太疏（进度条一顿一顿）。 */
+  on("update:checked", (payload) => {
+    if (!payload) return;
+    state.update.check = payload;
+    state.update.checking = false;
+    state.update.error = payload.error || "";
+    commit();
+    // 启动时的静默检查也会走到这里。**只有真的有更新才提示** ——
+    // 「已是最新版」「检查失败」都不该在启动时打扰用户。
+    if (payload.hasUpdate && payload.assetAvailable) {
+      toast(`发现新版本 ${payload.latest}，可在「设置 → 关于」中更新`, {
+        tone: "success",
+        duration: 6000,
+      });
+    }
+  });
+
+  on("update:progress", (payload) => {
+    if (!payload) return;
+    state.update.progress = { ...(state.update.progress || {}), ...payload };
+    commit();
+  });
+
+  on("update:downloaded", (payload) => {
+    if (!payload) return;
+    state.update.progress = null;
+    state.update.pending = {
+      name: payload.name,
+      path: payload.path,
+      bytes: payload.bytes,
+      verified: payload.verified,
+      mirrorId: payload.mirrorId,
+    };
+    commit();
+    toast(`更新包已下载（${payload.verified ? "已校验" : "未校验"}）：${payload.name}`, {
+      tone: payload.verified ? "success" : "warning",
+      duration: 5000,
+    });
+  });
+
+  on("update:failed", (payload) => {
+    state.update.progress = null;
+    state.update.error = payload?.message || "下载失败";
+    commit();
+  });
+
+  on("update:installing", (payload) => {
+    state.update.progress = null;
+    commit();
+    // 应用马上要退出了，这条提示要让用户知道「不是我按坏了，是在更新」。
+    toast(`正在安装 ${payload?.name || "更新"} 并重启…`, { duration: 4000 });
+  });
 }
 
 /* --------------------------------------------------------------------------
@@ -545,6 +604,13 @@ async function main() {
   // 响度能力与补偿表（后端可用时）
   await refreshLoudnessState();
   await refreshLoudnessGains();
+
+  // 更新状态快照：让刷新过界面 / 重新打开设置时立刻能看到上次的检查结果。
+  //
+  // **不在这里发起检查** —— 启动检查由 Go 侧在窗口出来之后自己做
+  // （见 main.go 的 ApplicationStarted），结果通过 update:checked 事件推过来。
+  // 两边都发的话会重复请求 GitHub（匿名额度只有每小时 60 次）。
+  loadUpdateState().catch(() => {});
 
   // 预览模式下的进度模拟（真实播放时自动让位给 <audio> 事件）
   startMockTicker();

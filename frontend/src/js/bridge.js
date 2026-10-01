@@ -19,6 +19,8 @@
      Media     URL / State
      Window    Minimize / ToggleMaximize / Close / SetFullscreen / ToggleFullscreen /
                Backdrop / Restart
+     Update    State / Version / Check / Download / Install / CancelDownload /
+               Mirrors / SetChannel / SetCheckOnStart / SkipVersion / OpenDownloadDir
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
@@ -85,6 +87,9 @@ export async function connect() {
       // 而调用处用的是简称 Unplayable —— 漏了这一行不会有构建错误，
       // 只会在运行时表现为「清单永远是空的」（call() 拿到 undefined 直接返回 null）。
       Unplayable: mod.UnplayableService,
+      // 版本更新（见 services_update.go）。同样是字符串键：
+      // 拼错不会有构建错误，只会让「检查更新」永远报「未接线」。
+      Update: mod.UpdateService,
     };
     active = true;
     try {
@@ -393,6 +398,28 @@ const backendImpl = {
   coverClearCache: () => call(bindings?.Cover?.ClearCache),
   // 一次性把缓存里已有的封面/歌词补写进歌曲文件（用户在设置里确认后才会调）
   coverWriteCacheToFiles: () => call(bindings?.Cover?.WriteCacheToFiles),
+
+  /* ---- 版本更新（见 Go 侧 services_update.go） ----
+     三步：Check（问 GitHub 有没有新版）→ Download（逐个通道尝试下载）
+     → Install（启动替换脚本并退出应用）。
+
+     状态与进度都靠事件推：update:checked / update:progress /
+     update:downloaded / update:failed / update:installing。
+     这里的方法只负责「发起动作」，界面渲染全部由事件驱动。 */
+  updateState: () => call(bindings?.Update?.State),
+  updateVersion: () => call(bindings?.Update?.Version),
+  // force=false 时尊重「跳过此版本」，不会为被跳过的版本报「有更新」
+  updateCheck: (force = false) => call(bindings?.Update?.Check, Boolean(force)),
+  updateDownload: () => call(bindings?.Update?.Download),
+  updateInstall: () => call(bindings?.Update?.Install),
+  updateCancel: () => call(bindings?.Update?.CancelDownload),
+  // 下载通道：auto（直连优先，失败自动换代理）或某个具体代理 id
+  updateMirrors: () => call(bindings?.Update?.Mirrors),
+  updateSetChannel: (id) => call(bindings?.Update?.SetChannel, String(id)),
+  updateSetCheckOnStart: (on) => call(bindings?.Update?.SetCheckOnStart, Boolean(on)),
+  // 传空字符串等于取消跳过
+  updateSkipVersion: (version) => call(bindings?.Update?.SkipVersion, String(version ?? "")),
+  updateOpenDir: () => call(bindings?.Update?.OpenDownloadDir),
 };
 
 /** 这些是语言/工具自身的协议属性，不能当成「漏接线的方法」 */

@@ -11,6 +11,8 @@ import { toast } from "./dom.js";
 import { MOCK_FOLDERS, MOCK_FILTER_RULES, MOCK_PLAYLISTS, MOCK_SONGS } from "./mock.js";
 import { moveItem, setCoverOverrideGetter, uid, uniq } from "./utils.js";
 import { backend, connect, emit, isWails, on } from "./bridge.js";
+// 预览模式下没有后端，检查更新要拿它编一个「已是最新版」出来
+import { APP_VERSION_FALLBACK } from "./about-info.js";
 
 const LS_KEY = "music-player.state.v1";
 
@@ -143,6 +145,42 @@ function initialState() {
     // 现在是状态，组件照着渲染，也就不需要「谁去 hidden 哪个节点」的约定。
     optionsOpen: false,
     sleepOpen: false,
+
+    /* 版本更新（见 Go 侧 services_update.go）
+       ------------------------------------------------------------------
+       这一块整体是「后端状态在前端的投影」：真正的事实全在 Go 侧
+       （检查结果、进度、待安装的包），前端只负责把它渲染出来。
+       所以这里没有「自己算」的字段，也没有乐观更新 ——
+       更新这种会动用户程序文件的操作，界面显示的必须是后端确认过的事实。 */
+    update: {
+      // 最近一次检查的结果（null = 还没检查过）
+      check: null,
+      // 后端是否正在检查
+      checking: false,
+      // 正在下载时的进度对象；null 表示没有下载在进行
+      progress: null,
+      // 下载完成、等待安装的包：{ name, path, bytes, verified, mirrorId }
+      pending: null,
+      // 用户选的下载通道：auto | 某个代理 id
+      channel: "auto",
+      // 启动时是否自动检查
+      checkOnStart: true,
+      // 被用户「跳过」的版本号
+      skippedVersion: "",
+      // 最近一次操作的错误文案（下载失败等），成功时清空
+      error: "",
+    },
+    /* updateRev 是「update 这一块变过几次」的计数器。
+       ------------------------------------------------------------------
+       必须单独有它，因为 state.update 是被**原地修改**的
+       （state.update.check = …），引用永远不变 —— 而设置组件按引用比较
+       依赖项，光把 s.update 放进依赖数组是**察觉不到变化**的。
+       实测症状：后端明明推了 update:checked，卡片上的文案一动不动；
+       手动 requestUpdate() 一下内容立刻就对了。
+
+       所以每次改 update 都调 touchUpdate() 把版本号加一，
+       让「变了」这件事在引用层面可见。 */
+    updateRev: 0,
     pvMode: "classic",
     query: "",
     // 搜索浮层：{ open: boolean, tab: 'local'|'online' }。
@@ -321,6 +359,21 @@ export function notify() {
 
 export function commit(mutator, options = {}) {
   if (typeof mutator === "function") mutator(state);
+  // ★ 自动推进 update 的版本号。
+  //
+  // state.update 里的字段是被**原地改**的（state.update.progress = …），
+  // 对象引用从头到尾不变 —— 而设置组件按引用比较依赖项，光把 s.update
+  // 放进依赖数组是察觉不到变化的。实测症状：后端推了 update:progress、
+  // state 也确实改了，但界面上的进度条一动不动（手动 requestUpdate()
+  // 一下立刻就对了）。
+  //
+  // 在这里统一推进而不是在每个写入点手动调：写入点有三十来处，
+  // 漏掉任何一处都是「界面不更新且不报错」—— 那是这个功能里最难查的
+  // 一类 bug。放在 commit 这个唯一漏斗里，就不可能漏。
+  //
+  // 代价是每次 commit 都会让 update 卡片重绘一次。这是可接受的：
+  // 这张卡片只在设置层「关于」分区里，而且 Lit 只更新变化的那几个 part。
+  state.updateRev = (state.updateRev || 0) + 1;
   recalcVisible();
   if (options.persist !== false) persist();
   if (options.immediate) {
@@ -1087,6 +1140,255 @@ export async function clearUnplayable() {
     return 0;
   }
   return n;
+}
+
+/* --------------------------------------------------------------------------
+   版本更新（见 Go 侧 services_update.go）
+   --------------------------------------------------------------------------
+   前端在这里只是「后端状态的投影」：检查结果、下载进度、待安装的包
+   全部由后端推事件过来，前端不自己算任何东西。
+
+   为什么不做乐观更新：更新会替换用户的程序文件。界面上写「已是最新版」
+   而实际检查失败，用户就再也不会去手动看一眼了 —— 这个方向上的错误
+   代价很大，所以宁可显示「检查失败，点重试」。
+
+   浏览器预览模式下这些方法都是安全的空操作（backend.* 返回 null），
+   界面会显示「预览模式不支持」的提示。
+   -------------------------------------------------------------------------- */
+
+/** 拉一次后端状态（界面打开时调用，让刷新后的界面立刻有内容） */
+export async function loadUpdateState() {
+  if (!isWails()) return state.update;
+  const snapshot = await backend.updateState();
+  if (snapshot && typeof snapshot === "object") applyUpdateSnapshot(snapshot);
+  return state.update;
+}
+
+/**
+ * 标记「update 这一块变了」。
+ *
+ * 正常情况下**不需要手动调** —— commit() 会自动推进版本号（见那里的说明）。
+ * 留着它是给「改了 state.update 但暂时不想 commit」这种少见场景用的
+ * （例如批量改完再统一提交时，中途想让界面先反映一部分）。
+ *
+ * 注意：只改 state.update 的字段而既不 commit 也不调这个函数，
+ * 界面就不会有任何反应，而且不会报错。
+ */
+export function touchUpdate() {
+  state.updateRev = (state.updateRev || 0) + 1;
+}
+
+/** 把后端的状态快照合并进 state.update */
+function applyUpdateSnapshot(snapshot) {
+  const u = state.update;
+  if (snapshot.check) u.check = snapshot.check;
+  if (typeof snapshot.checking === "boolean") u.checking = snapshot.checking;
+  if (typeof snapshot.downloading === "boolean") {
+    // 后端说没在下载，而我们这边还挂着进度条：那是上一次下载结束后
+    // 事件没收到（比如界面刷新过），清掉它，免得进度条永远停在那儿。
+    if (!snapshot.downloading) u.progress = null;
+  }
+  if (snapshot.channel) u.channel = String(snapshot.channel);
+  if (typeof snapshot.checkOnStart === "boolean") u.checkOnStart = snapshot.checkOnStart;
+  if (typeof snapshot.skippedVersion === "string") u.skippedVersion = snapshot.skippedVersion;
+  if (snapshot.pending) {
+    u.pending = snapshot.pending;
+  } else if (!snapshot.downloading) {
+    u.pending = null;
+  }
+  touchUpdate();
+  commit();
+}
+
+/** 检查更新。force=true 时忽略「跳过此版本」。 */
+export async function checkForUpdate({ force = false } = {}) {
+  const u = state.update;
+  if (u.checking) return null;
+  u.checking = true;
+  u.error = "";
+  commit();
+
+  if (!isWails()) {
+    // 预览模式：编一个「已是最新版」出来，让界面不至于卡在加载态。
+    // 明确不写成「有更新」—— 那会让预览看起来像是真的能升级。
+    u.checking = false;
+    u.check = {
+      current: state.appVersion || APP_VERSION_FALLBACK,
+      latest: state.appVersion || APP_VERSION_FALLBACK,
+      hasUpdate: false,
+      assetAvailable: false,
+      checkedAt: Date.now(),
+      error: "浏览器预览模式无法联网检查更新",
+    };
+    commit();
+    return u.check;
+  }
+
+  try {
+    const res = await backend.updateCheck(force);
+    if (res) {
+      u.check = res;
+      // 后端在检查失败时会带 error；如果这次检查成功了，清掉上一次的旧错误
+      u.error = res.error || "";
+    }
+  } catch (err) {
+    u.error = String(err?.message ?? err);
+    console.warn("[store] 检查更新失败", err);
+  } finally {
+    u.checking = false;
+    commit();
+  }
+  return u.check;
+}
+
+/** 下载上次检查发现的新版本 */
+export async function downloadUpdate() {
+  const u = state.update;
+  if (!isWails()) {
+    u.error = "浏览器预览模式无法下载更新";
+    commit();
+    return null;
+  }
+  if (!u.check?.downloadUrl) {
+    u.error = "没有可下载的安装包";
+    commit();
+    return null;
+  }
+
+  u.error = "";
+  // 先摆一个「0%，正在连接」的进度：后端的第一条事件要等它连上才来，
+  // 中间那段时间界面什么都不显示的话，用户会以为按钮没生效。
+  u.progress = { percent: -1, done: 0, total: u.check.assetSize || 0, message: "正在连接…", attempt: 1 };
+  commit();
+
+  try {
+    const res = await backend.updateDownload();
+    if (res?.path) {
+      u.pending = {
+        name: u.check.assetName,
+        path: res.path,
+        bytes: res.bytes,
+        verified: res.verified,
+        mirrorId: res.mirrorId,
+      };
+    }
+    u.progress = null;
+  } catch (err) {
+    u.error = String(err?.message ?? err);
+    u.progress = null;
+    console.warn("[store] 下载更新失败", err);
+  } finally {
+    commit();
+  }
+  return u.pending;
+}
+
+/** 取消正在进行的下载 */
+export async function cancelUpdateDownload() {
+  if (!isWails()) return false;
+  try {
+    const ok = await backend.updateCancel();
+    if (ok) {
+      state.update.progress = null;
+      commit();
+    }
+    return Boolean(ok);
+  } catch (err) {
+    console.warn("[store] 取消下载失败", err);
+    return false;
+  }
+}
+
+/**
+ * 安装已下载的更新并重启。
+ *
+ * 调用之后应用会退出，因此这里**不会**有「安装成功」的返回值 ——
+ * 成功表现为「程序重启并变成新版本」。失败（比如脚本起不来）
+ * 才会返回错误，那时界面必须把原因显示出来，否则用户只知道
+ * 「点了安装，然后什么都没发生」。
+ */
+export async function installUpdate() {
+  const u = state.update;
+  if (!isWails()) {
+    u.error = "浏览器预览模式无法安装更新";
+    commit();
+    return false;
+  }
+  if (!u.pending) {
+    u.error = "还没有下载好可安装的更新";
+    commit();
+    return false;
+  }
+  u.error = "";
+  commit();
+  try {
+    await backend.updateInstall();
+    return true;
+  } catch (err) {
+    u.error = String(err?.message ?? err);
+    commit();
+    console.warn("[store] 安装更新失败", err);
+    return false;
+  }
+}
+
+/** 切换下载通道（auto 或某个代理 id） */
+export async function setUpdateChannel(id) {
+  const u = state.update;
+  const before = u.channel;
+  u.channel = String(id || "auto");
+  commit();
+  if (!isWails()) return u.channel;
+
+  try {
+    await backend.updateSetChannel(u.channel);
+  } catch (err) {
+    // 后端拒绝就还原 —— 让界面显示的值始终是后端真正用的那个
+    u.channel = before;
+    commit();
+    console.warn("[store] 设置下载通道失败", err);
+  }
+  return u.channel;
+}
+
+/** 开关「启动时自动检查更新」 */
+export async function setUpdateCheckOnStart(on) {
+  const u = state.update;
+  const next = Boolean(on);
+  u.checkOnStart = next;
+  commit();
+  if (!isWails()) return next;
+  try {
+    await backend.updateSetCheckOnStart(next);
+  } catch (err) {
+    u.checkOnStart = !next;
+    commit();
+    console.warn("[store] 设置自动检查失败", err);
+  }
+  return u.checkOnStart;
+}
+
+/** 跳过某个版本（传空字符串取消跳过） */
+export async function skipUpdateVersion(version = "") {
+  const u = state.update;
+  const next = String(version ?? "");
+  u.skippedVersion = next;
+  if (u.check && !next) {
+    // 取消跳过之后要重新算一次「有没有更新」——否则界面会一直显示
+    // 「已跳过」，即使它的版本已经比当前新。
+    u.check = { ...u.check, hasUpdate: false };
+  }
+  commit();
+  if (!isWails()) return next;
+  try {
+    await backend.updateSkipVersion(next);
+    // 跳过后重新检查一次，让界面（和后端）的状态一致。
+    // 取消跳过时尤其必要：不重新检查的话，提示不会回来。
+    await checkForUpdate({ force: true });
+  } catch (err) {
+    console.warn("[store] 跳过版本失败", err);
+  }
+  return next;
 }
 
 /* --------------------------------------------------------------------------

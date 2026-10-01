@@ -168,6 +168,26 @@ type Config struct {
 	// 托盘图标由 WindowService 按同一个开关创建 / 销毁（见 services.go#ensureTray）。
 	MinimizeToTray bool `json:"minimizeToTray"`
 
+	// —— 版本更新（见 services_update.go）——
+	//
+	// UpdateCheckOnStart 启动后在后台静默检查一次有没有新版本。
+	//
+	// 为什么默认开启：更新检查唯一的价值就是「用户不知道有新版本时也能拿到」。
+	// 默认关闭的话，只有主动进设置点「检查更新」的人才会发现 —— 而那批人本来
+	// 就会自己去 GitHub 看。检查只是一次几 KB 的请求，且失败完全静默。
+	UpdateCheckOnStart bool `json:"updateCheckOnStart"`
+	// UpdateChannel 是下载更新时优先使用的通道：auto（默认）或某个代理 id。
+	//
+	// 用户显式选过之后要记住：他之所以去选，通常是因为自动模式在他的网络下
+	// 成功过某条代理，下次不该让他重新试一遍。
+	UpdateChannel string `json:"updateChannel"`
+	// SkippedVersion 是用户点了「跳过此版本」的那个版本号。
+	//
+	// 存在的原因：更新提示会反复出现（每次启动都检查），而「我知道有新版本、
+	// 但现在不想升」是完全合理的选择。没有这个字段的话，用户唯一的办法
+	// 就是关掉自动检查 —— 那会让他连以后的版本也一起错过。
+	SkippedVersion string `json:"skippedVersion"`
+
 	// —— 封面取色（cover-dark 主题）——
 	// CoverSeed / CoverSeed2 是上一次从封面里提取得出的主色（十六进制）。
 	//
@@ -416,6 +436,12 @@ func DefaultConfig() *Config {
 		SleepAfterSong:            false,
 		ShuffleMode:               "reshuffle",
 
+		// 版本更新：启动时静默检查一次；下载通道默认 auto（直连优先，
+		// 失败自动换代理）；没有跳过的版本。
+		UpdateCheckOnStart: true,
+		UpdateChannel:      "auto",
+		SkippedVersion:     "",
+
 		// 封面轮播默认关闭：多封面时才会有意义，用户明确打开才动
 		CoverCarousel:         false,
 		CoverCarouselInterval: 10,
@@ -502,6 +528,35 @@ func NormalizeListDensity(v string) string {
 		}
 	}
 	return "cozy"
+}
+
+// UpdateChannels 是更新下载通道的合法值（"auto" 表示自动逐个尝试）。
+//
+// 这份列表必须与 internal/update.Mirrors 里的 id 保持一致。
+// 之所以在配置层再列一遍，是为了不让最底层的 bootstrap 包反向依赖
+// 业务包；两者不一致时不会静默出错 —— update 包会把认不出来的通道
+// 当成 auto 处理，最坏结果只是「用户的选择没生效」，不会下载失败。
+var UpdateChannels = []string{
+	"auto",
+	"direct",
+	"ghproxy.net",
+	"ghfast.top",
+	"githubproxy.cc",
+	"gh-proxy.com",
+	"ghproxy.homeboyc.cn",
+	"gh.llkk.cc",
+	"ghp.ci",
+}
+
+// NormalizeUpdateChannel 规范化更新下载通道，非法值落回 auto。
+func NormalizeUpdateChannel(v string) string {
+	v = strings.TrimSpace(v)
+	for _, ok := range UpdateChannels {
+		if ok == v {
+			return v
+		}
+	}
+	return "auto"
 }
 
 // DefaultDownloadDir 在线歌曲的默认下载目录：系统「音乐」目录下的 downloads。
@@ -884,6 +939,13 @@ func normalize(cfg *Config) {
 	cfg.RowClickAction = NormalizeRowClickAction(cfg.RowClickAction)
 	cfg.ListDensity = NormalizeListDensity(cfg.ListDensity)
 	cfg.AnimationsSpeed = NormalizeAnimationsSpeed(cfg.AnimationsSpeed)
+	// 更新下载通道：手改成别的值（或者旧版本里存着一个已经下架的代理 id）
+	// 一律落回 auto —— 否则下载会拿着一个非法通道名去查表，
+	// 表现为「点下载没有任何反应」。
+	//
+	// 这里不导入 internal/update 来复用它的校验：bootstrap 是最底层的包，
+	// 让配置层依赖一个业务包会把依赖方向弄反。
+	cfg.UpdateChannel = NormalizeUpdateChannel(cfg.UpdateChannel)
 	if cfg.ShuffleMode != "once" {
 		cfg.ShuffleMode = "reshuffle"
 	}

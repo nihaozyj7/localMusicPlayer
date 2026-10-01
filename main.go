@@ -62,6 +62,9 @@ type appState struct {
 	metaCache     *metacache.Store
 	// mediaKeySvc 负责键盘媒体键（⏯）的全局热键接管
 	mediaKeySvc *MediaKeyService
+	// updateSvc 负责「检测 GitHub Release → 下载 → 自替换安装」
+	// （见 services_update.go）
+	updateSvc *UpdateService
 }
 
 var state *appState
@@ -173,6 +176,8 @@ func main() {
 	state.appSvc = NewAppService()
 	state.loudnessSvc = NewLoudnessService(loudMgr, lib)
 	state.downloadSvc = NewDownloadService(store, onlineClient)
+	// 版本更新：检测 GitHub Release，下载走代理降级，安装靠自替换脚本。
+	state.updateSvc = NewUpdateService(store)
 	// 封面/歌词缓存放在配置的缓存目录下（默认 %APPDATA%\LocalMusicPlayer\cache）
 	state.metaCache = metacache.NewStore(filepath.Join(store.Get().CacheDir, "meta"))
 	state.coverSvc = NewCoverService(store, state.metaCache, coverfetch.New(), songs)
@@ -224,6 +229,8 @@ func main() {
 			application.NewService(state.downloadSvc),
 			application.NewService(state.coverSvc),
 			application.NewService(state.unplayableSvc),
+			// 版本更新（设置 → 关于 → 检查更新）
+			application.NewService(state.updateSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -345,6 +352,10 @@ func main() {
 	state.coverSvc.setEmitter(emit)
 	// 「放不出来」清单：登记新条目时推一条事件给前端（刷新清单 + 提示用户）
 	state.unplayableSvc.setEmitter(emit)
+	// 更新服务：需要事件通道推「检查完了 / 下载进度 / 下载完成 / 正在安装」，
+	// 也需要应用句柄在安装时退出进程（见 services_update.go#Install）
+	state.updateSvc.setEmitter(emit)
+	state.updateSvc.setApp(app)
 	// 下载目录变了要让曲库重载文件夹（下载目录是隐式扫描根）并重扫一次，
 	// 这样刚迁移过去的歌会立刻出现在「本地歌曲」里。
 	state.downloadSvc.onDirChanged = func() {
@@ -532,6 +543,26 @@ func main() {
 		}
 		startWatchers()
 	}()
+
+	// 启动时静默检查一次更新。
+	//
+	// 放在 ApplicationStarted 里（而不是 main 开头）有两个原因：
+	//   · 它要发事件给前端，而前端得先装配完才挂得上监听；
+	//   · 启动阶段最抢时间的是「建窗口 + 出首帧」，一次 HTTP 请求
+	//     不该跟它抢带宽。
+	// CheckSilently 自己会读配置里的开关，失败只记日志、不弹任何东西 ——
+	// 用户没要求这次检查，就不该被它的失败打扰。
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		if state.updateSvc == nil {
+			return
+		}
+		go func() {
+			// 稍微等一会儿：让窗口先露面、界面先装配完，
+			// 这样发现新版本时的那个提示能落在已经画好的界面上。
+			time.Sleep(3 * time.Second)
+			state.updateSvc.CheckSilently()
+		}()
+	})
 
 	if err := app.Run(); err != nil {
 		log.Fatalf("app exit: %v", err)

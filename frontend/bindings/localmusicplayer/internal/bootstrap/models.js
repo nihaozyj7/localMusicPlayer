@@ -37,6 +37,9 @@
  * @property {boolean} rememberVolume - RememberVolume 是否记住上次的音量：关闭后每次启动都用默认音量。
  * @property {string} listDensity - ListDensity 列表密度：compact | cozy | roomy。 原来每张表头各有一个密度按钮，现在统一到设置里，对所有列表生效。
  * @property {boolean} minimizeToTray - MinimizeToTray 点窗口关闭按钮时「最小化到系统托盘」而不是退出应用。 关闭行为在主窗口的 WindowClosing **钩子**里判断（见 main.go）：钩子比 监听器先跑，取消事件就能让 Wails 内建的「关窗 = 销毁窗口」不发生。 托盘图标由 WindowService 按同一个开关创建 / 销毁（见 services.go#ensureTray）。
+ * @property {boolean} updateCheckOnStart - —— 版本更新（见 services_update.go）—— UpdateCheckOnStart 启动后在后台静默检查一次有没有新版本。 为什么默认开启：更新检查唯一的价值就是「用户不知道有新版本时也能拿到」。 默认关闭的话，只有主动进设置点「检查更新」的人才会发现 —— 而那批人本来 就会自己去 GitHub 看。检查只是一次几 KB 的请求，且失败完全静默。
+ * @property {string} updateChannel - UpdateChannel 是下载更新时优先使用的通道：auto（默认）或某个代理 id。 用户显式选过之后要记住：他之所以去选，通常是因为自动模式在他的网络下 成功过某条代理，下次不该让他重新试一遍。
+ * @property {string} skippedVersion - SkippedVersion 是用户点了「跳过此版本」的那个版本号。 存在的原因：更新提示会反复出现（每次启动都检查），而「我知道有新版本、 但现在不想升」是完全合理的选择。没有这个字段的话，用户唯一的办法 就是关掉自动检查 —— 那会让他连以后的版本也一起错过。
  * @property {string} coverSeed - —— 封面取色（cover-dark 主题）—— CoverSeed / CoverSeed2 是上一次从封面里提取得出的主色（十六进制）。 为什么要落盘：主题是在页面脚本跑起来之后才套用的，而取色还要等封面 图片解码完 —— 于是「启动 → 先用主题里写死的占位灰 → 取完色再整体重绘」， 肉眼看就是先黑一下、颜色还偏灰。把上次的取色结果记下来，Go 侧就能在 页面首屏之前把它写进 <html>，首帧直接就是对的颜色（见 early_theme.go）。
  * @property {string} coverSeed2
  * @property {boolean} showDesktopLyrics - ShowDesktopLyrics 是否显示桌面歌词（独立透明置顶窗口）。
