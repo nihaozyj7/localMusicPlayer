@@ -35,7 +35,7 @@ export const APP_TAGLINE = "本地曲库 + 在线试听的桌面音乐播放器"
  * 真实版本来自 Go 侧 AppService.Version()（唯一事实来源）；这里是浏览器预览
  * 状态下没有后端时用的值，两者应当一致。
  */
-export const APP_VERSION_FALLBACK = "0.1.0";
+export const APP_VERSION_FALLBACK = "0.1.1";
 
 /** 本项目自身的开源协议（SPDX）。 */
 export const APP_LICENSE = "Apache-2.0";
