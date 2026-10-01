@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"localmusicplayer/internal/bootstrap"
 	"localmusicplayer/internal/coverfetch"
 	"localmusicplayer/internal/lyricsfetch"
+	"localmusicplayer/internal/onlinecache"
 )
 
 type OnlineService struct {
@@ -27,6 +31,19 @@ type OnlineService struct {
 	token  string
 	// ai 自动匹配前清洗元数据（可选，见 services_ai.go）
 	ai *AiService
+
+	// files 是试听音频的磁盘缓存（见 internal/onlinecache）。
+	//
+	// ★ 它是「在线试听能用」的前提，不是可选优化：后端原生播放需要一个
+	// **真实存在的本地文件**去解析（PlayerService → media.PlayableFile →
+	// library.SongByID）。在线曲目在曲库里没有记录，没有缓存时解析必然失败，
+	// 而那条失败会和「文件损坏」共用同一条错误链路 —— 一首正常的在线歌曲会被
+	// 登记进「放不出来」清单。落盘之后它才是一个普通可播放的本地文件。
+	files *onlinecache.Store
+
+	// resolveVirtual 用于把「已经缓存好的在线音频」登记成后端可解析的歌曲。
+	// 由 main 注入（见 main.go 的 resolve 装配），nil 时只做缓存不登记。
+	resolveVirtual func(bvid, path, ext string)
 
 	mu    sync.Mutex
 	cache map[string]*onlineAudioCache
@@ -82,10 +99,69 @@ func NewOnlineService(store *bootstrap.Store, client *bilibili.Client, aggregate
 		covers: covers,
 		token:  bootstrap.RandomID("ol"),
 		cache:  map[string]*onlineAudioCache{},
+		files:  onlinecache.New(""),
 	}
 }
 
+// setVirtualResolver 注入「把缓存文件登记成后端可解析歌曲」的回调。
+//
+// 故意不导出：它接收一个函数值，Wails 的绑定生成器会为导出方法报
+// 「func type not supported by encoding/json」。它只该由 main 调用。
+func (s *OnlineService) setVirtualResolver(fn func(bvid, path, ext string)) {
+	s.mu.Lock()
+	s.resolveVirtual = fn
+	s.mu.Unlock()
+}
+
+// SetCacheDir 覆盖试听缓存目录（测试 / 设置界面用；空串落回默认位置）。
+func (s *OnlineService) SetCacheDir(dir string) {
+	s.files = onlinecache.New(dir)
+}
+
+// CacheDir 返回试听缓存目录（供设置界面显示 / 排查）。
+func (s *OnlineService) CacheDir() string { return s.files.Dir() }
+
+// CacheStats 返回试听缓存的占用（文件数 / 字节数）。
+func (s *OnlineService) CacheStats() map[string]any {
+	count, bytes := s.files.Stats()
+	return map[string]any{"dir": s.files.Dir(), "count": count, "bytes": bytes}
+}
+
+// ClearCache 清空试听缓存（设置界面用）。
+//
+// 清完之后在线歌曲需要重新下载一次才能播放 —— 这是「可丢弃的派生数据」
+// 应有的语义，缓存目录本来就在临时目录下。
+func (s *OnlineService) ClearCache() map[string]any {
+	_ = s.files.Clear()
+	return s.CacheStats()
+}
+
 const onlinePrefix = "/online/"
+
+// OnlineIDPrefix 是在线曲目 id 的前缀（形如 bili:BV1xx411c7mD）。
+//
+// 为什么要有前缀：在线曲目与本地曲目共用同一个 id 空间（播放队列、歌单、
+// 收藏都只存 id）。本地 id 是路径派生出来的，不可能撞上这个形态。
+const OnlineIDPrefix = "bili:"
+
+// onlineSongID 由 bvid 生成在线曲目的 id（与 OnlineService.Search 下发的一致）。
+func onlineSongID(bvid string) string { return OnlineIDPrefix + bvid }
+
+// onlineBVID 判断一个 id 是否是在线曲目，是则返回其 bvid。
+//
+// 前后端必须用同一套判据：前端注册在线曲目时用的是 `bili:` + bvid
+// （见 frontend/src/js/ui/search.js#previewOnline），后端解析时要能认出来。
+func onlineBVID(songID string) (string, bool) {
+	songID = strings.TrimSpace(songID)
+	if !strings.HasPrefix(songID, OnlineIDPrefix) {
+		return "", false
+	}
+	bvid := strings.TrimSpace(strings.TrimPrefix(songID, OnlineIDPrefix))
+	if bvid == "" {
+		return "", false
+	}
+	return bvid, true
+}
 
 // coverTTL 封面图片的浏览器缓存时长。封面基本不变，缓存久一点能省掉大量重复请求。
 const coverTTL = 7 * 24 * time.Hour
@@ -366,6 +442,12 @@ func (s *OnlineService) handleAudio(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
+	// 命中缓存就直接按普通文件提供：不用再解析一次远端地址，也支持 Range/seek。
+	// 这条路径同时让「试听两次」只下载一次。
+	if path, _, ok := s.files.LookupAny(bvid, "m4a"); ok {
+		serveCachedAudio(w, r, path, "audio/mp4")
+		return
+	}
 	stream, err := s.resolve(r.Context(), bvid)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -462,12 +544,156 @@ func (s *OnlineService) proxyStream(w http.ResponseWriter, r *http.Request, stre
 			h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".m4a"))
 		}
 		w.WriteHeader(resp.StatusCode)
-		// 用限长拷贝而不是裸 io.Copy：试听代理同样是「远端给多少就转发多少」，
-		// 没有上限时一个异常响应可以把内存/磁盘/带宽拖垮。
-		_, _ = io.Copy(w, io.LimitReader(resp.Body, maxRemoteAudioBytes))
+
+		// ★ 试听的音频要**顺便落盘**（见 internal/onlinecache 的说明）。
+		//
+		// 为什么必须在这一条路径上做：这是音频字节唯一经过本进程的地方，
+		// 不在这里存就等于没有缓存 —— 而后端原生播放需要一个真实的本地文件。
+		//
+		// 两个前提才写缓存：
+		//   · 只写完整响应（206 Partial / 带 Range 的请求只是取一段，
+		//     写下去会得到一个残缺文件，比不缓存更糟）；
+		//   · 下载接口（download=true）不写 —— 那是「另存为」，
+		//     用户要的是下载目录里的文件，不是又占一份缓存。
+		//
+		// 写失败只记日志：缓存是加速手段，绝不能因为它让试听本身失败
+		// （临时目录可能不可写、可能满）。
+		body := io.LimitReader(resp.Body, maxRemoteAudioBytes)
+		if !download && resp.StatusCode == http.StatusOK && r.Header.Get("Range") == "" {
+			body = s.teeToCache(stream, body)
+		}
+		_, _ = io.Copy(w, body)
 		return
 	}
 	http.Error(w, "online audio unavailable", http.StatusBadGateway)
+}
+
+// teeToCache 把响应体同时写进试听缓存并回给调用方。
+//
+// 返回的 reader 只负责「转发」；写盘在**旁路 goroutine** 里进行，这样
+// 落盘速度（可能慢，尤其是大文件 + 机械盘）不会拖住播放 —— 用户按下试听
+// 应当立刻听到声音，而不是等下载完。
+//
+// 用 io.Pipe 而不是简单包一层 MultiWriter：MultiWriter 会让 Write 变成
+// 「两边都写完才返回」，磁盘一慢就把播放拖成卡顿。
+func (s *OnlineService) teeToCache(stream *bilibili.AudioStream, body io.Reader) io.Reader {
+	path, ok := s.files.Path(stream.BVID, "m4a")
+	if !ok {
+		return body // 拿不到安全文件名：只播放，不缓存
+	}
+	pr, pw := io.Pipe()
+	go func() {
+		// 写缓存；失败只是没缓存，不影响正在播放的这一路
+		if _, err := s.files.WriteTo(path, pr); err != nil {
+			log.Printf("[online] 试听缓存写入失败（不影响播放）: %v", err)
+			return
+		}
+		// 缓存就绪后立刻登记成后端可播放的歌曲：
+		// 前端下一次「后端装载」才能解析到它（见 EnsureCached 的说明）。
+		s.registerVirtual(stream.BVID, path, "m4a")
+	}()
+	// TeeReader：读到的字节顺手喂给 pipe（写端由上面那个 goroutine 消费）。
+	// 读端出错（客户端断开）时 pipe 写端也会收到错误并结束上面那个 goroutine。
+	return io.TeeReader(body, pw)
+}
+
+// registerVirtual 把一个已缓存的在线音频登记成后端可解析的歌曲。
+func (s *OnlineService) registerVirtual(bvid, path, ext string) {
+	s.mu.Lock()
+	fn := s.resolveVirtual
+	s.mu.Unlock()
+	if fn != nil {
+		fn(bvid, path, ext)
+	}
+}
+
+// EnsureCached 确保某个 bvid 的音频**已经落在本地**，返回（路径, 扩展名）。
+//
+// 这是后端播放解析（main.go 的 resolve）在曲库里查不到歌曲时走的兜底：
+//   - 缓存命中 → 直接返回，零网络开销；
+//   - 未命中   → 现在下载到缓存。注意这一步是**阻塞**的（要等整首歌下来），
+//     调用方通常在前端已经显示「加载中」的切歌路径上，可以接受；
+//     接口本身也有超时兜底。
+func (s *OnlineService) EnsureCached(ctx context.Context, bvid string) (string, string, error) {
+	bvid = strings.TrimSpace(bvid)
+	if bvid == "" {
+		return "", "", errors.New("缺少视频 id")
+	}
+	if path, ext, ok := s.files.LookupAny(bvid, "m4a"); ok {
+		return path, strings.TrimPrefix(ext, "."), nil
+	}
+
+	stream, err := s.resolve(ctx, bvid)
+	if err != nil {
+		return "", "", err
+	}
+	ext := strings.TrimSpace(stream.Ext)
+	if ext == "" {
+		// B 站返回的是 m4a/AAC。拿不到扩展名时按 m4a 处理（见 onlinecache.NormalizeExt）
+		ext = "m4a"
+	}
+	path, ok := s.files.Path(bvid, ext)
+	if !ok {
+		return "", "", fmt.Errorf("无法为 %s 生成缓存文件名", bvid)
+	}
+
+	urls := append([]string{stream.URL}, stream.BackupURLs...)
+	var lastErr error
+	for _, rawURL := range urls {
+		if strings.TrimSpace(rawURL) == "" {
+			continue
+		}
+		if lastErr = s.downloadToCache(ctx, rawURL, path); lastErr == nil {
+			s.registerVirtual(bvid, path, ext)
+			return path, strings.TrimPrefix(onlinecache.NormalizeExt(ext), "."), nil
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("没有可用的音频地址")
+	}
+	return "", "", lastErr
+}
+
+// downloadToCache 把一个远端音频地址的完整内容写进缓存。
+func (s *OnlineService) downloadToCache(ctx context.Context, rawURL, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Referer", "https://www.bilibili.com/")
+	req.Header.Set("Origin", "https://www.bilibili.com")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36")
+
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("下载试听音频失败: HTTP %d", resp.StatusCode)
+	}
+	_, err = s.files.WriteTo(path, limitRemoteAudio(resp.Body))
+	return err
+}
+
+// serveCachedAudio 把缓存文件按普通文件提供（支持 Range / seek）。
+func serveCachedAudio(w http.ResponseWriter, r *http.Request, path, contentType string) {
+	f, err := os.Open(path)
+	if err != nil {
+		http.Error(w, "open failed", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		http.Error(w, "stat failed", http.StatusInternalServerError)
+		return
+	}
+	h := w.Header()
+	h.Set("Accept-Ranges", "bytes")
+	h.Set("Content-Type", contentType)
+	h.Set("Cache-Control", "no-store")
+	http.ServeContent(w, r, filepath.Base(path), st.ModTime(), f)
 }
 
 // SearchLyrics 手动匹配歌词：按用户给的关键词搜索候选。

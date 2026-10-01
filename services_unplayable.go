@@ -106,6 +106,27 @@ func (s *UnplayableService) Report(songID, reason, path string) map[string]any {
 	if strings.TrimSpace(songID) == "" {
 		return nil
 	}
+	// ★ 在线曲目不进这份清单。
+	//
+	// 「放不出来」清单的语义是「**磁盘上这个文件**坏了」—— 它的每条记录都会
+	// 被持久化，并顺手把这首歌从曲库里摘掉。在线曲目根本不是文件：
+	//   · 它的失败原因绝大多数是**网络**（限流、无版权、临时抽风），
+	//     过一会儿自己就好了。把它记成「坏文件」等于永久拉黑一首本来能听的歌；
+	//   · 它的 id（bili:xxx）不在曲库里，DropSong 也摘不掉任何东西，
+	//     只会在设置界面里堆出一条永远消不掉、且指向不存在的文件的记录。
+	//
+	// 前端那边已经不再把在线曲目的失败上报过来（见 audio.js#reportUnplayable），
+	// 这里再挡一层：后端不该依赖前端"记得别报"。
+	if _, ok := onlineBVID(songID); ok {
+		log.Printf("[unplayable] 忽略在线曲目的播放失败（不进「放不出来」清单）：%s —— %s", songID, reason)
+		return map[string]any{
+			"songId":             songID,
+			"reason":             reason,
+			"ignored":            true,
+			"isNew":              false,
+			"removedFromLibrary": false,
+		}
+	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		reason = "未知原因"

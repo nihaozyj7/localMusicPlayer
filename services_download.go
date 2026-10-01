@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"localmusicplayer/internal/bilibili"
 	"localmusicplayer/internal/bootstrap"
+	"localmusicplayer/internal/onlinecache"
 )
 
 // DownloadService 把在线歌曲保存到本地。
@@ -30,6 +32,10 @@ type DownloadService struct {
 	// client 与在线搜索共用同一个 bilibili 客户端，才能复用它缓存的 WBI 密钥。
 	client *bilibili.Client
 	app    *application.App
+
+	// files 是试听缓存。下载优先从这里「搬运」而不是重新走网络：
+	// 用户试听过再点下载时，音频其实已经在本地了（见 internal/onlinecache）。
+	files *onlinecache.Store
 
 	// emitFn 由 main 注入（与 LibraryService 一致，避免服务直接依赖应用生命周期）
 	emitFn func(string, any)
@@ -93,6 +99,17 @@ func NewDownloadService(store *bootstrap.Store, client *bilibili.Client) *Downlo
 		client:  client,
 		running: map[string]bool{},
 		tasks:   []*DownloadTask{},
+		files:   onlinecache.New(""),
+	}
+}
+
+// setCache 注入试听缓存（与 OnlineService 共用同一个实例）。
+//
+// 共用而不是各建一份：两边必须看到同一个目录，"试听时写入的" 与
+// "下载时读取的" 是同一份数据。测试里也可以注入一个指向临时目录的实例。
+func (s *DownloadService) setCache(store *onlinecache.Store) {
+	if store != nil {
+		s.files = store
 	}
 }
 
@@ -406,6 +423,18 @@ func (s *DownloadService) run(taskID, bvid, title string, durationMS int64, dir 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
+	// ★ 先看试听缓存里有没有这首歌。
+	//
+	// 用户在搜索结果里「试听」过的歌，音频其实已经完整落在本地缓存了
+	// （见 services_online.go#handleAudio）。这时再走一遍网络没有任何意义：
+	// 白白消耗一份流量、还要让用户再等一遍下载时间。
+	//
+	// 搬运失败（跨盘符、缓存被清理、权限问题）不是错误路径的终点 ——
+	// 直接回退到下面的网络下载，用户仍然能拿到文件。
+	if s.tryMoveFromCache(taskID, bvid, title, dir) {
+		return
+	}
+
 	stream, err := s.client.ResolveAudio(ctx, bvid)
 	if err != nil {
 		s.failTask(taskID, bvid, err.Error())
@@ -423,7 +452,7 @@ func (s *DownloadService) run(taskID, bvid, title string, durationMS int64, dir 
 	if name == "" {
 		name = bvid
 	}
-	target, reserved, err := uniquePath(dir, name, "."+ext)
+	target, reserved, partReserved, err := uniquePath(dir, name, "."+ext)
 	if err != nil {
 		s.failTask(taskID, bvid, err.Error())
 		return
@@ -431,8 +460,14 @@ func (s *DownloadService) run(taskID, bvid, title string, durationMS int64, dir 
 	// 占位文件是 uniquePath 用 O_EXCL 建的，用来「预定」这个名字。
 	// 必须立刻关掉句柄（Windows 上不关会影响后续 Rename），
 	// 失败路径上还要把占位一起清掉，别在用户目录里留空文件。
+	//
+	// ★ .part 的占位句柄同样要关：下载内容是由 fetchTo **重新打开**
+	// <target>.part 写入的，占位句柄一直开着会让 Windows 上的写入/改名失败。
 	if reserved != nil {
 		_ = reserved.Close()
+	}
+	if partReserved != nil {
+		_ = partReserved.Close()
 	}
 	cleanupPlaceholder := func() {
 		_ = os.Remove(target)
@@ -484,6 +519,96 @@ func (s *DownloadService) run(taskID, bvid, title string, durationMS int64, dir 
 	if s.onFileAdded != nil {
 		s.onFileAdded(target)
 	}
+}
+
+// tryMoveFromCache 尝试把试听缓存里的文件直接搬到下载目录。
+//
+// 返回 true 表示「缓存命中且搬运成功」，任务已经收尾，调用方应当直接返回；
+// 返回 false 表示「没有可用缓存或搬运失败」，调用方继续走网络下载。
+//
+// 为什么用「移动」而不是「复制」：缓存是**可丢弃的派生数据**，
+// 搬到下载目录之后就该从缓存里消失 —— 否则同一首歌在磁盘上会有两份，
+// 而且用户清缓存时也不会想到下载目录里那份其实是同一个来源。
+func (s *DownloadService) tryMoveFromCache(taskID, bvid, title, dir string) bool {
+	if s.files == nil {
+		return false
+	}
+	src, _, ok := s.files.LookupAny(bvid, "")
+	if !ok {
+		return false
+	}
+
+	// 文件名与落盘路径要和网络下载那条路径**完全一致**：
+	// 用户看到的结果不该因为「是否命中缓存」而不同（重名后缀、扩展名都一样）。
+	ext := strings.ToLower(filepath.Ext(src))
+	name := safeFilename(title)
+	if name == "" {
+		name = bvid
+	}
+	target, reserved, partReserved, err := uniquePath(dir, name, ext)
+	if err != nil {
+		return false
+	}
+	// uniquePath 用 O_CREATE|O_EXCL 建了 target 与 target.part 两个占位文件来
+	// 「预定」这个名字（那是为网络下载准备的：下载过程可能长达几分钟，
+	// 必须防住别人中途抢占同名文件）。
+	//
+	// 但搬运是**立刻完成**的，这两个占位反而是障碍：
+	//   · target 已存在会让 os.Rename 直接覆盖它 —— 没问题，但语义上更希望
+	//     「移动到一个干净的目标」；
+	//   · target.part 会变成一个**没人清理的垃圾文件**（Windows 上还因为
+	//     句柄没关而删不掉）。
+	// 所以这里把两个占位句柄都关掉、两个占位文件都删掉：名字已经预定过了，
+	// 此刻不会有人插进来。
+	if reserved != nil {
+		_ = reserved.Close()
+	}
+	if partReserved != nil {
+		_ = partReserved.Close()
+	}
+	_ = os.Remove(target)
+	_ = os.Remove(target + ".part")
+
+	if err := s.files.MovePath(src, target); err != nil {
+		log.Printf("[download] 从试听缓存搬运失败，回退到网络下载: %v", err)
+		_ = os.Remove(target)
+		return false
+	}
+
+	st, err := os.Stat(target)
+	if err != nil {
+		log.Printf("[download] 搬运后的文件不可用，回退到网络下载: %v", err)
+		return false
+	}
+	size := st.Size()
+
+	s.updateTask(taskID, func(t *DownloadTask) {
+		t.State = DownloadDone
+		t.Title = title
+		t.Path = target
+		t.Dir = dir
+		t.Done = size
+		t.Total = size
+		t.Message = ""
+		t.FinishedAt = time.Now().UnixMilli()
+	})
+
+	s.emit("download:done", map[string]any{
+		"bvid":      bvid,
+		"title":     title,
+		"path":      target,
+		"dir":       dir,
+		"bytes":     size,
+		"duration":  0,
+		"fromCache": true,
+	})
+	log.Printf("[download] %s 命中试听缓存，已直接移动到 %s", bvid, target)
+
+	// 与网络下载一致：让新文件立刻进曲库
+	if s.onFileAdded != nil {
+		s.onFileAdded(target)
+	}
+	return true
 }
 
 // failTask 把一条任务标记为失败并广播。
@@ -806,33 +931,42 @@ var windowsReservedNames = func() map[string]bool {
 // 返回的 reserve 是那个已创建的空文件句柄，调用方负责关闭它；
 // 真正的内容仍然写进 <target>.part，成功后 Rename 覆盖这个占位文件
 // （此时覆盖是安全的：占位文件是我们自己刚建的）。
-func uniquePath(dir, base, ext string) (string, *os.File, error) {
-	try := func(name string) (string, *os.File, bool) {
+//
+// ★ 第二个返回的句柄是 <target>.part 的占位句柄，**调用方也必须关闭它**。
+//
+// 以前这里把 .part 的句柄直接丢掉（`if _, partErr := os.OpenFile(...)`），
+// 于是 Windows 上那个文件永远带着一个打开的句柄：任何人都删不掉它
+// （包括调用方的清理与 os.Remove 失败时的回滚），会在用户目录里
+// 留下一个删不掉的 0 字节 .part —— 实测就是 TempDir 清理时报
+// 「The process cannot access the file because it is being used」。
+func uniquePath(dir, base, ext string) (string, *os.File, *os.File, error) {
+	try := func(name string) (string, *os.File, *os.File, bool) {
 		candidate := filepath.Join(dir, name)
 		// 连 .part 一起占位：并发任务用同一个 target+".part" 会互相写坏
 		f, err := os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
-			return candidate, nil, false
+			return candidate, nil, nil, false
 		}
-		if _, partErr := os.OpenFile(candidate+".part", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644); partErr != nil {
+		part, partErr := os.OpenFile(candidate+".part", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if partErr != nil {
 			// .part 已被别人占用 → 放弃这个名字，清掉刚建的占位
 			_ = f.Close()
 			_ = os.Remove(candidate)
-			return candidate, nil, false
+			return candidate, nil, nil, false
 		}
-		return candidate, f, true
+		return candidate, f, part, true
 	}
 
-	if target, f, ok := try(base + ext); ok {
-		return target, f, nil
+	if target, f, part, ok := try(base + ext); ok {
+		return target, f, part, nil
 	}
 	for i := 2; i < 1000; i++ {
 		name := fmt.Sprintf("%s (%d)%s", base, i, ext)
-		if target, f, ok := try(name); ok {
-			return target, f, nil
+		if target, f, part, ok := try(name); ok {
+			return target, f, part, nil
 		}
 	}
-	return "", nil, fmt.Errorf("同名文件过多，无法生成文件名: %s", base)
+	return "", nil, nil, fmt.Errorf("同名文件过多，无法生成文件名: %s", base)
 }
 
 func fileExists(p string) bool {

@@ -50,6 +50,18 @@ type Server struct {
 	mu             sync.Mutex
 	running        bool
 
+	// virtual 是「不在曲库里、但有真实本地文件」的歌曲（目前只有在线试听
+	// 缓存下来的曲目，见 internal/onlinecache）。
+	//
+	// 为什么需要它：在线曲目在曲库里查不到（它不是用户扫描出来的文件），
+	// 但它的音频确实已经落在磁盘上、也确实该被播放。没有这张表，解析会以
+	// 「歌曲不存在」失败，而这个失败会被上层当成「文件损坏」处理 ——
+	// 一首正常的在线歌曲就此被拉黑。
+	//
+	// 只由程序自己登记（RegisterVirtual），前端无法通过任何接口写入，
+	// 因此不破坏「只允许访问曲库中登记过的文件」这一安全前提。
+	virtual map[string]bootstrap.Song
+
 	// 转码缓存：把不能原生播放的格式一次性转成 WAV 落到临时目录，
 	// 之后按普通文件提供，从而拥有准确的 Content-Length 与字节级 seek。
 	cacheDir string
@@ -75,8 +87,74 @@ func New(songs func(id string) (bootstrap.Song, bool)) *Server {
 		// 之前，把首帧拖慢好几秒。启动流程里有后台 goroutine 调 RefreshFFmpeg()
 		// （见 main.go 的 ffmpeg prewarm）；在那之前需要 ffmpeg 的路径也会先
 		// 看到空值并如实报「不可用」，不会给出错误结果。
-		cache: map[string]*cacheItem{},
+		cache:   map[string]*cacheItem{},
+		virtual: map[string]bootstrap.Song{},
 	}
+}
+
+// RegisterVirtual 登记一首「不在曲库里、但磁盘上确实有文件」的歌曲。
+//
+// 目前唯一的用途是在线试听：音频下载到缓存目录后，后端需要一个可以按 id
+// 解析到的 Song 才能转码/播放它（见 services_online.go#EnsureCached）。
+//
+// 安全边界：调用方只能传程序自己下载并校验过的路径。这个方法只由 Go 侧调用，
+// 前端没有任何接口能触达它 —— 否则它就变成了「任意路径读取」的入口，
+// 而本服务「只提供曲库里登记过的文件」正是它敢监听本机端口的前提。
+//
+// 重复登记同一 id 是幂等的：缓存路径由 bvid 决定，第二次是同一条。
+func (s *Server) RegisterVirtual(id, path, ext string) {
+	id = strings.TrimSpace(id)
+	path = strings.TrimSpace(path)
+	if id == "" || path == "" {
+		return
+	}
+	ext = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(ext), "."))
+	if ext == "" {
+		ext = strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+	}
+
+	song := bootstrap.Song{
+		ID:    id,
+		Path:  path,
+		Ext:   ext,
+		Title: filepath.Base(path),
+	}
+	// 大小与修改时间要填对：转码缓存的 key 由它们组成（见 cacheKey）。
+	// 留空会让「文件换了但 key 没变」，从而复用一个过期的转码结果。
+	if st, err := os.Stat(path); err == nil {
+		song.Size = st.Size()
+		song.ModTime = st.ModTime().UnixMilli()
+	}
+
+	s.mu.Lock()
+	s.virtual[id] = song
+	s.mu.Unlock()
+}
+
+// lookupSong 按 id 取歌曲：先查曲库，再查虚拟表。
+//
+// 顺序不能反：曲库里的是用户自己的文件，优先级应当高于程序缓存。
+// 而且同一个 id 不可能同时出现在两边（在线曲目的 id 形如 bili:xxx，
+// 本地曲目是路径 hash），所以这个顺序实际上只是「读起来更直观」。
+func (s *Server) lookupSong(id string) (bootstrap.Song, bool) {
+	if s.songs != nil {
+		if song, ok := s.songs(id); ok {
+			return song, true
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	song, ok := s.virtual[id]
+	return song, ok
+}
+
+// VirtualSong 返回已登记的虚拟歌曲（第二个返回值是「有没有」）。
+// 供 main.go 的播放解析复用，避免它自己再维护一份映射。
+func (s *Server) VirtualSong(id string) (bootstrap.Song, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	song, ok := s.virtual[id]
+	return song, ok
 }
 
 // SetCacheDir 设置转码缓存目录（通常在数据目录下的 cache/transcode）
@@ -254,7 +332,7 @@ func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing song id", http.StatusBadRequest)
 		return
 	}
-	song, ok := s.songs(id)
+	song, ok := s.lookupSong(id)
 	if !ok {
 		http.Error(w, "song not found", http.StatusNotFound)
 		return
@@ -574,7 +652,7 @@ func (s *Server) ToolsInfo() map[string]any {
 // 缓存是 media.Server 现有的 600MB LRU（与 HTTP 路径共用），
 // 所以「听过的歌」不会被转码两次。
 func (s *Server) PlayableFile(ctx context.Context, songID string) (string, error) {
-	song, ok := s.songs(songID)
+	song, ok := s.lookupSong(songID)
 	if !ok {
 		return "", fmt.Errorf("歌曲不存在: %s", songID)
 	}

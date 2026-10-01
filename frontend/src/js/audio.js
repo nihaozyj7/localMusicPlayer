@@ -480,6 +480,11 @@ function noteLoadSucceeded() {
  */
 function reportUnplayable(song, reason) {
   if (!isWails() || !song?.id) return;
+  // 在线曲目不上报：它不是磁盘上的文件，失败原因通常是网络（限流/无版权/
+  // 临时抽风）。上报会让它被当成「坏文件」永久拉黑，还会在设置里的
+  // 「放不出来」清单中堆出一条指向不存在的文件的记录。
+  // 后端 services_unplayable.go#Report 也有同样的拦截，这里是第一道。
+  if (song.online) return;
   try {
     backend
       .unplayableReport(song.id, String(reason || ""), song.path || "")

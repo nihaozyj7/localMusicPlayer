@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -105,15 +106,38 @@ func main() {
 	mediaSrv.SetCacheDir(filepath.Join(store.DataDir(), "cache", "transcode"))
 	state.media = mediaSrv
 
+	// 在线能力共用一个 bilibili 客户端：WBI 签名密钥与设备标识只需要取一次。
+	//
+	// 提前到这里创建，因为它要参与下面后端播放的 resolve（在线歌曲兜底）。
+	onlineClient := bilibili.NewClient()
+	onlineSvc := newOnlineService(store, onlineClient)
+
 	// 后端原生播放：把「解码 + 输出」从 WebView2 搬到 Go 进程。
 	//
 	// resolve 的职责是把歌曲 id 变成引擎能直接读的 PCM WAV 路径。
 	// 走 mediaSrv.PlayableFile 是为了复用现有的转码缓存（600MB LRU）——
 	// 它本来是为「浏览器播不了 ape/wma」建的，现在后端播放也吃同一份缓存，
 	// 于是同一首歌不会被转码两次。
+	//
+	// ★ 在线歌曲的兜底（这是「在线试听不能用」的修复点）：
+	//
+	// 在线试听曲目**不在曲库里**（它不是用户扫描出来的文件），直接查会得到
+	// 「歌曲不存在」。以前这条失败会和「文件损坏」共用同一条错误链路，
+	// 于是一首完全正常的在线歌曲会被登记进「放不出来」清单 ——
+	// 用户看到的正是「在线试听不能用了」。
+	//
+	// 现在的做法：识别出在线曲目（bili: 前缀）就先确保它的音频已经落到本地
+	// 缓存（命中零开销，未命中现在下载），再正常走转码/播放。
 	playerSvc := NewPlayerService(func(songID string) (string, int64, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 		defer cancel()
+
+		if bvid, ok := onlineBVID(songID); ok {
+			if _, _, err := onlineSvc.EnsureCached(ctx, bvid); err != nil {
+				return "", 0, fmt.Errorf("在线试听准备失败: %w", err)
+			}
+		}
+
 		path, err := mediaSrv.PlayableFile(ctx, songID)
 		if err != nil {
 			return "", 0, err
@@ -132,9 +156,14 @@ func main() {
 		log.Printf("media server: %s", base)
 	}
 
-	// 在线能力共用一个 bilibili 客户端：WBI 签名密钥与设备标识只需要取一次
-	onlineClient := bilibili.NewClient()
-	onlineSvc := newOnlineService(store, onlineClient)
+	// 试听缓存就绪后，把它登记成 mediaSrv 能解析到的「虚拟歌曲」。
+	//
+	// 走回调而不是让 OnlineService 直接依赖 media.Server：在线服务只该负责
+	// 「把音频弄到本地」，谁需要这份文件、以什么形式需要，是装配层的事
+	// （也让测试里可以只验缓存、不接后端）。
+	onlineSvc.setVirtualResolver(func(bvid, path, ext string) {
+		mediaSrv.RegisterVirtual(onlineSongID(bvid), path, ext)
+	})
 	// 歌词 / 封面自动匹配时用 AI 清洗元数据
 	aiSvc := NewAiService(store)
 	onlineSvc.setAI(aiSvc)
@@ -176,6 +205,9 @@ func main() {
 	state.appSvc = NewAppService()
 	state.loudnessSvc = NewLoudnessService(loudMgr, lib)
 	state.downloadSvc = NewDownloadService(store, onlineClient)
+	// 下载与试听**共用同一份缓存**：用户在搜索结果里试听过的歌，
+	// 点下载时可以直接从缓存搬到下载目录，不必重新走一遍网络。
+	state.downloadSvc.setCache(onlineSvc.files)
 	// 版本更新：检测 GitHub Release，下载走代理降级，安装靠自替换脚本。
 	state.updateSvc = NewUpdateService(store)
 	// 封面/歌词缓存放在配置的缓存目录下（默认 %APPDATA%\LocalMusicPlayer\cache）
