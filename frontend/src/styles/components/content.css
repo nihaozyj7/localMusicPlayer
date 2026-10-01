@@ -199,7 +199,41 @@
   box-shadow: none;
 }
 
-/* —— 下拉框 —— */
+/* —— 排序按钮 ——
+   它替换了原来的原生 <select>（理由见 ui/content.js#openSortMenu）。
+   按钮上直接显示「字段名 + 方向箭头」，所以不看面板也知道当前按什么排。 */
+.btn--sort {
+  /* 字段名可能是「文件大小」这类较长的词，给它一个下限免得按钮忽宽忽窄 */
+  min-width: 96px;
+}
+
+.btn--sort svg {
+  /* 前缀的排序图标略小一点，让文字仍是视觉主体 */
+  opacity: 0.75;
+}
+
+/* 方向箭头：紧跟在文字后面、更小、更暗 —— 它是**状态**而不是第二个图标 */
+.btn--sort .btn__dir {
+  display: inline-flex;
+  align-items: center;
+  margin-left: calc(var(--sp-1) * -1);
+  color: var(--text-3);
+}
+
+.btn--sort .btn__dir svg {
+  width: 12px;
+  height: 12px;
+  opacity: 1;
+}
+
+.btn--sort[data-dir="asc"] .btn__dir,
+.btn--sort[data-dir="desc"] .btn__dir {
+  /* 有明确方向时用强调色，一眼能看出「排序正在生效」 */
+  color: var(--accent);
+}
+
+/* —— 下拉框 ——
+   保留 .select 供设置界面等处继续使用（settings-view.js 里还有引用）。 */
 .select {
   position: relative;
   display: inline-flex;

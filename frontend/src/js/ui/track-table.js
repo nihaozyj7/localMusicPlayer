@@ -21,7 +21,7 @@ import { Directive, directive } from "lit/directive.js";
 import { MpElement, define, html, nothing, repeat, icon } from "./base.js";
 import { toast } from "./overlays.js";
 import { bindCoverFallback } from "./overlays.js";
-import { coverVersion, commit, isLiked, reorderQueue, state, toggleSelectedSong } from "../store.js";
+import { coverVersion, commit, isLiked, reorderQueue, state, toggleSelectedSong, toggleSort } from "../store.js";
 import { activateRow, markDragEnd, openColumnMenu, openTrackMenu, shouldIgnoreRowClick } from "../tracks.js";
 import { currentContext, playContext, toggleLike } from "../store.js";
 import { DEFAULT_COVER, coverOf, fmtTime } from "../utils.js";
@@ -290,14 +290,10 @@ export class MpTrackTable extends MpElement {
 
     const sortBtn = e.target.closest("[data-sort]");
     if (sortBtn) {
-      const key = sortBtn.dataset.sort;
-      if (state.sortKey === key) {
-        state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
-      } else {
-        state.sortKey = key;
-        state.sortDir = key === "addedAt" ? "desc" : "asc";
-      }
-      commit();
+      // 走 store 里统一的 toggleSort：点当前字段翻转方向、点别的字段换过去
+      // 并用该字段的默认方向。以前这里自己写了一遍同样的逻辑 ——
+      // 两份实现一旦不同步，就会出现「点表头和点排序面板结果不一致」。
+      toggleSort(sortBtn.dataset.sort);
       return;
     }
 

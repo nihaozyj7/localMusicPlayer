@@ -526,6 +526,24 @@ export function applyRules(songs, rules) {
  */
 const textCollator = new Intl.Collator("zh-Hans-CN");
 
+/**
+ * 排序比较函数：一律以**升序**语义书写（返回值 < 0 表示 a 排在 b 前面）。
+ *
+ * ★ 为什么必须全部统一成升序（这是一个真实踩过的坑）：
+ *
+ * 原来 addedAt 写成 `b.addedAt - a.addedAt`、playCount 写成
+ * `b.playCount - a.playCount` —— 它们本身已经是「降序」。这在只有
+ * 「点一下就切」的旧逻辑里碰巧能用（因为默认方向和比较函数是配套的），
+ * 但一旦引入显式的「升序 / 降序」选择，方向就变成了一个**乘数**：
+ *
+ *	排序结果 = cmp(a, b) × (dir === "desc" ? -1 : 1)
+ *
+ * 此时若 cmp 自身还是降序的，选「降序」就会得到**升序**的结果 ——
+ * 用户点「降序」看到的却是最旧的排在前面。两处「降序」互相抵消了。
+ *
+ * 所以规则收敛成一句：SORTERS 只用升序语义，方向完全由 dir 决定。
+ * 某个字段希望默认降序，通过 SORT_FIELDS 的 descFirst 表达（见下）。
+ */
 const SORTERS = {
   title: (a, b) => textCollator.compare(String(a.title), String(b.title)),
   artist: (a, b) => textCollator.compare(String(a.artist), String(b.artist)),
@@ -533,9 +551,63 @@ const SORTERS = {
   duration: (a, b) => a.duration - b.duration,
   size: (a, b) => a.size - b.size,
   ext: (a, b) => textCollator.compare(String(a.ext), String(b.ext)),
-  playCount: (a, b) => b.playCount - a.playCount,
-  addedAt: (a, b) => b.addedAt - a.addedAt,
+  playCount: (a, b) => (a.playCount ?? 0) - (b.playCount ?? 0),
+  addedAt: (a, b) => (a.addedAt ?? 0) - (b.addedAt ?? 0),
 };
+
+/**
+ * 排序字段的展示定义（顺序即悬浮面板里的顺序）。
+ *
+ * ★ 为什么要有 def 里这个 `descFirst`：
+ *
+ * 「升序 / 降序」对不同的字段意味着不同的「有用顺序」。用户点开排序面板，
+ * 想要的是「哪个字段」+「哪个方向」，而不是先默认成升序再自己翻一次：
+ *   · 时间类（添加时间、播放次数）：他关心「最近/最多」→ 默认降序；
+ *   · 文本类（标题、歌手、专辑）：他关心「A→Z」→ 默认升序；
+ *   · 时长/大小：查「最大的那几个」比「最小的」更常见，但也常用升序找短歌 ——
+ *     这两个保持升序（与「从小到大」的直觉一致）。
+ *
+ * ★ descFirst 只决定「选中这个字段时初始用哪个方向」。
+ *
+ * 它**不影响**比较函数本身 —— SORTERS 一律是升序语义，方向统一由 dir 决定
+ * （见上面 SORTERS 的说明）。所以 descFirst 与比较函数之间没有任何隐含耦合：
+ * 改这里不会让某个字段的升降序反过来。
+ */
+export const SORT_FIELDS = [
+  { key: "addedAt", label: "添加时间", descFirst: true },
+  { key: "title", label: "标题", descFirst: false },
+  { key: "artist", label: "歌手", descFirst: false },
+  { key: "album", label: "专辑", descFirst: false },
+  { key: "duration", label: "时长", descFirst: false },
+  { key: "size", label: "文件大小", descFirst: false },
+  { key: "playCount", label: "播放次数", descFirst: true },
+];
+
+/** 按 key 取字段定义（认不出来时返回 undefined）。 */
+export function sortField(key) {
+  return SORT_FIELDS.find((f) => f.key === key);
+}
+
+/** 方向的中文名（供菜单 aria-label / 提示文案使用）。 */
+export function sortDirLabel(dir) {
+  return dir === "desc" ? "降序" : "升序";
+}
+
+/**
+ * 切换排序字段时应当采用的默认方向。
+ *
+ * 单独抽成函数是因为它被两处调用（表头点击、悬浮面板选字段），
+ * 而两处必须给出**同一个**结果 —— 各写一遍就会出现「点表头和点面板
+ * 同一字段得到不同方向」这种莫名其妙的行为。
+ */
+export function defaultSortDir(key) {
+  return sortField(key)?.descFirst ? "desc" : "asc";
+}
+
+/** 规范化排序方向：只有 "asc" / "desc" 两个合法值，其它一律落回 asc。 */
+export function normalizeSortDir(dir) {
+  return dir === "desc" ? "desc" : "asc";
+}
 
 function currentSongList() {
   const { view, playlistId, playlists, queue, songs } = state;
@@ -638,12 +710,37 @@ function computeVisible() {
   // 播放列表（队列）视图**不排序**：队列顺序本身就是数据（用户拖拽排序的结果），
   // 再按 sortKey 排一次会把拖拽效果整个抹掉 —— 这正是「拖拽后提示成功、
   // 界面却没变化」的原因。队列的排序由用户拖拽决定。
-  if (state.view !== "queue" && state.sortKey && SORTERS[state.sortKey]) {
-    const cmp = SORTERS[state.sortKey];
-    const dir = state.sortDir === "desc" ? -1 : 1;
-    out = out.slice().sort((a, b) => cmp(a, b) * dir);
-  }
-  return out;
+  if (state.view === "queue") return out;
+  return computeSorted(out);
+}
+
+/**
+ * 按当前（或指定）排序设置给歌曲列表排序。
+ *
+ * 抽成纯函数有两个理由：
+ *  1. 它是「升序/降序到底对不对」这个问题的唯一判定点，必须能直接测
+ *     （见 frontend/tests/sort.test.js）；
+ *  2. 队列视图要**跳过**它 —— 把「跳不跳」留在调用点，比在这个函数里
+ *     偷偷读 state.view 更容易看明白（也更难被误改）。
+ *
+ * @param {Array} list 待排序的歌曲
+ * @param {{key?:string, dir?:string}} [sort] 排序设置；省略时读 state
+ */
+function computeSorted(list, sort) {
+  const key = sort?.key ?? state.sortKey;
+  const dir = normalizeSortDir(sort?.dir ?? state.sortDir);
+  const cmp = SORTERS[key];
+  if (!cmp) return list;
+  const sign = dir === "desc" ? -1 : 1;
+  // slice() 再排：不能就地改调用方传进来的数组（那是曲库/队列本身）
+  //
+  // ★ 比较函数相同时必须返回 0 的稳定性：Array.prototype.sort 在现代
+  // 引擎里是稳定排序，所以「按添加时间」相同时会保留原有相对顺序 ——
+  // 这正是「同一天导入的歌顺序不会莫名其妙变来变去」的依据。
+  return list.slice().sort((a, b) => {
+    const r = cmp(a, b);
+    return r === 0 ? 0 : r * sign;
+  });
 }
 
 function recalcVisible() {
@@ -1506,6 +1603,63 @@ export function setListDensity(value) {
   commit();
 }
 
+/* --------------------------------------------------------------------------
+   排序
+   --------------------------------------------------------------------------
+   排序是「字段 + 方向」两个维度，而它有三个入口：表头点击、排序悬浮面板、
+   以及（历史上）工具栏下拉框。三个入口如果各自改 state，很容易出现
+   「点表头是升序、点面板却成了降序」这种对不上的行为。
+
+   所以真正改状态的动作收敛到下面这一个函数，各入口只负责决定
+   「要哪个字段 / 要哪个方向」。
+   -------------------------------------------------------------------------- */
+
+/**
+ * 设置排序字段。
+ *
+ * 换字段时的方向由 defaultSortDir 决定（时间类默认降序、文本类默认升序）。
+ * 传 dir 可以显式指定方向（悬浮面板里「先选字段、再选方向」的情形：
+ * 用户点了字段本身，我们按该字段的偏好给一个合理默认，他再想翻转就点方向）。
+ */
+export function setSort(key, dir) {
+  if (!key || !SORTERS[key]) return;
+  const changing = state.sortKey !== key;
+  state.sortKey = key;
+  if (dir) {
+    state.sortDir = normalizeSortDir(dir);
+  } else if (changing) {
+    // 只在**换字段**时套用默认方向。
+    //
+    // 不在这里「同字段再点一次就翻转」：那个语义属于「切换」，
+    // 由 toggleSort 负责。把它混进来会让「明确指定字段」这个动作
+    // 意外地翻转方向 —— 比如从面板里再点一次当前字段，本该无变化。
+    state.sortDir = defaultSortDir(key);
+  }
+  commit();
+}
+
+/** 设置排序方向（升序 / 降序）。 */
+export function setSortDir(dir) {
+  state.sortDir = normalizeSortDir(dir);
+  commit();
+}
+
+/**
+ * 切换排序：点的是当前字段就翻转方向，是别的字段就换过去并用它的默认方向。
+ *
+ * 这是「点表头」与「点面板里当前字段」共用的行为。
+ */
+export function toggleSort(key) {
+  if (!key || !SORTERS[key]) return;
+  if (state.sortKey === key) {
+    state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+  } else {
+    state.sortKey = key;
+    state.sortDir = defaultSortDir(key);
+  }
+  commit();
+}
+
 /**
  * 登记一首在线曲目（返回登记后的对象）。
  *
@@ -2343,4 +2497,4 @@ function waitForScanDone() {
   });
 }
 
-export { DEFAULT_CONFIG, SORTERS };
+export { DEFAULT_CONFIG, SORTERS, computeSorted };

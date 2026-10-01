@@ -12,7 +12,7 @@
 
 import { keyed } from "lit/directives/keyed.js";
 import { MpElement, define, html, nothing, icon } from "./base.js";
-import { toast } from "./overlays.js";
+import { openMenu, toast } from "./overlays.js";
 import {
   clearQueue,
   commit,
@@ -20,6 +20,11 @@ import {
   removeSongsFromPlaylist,
   setPlaylistSelecting,
   setSelectedSongs,
+  setSort,
+  setSortDir,
+  SORT_FIELDS,
+  sortDirLabel,
+  sortField as sortFieldDef,
   state,
 } from "../store.js";
 import { LIKED_ID, currentContext, playlistById as playlistOf } from "../store.js";
@@ -66,7 +71,6 @@ class MpContent extends MpElement {
           class="content-header"
           id="content-header"
           @click=${(e) => this.onHeaderClick(e)}
-          @change=${(e) => this.onHeaderChange(e)}
         >
           <div class="content-header__titles">
             <h1 class="content-header__title" id="content-title">
@@ -169,21 +173,30 @@ class MpContent extends MpElement {
     >
       ${icon("disc")}
     </button>`;
-    const sortSel = html`
-      <div class="select">
-        <select class="select__field" id="select-sort" aria-label="排序方式">
-          ${[
-            ["addedAt", "添加时间"],
-            ["title", "标题"],
-            ["artist", "歌手"],
-            ["album", "专辑"],
-            ["duration", "时长"],
-            ["size", "文件大小"],
-            ["playCount", "播放次数"],
-          ].map(([k, l]) => html`<option value=${k} ?selected=${state.sortKey === k}>${l}</option>`)}
-        </select>
-        ${icon("chevron-down", "select__icon")}
-      </div>
+    // 排序入口：一个按钮，点开是**悬浮面板**（不再是原生 <select>）。
+    //
+    // 为什么换掉下拉框：
+    //   · 原生 <select> 的选项列表由系统绘制，无法跟随本应用的主题与
+    //     毛玻璃风格（在深色主题下会突兀地弹出一块系统白底列表）；
+    //   · 它也没法表达「当前方向」——「标题 ↑」这个信息必须让用户自己
+    //     从列表里推断，而方向恰恰是排序的一半。
+    //
+    // 按钮上直接显示「字段 + 方向箭头」，不看面板也知道当前按什么排。
+    const sortField = sortFieldDef(state.sortKey);
+    const sortBtn = html`
+      <button
+        class="btn btn--sort"
+        type="button"
+        data-tool="sort"
+        data-dir=${state.sortDir}
+        data-tip="排序方式"
+        aria-haspopup="menu"
+        aria-label="排序方式：${sortField?.label ?? "添加时间"}，${sortDirLabel(state.sortDir)}"
+      >
+        ${icon("sort")}
+        <span>${sortField?.label ?? "添加时间"}</span>
+        <span class="btn__dir" aria-hidden="true">${icon(state.sortDir === "desc" ? "chevron-down" : "chevron-up")}</span>
+      </button>
     `;
 
     if (v === "queue") {
@@ -211,7 +224,7 @@ class MpContent extends MpElement {
         `;
       }
       return html`
-        ${sortSel}${playAll}
+        ${sortBtn}${playAll}
         <button class="btn" type="button" data-tool="pl-select">${icon("check")}<span>多选</span></button>
         <button class="btn" type="button" data-tool="pl-add">${icon("plus")}<span>添加</span></button>
         ${locate}
@@ -221,7 +234,7 @@ class MpContent extends MpElement {
 
     return html`
       <button class="btn" type="button" data-tool="rescan">${icon("refresh")}<span>重新扫描</span></button>
-      ${sortSel}${playAll}${locate}
+      ${sortBtn}${playAll}${locate}
     `;
   }
 
@@ -303,17 +316,73 @@ class MpContent extends MpElement {
     await this.handleTool(tool);
   }
 
-  onHeaderChange(e) {
-    if (e.target.id === "select-sort") {
-      state.sortKey = e.target.value;
-      commit();
-    }
+  /* ------------------------------------------------------------------------
+     排序悬浮面板
+     ------------------------------------------------------------------------
+     结构是「字段（单选）+ 方向（升序/降序）两块」，因为它们本来就是两个
+     正交的维度：
+       · 用户要「按播放次数降序」——先选字段再选方向，两次点击都是明确的；
+       · 而「点字段自动带一个默认方向」让最常见的需求一次点击就完成
+         （时间类默认降序、文本类默认升序，见 store.js#defaultSortDir）。
+
+     复用 openMenu 而不是自己写浮层：定位、越界翻转、点外部关闭、Escape、
+     滚动关闭、进出动画它都已经处理好了，而且视觉与右键菜单完全一致。
+     ------------------------------------------------------------------------ */
+  openSortMenu() {
+    const anchor = this.querySelector('[data-tool="sort"]');
+    // 用 openMenu 的 checked 而不是自己塞一个 check 图标：
+    //   · checked 会同时渲染勾选标记**并**写上 aria-checked，
+    //     读屏用户才知道「当前选的是哪个」；
+    //   · 自己塞图标只有视觉，无障碍上是缺失的（菜单项看起来都一样）。
+    const items = [
+      { id: "hdr-field", kind: "label", label: "排序方式" },
+      ...SORT_FIELDS.map((f) => ({
+        id: `field:${f.key}`,
+        label: f.label,
+        checked: f.key === state.sortKey,
+      })),
+      { id: "sep-dir", kind: "sep" },
+      { id: "hdr-dir", kind: "label", label: "排列顺序" },
+      { id: "dir:asc", label: "升序", checked: state.sortDir === "asc" },
+      { id: "dir:desc", label: "降序", checked: state.sortDir === "desc" },
+    ];
+
+    openMenu({
+      anchor,
+      align: "left",
+      items,
+      onPick: (id) => {
+        if (id.startsWith("field:")) {
+          const key = id.slice("field:".length);
+          // 点的就是当前字段：不做事（方向交给下面的「排列顺序」）。
+          //
+          // 这里刻意**不**翻转方向。翻转是表头点击的语义（那是一个「切换」
+          // 动作，见 track-table.js），而这个面板里字段与方向是两个独立的
+          // 选择控件；在字段列表上做隐式翻转会让「我只想确认一下按什么排」
+          // 变成一次意外的重排。
+          if (key === state.sortKey) {
+            toast(`已经按「${sortFieldDef(key)?.label ?? key}」排序`, { duration: 1400 });
+            return;
+          }
+          setSort(key);
+          return;
+        }
+        if (id.startsWith("dir:")) {
+          const dir = id.slice("dir:".length);
+          if (dir === state.sortDir) return;
+          setSortDir(dir);
+        }
+      },
+    });
   }
 
   async handleTool(tool) {
     switch (tool) {
       case "rescan":
         doRescan({ manual: true });
+        break;
+      case "sort":
+        this.openSortMenu();
         break;
       case "add-folder":
         await handleSettingsAction({ dataset: { act: "add-folder" } }, SETTINGS_CTX);
