@@ -56,6 +56,12 @@ library, cover art and lyric cache all live on your own disk.
 - Built-in FFmpeg transcoding: `ape` / `wma` / `dsf` and friends are transcoded to PCM/WAV, cached per file;
 - **Loudness normalisation**: EBU R128 (`loudnorm`) measurement plus replay-gain compensation, per track
   or per album;
+- **Leading/trailing silence skipping**: automatically skip past the blank lead-in of live recordings and
+  the silence left at the end of CD rips — the two ends are toggled separately. The duration, progress bar
+  and lyrics stay on the **original** timeline; those two stretches simply are not played. Detection runs on
+  the decoded PCM and is cached per file, so replaying a track costs nothing;
+- **Track gap**: a pause between automatically consecutive tracks (1.5 s by default, 0–10 s). It is timed on
+  the audio thread, so a busy UI never makes it drift;
 - Drag-and-drop queue reordering, playlists, likes, a sleep timer and configurable keyboard shortcuts;
 - Frameless window with native materials (Mica / Acrylic), rounded corners and minimise-to-tray.
 

@@ -146,7 +146,7 @@ func TestRealPlaybackAdvances(t *testing.T) {
 	dir, path := tempAudioDir(t, "tone.wav", 440, 3.0) // 3 秒 440Hz
 	defer func() { closeEngine(); cleanupDir(dir) }()
 
-	if err := e.Load(path, 0, 1); err != nil {
+	if err := e.Load(path, 0, 0, 1); err != nil {
 		t.Fatalf("装载失败: %v", err)
 	}
 	e.SetGain(1.0)
@@ -185,7 +185,7 @@ func TestRealPlaybackPauseStopsPosition(t *testing.T) {
 
 	dir, path := tempAudioDir(t, "tone.wav", 440, 5.0)
 	defer func() { closeEngine(); cleanupDir(dir) }()
-	if err := e.Load(path, 0, 1); err != nil {
+	if err := e.Load(path, 0, 0, 1); err != nil {
 		t.Fatalf("装载失败: %v", err)
 	}
 	e.Play()
@@ -212,7 +212,7 @@ func TestRealPlaybackSeekMovesPosition(t *testing.T) {
 
 	dir, path := tempAudioDir(t, "tone.wav", 440, 6.0) // 6 秒
 	defer func() { closeEngine(); cleanupDir(dir) }()
-	if err := e.Load(path, 0, 1); err != nil {
+	if err := e.Load(path, 0, 0, 1); err != nil {
 		t.Fatalf("装载失败: %v", err)
 	}
 	e.Play()
@@ -246,7 +246,7 @@ func TestRealPlaybackSpectrumIsLive(t *testing.T) {
 	// 用一个低频正弦：能量应当集中在低频段
 	dir, path := tempAudioDir(t, "bass.wav", 120, 3.0)
 	defer func() { closeEngine(); cleanupDir(dir) }()
-	if err := e.Load(path, 0, 1); err != nil {
+	if err := e.Load(path, 0, 0, 1); err != nil {
 		t.Fatalf("装载失败: %v", err)
 	}
 	e.SetGain(1.0)
@@ -304,7 +304,7 @@ func TestRealPlaybackEOF(t *testing.T) {
 		}
 	})
 
-	if err := e.Load(path, 0, 1); err != nil {
+	if err := e.Load(path, 0, 0, 1); err != nil {
 		t.Fatalf("装载失败: %v", err)
 	}
 	e.Play()
@@ -335,7 +335,7 @@ func TestRealPlaybackGainDoesNotBreakAudio(t *testing.T) {
 
 	dir, path := tempAudioDir(t, "tone.wav", 440, 3.0)
 	defer func() { closeEngine(); cleanupDir(dir) }()
-	if err := e.Load(path, 0, 1); err != nil {
+	if err := e.Load(path, 0, 0, 1); err != nil {
 		t.Fatalf("装载失败: %v", err)
 	}
 	e.Play()
@@ -380,14 +380,14 @@ func TestRealPlaybackReloadSwitchesSong(t *testing.T) {
 	writeTestWAV(t, a, 440, 4.0)
 	writeTestWAV(t, b, 880, 2.0)
 
-	if err := e.Load(a, 0, 1); err != nil {
+	if err := e.Load(a, 0, 0, 1); err != nil {
 		t.Fatalf("装载 a 失败: %v", err)
 	}
 	e.Play()
 	time.Sleep(400 * time.Millisecond)
 
 	// 换到 b：位置必须归零，时长必须变成 b 的
-	if err := e.Load(b, 0, 1); err != nil {
+	if err := e.Load(b, 0, 0, 1); err != nil {
 		t.Fatalf("装载 b 失败: %v", err)
 	}
 	posMs, durMs := e.Position()

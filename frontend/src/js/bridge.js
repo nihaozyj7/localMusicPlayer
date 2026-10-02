@@ -277,6 +277,9 @@ const backendImpl = {
   playerUnload: () => call(bindings?.Player?.Unload),
   playerState: () => call(bindings?.Player?.State),
   playerSetVolume: (volume, muted) => call(bindings?.Player?.SetVolume, volume, Boolean(muted)),
+  // 跳过首尾静音 + 切歌间隔：都在后端生效（检测与计时跑在音频线程上）
+  playerSetPlaybackOptions: (skipHead, skipTail, gapSeconds) =>
+    call(bindings?.Player?.SetPlaybackOptions, Boolean(skipHead), Boolean(skipTail), Number(gapSeconds) || 0),
   playerSetLoudness: (gainDB) => call(bindings?.Player?.SetLoudnessGain, gainDB),
   playerSpectrum: (bands) => call(bindings?.Player?.Spectrum, bands),
   playerDiagnostics: () => call(bindings?.Player?.Diagnostics),

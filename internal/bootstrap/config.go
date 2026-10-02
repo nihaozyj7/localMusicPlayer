@@ -253,6 +253,31 @@ type Config struct {
 	// ShuffleMode 随机播放行为：reshuffle | once。
 	ShuffleMode string `json:"shuffleMode"`
 
+	// —— 跳过静音（见 internal/audioplay/silence.go）——
+	//
+	// SkipSilenceHead / SkipSilenceTail 分别控制「跳过开头无声」与「跳过结尾无声」。
+	//
+	// 为什么做成两个开关而不是一个「跳过静音」：这两件事解决的是完全不同的问题 ——
+	//   · 开头静音 —— 很多无损/现场转录的文件前面有几秒空白，点播放却迟迟不出声，
+	//     听感上像「播放器卡了」；
+	//   · 结尾静音 —— CD 抓轨与整轨转录的文件尾部常常拖十几秒空白，
+	//     自动下一首会白白等完那一段。
+	// 用户完全可能只想解决其中一个（比如就想要「听完尾奏再切歌」）。
+	//
+	// 检测在装载时对解码后的 PCM 做（见 audioplay.DetectSilence），结果按文件缓存，
+	// 所以同一首歌第二次播放零开销。
+	SkipSilenceHead bool `json:"skipSilenceHead"`
+	SkipSilenceTail bool `json:"skipSilenceTail"`
+
+	// TrackGapSeconds 是切歌时两首歌之间的间隔（秒）。
+	//
+	// 它作用于**自动切歌**（上一首播完 → 下一首起播）之间的停顿，默认 1.5 秒。
+	// 用户手动点下一首 / 点播某一首时不等这个间隔 —— 那是明确的即时意图，
+	// 中间插一段静音只会显得播放器反应慢。
+	//
+	// 0 表示不留间隔（播完立刻接上）。
+	TrackGapSeconds float64 `json:"trackGapSeconds"`
+
 	// —— 封面轮播（播放详情页）——
 	// CoverCarousel 是否轮播多张封面。
 	// 刻意做成**全局偏好**而不是每首一份：一首歌有几张封面是数据，
@@ -451,6 +476,14 @@ func DefaultConfig() *Config {
 		SleepAfterSong:            false,
 		ShuffleMode:               "reshuffle",
 
+		// 跳过静音默认**关闭**：它会改变用户听到的音频（掐掉头尾）。
+		// 与「响度均衡」同一立场 —— 任何改动音频本身的处理都必须由用户明确开启。
+		SkipSilenceHead: false,
+		SkipSilenceTail: false,
+		// 切歌间隔默认 1.5 秒：自动切歌时留一点呼吸感，也让「上一首结束」
+		// 与「下一首开始」在听感上分得开，而不是硬接在一起。
+		TrackGapSeconds: DefaultTrackGapSeconds,
+
 		// 版本更新：启动时静默检查一次；下载通道默认 auto（直连优先，
 		// 失败自动换代理）；没有跳过的版本。
 		UpdateCheckOnStart: true,
@@ -506,6 +539,42 @@ func NormalizeRowClickAction(v string) string {
 		}
 	}
 	return "next"
+}
+
+/* --------------------------------------------------------------------------
+   切歌间隔
+   -------------------------------------------------------------------------- */
+
+// DefaultTrackGapSeconds 是「两首歌之间间隔」的默认值（秒）。
+//
+// 1.5 秒：短到不至于让用户觉得播放器卡住，长到能把两首歌分得开。
+// 前端 store.js 的 DEFAULT_CONFIG 与设置界面滑块都以这个常量为准。
+const DefaultTrackGapSeconds = 1.5
+
+// 切歌间隔的合法范围（秒）。
+//
+// 上限 10 秒：再长的「间隔」已经不是间隔而是暂停了，用户想要的是定时停止
+// （见 SleepAfterSong），不该用这个滑块去凑。
+const (
+	MinTrackGapSeconds = 0.0
+	MaxTrackGapSeconds = 10.0
+)
+
+// NormalizeTrackGapSeconds 把切歌间隔夹到 [0, 10] 秒。
+//
+// 0 是**合法值**（表示「不留间隔，播完立刻接上」），所以不能用 <=0 落回默认 ——
+// 那会让用户明确选的「不间隔」被静默改成 1.5 秒。
+// 负数是非法输入（手改配置 / 旧版本），统一按 0 处理。
+func NormalizeTrackGapSeconds(seconds float64) float64 {
+	if seconds < MinTrackGapSeconds {
+		return MinTrackGapSeconds
+	}
+	if seconds > MaxTrackGapSeconds {
+		return MaxTrackGapSeconds
+	}
+	// 保留一位小数：设置界面的滑块是 0.1 秒一档，多余的精度只会让
+	// config.json 里出现 1.5000000000000002 这种值。
+	return float64(int(seconds*10+0.5)) / 10
 }
 
 // ListDensities 列表密度可选值
@@ -976,6 +1045,9 @@ func normalize(cfg *Config) {
 	}
 	cfg.RowClickAction = NormalizeRowClickAction(cfg.RowClickAction)
 	cfg.ListDensity = NormalizeListDensity(cfg.ListDensity)
+	// 切歌间隔：手改配置写成负数 / 超大值时收敛到合法范围。
+	// 注意 0 是合法值，NormalizeTrackGapSeconds 内部已经区分了「0」与「非法」。
+	cfg.TrackGapSeconds = NormalizeTrackGapSeconds(cfg.TrackGapSeconds)
 	cfg.AnimationsSpeed = NormalizeAnimationsSpeed(cfg.AnimationsSpeed)
 	cfg.SkinPerformanceMode = NormalizeSkinPerformanceMode(cfg.SkinPerformanceMode)
 	// 更新下载通道：手改成别的值（或者旧版本里存着一个已经下架的代理 id）

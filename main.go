@@ -150,6 +150,13 @@ func main() {
 	})
 	state.playerSvc = playerSvc
 
+	// 播放选项（跳过首尾静音 / 切歌间隔）从配置里读。
+	//
+	// 注入的是「读取函数」而不是配置本身：用户在设置里改了开关之后，
+	// 下一首装载就该用新值，而这个服务是长期存活的单例 ——
+	// 拿一份构造时的快照会让改动要重启才生效。
+	playerSvc.setConfigProvider(func() bootstrap.Config { return store.Get() })
+
 	if base, err := mediaSrv.Start(); err != nil {
 		log.Printf("media server failed: %v", err)
 	} else {

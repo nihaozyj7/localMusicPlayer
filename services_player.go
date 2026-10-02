@@ -128,6 +128,17 @@ type PlayerService struct {
 
 	// onEOF 播完时的回调（由 main 注入，用于自动切下一首）
 	onEOF func()
+
+	// config 提供「跳过首尾静音」与「切歌间隔」这几个开关（由 main 注入）。
+	//
+	// 为什么不让服务直接持有 *bootstrap.Store：本文件刻意只依赖两个窄接口
+	//（resolve 函数与 eventEmitter），测试里可以完全脱离配置层跑。
+	// 配置读取失败（比如测试里没注入）时一律按「不跳过、无间隔」处理 ——
+	// 那正是加入这个功能之前的默认行为，属于安全兜底。
+	config func() bootstrap.Config
+
+	// lastTrim 是最近一次装载实际用的掐点（诊断 / 前端展示「跳过了多少」）。
+	lastTrim audioplay.SilenceTrim
 }
 
 // eventEmitter 是发事件需要的最小接口。
@@ -163,6 +174,33 @@ func NewPlayerService(resolve func(string) (string, int64, error)) *PlayerServic
 		userVolume:   1,
 		playbackRate: 1,
 	}
+}
+
+// setConfigProvider 注入配置读取器（同样不导出，理由见 setApp）。
+//
+// 只读配置、不写配置：这个服务负责的是「按当前开关播这一首」，
+// 改开关是设置界面的事。把写入能力挡在外面，就不会出现
+// 「播放路径顺手改用户配置」这种很难排查的行为。
+func (s *PlayerService) setConfigProvider(fn func() bootstrap.Config) {
+	s.mu.Lock()
+	s.config = fn
+	s.mu.Unlock()
+	// 立刻把「切歌间隔」同步给引擎：用户改完设置不必重启，
+	// 下一首自动切歌就该按新值停顿。
+	if fn != nil && s.engine != nil {
+		s.engine.SetTrackGapSeconds(fn().TrackGapSeconds)
+	}
+}
+
+// cfgLocked 读取当前配置（没注入时返回默认值）。调用方必须持有 s.mu。
+//
+// 默认值是「不跳过任何静音、间隔按默认秒数」—— 与设置界面首次打开时
+// 看到的状态一致，测试里也就不用为每个用例准备一份配置。
+func (s *PlayerService) cfgLocked() bootstrap.Config {
+	if s.config == nil {
+		return *bootstrap.DefaultConfig()
+	}
+	return s.config()
 }
 
 // setApp 注入事件发送器（main 里 app 构造完成后调用）。
@@ -277,13 +315,17 @@ func (s *PlayerService) Load(songID string) (map[string]any, error) {
 	// 就是张冠李戴。新歌没测过时它的补偿本来就是 0，所以「不补偿」既是最安全
 	// 的起点，也是未测量时的正确值；前端在装载返回后会立刻推真实补偿。
 	s.loudnessGainDB = 0
-	if err := s.engine.Load(path, 0, s.composeGainLocked()); err != nil {
+	trim := s.planTrimLocked(path)
+	if err := s.engine.Load(path, trim.StartFrame, trim.EndFrame, s.composeGainLocked()); err != nil {
 		s.lastErr = err.Error()
 		s.mu.Unlock()
 		s.fail(songID, err)
 		s.mu.Lock()
 		return nil, err
 	}
+	// 掐点方案要在装载成功之后才记账：失败时它属于上一首，
+	// 记下来会让诊断信息指向一个根本没播成的区间。
+	s.lastTrim = trim
 
 	s.currentSongID = songID
 	s.loaded = true
@@ -303,7 +345,67 @@ func (s *PlayerService) Load(songID string) (map[string]any, error) {
 	return map[string]any{
 		"positionMs": posMs,
 		"durationMs": durMs,
+		// 跳过静音的实况：前端据此显示「跳过了多少」，
+		// 也让用户在排查「开头怎么直接就是音乐」时有据可查。
+		//
+		// 注意 durationMs 仍是**整首歌**（见 planTrimLocked 的说明）——
+		// 跳过静音不会让这首歌变短。
+		"skippedHeadMs": trim.SkippedHeadMs,
+		"skippedTailMs": trim.SkippedTailMs,
 	}, nil
+}
+
+// planTrimLocked 按当前开关算出这首歌「要自动跳过哪一段」。
+//
+// 调用方必须持有 s.mu（读的是 s.config）。
+//
+// ★ 返回的是**会播放的区间**，不是「这首歌的长度」。
+//
+// 「跳过静音」的语义是**自动跳过**，不是把歌变短：
+//
+//	一首 4:12 的歌，开头 3 秒静音、结尾 20 秒静音，两个开关都开 ——
+//	 · 时长仍然是 4:12（engine.Position 的分母恒为整个文件）；
+//	 · 起播瞬间位置落到 3 秒处（用户听到的第一声就是音乐）；
+//	 · 位置走到 3:52 就结束并切下一首（不去听那 20 秒空白）。
+//
+// 为什么不能把时长也改成「跳完之后」：歌词按原曲时间轴打轴，
+// 位置一旦从 0 重新起算就会**整体提前**（开头静音多长就偏多少）；
+// 「保留歌曲播放进度」存的位置同样会对不上。
+//
+// 这里刻意**不把检测失败当成错误**：它是「锦上添花」，
+// 读不了文件（文件被删、权限不足）时应当退回「原样播放」，
+// 而不是让一首本来能播的歌变成播不了 —— 那才是真正糟糕的结果。
+// 读不了的原因会记进日志，便于排查。
+func (s *PlayerService) planTrimLocked(path string) audioplay.SilenceTrim {
+	cfg := s.cfgLocked()
+
+	// 两个开关都关：短路，不去扫文件（省掉一次整段读取，装载更快）。
+	//
+	// 注意间隔与跳过静音是**两个独立设置**：「不跳过静音」不代表
+	// 「不留间隔」，所以间隔照样同步给引擎。
+	s.engine.SetTrackGapSeconds(cfg.TrackGapSeconds)
+	if !cfg.SkipSilenceHead && !cfg.SkipSilenceTail {
+		// StartFrame / EndFrame 都是 0 = 「从头播到文件末尾」，
+		// 与加入这个功能之前的行为逐字一致。
+		return audioplay.SilenceTrim{StartFrame: 0, EndFrame: 0}
+	}
+
+	info, err := audioplay.LoadSilenceInfo(path)
+	if err != nil {
+		log.Printf("[player] 静音检测失败，本首按原样播放：%v", err)
+		return audioplay.SilenceTrim{StartFrame: 0, EndFrame: 0}
+	}
+
+	trim := audioplay.PlanSilenceTrim(info, cfg.SkipSilenceHead, cfg.SkipSilenceTail)
+	if !trim.Playing() {
+		// 掐完什么都不剩（整首歌都是静音，或头尾静音盖住了全部内容）。
+		// 退回「不掐」：放一段静音至少是「有反应」，
+		// 而零长度区间会让进度条与位置计算全部失效。
+		log.Printf("[player] 掐完首尾静音后没有可播放内容，本首按原样播放（总长 %dms）",
+			info.TotalFrames*1000/audioplay.SampleRate)
+		return audioplay.SilenceTrim{StartFrame: 0, EndFrame: 0, TotalFrames: info.TotalFrames}
+	}
+	return trim
 }
 
 // Play 开始播放（不换歌）
@@ -352,6 +454,9 @@ func (s *PlayerService) Seek(positionMs float64) (map[string]any, error) {
 	if s.engine == nil || !s.loaded {
 		return s.stateLocked(), nil
 	}
+	// seek 是明确的即时意图：把可能还挂着的切歌间隔取消掉。
+	// 否则用户在间隔里拖了进度条，间隔走完还是会把歌切走。
+	s.engine.CancelTrackGap()
 	_, durMs := s.engine.Position()
 	ms := int64(positionMs)
 	if ms < 0 {
@@ -376,12 +481,41 @@ func (s *PlayerService) Unload() map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.engine != nil {
+		// 先取消可能还挂着的切歌间隔，再暂停：
+		// 顺序反过来的话，间隔走完的回调会把「已经停掉的播放器」又推到下一首。
+		s.engine.CancelTrackGap()
 		s.engine.Pause()
 	}
 	s.loaded = false
 	s.currentSongID = ""
 	s.pushAnchorLocked("stop")
 	return s.stateLocked()
+}
+
+// SetPlaybackOptions 同步「跳过静音」与「切歌间隔」这几个播放选项。
+//
+// 它是设置界面改完开关后**立刻**调用的：跳过静音要影响的是「下一首」，
+// 而切歌间隔可能正好在等 —— 所以间隔在这里就地重建，用户改完不必重启。
+//
+// 参数用显式的三个值而不是一个结构体：Wails 的绑定生成器对匿名结构体、
+// map 之外的自定义类型支持都不好（见 setApp 里关于 non-empty interface 的说明），
+// 三个标量参数是最省事也最不容易出错的形式。
+//
+// enabled=false 时把两个跳过开关一起关掉，用于「恢复默认」这类场景。
+func (s *PlayerService) SetPlaybackOptions(skipSilenceHead, skipSilenceTail bool, trackGapSeconds float64) map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// 间隔的取值范围在这里也钳一次：前端可能推来非法值（手改配置、
+	// 旧版本前端），而引擎拿到负数会算出「往回等」的荒谬行为。
+	gap := bootstrap.NormalizeTrackGapSeconds(trackGapSeconds)
+	if s.engine != nil {
+		s.engine.SetTrackGapSeconds(gap)
+	}
+	return map[string]any{
+		"skipSilenceHead": skipSilenceHead,
+		"skipSilenceTail": skipSilenceTail,
+		"trackGapSeconds": gap,
+	}
 }
 
 // SetVolume 同步用户音量（0..1）与静音状态。
@@ -467,12 +601,24 @@ func (s *PlayerService) Diagnostics() map[string]any {
 		"muted":        s.muted,
 		"loudnessDB":   s.loudnessGainDB,
 		"periodFrames": audioplay.PeriodFrames,
+		// 跳过静音的实况：排查「开头/结尾怎么少了几秒」时看这几项。
+		//
+		// skipped*Ms = 自动跳过的那两段有多长；
+		// trimStartMs = 实际从原曲的哪个位置开始出声（开了跳过开头时不是 0）。
+		// 时长**不在这里**：它恒为整首歌（进度条要覆盖全曲）。
+		"skippedHeadMs": s.lastTrim.SkippedHeadMs,
+		"skippedTailMs": s.lastTrim.SkippedTailMs,
+		"trimStartMs":   s.lastTrim.StartFrame * 1000 / audioplay.SampleRate,
+		"trimEndMs":     s.lastTrim.EndFrame * 1000 / audioplay.SampleRate,
 	}
 	if s.engine != nil {
 		out["playing"] = s.engine.Playing()
 		out["underruns"] = s.engine.Underruns()
 		out["bufferedMs"] = s.engine.Buffered()
 		out["eof"] = s.engine.EOF()
+		// 切歌间隔：用户报「切歌时停了一下」时可以在这里确认是不是间隔在起作用
+		out["trackGapSeconds"] = s.engine.GapSeconds()
+		out["trackGapActive"] = s.engine.TrackGapActive()
 	}
 	return out
 }

@@ -95,6 +95,26 @@ export function SetLoudnessGain(gainDB) {
 }
 
 /**
+ * SetPlaybackOptions 同步「跳过静音」与「切歌间隔」这几个播放选项。
+ * 
+ * 它是设置界面改完开关后**立刻**调用的：跳过静音要影响的是「下一首」，
+ * 而切歌间隔可能正好在等 —— 所以间隔在这里就地重建，用户改完不必重启。
+ * 
+ * 参数用显式的三个值而不是一个结构体：Wails 的绑定生成器对匿名结构体、
+ * map 之外的自定义类型支持都不好（见 setApp 里关于 non-empty interface 的说明），
+ * 三个标量参数是最省事也最不容易出错的形式。
+ * 
+ * enabled=false 时把两个跳过开关一起关掉，用于「恢复默认」这类场景。
+ * @param {boolean} skipSilenceHead
+ * @param {boolean} skipSilenceTail
+ * @param {number} trackGapSeconds
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function SetPlaybackOptions(skipSilenceHead, skipSilenceTail, trackGapSeconds) {
+    return $Call.ByID(904562217, skipSilenceHead, skipSilenceTail, trackGapSeconds);
+}
+
+/**
  * SetVolume 同步用户音量（0..1）与静音状态。
  * 真正的增益 = 用户音量 × 响度补偿，在 applyGainLocked 里合成。
  * @param {number} volume

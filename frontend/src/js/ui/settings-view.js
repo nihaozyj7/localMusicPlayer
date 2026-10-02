@@ -68,6 +68,8 @@ import { themeRegistryVersion } from "../theme.js";
 import { closeSettings, doRescan, settingsLayerOpen } from "../shell.js";
 import { applyGlassAlpha } from "../theme.js";
 import { createSlider } from "../slider.js";
+// 跳过静音 / 切歌间隔都在后端生效，这里只负责把改动推下去（见 audio.js）
+import { applyPlaybackOptions } from "../audio.js";
 
 /* --------------------------------------------------------------------------
    设置分区
@@ -177,6 +179,15 @@ function rangeSlider(id, key, ariaLabel) {
     <!-- 数值由滑杆自己写（见 sliderOptions 的 onChange）：同一个节点只允许一个写入方 -->
     <span class="rangeslider__value"></span>
   </div>`;
+}
+
+/** 让「切歌间隔」立刻生效（滑条拖动时调用，见 sliderOptions） */
+function applyTrackGap(seconds) {
+  // 只推给后端：间隔在音频线程上计时（见 audio.js#applyPlaybackOptions）。
+  // 这里刻意不 await —— 滑条按 pointermove 高频触发，等 IPC 会让拖拽发涩。
+  const v = Number(seconds);
+  state.config.trackGapSeconds = Number.isFinite(v) ? v : 1.5;
+  applyPlaybackOptions();
 }
 
 /** 逐项 === 比较两个依赖数组（与 base.js#sameDeps 同一语义，此处独立一份以免循环依赖） */
@@ -1075,6 +1086,24 @@ class MpSettingsLayer extends MpElement {
           label: "保留歌曲播放进度",
           hint: "记住每首歌上次播到哪儿；退出后重新打开会回到那个位置。只恢复进度条，不会自动开始播放",
           control: switchControl("resumeProgress", state.config.resumeProgress === true, "保留歌曲播放进度"),
+        })}
+        ${settingRow({
+          label: "跳过开头无声片段",
+          hint: html`开头有一段空白时，播放会自动从出声处开始，不必干等（现场录音与转录文件常见）。<br />
+            只跳过开头连续 0.2 秒以上的静音，乐句之间的短暂停顿不会被误伤。<br />
+            <span class="u-dim">歌曲长度与进度条仍按原曲显示，歌词与播放进度不会因此错位。</span>`,
+          control: switchControl("skipSilenceHead", state.config.skipSilenceHead === true, "跳过开头无声片段"),
+        })}
+        ${settingRow({
+          label: "跳过结尾无声片段",
+          hint: html`结尾拖着一长段空白时，播到最后一个声音就结束，紧接着切下一首（CD 抓轨与整轨转录常见）。<br />
+            <span class="u-dim">歌曲长度仍按原曲显示；进度条会在原曲的静音起点处停住。</span>`,
+          control: switchControl("skipSilenceTail", state.config.skipSilenceTail === true, "跳过结尾无声片段"),
+        })}
+        ${settingRow({
+          label: "切歌间隔",
+          hint: "自动切到下一首时中间留出的停顿。手动点「下一首」不受影响（那是即时的操作）；调到 0 表示紧接着播",
+          control: rangeSlider("set-track-gap", "trackGapSeconds", "切歌间隔"),
         })}
         ${settingRow({
           label: "单击歌曲时的行为",
@@ -2123,20 +2152,49 @@ class MpSettingsLayer extends MpElement {
     const isBlur = key === "glassBlur";
     const isAlpha = key === "glassAlpha";
     const isCarousel = key === "coverCarouselInterval";
-    const min = isCarousel ? 2 : key === "lyricsFontSize" ? 12 : isBlur ? 0 : isAlpha ? 20 : 0;
-    const max = isCarousel ? 60 : key === "lyricsFontSize" ? 26 : isBlur ? 48 : isAlpha ? 95 : 100;
-    // 单位跟着键走：轮播是秒，字号/模糊是像素，透明度是百分比
-    const unit = isCarousel ? " 秒" : isBlur ? "px" : isAlpha ? "%" : "px";
+    const isTrackGap = key === "trackGapSeconds";
+    const min = isTrackGap
+      ? 0
+      : isCarousel
+        ? 2
+        : key === "lyricsFontSize"
+          ? 12
+          : isBlur
+            ? 0
+            : isAlpha
+              ? 20
+              : 0;
+    const max = isTrackGap
+      ? 10
+      : isCarousel
+        ? 60
+        : key === "lyricsFontSize"
+          ? 26
+          : isBlur
+            ? 48
+            : isAlpha
+              ? 95
+              : 100;
+    // 单位跟着键走：轮播与切歌间隔是秒，字号/模糊是像素，透明度是百分比
+    const unit = isCarousel || isTrackGap ? " 秒" : isBlur ? "px" : isAlpha ? "%" : "px";
+    // 切歌间隔要能表达「1.5 秒」这种半秒/十分之一秒的档位；
+    // 其余滑条都是整数（秒 / 像素 / 百分比），保持 step=1 的手感。
+    const step = isTrackGap ? 0.1 : 1;
+    // 切歌间隔保留一位小数（1.5 秒而不是 1.5000000000000002）；
+    // 其余仍按整数显示。
+    const decimals = isTrackGap ? 1 : 0;
+    const format = (v) => `${v.toFixed(decimals)}${unit}`;
     return {
       min,
       max,
-      step: 1,
+      step,
       value: this.sliderValue(key),
-      format: (v) => `${Math.round(v)}${unit}`,
+      format,
       onChange: (v) => {
-        state.config[key] = v;
+        // 切歌间隔是小数，其余是整数 —— 直接写 v 会让整数滑条变成 22.000000001
+        state.config[key] = isTrackGap ? Math.round(v * 10) / 10 : v;
         const label = root.parentElement.querySelector(".rangeslider__value");
-        if (label) label.textContent = `${Math.round(v)}${unit}`;
+        if (label) label.textContent = format(v);
         if (isBlur) {
           state.config.glassBlurCustom = true;
           setRuntimeToken("--glass-blur", `${v}px`);
@@ -2146,6 +2204,8 @@ class MpSettingsLayer extends MpElement {
           applyGlassAlpha(v);
         }
         if (key === "lyricsFontSize") setRuntimeToken("--lyric-size", `${v}px`);
+        // 切歌间隔要立刻生效：改完设置后紧接着的那次自动切歌就该按新值停顿
+        if (isTrackGap) applyTrackGap(state.config[key]);
       },
       onCommit: () => commit(),
     };
@@ -2154,6 +2214,12 @@ class MpSettingsLayer extends MpElement {
   sliderValue(key) {
     if (key === "glassBlur") return state.config.glassBlurCustom ? state.config.glassBlur : resolvedGlassBlur();
     if (key === "glassAlpha") return state.config.glassAlphaCustom ? state.config.glassAlpha : resolvedGlassAlpha();
+    // 切歌间隔的兜底是 1.5（而不是 ?? 0）：配置里缺这个字段时，
+    // 滑条显示 0 秒会让用户以为「切歌没有间隔」，而实际用的是默认值。
+    if (key === "trackGapSeconds") {
+      const v = Number(state.config.trackGapSeconds);
+      return Number.isFinite(v) ? v : 1.5;
+    }
     return state.config[key] ?? 0;
   }
 }

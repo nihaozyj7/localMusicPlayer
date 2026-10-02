@@ -367,6 +367,79 @@ function handleEnded() {
 }
 
 /* --------------------------------------------------------------------------
+   跳过静音与切歌间隔
+   --------------------------------------------------------------------------
+   这两项都在**后端**生效（检测与计时都在音频线程上，见
+   internal/audioplay/silence.go 与 services_player.go#SetPlaybackOptions），
+   前端只负责「把开关同步下去」和「把跳过量显示对」。
+
+   为什么不放在前端做：
+     · 静音检测要读整首歌的 PCM —— 前端没有 raw PCM，且真做起来要把
+       音频再解一遍，等于把刚搬到后端的工作又搬回来；
+     · 切歌间隔是**音频时间**上的空白，只有音频时钟量得准。放前端的话，
+       网页一卡（或窗口最小化被节流）间隔就会忽长忽短。
+   -------------------------------------------------------------------------- */
+
+/**
+ * 把当前的跳过静音 / 切歌间隔设置推给后端。
+ *
+ * 设置界面改完开关与滑条后调用（见 settings-view.js 与 settings.js）。
+ * 后端会把它应用到**下一次装载**与正在等待的切歌间隔上。
+ */
+export async function applyPlaybackOptions() {
+  if (!backendReady) {
+    // 回退路径（<audio>）：没有静音检测与音频时钟计时，
+    // 只把「切歌间隔」在本地落实（见 scheduleLegacyGap）。
+    return;
+  }
+  try {
+    await backend.playerSetPlaybackOptions(
+      state.config.skipSilenceHead === true,
+      state.config.skipSilenceTail === true,
+      Number(state.config.trackGapSeconds) || 0
+    );
+  } catch (err) {
+    console.warn("[audio] 同步跳过静音/切歌间隔失败", err);
+  }
+}
+
+/**
+ * 最近一次装载时后端报告的跳过量（毫秒）。
+ *
+ * 它只用于界面提示（设置界面的诊断信息），不参与任何播放决策 ——
+ * 决策全在后端。取不到时是 null，界面据此显示「未知」而不是 0，
+ * 免得让人误以为「没跳过任何东西」。
+ */
+let lastSkip = null;
+
+/** 最近一次装载实际跳过的首/尾静音（毫秒）；未装载过时为 null */
+export function lastSkippedSilence() {
+  return lastSkip;
+}
+
+/** 播放选项的快照（设置界面展示用） */
+export function playbackOptionsState() {
+  if (!backendReady) {
+    return {
+      backend: false,
+      skipSilenceHead: state.config.skipSilenceHead === true,
+      skipSilenceTail: state.config.skipSilenceTail === true,
+      trackGapSeconds: Number(state.config.trackGapSeconds) || 0,
+      skippedHeadMs: null,
+      skippedTailMs: null,
+    };
+  }
+  return {
+    backend: true,
+    skipSilenceHead: state.config.skipSilenceHead === true,
+    skipSilenceTail: state.config.skipSilenceTail === true,
+    trackGapSeconds: Number(state.config.trackGapSeconds) || 0,
+    skippedHeadMs: lastSkip?.headMs ?? null,
+    skippedTailMs: lastSkip?.tailMs ?? null,
+  };
+}
+
+/* --------------------------------------------------------------------------
    播放失败：提示一次 + 自动跳下一首
    -------------------------------------------------------------------------- */
 
@@ -609,8 +682,26 @@ async function loadSong(song) {
     // 到这一步后端才真正换成了这首歌，增益的归属也随之切换
     backendSongId = song.id;
 
-    // 装载完成：后端返回准确的时长与起始位置
+    // 装载完成：后端返回准确的时长与起始位置。
+    //
+    // ★ 时长是**整首歌**，起播位置可能不是 0。
+    //
+    // 开了「跳过开头静音」时，后端会把起播点自动挪到出声处 ——
+    // 于是下面的 playerState() 拿到的 positionMs 会是「3 秒」这类值，
+    // 而 durationMs 仍是整首歌。这是**预期行为**（不是位置错乱）：
+    // 进度条与歌词都留在原曲时间轴上，只是开头那几秒不会被播放。
+    //
+    // 这里刻意**不**把位置强行归零：那会让歌词与进度条整体提前
+    // （前端显示的位置与后端音频的实际位置对不上）。
     if (res?.durationMs > 0) state.duration = res.durationMs;
+
+    // 记下这次实际跳过了多少（设置界面展示 + 排查「开头怎么直接是音乐」）。
+    // 后端在**没跳过**时返回 0 而不是省略字段，所以这里能区分
+    // 「确认没跳过」与「后端没告诉我」。
+    lastSkip = {
+      headMs: Number(res?.skippedHeadMs) || 0,
+      tailMs: Number(res?.skippedTailMs) || 0,
+    };
 
     // 恢复上次的播放位置（仅启动时那一首）
     const resumeMs = consumeResumeSeek(song);

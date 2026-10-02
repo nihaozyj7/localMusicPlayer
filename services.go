@@ -2142,6 +2142,17 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			} else {
 				c.ShuffleMode = "reshuffle"
 			}
+		// —— 跳过静音与切歌间隔 ——
+		// 三个键都要有对应分支：前端 flushConfigSync 一直在推，
+		// 漏掉任何一个都会变成「开关能动、看起来生效了，重启后什么都没变」
+		//（这正是响度那几个键以前踩过的坑，见上面的注释）。
+		case "skipSilenceHead":
+			c.SkipSilenceHead = asBool(raw, c.SkipSilenceHead)
+		case "skipSilenceTail":
+			c.SkipSilenceTail = asBool(raw, c.SkipSilenceTail)
+		case "trackGapSeconds":
+			// 0 是合法值（不留间隔），规范化只在越界时收敛。
+			c.TrackGapSeconds = bootstrap.NormalizeTrackGapSeconds(asFloat(raw, c.TrackGapSeconds))
 		case "aiBaseUrl":
 			c.AIBaseURL = strings.TrimSpace(asString(raw, c.AIBaseURL))
 		case "aiApiKey":

@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"localmusicplayer/internal/audioplay"
+	"localmusicplayer/internal/bootstrap"
 )
 
 /* --------------------------------------------------------------------------
@@ -1024,5 +1025,523 @@ func TestPlayerServiceEOFHandler(t *testing.T) {
 	case <-fired:
 	case <-time.After(5 * time.Second):
 		t.Fatal("播完了却没有触发 EOF 回调（自动下一首会失效）")
+	}
+}
+
+/* --------------------------------------------------------------------------
+   10. 跳过首尾静音
+   -------------------------------------------------------------------------- */
+
+// writeSilenceWAV 造一个「头 headMs 静音 + 中间 440Hz + 尾 tailMs 静音」的 WAV。
+func writeSilenceWAV(t *testing.T, path string, headMs, bodyMs, tailMs int) {
+	t.Helper()
+	frames := func(ms int) int { return audioplay.SampleRate * ms / 1000 }
+	head := frames(headMs)
+	body := frames(bodyMs)
+	tail := frames(tailMs)
+
+	total := head + body + tail
+	pcm := make([]byte, total*audioplay.FrameSize)
+	for i := head; i < head+body; i++ {
+		v := int16(18000 * math.Sin(2*math.Pi*440*float64(i)/float64(audioplay.SampleRate)))
+		binary.LittleEndian.PutUint16(pcm[i*audioplay.FrameSize:], uint16(v))
+		binary.LittleEndian.PutUint16(pcm[i*audioplay.FrameSize+2:], uint16(v))
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("创建测试 WAV 失败: %v", err)
+	}
+	defer f.Close()
+
+	dataLen := uint32(len(pcm))
+	h := make([]byte, 0, 44)
+	put32 := func(v uint32) { b := make([]byte, 4); binary.LittleEndian.PutUint32(b, v); h = append(h, b...) }
+	put16 := func(v uint16) { b := make([]byte, 2); binary.LittleEndian.PutUint16(b, v); h = append(h, b...) }
+	h = append(h, []byte("RIFF")...)
+	put32(36 + dataLen)
+	h = append(h, []byte("WAVE")...)
+	h = append(h, []byte("fmt ")...)
+	put32(16)
+	put16(1)
+	put16(audioplay.Channels)
+	put32(audioplay.SampleRate)
+	put32(audioplay.SampleRate * audioplay.FrameSize)
+	put16(audioplay.FrameSize)
+	put16(16)
+	h = append(h, []byte("data")...)
+	put32(dataLen)
+	if _, err := f.Write(h); err != nil {
+		t.Fatalf("写头失败: %v", err)
+	}
+	if _, err := f.Write(pcm); err != nil {
+		t.Fatalf("写 PCM 失败: %v", err)
+	}
+}
+
+// withSilenceConfig 给 PlayerService 注入一份指定的播放选项。
+func withSilenceConfig(svc *PlayerService, head, tail bool, gap float64) {
+	svc.setConfigProvider(func() bootstrap.Config {
+		c := *bootstrap.DefaultConfig()
+		c.SkipSilenceHead = head
+		c.SkipSilenceTail = tail
+		c.TrackGapSeconds = gap
+		return c
+	})
+}
+
+// TestPlayerServiceSkipSilenceDisabledIsUntouched 两个开关都关时，
+// 装载必须**原样播放**（这是加入这个功能之前的默认行为，也是最该稳住的路径）。
+func TestPlayerServiceSkipSilenceDisabledIsUntouched(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "silence-off.wav")
+	// 头 1 秒静音 + 2 秒声音 + 尾 1 秒静音
+	writeSilenceWAV(t, wav, 1000, 2000, 1000)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 4000)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, false, false, 0)
+
+	res, err := svc.Load("song-off")
+	if err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	if got := res["durationMs"].(int64); got < 3900 || got > 4100 {
+		t.Errorf("关掉开关时时长 = %dms，期望约 4000（整个文件，不该被掐）", got)
+	}
+	if got := res["skippedHeadMs"].(int64); got != 0 {
+		t.Errorf("关掉开关时 skippedHeadMs = %d，期望 0", got)
+	}
+	if got := res["skippedTailMs"].(int64); got != 0 {
+		t.Errorf("关掉开关时 skippedTailMs = %d，期望 0", got)
+	}
+}
+
+// TestPlayerServiceSkipSilenceHeadOnly 只开「跳过开头」时只跳头、尾部不动。
+//
+// ★ 这条是国内需求「分别为跳过头部、尾部的静音区域」的核心断言：
+// 两个开关必须是**独立**的，做成一个「跳过静音」总开关就违背了需求。
+func TestPlayerServiceSkipSilenceHeadOnly(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "silence-head.wav")
+	writeSilenceWAV(t, wav, 1000, 2000, 1000)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 4000)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, true, false, 0)
+
+	res, err := svc.Load("song-head")
+	if err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	head := res["skippedHeadMs"].(int64)
+	tail := res["skippedTailMs"].(int64)
+	if head < 950 || head > 1050 {
+		t.Errorf("skippedHeadMs = %d，期望约 1000", head)
+	}
+	if tail != 0 {
+		t.Errorf("只开了「跳过开头」，尾部不该被跳：skippedTailMs = %d", tail)
+	}
+	// ★ 时长仍是**整首歌**：跳过静音是「自动跳过」，不是「把歌变短」
+	if got := res["durationMs"].(int64); got < 3900 || got > 4100 {
+		t.Errorf("时长 = %dms，期望约 4000（整首歌原长）", got)
+	}
+	// ★ 起播位置落在跳过之后：用户听到的第一声就是音乐，
+	// 而「这首歌的时间轴」没有被改动（歌词/记忆进度都按原曲算）
+	if got := res["positionMs"].(int64); got < 950 || got > 1050 {
+		t.Errorf("起播位置 = %dms，期望约 1000（自动跳过开头静音之后的落点）", got)
+	}
+}
+
+// TestPlayerServiceSkipSilenceTailOnly 只开「跳过结尾」时只跳尾、头部不动。
+func TestPlayerServiceSkipSilenceTailOnly(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "silence-tail.wav")
+	writeSilenceWAV(t, wav, 1000, 2000, 1000)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 4000)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, false, true, 0)
+
+	res, err := svc.Load("song-tail")
+	if err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	if got := res["skippedHeadMs"].(int64); got != 0 {
+		t.Errorf("只开了「跳过结尾」，头部不该被跳：skippedHeadMs = %d", got)
+	}
+	tail := res["skippedTailMs"].(int64)
+	if tail < 950 || tail > 1050 {
+		t.Errorf("skippedTailMs = %d，期望约 1000", tail)
+	}
+}
+
+// TestPlayerServiceSkipSilenceBoth 两个都开时首尾都跳，但时长仍是整首歌。
+func TestPlayerServiceSkipSilenceBoth(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "silence-both.wav")
+	writeSilenceWAV(t, wav, 1000, 2000, 1000)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 4000)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, true, true, 0)
+
+	res, err := svc.Load("song-both")
+	if err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	// 时长仍是 4 秒：跳过静音只是「不去播」那两段，不改变这首歌的长度
+	if got := res["durationMs"].(int64); got < 3900 || got > 4100 {
+		t.Errorf("时长 = %dms，期望约 4000（整首歌原长）", got)
+	}
+	// 起播落到头部静音之后
+	if got := res["positionMs"].(int64); got < 950 || got > 1050 {
+		t.Errorf("起播位置 = %dms，期望约 1000", got)
+	}
+}
+
+// TestPlayerServiceSilencePlaysToTrimmedEnd 开了跳过结尾之后，
+// EOF 必须在掐点触发，而不是等整首文件播完。
+//
+// 这是「跳过尾部静音」唯一真正有意义的行为：用户要的是「播到最后一个声音
+// 就切下一首」，而不是「听完那段空白再切」。
+func TestPlayerServiceSilencePlaysToTrimmedEnd(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "trim-eof.wav")
+	// 声音 0.4 秒 + 尾部 3 秒静音：开着跳过结尾时应当很快播完
+	writeSilenceWAV(t, wav, 0, 400, 3000)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 3400)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	// 间隔设 0：这个用例要验的是「掐点触发 EOF」，不该被切歌间隔拖慢
+	withSilenceConfig(svc, false, true, 0)
+
+	fired := make(chan struct{}, 1)
+	svc.setEOFHandler(func() {
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
+	})
+
+	start := time.Now()
+	if _, err := svc.Load("song-trim"); err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	svc.Play()
+
+	select {
+	case <-fired:
+		// 掐掉 3 秒尾部 → 应当在 0.4 秒左右就结束，给足余量但远小于 3.4 秒
+		if elapsed := time.Since(start); elapsed > 2500*time.Millisecond {
+			t.Errorf("播完用了 %v，期望约 0.4 秒（尾部 3 秒静音应当被跳过）", elapsed)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("开着「跳过结尾静音」时没有在掐点触发 EOF（等于功能没生效）")
+	}
+}
+
+// TestPlayerServiceAllSilentFileStillPlays 整首歌都是静音时不能掐成零长度。
+//
+// 零长度区间会让位置/时长计算失效（前端拿 duration=0 做除法就是 NaN），
+// 用户看到的是「点了完全没反应」。正确行为是退回「原样播放」。
+func TestPlayerServiceAllSilentFileStillPlays(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "all-silent.wav")
+	writeSilenceWAV(t, wav, 3000, 0, 0) // 3 秒全静音
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 3000)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, true, true, 0)
+
+	res, err := svc.Load("song-silent")
+	if err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	dur := res["durationMs"].(int64)
+	if dur <= 0 {
+		t.Fatalf("整首静音的文件时长为 %dms —— 掐成了零长度（前端进度条会坏掉）", dur)
+	}
+	if dur < 2900 || dur > 3100 {
+		t.Errorf("时长 = %dms，期望约 3000（退回原样播放）", dur)
+	}
+}
+
+// TestPlayerServiceSilenceDetectionFailureIsNotFatal 文件读不了时退回原样播放，
+// 而不是让一首本来能播的歌变成播不了。
+func TestPlayerServiceSilenceDetectionFailureIsNotFatal(t *testing.T) {
+	svc := NewPlayerService(func(string) (string, int64, error) {
+		return "", 0, fmt.Errorf("测试：没有可播放的文件")
+	})
+	withSilenceConfig(svc, true, true, 0)
+	// 没 Start（声卡不可用）时 Load 会返回「后端音频不可用」，
+	// 但重点是它**不能 panic**、也不能因为静音检测而多出一种失败。
+	if _, err := svc.Load("song-x"); err == nil {
+		t.Log("声卡可用时这里会成功；不可用时返回错误，两者都可接受")
+	}
+}
+
+/* --------------------------------------------------------------------------
+   11. 切歌间隔
+   -------------------------------------------------------------------------- */
+
+// TestPlayerServiceSkipSilenceKeepsOriginalTimeline 位置必须留在**原曲时间轴**上。
+//
+// ★ 这是「自动跳过」与「把歌变短」的分水岭，也是本功能最重要的一条不变式。
+//
+// 歌词是按原曲时间轴打轴的。如果开了跳过开头之后位置从 0 重新起算，
+// 那么**所有歌词都会整体提前**（开头静音多长就偏多少），越往后越对不上；
+// 「保留歌曲播放进度」存下来的位置也会对不上。
+//
+// 正确的语义：掐掉的只是「会被播放的区间」，不是「这首歌的时间轴」——
+//
+//	· 时长 = 整首歌；
+//	· 起播位置 = 跳过开头静音之后的原曲位置。
+func TestPlayerServiceSkipSilenceKeepsOriginalTimeline(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "timeline.wav")
+	// 头 3 秒静音 + 4 秒声音 + 尾 2 秒静音 = 共 9 秒
+	writeSilenceWAV(t, wav, 3000, 4000, 2000)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 9000)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, true, false, 0) // 只跳开头，便于单独观察
+
+	res, err := svc.Load("song-timeline")
+	if err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+
+	// 时长 = 整首歌 9 秒（**不是** 6 秒）
+	if got := res["durationMs"].(int64); got < 8900 || got > 9100 {
+		t.Errorf("时长 = %dms，期望约 9000（整首歌；跳过静音不该让歌变短——"+
+			"否则歌词会整体提前 3 秒）", got)
+	}
+	// 起播位置 = 3 秒（原曲时间轴上的绝对位置，**不是** 0）
+	if got := res["positionMs"].(int64); got < 2900 || got > 3100 {
+		t.Errorf("起播位置 = %dms，期望约 3000（原曲时间轴上的绝对位置）", got)
+	}
+
+	// 诊断信息也要能分别回答「从哪儿开始播」与「跳过了多少」
+	d := svc.Diagnostics()
+	if got := d["trimStartMs"].(int64); got < 2900 || got > 3100 {
+		t.Errorf("diagnostics.trimStartMs = %d，期望约 3000", got)
+	}
+}
+
+// TestPlayerServiceTrackGapDelaysEOF 配了切歌间隔时，EOF 回调必须**推迟**
+// 到间隔走完才触发（自动切歌的停顿就是这么来的）。
+func TestPlayerServiceTrackGapDelaysEOF(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "gap.wav")
+	writeServiceTestWAV(t, wav, 0.4)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 400)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	// 1.0 秒间隔：够长到能明显量出来，又不至于让用例太慢
+	withSilenceConfig(svc, false, false, 1.0)
+
+	fired := make(chan time.Duration, 1)
+	start := time.Now()
+	svc.setEOFHandler(func() {
+		select {
+		case fired <- time.Since(start):
+		default:
+		}
+	})
+
+	if _, err := svc.Load("song-gap"); err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	svc.Play()
+
+	select {
+	case elapsed := <-fired:
+		// 音频本身 0.4 秒 + 间隔 1.0 秒 ≈ 1.4 秒。
+		// 下限卡在 1.2 秒：明显大于「没有间隔」时的 0.4 秒，
+		// 说明间隔确实生效了；上限不卡太死（调度抖动是正常的）。
+		if elapsed < 1200*time.Millisecond {
+			t.Errorf("EOF 在 %v 就触发了，期望约 1.4 秒（0.4 秒音频 + 1 秒间隔）—— 间隔没生效", elapsed)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("配了切歌间隔后 EOF 一直没触发（等于播放卡死了）")
+	}
+}
+
+// TestPlayerServiceZeroTrackGapFiresImmediately 间隔设为 0 时必须立刻触发 EOF
+// （与历史行为一致，不留任何多余停顿）。
+func TestPlayerServiceZeroTrackGapFiresImmediately(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "nogap.wav")
+	writeServiceTestWAV(t, wav, 0.3)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 300)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, false, false, 0)
+
+	fired := make(chan struct{}, 1)
+	svc.setEOFHandler(func() {
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
+	})
+
+	if _, err := svc.Load("song-nogap"); err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	svc.Play()
+
+	select {
+	case <-fired:
+	case <-time.After(4 * time.Second):
+		t.Fatal("间隔为 0 时 EOF 没有被触发")
+	}
+}
+
+// TestPlayerServiceSetPlaybackOptions 公开的设置接口必须夹住非法值。
+func TestPlayerServiceSetPlaybackOptions(t *testing.T) {
+	svc := NewPlayerService(func(string) (string, int64, error) { return "", 0, nil })
+	em := &fakeEmitter{}
+	svc.setApp(em)
+
+	// 负数间隔 → 钳到 0
+	res := svc.SetPlaybackOptions(true, false, -3)
+	if got := res["trackGapSeconds"].(float64); got != 0 {
+		t.Errorf("负间隔应被钳到 0，实际 %v", got)
+	}
+	// 超大间隔 → 钳到上限 10
+	res = svc.SetPlaybackOptions(false, true, 999)
+	if got := res["trackGapSeconds"].(float64); got != 10 {
+		t.Errorf("超大间隔应被钳到 10，实际 %v", got)
+	}
+	// 正常值原样保留
+	res = svc.SetPlaybackOptions(true, true, 2.5)
+	if got := res["trackGapSeconds"].(float64); got != 2.5 {
+		t.Errorf("间隔应保持 2.5，实际 %v", got)
+	}
+	if res["skipSilenceHead"] != true || res["skipSilenceTail"] != true {
+		t.Errorf("两个跳过开关都应回显 true，实际 %+v", res)
+	}
+	if svc.engine == nil || svc.engine.GapSeconds() != 2.5 {
+		t.Error("间隔没有同步到引擎")
+	}
+}
+
+// TestPlayerServiceDiagnosticsReportsSilence 诊断信息要能回答
+// 「这次到底跳了多少」——排查「开头怎么少了几秒」全靠它。
+func TestPlayerServiceDiagnosticsReportsSilence(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "diag-silence.wav")
+	writeSilenceWAV(t, wav, 1000, 2000, 1000)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 4000)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, true, true, 1.5)
+
+	if _, err := svc.Load("song-diag-silence"); err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+
+	d := svc.Diagnostics()
+	if got := d["skippedHeadMs"].(int64); got < 950 || got > 1050 {
+		t.Errorf("diagnostics.skippedHeadMs = %d，期望约 1000", got)
+	}
+	if got := d["skippedTailMs"].(int64); got < 950 || got > 1050 {
+		t.Errorf("diagnostics.skippedTailMs = %d，期望约 1000", got)
+	}
+	if got := d["trackGapSeconds"].(float64); got != 1.5 {
+		t.Errorf("diagnostics.trackGapSeconds = %v，期望 1.5", got)
+	}
+	if _, ok := d["trackGapActive"]; !ok {
+		t.Error("diagnostics 缺少 trackGapActive（排查切歌卡顿要靠它）")
+	}
+}
+
+// TestPlayerServiceUnloadCancelsGap 卸载时必须取消还挂着的切歌间隔。
+//
+// 不取消的话：用户点了停止，间隔走完的回调仍会把播放器推到下一首 ——
+// 表现是「明明停了，过一秒自己又放起来了」，而且会连带触发一次自动跳歌。
+func TestPlayerServiceUnloadCancelsGap(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "unload-gap.wav")
+	writeServiceTestWAV(t, wav, 0.3)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 300)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	// 3 秒间隔：卸载发生在间隔期间
+	withSilenceConfig(svc, false, false, 3.0)
+
+	fired := make(chan struct{}, 1)
+	svc.setEOFHandler(func() {
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
+	})
+
+	if _, err := svc.Load("song-unload-gap"); err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	svc.Play()
+
+	// 等音频播完、进入间隔
+	time.Sleep(700 * time.Millisecond)
+	svc.Unload()
+
+	// 间隔本该在 3 秒后触发；等 1.5 秒确认它已经被取消
+	select {
+	case <-fired:
+		t.Fatal("Unload 之后切歌间隔仍然触发了（用户已经停止，不该再自动切歌）")
+	case <-time.After(1500 * time.Millisecond):
+		// 正确：没有触发
+	}
+}
+
+// TestPlayerServiceSeekCancelsGap 在间隔里拖进度条必须取消切歌。
+func TestPlayerServiceSeekCancelsGap(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "seek-gap.wav")
+	writeServiceTestWAV(t, wav, 0.3)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 300)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, false, false, 3.0)
+
+	fired := make(chan struct{}, 1)
+	svc.setEOFHandler(func() {
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
+	})
+
+	if _, err := svc.Load("song-seek-gap"); err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	svc.Play()
+
+	time.Sleep(700 * time.Millisecond) // 等进入间隔
+	if _, err := svc.Seek(0); err != nil {
+		t.Fatalf("Seek 失败: %v", err)
+	}
+
+	select {
+	case <-fired:
+		t.Fatal("在间隔里拖了进度条，切歌间隔仍然触发了（本该被 seek 取消）")
+	case <-time.After(1500 * time.Millisecond):
+		// 正确：seek 取消了间隔
 	}
 }

@@ -27,6 +27,7 @@ import { updateMirror } from "./about-info.js";
 import { applyResolvedTheme, discoverThemes, listThemes, removeTheme } from "./theme.js";
 import { BACKDROP_MODES, backdropLabel } from "./backdrop.js";
 import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
+import { applyPlaybackOptions } from "./audio.js";
 import { animationDurationValue, setRuntimeToken, replaceStyleRules } from "./runtime-tokens.js";
 import { applyDesktopMode } from "./desktop-mode.js";
 
@@ -1706,6 +1707,12 @@ export function handleSettingControl(actEl, ctx = {}) {
       if (toggleKey === "animations") {
         // 重新按当前「过渡速度」算一遍 --dur：关掉是 0.001ms，打开则回到该档时长
         setRuntimeToken("--dur", animationDurationValue(state.config));
+      }
+      // 跳过静音：开关只影响**下一次装载**（以及正在等的那次切歌间隔），
+      // 所以立刻推给后端就够了 —— 当前正在放的这一首不会被中途掐掉，
+      // 那会让「拨开关」听起来像「歌曲跳了一段」。
+      if (toggleKey === "skipSilenceHead" || toggleKey === "skipSilenceTail") {
+        applyPlaybackOptions();
       }
       if (toggleKey === "minimizeToTray") {
         // 除了写配置（commit 会推给后端），还要立刻让后端创建/销毁托盘图标，

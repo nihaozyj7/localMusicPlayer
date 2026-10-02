@@ -334,6 +334,27 @@ type Engine struct {
 	file    *os.File
 	pcmSize int64 // 去掉头之后的 PCM 字节数
 
+	// endFrame 是「播到这里就算结束」的帧下标（不含）。
+	//
+	// 它存在的唯一目的是「跳过尾部静音」：设成掐掉尾巴之后的位置，
+	// 播放位置一走到它就按播完处理，不再等文件真正读空。
+	// 0 表示没有设限（原样播到文件末尾）。为什么用 0 而不是 pcmSize：
+	// pcmSize 要等到 Load 里 stat 完才知道，而 Load 之前的零值状态
+	// 用一个哨兵表示「没限制」比到处判 pcmSize 更不容易写错。
+	endFrame int64
+
+	// trimStart 是本次装载的起播帧（跳过开头静音之后的位置）。
+	//
+	// 它与 positionFrame 的区别是：positionFrame 会随播放推进、也会被 seek 改，
+	// 而它是「这首歌是从哪儿开始的」这个事实，全程不变。
+	// 进度条的时间基准要用它 —— 否则 seek 之后 0 点会跟着漂。
+	// 由 posMu 保护（与 positionFrame / endFrame 同一把锁）。
+	trimStart int64
+
+	// gap 是「上一首播完到下一首起播」的间隔调度器（见 silence.go）。
+	// 没配置间隔时它的 Arm 返回 false，引擎立刻触发 EOF 回调（与历史行为一致）。
+	gap *GapScheduler
+
 	// stopFeed 用于让当前 feeder goroutine 退出（换歌 / seek / 关闭时）
 	stopFeed chan struct{}
 	feedDone chan struct{}
@@ -365,6 +386,43 @@ func New() *Engine {
 		ring:     newRingBuffer(ringFrames),
 		analyzer: NewAnalyzer(DefaultFFTSize),
 		gain:     gainState{current: 1, target: 1},
+		gap:      NewGapScheduler(),
+	}
+}
+
+// SetTrackGapSeconds 设置「自动切歌时两首歌之间的间隔」（秒）。
+//
+// 传 0 表示不留间隔（播完立刻触发下一首）。这个方法可以从任意 goroutine 调用。
+func (e *Engine) SetTrackGapSeconds(seconds float64) {
+	if e.gap != nil {
+		e.gap.SetGapSeconds(seconds)
+	}
+}
+
+// TrackGapActive 报告当前是否正在「切歌间隔」中（诊断用）。
+func (e *Engine) TrackGapActive() bool {
+	if e.gap == nil {
+		return false
+	}
+	return e.gap.Active()
+}
+
+// GapSeconds 返回当前配置的切歌间隔（秒，诊断用）。
+func (e *Engine) GapSeconds() float64 {
+	if e.gap == nil {
+		return 0
+	}
+	return e.gap.GapSeconds()
+}
+
+// CancelTrackGap 取消正在进行的切歌间隔。
+//
+// 用户手动切歌 / 暂停 / 卸载时必须调它：间隔期间点「下一首」是明确的即时意图，
+// 不该还要等剩下的半秒；而卸载后还挂着计时器会让下一次装载立刻收到一个
+// 过期的「播完了」回调 —— 表现为自动跳过一首歌。
+func (e *Engine) CancelTrackGap() {
+	if e.gap != nil {
+		e.gap.Cancel()
 	}
 }
 
@@ -414,6 +472,9 @@ func (e *Engine) Open() error {
 func (e *Engine) Close() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.gap != nil {
+		e.gap.Cancel()
+	}
 	e.stopFeedLocked()
 	if e.file != nil {
 		_ = e.file.Close()
@@ -446,6 +507,25 @@ func (e *Engine) Started() bool {
    -------------------------------------------------------------------------- */
 
 func (e *Engine) onData(out, in []byte, frameCount uint32) {
+	// 切歌间隔（见 GapScheduler）：上一首已经放完，正在等两首歌之间的停顿。
+	//
+	// ★ 它必须排在「是否在播放」的判断**之前**。
+	//
+	// markEOF 会把 playing 置成 false（这首歌确实已经结束了），
+	// 如果间隔的推进放在那个判断之后，就永远走不到 —— 表现为配了切歌间隔
+	// 之后「播完再也不切歌」，也就是整个自动切歌链路卡死。
+	//
+	// 这里输出的是**静音**而不是继续喂数据 —— 间隔的语义就是「什么都不放」。
+	// 用音频回调来推进（而不是另起一个 timer）是为了让间隔严格跟着音频时钟走：
+	// 网页卡顿、系统忙、设备缓冲变化都不会让间隔忽长忽短。
+	if e.gap != nil && e.gap.Active() {
+		for i := range out {
+			out[i] = 0
+		}
+		e.gap.Tick(int(frameCount))
+		return
+	}
+
 	// 暂停 / 未装载：输出静音。
 	// 注意仍然要「填满」缓冲区，返回短缓冲在 WASAPI 下会被当成欠载处理。
 	if !e.playingNow() {
@@ -469,6 +549,35 @@ func (e *Engine) onData(out, in []byte, frameCount uint32) {
 		return
 	}
 
+	// —— 尾部静音截断 ——
+	//
+	// 开了「跳过尾部静音」时，位置一走到 endFrame 就按播完处理：
+	// 不去等文件真正读空（那正是用户不想要的那段静音）。
+	// 本缓冲内**只放出到 endFrame 为止**的那部分，多出来的样本就地清零 ——
+	// 直接丢掉这些帧会让回调拿到一个短缓冲，而短缓冲在 WASAPI 下会被当成
+	// 欠载处理（听感是「卡带」）。
+	e.posMu.Lock()
+	end := e.endFrame
+	pos := e.positionFrame
+	e.posMu.Unlock()
+	if end > 0 {
+		remaining := end - pos
+		if remaining <= 0 {
+			for i := range out {
+				out[i] = 0
+			}
+			e.markEOF()
+			return
+		}
+		if int64(frames) > remaining {
+			zeroFrom := int(remaining) * FrameSize
+			for i := zeroFrom; i < len(out); i++ {
+				out[i] = 0
+			}
+			frames = int(remaining)
+		}
+	}
+
 	// 应用增益（用户音量 × 响度补偿），并就地做 16bit 定点缩放。
 	// 用缓冲内插值：整块共用一个增益值的话，音量变化在波形上仍是阶跃。
 	gainTo := e.gain.valueFor(int(frames))
@@ -479,7 +588,15 @@ func (e *Engine) onData(out, in []byte, frameCount uint32) {
 
 	e.posMu.Lock()
 	e.positionFrame += int64(frames)
+	reachedEnd := end > 0 && e.positionFrame >= end
 	e.posMu.Unlock()
+
+	// 恰好停在掐点上：本缓冲已经把最后一段放完了，立刻按播完处理。
+	// 不这样做的话要等下一个回调（那时 remaining<=0 才被发现），
+	// 中间会多放一个约 23ms 的静音缓冲 —— 听感上是切歌前多了一丝停顿。
+	if reachedEnd {
+		e.markEOF()
+	}
 }
 
 // applyGainRampS16 在缓冲**内部**从 from 线性插值到 to，逐样本套用增益。
@@ -566,6 +683,17 @@ func (e *Engine) playingNow() bool {
 	return p
 }
 
+// markEOF 处理「这首歌播完了」。
+//
+// ★ 有切歌间隔时不立刻回调上层。
+//
+// 间隔的语义是「这一首结束了，但下一首要等一会儿才开始」。所以这里先把自己
+// 标记成「已结束、不再出声」，然后交给 GapScheduler 在**音频时钟**上等满
+// 间隔再回调。回调最终会走到上层的 setEOFHandler（自动切下一首）。
+//
+// 为什么让引擎自己管这段等待，而不是让上层 setTimeout：间隔的时长必须由
+// 音频时钟度量。上层在 WebView / Go 定时器上等，网页一卡或系统一忙，
+// 间隔就会忽长忽短 —— 用户听到的是停顿时长不稳定。
 func (e *Engine) markEOF() {
 	e.posMu.Lock()
 	if e.eof {
@@ -576,6 +704,12 @@ func (e *Engine) markEOF() {
 	e.playing = false
 	fn := e.onEOF
 	e.posMu.Unlock()
+
+	// 没配置间隔（或已经在间隔中）：与历史行为完全一致，立刻回调。
+	// 注意 Arm 传进去的回调就是 fn —— 间隔走完时由 GapScheduler 调用它。
+	if e.gap != nil && e.gap.Arm(fn) {
+		return
+	}
 	if fn != nil {
 		fn()
 	}
@@ -588,11 +722,18 @@ func (e *Engine) markEOF() {
 // Load 装载一个 PCM WAV 文件（44 字节标准头）并准备播放。
 // 会停止当前的 feeder、清空缓冲、把位置重置到 startFrame。
 //
+// startFrame / endFrame 是「跳过首尾静音」的落点（见 PlanSilenceTrim）：
+//   - startFrame 是起播位置（0 = 从头）；
+//   - endFrame 是结束位置（0 = 一直播到文件末尾）。
+//
+// 两个边界都由上层算好传进来，引擎不自己读配置也不自己扫静音 ——
+// 引擎只负责「按给定的区间播放」，这样它的行为可以被单独测试。
+//
 // gain 是这首歌应当使用的线性增益（用户音量 × 该曲响度补偿）。**必须**在这里
 // 一起传入，而不是装载完再单独调 SetGain —— 原因见 applyGainForLoad 的注释：
 // 「装载」与「换增益」之间只要有一个音频回调的窗口，那一个缓冲就会用上一首的
 // 增益放出来，听起来正是「切歌瞬间上一首突然变响」。
-func (e *Engine) Load(path string, startFrame int64, gain float64) error {
+func (e *Engine) Load(path string, startFrame, endFrame int64, gain float64) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("打开音频文件失败: %w", err)
@@ -628,16 +769,33 @@ func (e *Engine) Load(path string, startFrame int64, gain float64) error {
 	e.analyzer.Reset()
 	// 换增益与换音频在同一个「装载」动作里完成，中间不留给音频回调任何窗口
 	e.gain.setHard(gain)
+	// 换歌作废上一首可能还挂着的切歌间隔：不等它走完，否则新歌会先静音 1.5 秒
+	if e.gap != nil {
+		e.gap.Cancel()
+	}
 
+	totalFrames := pcmSize / FrameSize
 	start := startFrame
 	if start < 0 {
 		start = 0
 	}
-	if maxFrames := pcmSize / FrameSize; start > maxFrames {
-		start = maxFrames
+	if start > totalFrames {
+		start = totalFrames
 	}
+	// endFrame <= 0 / 超出范围一律按「播到文件末尾」处理：
+	// 上层在关闭「跳过尾部静音」时传的就是 0。
+	end := endFrame
+	if end <= 0 || end > totalFrames {
+		end = totalFrames
+	}
+	if end < start {
+		end = start
+	}
+
 	e.posMu.Lock()
 	e.positionFrame = start
+	e.endFrame = end
+	e.trimStart = start
 	e.eof = false
 	e.pendingSeek = nil
 	e.posMu.Unlock()
@@ -736,7 +894,13 @@ func (e *Engine) Play() {
 }
 
 // Pause 暂停：停在这里，不丢位置
+//
+// 顺带取消切歌间隔：暂停表达的是「先别放」，而间隔走完会触发「下一首」——
+// 两者叠加的结果是暂停之后歌自己切走了，那是明确违背用户意图的。
 func (e *Engine) Pause() {
+	if e.gap != nil {
+		e.gap.Cancel()
+	}
 	e.posMu.Lock()
 	e.playing = false
 	e.posMu.Unlock()
@@ -760,10 +924,23 @@ func (e *Engine) SeekToFrame(frame int64) error {
 	if e.file == nil {
 		return ErrNotReady
 	}
+	// seek 是明确的即时意图：把可能还挂着的切歌间隔取消掉，
+	// 否则用户在间隔里拖了进度条，1.5 秒后歌还是会被切走。
+	if e.gap != nil {
+		e.gap.Cancel()
+	}
 	if frame < 0 {
 		frame = 0
 	}
+	// 上界按「掐完尾部静音之后的结束位置」算：拖到最右应当停在真正的终点，
+	// 而不是停在文件末尾那段用户根本听不到的静音里。
+	e.posMu.Lock()
+	end := e.endFrame
+	e.posMu.Unlock()
 	maxFrames := e.pcmSize / FrameSize
+	if end > 0 && end < maxFrames {
+		maxFrames = end
+	}
 	if frame > maxFrames {
 		frame = maxFrames
 	}
@@ -802,12 +979,42 @@ func (e *Engine) GainTarget() float64 {
 	return e.gain.targetValue()
 }
 
-// Position 返回当前播放位置（毫秒）与总时长（毫秒）
+// Position 返回当前播放位置（毫秒）与总时长（毫秒）。
+//
+// ★ 两者都用**整首歌的原时间轴**，与「跳过静音」无关。
+//
+// 「跳过静音」的语义是「自动跳过」，不是「把歌变短」：
+//
+//	一首 4:12 的歌，开头 3 秒静音、结尾 20 秒静音，两个开关都开 ——
+//	 · 时长仍然是 4:12（252000ms），进度条按整首歌铺开；
+//	 · 起播瞬间位置自动落到 3 秒处（用户听到的第一声就是音乐）；
+//	 · 位置走到 3:52 就结束并切下一首（不去听那 20 秒空白）。
+//
+// 为什么位置必须是原时间轴上的绝对位置，而不是「掐完之后从 0 起算」：
+//
+//  1. **歌词**是按原曲时间轴打轴的。位置若从 0 起算，所有歌词都会
+//     整体提前（开头静音多长就偏多少），越往后越对不上；
+//  2. **记忆播放进度**（保留歌曲播放进度）存的是原曲位置，恢复时要能对得上；
+//  3. 用户拖进度条时心里的刻度也是原曲时间轴。
+//
+// 一句话：**掐掉的只是「会被播放的区间」，不是「这首歌的时间轴」**。
 func (e *Engine) Position() (posMs, durMs int64) {
 	e.posMu.Lock()
 	frame := e.positionFrame
 	e.posMu.Unlock()
+	// 分母恒为文件总长：进度条要覆盖整首歌，包括被跳过的首尾。
 	return frameToMs(frame), frameToMs(e.pcmSize / FrameSize)
+}
+
+// TrimStart 返回本次装载「实际起播」的位置（毫秒，原曲时间轴）。
+//
+// 开了「跳过开头静音」时它不是 0 —— 前端据此知道「进度条一上来就落在
+// 3 秒处」是预期行为，而不是播放位置错乱；诊断信息也用它回答
+// 「到底从头开始播了没有」。
+func (e *Engine) TrimStart() int64 {
+	e.posMu.Lock()
+	defer e.posMu.Unlock()
+	return frameToMs(e.trimStart)
 }
 
 func frameToMs(f int64) int64 {
@@ -846,4 +1053,18 @@ func (e *Engine) Underruns() int64 {
 // Buffered 返回缓冲中可读的毫秒数（诊断用）
 func (e *Engine) Buffered() int64 {
 	return frameToMs(int64(e.ring.buffered()))
+}
+
+// TrimRange 返回当前装载的播放区间（起播帧、结束帧、文件总帧数）。
+// 供上层诊断「跳过静音到底跳了多少」。三个值都是**文件口径**的绝对帧号。
+func (e *Engine) TrimRange() (start, end, total int64) {
+	e.posMu.Lock()
+	start = e.trimStart
+	end = e.endFrame
+	e.posMu.Unlock()
+	total = e.pcmSize / FrameSize
+	if end <= 0 {
+		end = total
+	}
+	return start, end, total
 }

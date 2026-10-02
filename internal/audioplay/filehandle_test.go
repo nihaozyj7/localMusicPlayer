@@ -22,7 +22,7 @@ func TestFileReleasedAfterClose(t *testing.T) {
 	if err := e.Open(); err != nil {
 		t.Skipf("没有音频设备: %v", err)
 	}
-	if err := e.Load(path, 0, 1); err != nil {
+	if err := e.Load(path, 0, 0, 1); err != nil {
 		t.Fatalf("装载失败: %v", err)
 	}
 	e.Play()
@@ -53,7 +53,7 @@ func TestSeekDoesNotLeakOldFileHandles(t *testing.T) {
 	if err := e.Open(); err != nil {
 		t.Skipf("没有音频设备: %v", err)
 	}
-	if err := e.Load(path, 0, 1); err != nil {
+	if err := e.Load(path, 0, 0, 1); err != nil {
 		t.Fatalf("装载失败: %v", err)
 	}
 	e.Play()

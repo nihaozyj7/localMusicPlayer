@@ -42,6 +42,8 @@ import { doRescan, navigate, settingsLayerOpen, refreshSettingsLayer } from "./s
 import {
   applyVolume,
   applyGainForSong,
+  // 跳过首尾静音 / 切歌间隔（设置项，后端生效）
+  applyPlaybackOptions,
   refreshLoudnessGains,
   refreshLoudnessState,
   seekTo,
@@ -582,6 +584,12 @@ async function main() {
   // 而 syncAudio 要按「后端是否可用」选链路 —— 探测晚了第一次播放会走错分支。
   await probeBackend();
   startAudioEvents();
+  // 把「跳过首尾静音 / 切歌间隔」这两项设置推给后端。
+  //
+  // 必须在这里（探测之后、startRuntime 之前）：startRuntime 的第一次 run
+  // 就可能装载并起播，而跳过静音的方案是**装载时**算好的 ——
+  // 推晚了第一首歌会用默认值（不跳过）播出，用户听到的是「设置没生效」。
+  applyPlaybackOptions();
 
   // 键盘媒体键（⏯）：Go 侧用系统级全局热键接管，这里只接它转达的意图。
   // 必须等 store 就绪之后再挂 —— 处理器里直接调 togglePlay。

@@ -119,6 +119,20 @@ const DEFAULT_CONFIG = {
   /* 封面轮播（详情页）：只影响详情页显示哪一张，不动「当前生效封面」 */
   coverCarousel: false,
   coverCarouselInterval: 10, // 秒
+
+  /* 跳过静音（见 Go 侧 internal/audioplay/silence.go）
+     ------------------------------------------------------------------
+     两个开关分别控制「跳过开头无声」与「跳过结尾无声」：
+       · 开头静音 —— 点播放却迟迟不出声，像播放器卡了；
+       · 结尾静音 —— CD 抓轨的尾部空白，自动下一首要白等十几秒。
+     默认都关：它们会改变用户听到的音频，必须由用户明确开启
+     （与「响度均衡」同一立场）。 */
+  skipSilenceHead: false,
+  skipSilenceTail: false,
+  /* 切歌时两首歌之间的间隔（秒），默认 1.5。
+     作用于**自动切歌**；手动点下一首不等它（那是明确的即时意图）。
+     与 Go 侧 bootstrap.DefaultTrackGapSeconds 保持一致。 */
+  trackGapSeconds: 1.5,
 };
 
 function initialState() {
@@ -2210,6 +2224,9 @@ const SYNCED_KEYS = [
   "listDensity",
   "coverCarousel",
   "coverCarouselInterval",
+  "skipSilenceHead",
+  "skipSilenceTail",
+  "trackGapSeconds",
 ];
 
 let syncTimer = null;

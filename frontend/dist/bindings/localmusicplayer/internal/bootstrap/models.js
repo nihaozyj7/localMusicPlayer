@@ -50,6 +50,9 @@
  * @property {boolean} autoStartDesktopWallpaper - AutoStartDesktopWallpaper 是否在**每次启动时**自动打开桌面背景歌词。 为什么要有它：ShowDesktopWallpaper 既表示「现在开着」，也曾经隐式表示 「下次启动也开着」—— 用户临时开着看了一会儿、关掉程序，下次启动它又冒出来。 现在把这两件事拆开： · ShowDesktopWallpaper     = 本次运行开不开（随开关实时落盘）； · AutoStartDesktopWallpaper = 启动时要不要自动开。 关掉后者之后，本次仍然可以手动打开背景歌词，只是重启后不再自动出现 —— 这正是「关闭后则桌面背景歌词只在本次启动生效」。 默认 true：与加入这个开关之前的行为一致（开过就会被记住并在下次启动恢复）。 它只在 Windows 上有意义（别的平台 desktopWallpaperSupport 恒为不支持）。
  * @property {boolean} sleepAfterSong - SleepAfterSong 定时停止的「播放完歌曲（延长到歌曲播放结束）」选项。 打开后：倒计时到点时**不立刻暂停**，而是等当前这首播完再停。 这是「睡眠定时」的常见语义 —— 用户想听到正在听的这首结束， 而不是在副歌中间被掐掉。
  * @property {string} shuffleMode - ShuffleMode 随机播放行为：reshuffle | once。
+ * @property {boolean} skipSilenceHead - —— 跳过静音（见 internal/audioplay/silence.go）—— SkipSilenceHead / SkipSilenceTail 分别控制「跳过开头无声」与「跳过结尾无声」。 为什么做成两个开关而不是一个「跳过静音」：这两件事解决的是完全不同的问题 —— · 开头静音 —— 很多无损/现场转录的文件前面有几秒空白，点播放却迟迟不出声， 听感上像「播放器卡了」； · 结尾静音 —— CD 抓轨与整轨转录的文件尾部常常拖十几秒空白， 自动下一首会白白等完那一段。 用户完全可能只想解决其中一个（比如就想要「听完尾奏再切歌」）。 检测在装载时对解码后的 PCM 做（见 audioplay.DetectSilence），结果按文件缓存， 所以同一首歌第二次播放零开销。
+ * @property {boolean} skipSilenceTail
+ * @property {number} trackGapSeconds - TrackGapSeconds 是切歌时两首歌之间的间隔（秒）。 它作用于**自动切歌**（上一首播完 → 下一首起播）之间的停顿，默认 1.5 秒。 用户手动点下一首 / 点播某一首时不等这个间隔 —— 那是明确的即时意图， 中间插一段静音只会显得播放器反应慢。 0 表示不留间隔（播完立刻接上）。
  * @property {boolean} coverCarousel - —— 封面轮播（播放详情页）—— CoverCarousel 是否轮播多张封面。 刻意做成**全局偏好**而不是每首一份：一首歌有几张封面是数据， 「要不要轮着看」是习惯；放进每首歌里会出现「这首开、那首关」， 用户根本记不住自己在哪首开的。
  * @property {number} coverCarouselInterval - CoverCarouselInterval 轮播间隔（秒），下限 2 秒，默认 10 秒。
  * @property {string} aiBaseUrl - —— AI 元数据清洗（设置 → AI 元数据）——
@@ -118,7 +121,7 @@
  * @property {number} bitrate
  * @property {number} addedAt
  * @property {number} playCount
- * @property {string} cover - data URL；无封面时为空字符串
+ * @property {string} [cover] - data URL；无封面时为空字符串
  * @property {string} [coverUrl] - CoverURL 是同源封面地址（形如 /cover/<内容hash>.jpg?t=…），指向封面缓存 目录里的内容寻址文件。 为什么本地歌曲走 URL 而不是 Cover 里的 base64：内嵌封面平均 143KB， base64 后还会膨胀 1/3 —— 整库塞进列表接口意味着 5,000 首约 484MB 的 IPC 载荷（每次 scan:done 都要重来一遍，含文件夹监听触发的增量重扫）。 给 URL 之后列表载荷只剩几十字节/首，图片由浏览器按 immutable 长缓存按需取， 同一张封面只下载一次。Cover 字段保留给仍需要内嵌 data URL 的场景（在线曲目）。
  */
 
