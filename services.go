@@ -2153,6 +2153,13 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 		case "trackGapSeconds":
 			// 0 是合法值（不留间隔），规范化只在越界时收敛。
 			c.TrackGapSeconds = bootstrap.NormalizeTrackGapSeconds(asFloat(raw, c.TrackGapSeconds))
+		case "effectPreset":
+			// 音效档位：非法值落回 off（见 NormalizeEffectPreset 的说明）。
+			//
+			// ★ 这个键必须有分支：前端 flushConfigSync 一直在推，
+			// 漏掉它就变成「音效能用、看起来生效了，重启后回到关闭」——
+			// 与下面注释里提到的响度那几个键踩过的是同一个坑。
+			c.EffectPreset = bootstrap.NormalizeEffectPreset(asString(raw, c.EffectPreset))
 		case "aiBaseUrl":
 			c.AIBaseURL = strings.TrimSpace(asString(raw, c.AIBaseURL))
 		case "aiApiKey":

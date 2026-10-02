@@ -678,6 +678,22 @@
   font-weight: var(--fw-medium);
 }
 
+/* 换行版分段控件：选项多（音效有 6 档）而卡片宽度有限时用。
+   默认的 .segmented 是 inline-flex 且不换行，6 个按钮会直接溢出卡片
+   边界（表现为按钮压到卡片外面）。改成 flex + wrap + 等宽填满，
+   窄窗口下自动折成两行。 */
+.segmented--wrap {
+  display: flex;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.segmented--wrap .segmented__btn {
+  flex: 1 1 auto;
+  /* 下限保证文字不被压到换行（"清澈人声"四个字） */
+  min-width: 5.5em;
+}
+
 /* —— 播放界面样式（皮肤）卡片 ——
    卡片本身是 <div>，里面两个按钮：占满卡片的「选中」按钮 + 右上角的「移除」。
    之所以不再是「整张卡片就是一个 <button>」：直接在按钮里再放一个按钮是非法

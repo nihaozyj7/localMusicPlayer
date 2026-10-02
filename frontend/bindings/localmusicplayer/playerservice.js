@@ -33,6 +33,18 @@ export function Diagnostics() {
 }
 
 /**
+ * Effect 返回当前音效档位（供前端挂载时对齐状态）。
+ * 
+ * 同时返回"请求值"与"音频线程实际生效值"：两者在切换后可能差一个
+ * 缓冲周期，正常情况下应当一致；不一致说明音频回调没有在推进
+ * （声卡没开、或者引擎卡住了），诊断时很有用。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function Effect() {
+    return $Call.ByID(1883364337);
+}
+
+/**
  * Load 装载一首歌并（按 state 里的播放意图）开始播放。
  * 
  * 这个方法会**阻塞**到歌曲可以起播为止（需要转码时可能几秒）。
@@ -82,6 +94,26 @@ export function Playing() {
  */
 export function Seek(positionMs) {
     return $Call.ByID(1479346536, positionMs);
+}
+
+/**
+ * SetEffect 设置音效档位（清澈人声 / 3D 环绕 / 混响等）。
+ * 
+ * 取值见 audioplay.EffectPresets；非法值会被收敛到 off，不报错 ——
+ * 音效是"锦上添花"的功能，为一个非法字符串让播放失败是本末倒置。
+ * 
+ * 这个方法**不需要**在装载时一起传（不像 SetGain）：音效是跨歌的偏好，
+ * 换歌时引擎会清空 DSP 状态但保留档位（见 audioplay.Engine.Load）。
+ * 所以前端只需在设置变化时调一次。
+ * 
+ * 返回载荷里带上实际生效的档位与中文名，供设置界面回显 ——
+ * 前端传了非法值时能立刻看到"其实落回了关闭"，而不是界面显示一套、
+ * 实际生效另一套。
+ * @param {string} preset
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function SetEffect(preset) {
+    return $Call.ByID(1919586049, preset);
 }
 
 /**

@@ -281,6 +281,10 @@ const backendImpl = {
   playerSetPlaybackOptions: (skipHead, skipTail, gapSeconds) =>
     call(bindings?.Player?.SetPlaybackOptions, Boolean(skipHead), Boolean(skipTail), Number(gapSeconds) || 0),
   playerSetLoudness: (gainDB) => call(bindings?.Player?.SetLoudnessGain, gainDB),
+  // 音效档位（清澈人声 / 3D 环绕 / 混响等）。后端会做合法性收敛，
+  // 返回值里带实际生效的档位，供界面回显。
+  playerSetEffect: (preset) => call(bindings?.Player?.SetEffect, String(preset || "off")),
+  playerEffect: () => call(bindings?.Player?.Effect),
   playerSpectrum: (bands) => call(bindings?.Player?.Spectrum, bands),
   playerDiagnostics: () => call(bindings?.Player?.Diagnostics),
 

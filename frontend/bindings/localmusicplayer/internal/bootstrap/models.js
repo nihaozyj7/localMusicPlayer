@@ -53,6 +53,7 @@
  * @property {boolean} skipSilenceHead - —— 跳过静音（见 internal/audioplay/silence.go）—— SkipSilenceHead / SkipSilenceTail 分别控制「跳过开头无声」与「跳过结尾无声」。 为什么做成两个开关而不是一个「跳过静音」：这两件事解决的是完全不同的问题 —— · 开头静音 —— 很多无损/现场转录的文件前面有几秒空白，点播放却迟迟不出声， 听感上像「播放器卡了」； · 结尾静音 —— CD 抓轨与整轨转录的文件尾部常常拖十几秒空白， 自动下一首会白白等完那一段。 用户完全可能只想解决其中一个（比如就想要「听完尾奏再切歌」）。 检测在装载时对解码后的 PCM 做（见 audioplay.DetectSilence），结果按文件缓存， 所以同一首歌第二次播放零开销。
  * @property {boolean} skipSilenceTail
  * @property {number} trackGapSeconds - TrackGapSeconds 是切歌时两首歌之间的间隔（秒）。 它作用于**自动切歌**（上一首播完 → 下一首起播）之间的停顿，默认 1.5 秒。 用户手动点下一首 / 点播某一首时不等这个间隔 —— 那是明确的即时意图， 中间插一段静音只会显得播放器反应慢。 0 表示不留间隔（播完立刻接上）。
+ * @property {string} effectPreset - EffectPreset 是当前的音效档位（见 internal/audioplay/effects.go）。 取值：off | vocal | bass | surround | live | hall ★ 默认 off 是刻意的，与「响度均衡」「跳过静音」同一立场： 任何改动音频本身的处理都必须由用户明确开启。开音效会改变用户 听到的声音（EQ 会调整频响），默认开就等于"每个用户都被静音地 加了一层处理"——那是不可接受的。 存字符串而不是数字：这个值要落盘、要传给前端、要出现在诊断信息里。 数字在配置文件里完全不可读，而字符串写错了能一眼看出来 （非法值由 audioplay.NormalizeEffectPreset 收敛到 off）。
  * @property {boolean} coverCarousel - —— 封面轮播（播放详情页）—— CoverCarousel 是否轮播多张封面。 刻意做成**全局偏好**而不是每首一份：一首歌有几张封面是数据， 「要不要轮着看」是习惯；放进每首歌里会出现「这首开、那首关」， 用户根本记不住自己在哪首开的。
  * @property {number} coverCarouselInterval - CoverCarouselInterval 轮播间隔（秒），下限 2 秒，默认 10 秒。
  * @property {string} aiBaseUrl - —— AI 元数据清洗（设置 → AI 元数据）——

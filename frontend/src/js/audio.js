@@ -404,6 +404,50 @@ export async function applyPlaybackOptions() {
 }
 
 /**
+ * 把当前音效档位推给后端。
+ *
+ * 设置界面改完音效按钮后调用（见 settings.js 的 effect-preset 分支）。
+ *
+ * ★ 为什么音效不需要在切歌时重新推送（与响度补偿不同）：
+ * 音效是**跨歌的偏好**，后端在换歌时只清空 DSP 状态（滤波器历史、
+ * 混响延迟线）而保留档位（见 audioplay.Engine.Load 的注释）。
+ * 响度补偿则是逐曲算出来的，换歌必须重推。
+ *
+ * 后端播放不可用时（回退到 <audio>）什么都不做：legacy 路径没有
+ * DSP 链路，做不了音效。界面会据此显示"后端不可用"的说明。
+ */
+export async function applyEffectPreset() {
+  if (!backendReady) return;
+  const preset = state.config.effectPreset || "off";
+  try {
+    const res = await backend.playerSetEffect(preset);
+    // 后端会做合法性收敛。若它返回的档位与我们推的不一致，说明本地
+    // 配置里存了一个非法值（手改配置 / 旧版本遗留）—— 以**后端**为准
+    // 写回本地，免得界面显示一套、实际生效另一套。
+    if (res && typeof res.preset === "string" && res.preset !== preset) {
+      console.warn(`[audio] 音效档位 ${preset} 非法，后端收敛为 ${res.preset}`);
+      state.config.effectPreset = res.preset;
+      commit?.();
+    }
+  } catch (err) {
+    console.warn("[audio] 同步音效档位失败", err);
+  }
+}
+
+/**
+ * 音效状态快照（设置界面展示用）。
+ *
+ * backend=false 时说明后端原生音频不可用，音效无法生效 ——
+ * 界面据此显示提示，而不是让用户点了按钮却听不出任何区别。
+ */
+export function effectState() {
+  return {
+    backend: backendReady,
+    preset: state.config.effectPreset || "off",
+  };
+}
+
+/**
  * 最近一次装载时后端报告的跳过量（毫秒）。
  *
  * 它只用于界面提示（设置界面的诊断信息），不参与任何播放决策 ——

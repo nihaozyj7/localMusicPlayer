@@ -155,12 +155,14 @@ try {
       loudnessTarget: -14,
       loudnessLimit: false,
       onlineCover: false,
+      effectPreset: "hall",
     });
     return {
       mode: cfg?.loudnessMode,
       target: cfg?.loudnessTarget,
       limit: cfg?.loudnessLimit,
       onlineCover: cfg?.onlineCover,
+      effect: cfg?.effectPreset,
       downloadDir: cfg?.downloadDir || "",
       rowClick: cfg?.rowClickAction,
       density: cfg?.listDensity,
@@ -172,6 +174,51 @@ try {
     written.mode === "track" && written.target === -14 && written.limit === false,
     JSON.stringify(written)
   );
+  check("写入音效档位后后端立即返回 hall", written.effect === "hall", `effectPreset=${written.effect}`);
+
+  // 非法档位必须被收敛成 off，而不是原样存下来 ——
+  // 否则界面会出现「一个音效都没选中，但声音确实被处理过」。
+  const bogus = await first.evalJs(`
+    const { backend } = await import("/js/bridge.js");
+    const cfg = await backend.setConfig({ effectPreset: "definitely-not-a-preset" });
+    return { effect: cfg?.effectPreset };
+  `);
+  check(
+    "非法音效档位被收敛为 off",
+    bogus.effect === "off",
+    `effectPreset=${JSON.stringify(bogus.effect)}（期望 off）`
+  );
+  // 收敛测试会把值改掉，写回我们真正要验证的 hall
+  await first.evalJs(`
+    const { backend } = await import("/js/bridge.js");
+    await backend.setConfig({ effectPreset: "hall" });
+    return true;
+  `);
+
+  // 后端引擎要真的收到这个档位（写入配置 ≠ 引擎生效）
+  const engine = await first.evalJs(`
+    const { backend } = await import("/js/bridge.js");
+    const res = await backend.playerSetEffect("surround");
+    const after = await backend.playerEffect();
+    return { res, after };
+  `);
+  check(
+    "PlayerService.SetEffect 能接受合法档位",
+    engine?.res?.preset === "surround" && engine?.res?.applied === true,
+    JSON.stringify(engine?.res)
+  );
+  check(
+    "引擎报告的请求档位是 surround",
+    engine?.after?.requested === "surround",
+    JSON.stringify(engine?.after)
+  );
+  // 还原成 hall（重启后要验证的是它）
+  await first.evalJs(`
+    const { backend } = await import("/js/bridge.js");
+    await backend.playerSetEffect("hall");
+    return true;
+  `);
+
   check("下载目录有默认值（系统音乐目录 / downloads）", /downloads$/i.test(written.downloadDir), written.downloadDir);
 
   // 新增的交互/在线设置也一起写进去（重启后一起验证）
@@ -200,6 +247,8 @@ try {
   await sleep(600);
   const ui = await first.evalJs(`
     const btn = document.querySelector('[data-segment="loudnessMode"] [data-value="track"]');
+    const effBtn = document.querySelector('[data-segment="effectPreset"] [data-value="hall"]');
+    const effSegment = document.querySelector('[data-segment="effectPreset"]');
     const layer = document.getElementById("settings-layer");
     return {
       exists: Boolean(btn),
@@ -207,6 +256,11 @@ try {
       layerOpen: layer ? !layer.hidden : false,
       sections: Array.from(document.querySelectorAll(".settings__nav-item")).map((n) => n.textContent.trim()),
       hasOnlineCard: Boolean(document.getElementById("sec-online")),
+      hasEffectCard: Boolean(document.getElementById("sec-effect")),
+      effectPressed: effBtn?.getAttribute("aria-pressed"),
+      effectOptions: effSegment
+        ? Array.from(effSegment.querySelectorAll(".segmented__btn")).map((b) => b.dataset.value)
+        : [],
       hasDensity: Boolean(document.querySelector('[data-segment="listDensity"] [data-value="roomy"]')),
       hasRowClick: Boolean(document.querySelector('[data-segment="rowClickAction"] [data-value="append"]')),
       hasEmbed: document.querySelector('[data-toggle="embedMeta"]')?.getAttribute("aria-checked"),
@@ -215,6 +269,14 @@ try {
   check("设置界面「逐曲均衡」按钮存在且为选中态", ui.exists && ui.pressed === "true", JSON.stringify(ui));
   check("设置界面有「在线歌曲」分区", ui.hasOnlineCard === true, JSON.stringify(ui.sections));
   check("设置以弹出层形式打开", ui.layerOpen === true, JSON.stringify({ layerOpen: ui.layerOpen }));
+  // 音效卡片必须存在于界面上（不是只加了后端）——
+  // 少了这张卡片，用户根本没法开音效。
+  check("设置界面有「音效」卡片", ui.hasEffectCard === true, `sections=${JSON.stringify(ui.sections)}`);
+  check(
+    "音效卡片有全部 6 个档位按钮且 hall 为选中态",
+    ui.effectOptions.length === 6 && ui.effectOptions.includes("hall") && ui.effectPressed === "true",
+    JSON.stringify({ options: ui.effectOptions, pressed: ui.effectPressed })
+  );
   check(
     "新增设置项回显正确（单击行为/密度/写回文件）",
     ui.hasDensity && ui.hasRowClick && ui.hasEmbed === "true",
@@ -232,11 +294,14 @@ try {
   const after = await second.evalJs(`
     const { backend } = await import("/js/bridge.js");
     const cfg = await backend.getConfig();
+    const eff = await backend.playerEffect();
     return {
       mode: cfg?.loudnessMode,
       target: cfg?.loudnessTarget,
       limit: cfg?.loudnessLimit,
       onlineCover: cfg?.onlineCover,
+      effect: cfg?.effectPreset,
+      effectRequested: eff?.requested,
       rowClick: cfg?.rowClickAction,
       density: cfg?.listDensity,
       embedMeta: cfg?.embedMeta,
@@ -250,6 +315,20 @@ try {
   check("重启后目标响度仍是 -14", after.target === -14, `loudnessTarget=${after.target}`);
   check("重启后真峰值保护仍是关闭", after.limit === false, `loudnessLimit=${after.limit}`);
   check("重启后在线封面开关仍是关闭", after.onlineCover === false, `onlineCover=${after.onlineCover}`);
+  // ★ 音效的"重启后还在不在"分两层，两层都要检查：
+  //   1. 配置里存住了（用户在设置界面看到的是这个）；
+  //   2. 引擎启动时**真的装载**了它（不然界面显示开着、实际没声音差别）。
+  // 只查第 1 层会漏掉"setConfigProvider 忘了同步给引擎"这种 bug。
+  check(
+    "重启后音效档位仍是 hall（配置层）",
+    after.effect === "hall",
+    `effectPreset=${JSON.stringify(after.effect)}（启动时没同步的话这里可能是 off）`
+  );
+  check(
+    "重启后引擎装载的也是 hall（运行期）",
+    after.effectRequested === "hall",
+    `引擎 requested=${JSON.stringify(after.effectRequested)}（setConfigProvider 没同步给引擎？）`
+  );
   check(
     "重启后单击行为/列表密度/写回文件都还在",
     after.rowClick === "append" && after.density === "roomy" && after.embedMeta === true,
@@ -272,6 +351,7 @@ if (existsSync(cfgPath)) {
     "embedMeta",
     "rowClickAction",
     "listDensity",
+    "effectPreset",
   ].filter((k) => !raw.includes(`"${k}"`));
   check(
     "config.json 里写入了全部设置键",

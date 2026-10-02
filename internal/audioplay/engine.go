@@ -40,6 +40,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gen2brain/malgo"
@@ -327,6 +328,26 @@ type Engine struct {
 	// analyzer 在音频线程里被写入，由前端轮询读取 —— 内部自带锁
 	analyzer *Analyzer
 
+	// effects 是音效链（均衡器 + 空间处理 + 混响，见 effects.go）。
+	//
+	// ★ 并发的处理方式与 gain / analyzer 都不同，值得单独说明：
+	//
+	// 音效切换涉及"换掉整条链的参数"，而这个动作**必须**发生在音频样本
+	// 边界上（否则会爆音）。所以这里不让控制线程直接改 Chain，而是：
+	//   1. 控制线程写 effectPreset（一个原子变量，见 SetEffect）；
+	//   2. 音频回调每次进来先读它，变了就调 Chain.RequestPreset；
+	//   3. Chain 自己在缓冲边界执行切换 + 交叉淡化。
+	//
+	// 为什么不复用 e.mu：音频回调**绝对不能**拿一把可能被控制线程长期
+	// 持有的锁（Load 会持锁跑几秒的转码等待）。gainState 用的是同样的
+	// 思路 —— 不过那里只需要一个数字，用普通赋值 + 内存序就够；
+	// 这里要传的是一个档位字符串，必须用 atomic.Value 或 atomic.Pointer。
+	effects Chain
+
+	// effectPreset 是"控制线程请求的档位"。由原子指针持有，
+	// 保证音频线程读到的是一个完整、不可变的字符串值。
+	effectPreset atomic.Pointer[EffectPreset]
+
 	// monoScratch 是 feedAnalyzer 的复用缓冲（避免在音频线程上分配）
 	monoScratch []float64
 
@@ -382,11 +403,63 @@ type Engine struct {
 
 // New 创建一个未启动的引擎
 func New() *Engine {
-	return &Engine{
+	e := &Engine{
 		ring:     newRingBuffer(ringFrames),
 		analyzer: NewAnalyzer(DefaultFFTSize),
 		gain:     gainState{current: 1, target: 1},
 		gap:      NewGapScheduler(),
+	}
+	// 音效档位默认 off。必须先存一个值：音频回调会 load 它，
+	// 而 atomic.Pointer 的零值是 nil（解引用会 panic）。
+	off := EffectOff
+	e.effectPreset.Store(&off)
+	return e
+}
+
+// SetEffect 设置音效档位。可以从任意 goroutine 调用。
+//
+// 返回是否发生了实际变化（相同档位是 no-op）。
+//
+// ★ 它**不**直接改音效链，只把请求记进一个原子变量；
+// 真正的切换由音频回调在下一次进入时执行（见 Engine.effects 的说明）。
+// 这样做的代价是切换最多晚一个缓冲周期（23ms）生效 —— 用户不可感知；
+// 换来的是"参数永远在样本边界上原子生效"，不需要在音频线程上加锁。
+func (e *Engine) SetEffect(preset EffectPreset) bool {
+	// 与当前请求相同 → 不需要写
+	if cur := e.effectPreset.Load(); cur != nil && *cur == preset {
+		return false
+	}
+	// 用局部变量取地址：escape analysis 会把它放到堆上，
+	// 每次调用一次小分配。这个路径只在用户改设置时走（不是热路径），
+	// 用一次分配换"读到一个完整不可变的值"是完全值得的 ——
+	// 反过来（存进 Engine 的字段再取地址）会让多个调用方共享同一块内存，
+	// 那就又变成数据竞争了。
+	p := preset
+	e.effectPreset.Store(&p)
+	return true
+}
+
+// Effect 返回控制线程最近一次请求的档位（诊断用）。
+//
+// 注意它返回的是"请求值"，不是"音频线程正在用的值" ——
+// 两者在切换后可能差一个缓冲周期。想知道后者用 EffectDiagnostics。
+func (e *Engine) Effect() EffectPreset {
+	if p := e.effectPreset.Load(); p != nil {
+		return *p
+	}
+	return EffectOff
+}
+
+// EffectDiagnostics 返回音效链的运行状态（设置界面 / 排查用）。
+//
+// 这里读的是音频线程维护的状态，属于"探测"语义：拿到的可能是
+// 一个缓冲周期之前的值。对诊断用途完全够用。
+func (e *Engine) EffectDiagnostics() map[string]any {
+	return map[string]any{
+		"requested": string(e.Effect()),
+		"applied":   string(e.effects.CurrentPreset()),
+		"prepared":  e.effects.Prepared(),
+		"label":     EffectPresetLabel(e.effects.CurrentPreset()),
 	}
 }
 
@@ -464,6 +537,19 @@ func (e *Engine) Open() error {
 		ctx.Free()
 		return fmt.Errorf("启动音频设备失败: %w", err)
 	}
+
+	// 音效链在声卡打开之后才 prepare：它会分配几十 KB 的延迟线，
+	// 而这些分配**必须**发生在音频线程启动之前（回调里不能分配内存）。
+	// 放在 Start 之前也可以，但那时设备还没确认可用 —— 分配了又要在
+	// 失败路径上回收，不如放到确认成功之后。
+	e.effects.prepare(SampleRate)
+	// 把当前请求的档位立刻装载进链（不用等第一个回调）。
+	// 注意这里用的是 RequestPreset 而不是直接 apply：切换逻辑统一走
+	// 音频线程那条路径，避免"启动时"和"运行时"两套装载代码。
+	if p := e.effectPreset.Load(); p != nil && *p != EffectOff {
+		e.effects.RequestPreset(*p)
+	}
+
 	e.started = true
 	return nil
 }
@@ -577,6 +663,27 @@ func (e *Engine) onData(out, in []byte, frameCount uint32) {
 			frames = int(remaining)
 		}
 	}
+
+	// —— 音效（均衡器 + 空间处理 + 混响）——
+	//
+	// ★ 顺序：音效在增益**之前**。
+	//
+	// 这不是随便排的。音效链的末尾有一个固定在 0.85 阈值的软限幅器，
+	// 它的职责是"防止 EQ 提升 + 混响叠加把峰值推过头"—— 也就是说
+	// 它保护的是**音乐信号本身**。而增益（用户音量 × 响度补偿）是
+	// 用户的输出级控制，它应该在限幅**之后**：用户把音量调到 30%
+	// 时，限幅器看到的仍然是满幅的音乐（该压的地方照压），
+	// 然后整体再乘 0.3。反过来（先乘 0.3 再限幅）会让限幅器在
+	// 音量很低时完全不工作 —— 因为信号根本没到阈值，于是"小音量下
+	// 音效不会过载、大音量下会"，同一个音效在不同音量下听感不一致。
+	//
+	// 另外还有一个更实际的理由：applyGainRampS16 是纯整数运算
+	//（就地为 s16 乘增益），而音效链是 float64 的。把音效放前面，
+	// 两者各自处理自己擅长的格式，中间只转换一次。
+	if preset := e.effectPreset.Load(); preset != nil {
+		e.effects.RequestPreset(*preset)
+	}
+	e.effects.ProcessStereo(out[:frames*FrameSize])
 
 	// 应用增益（用户音量 × 响度补偿），并就地做 16bit 定点缩放。
 	// 用缓冲内插值：整块共用一个增益值的话，音量变化在波形上仍是阶跃。
@@ -767,6 +874,12 @@ func (e *Engine) Load(path string, startFrame, endFrame int64, gain float64) err
 	e.ring.reset()
 	e.ring.setClosed(false)
 	e.analyzer.Reset()
+	// 音效链也要清：混响/延迟线里留着上一首的残响，不清的话新歌开头
+	// 会盖着一层上一首的混响尾巴（听感是"切歌后前几百毫秒糊成一片"）。
+	//
+	// ★ 清状态但**不**清档位：用户的音效选择是跨歌的偏好
+	//（"我要一直用大厅混响" 而不是"只给这一首"）。
+	e.effects.Reset()
 	// 换增益与换音频在同一个「装载」动作里完成，中间不留给音频回调任何窗口
 	e.gain.setHard(gain)
 	// 换歌作废上一首可能还挂着的切歌间隔：不等它走完，否则新歌会先静音 1.5 秒
@@ -952,6 +1065,11 @@ func (e *Engine) SeekToFrame(frame int64) error {
 	e.ring.reset()
 	e.ring.setClosed(false)
 	e.analyzer.Reset()
+	// 与 Load 同理：跳转后混响尾巴要清掉。
+	//
+	// 这里比换歌更明显：seek 是"用户想立刻听到那个位置的音乐"，
+	// 而一段残响拖在后面会让跳转听起来不够即时。
+	e.effects.Reset()
 
 	e.posMu.Lock()
 	e.positionFrame = frame

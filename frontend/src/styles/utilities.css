@@ -58,6 +58,13 @@
   opacity: 0.6;
 }
 
+/* 需要提醒但不阻断的场景（例如"这个功能当前不生效"）。
+   用 token 而不是写死颜色：三套主题各有自己的 --warning，
+   写死会让浅色主题下的提示文字对比度不足。 */
+.u-warning {
+  color: var(--warning);
+}
+
 .u-wrap {
   flex-wrap: wrap;
   gap: var(--sp-2);

@@ -44,6 +44,8 @@ import {
   applyGainForSong,
   // 跳过首尾静音 / 切歌间隔（设置项，后端生效）
   applyPlaybackOptions,
+  // 音效档位（设置项，后端生效）
+  applyEffectPreset,
   refreshLoudnessGains,
   refreshLoudnessState,
   seekTo,
@@ -590,6 +592,12 @@ async function main() {
   // 就可能装载并起播，而跳过静音的方案是**装载时**算好的 ——
   // 推晚了第一首歌会用默认值（不跳过）播出，用户听到的是「设置没生效」。
   applyPlaybackOptions();
+  // 音效档位同样在起播之前推给后端。
+  //
+  // 与上面同理：音效是**跨歌的偏好**，后端在 Engine.Open 时把链初始化成
+  // off。不在这里推的话，用户上次开着「大厅混响」，这次启动就会变成
+  //「设置界面显示开着、实际没有任何效果」，直到他重新点一次按钮。
+  applyEffectPreset();
 
   // 键盘媒体键（⏯）：Go 侧用系统级全局热键接管，这里只接它转达的意图。
   // 必须等 store 就绪之后再挂 —— 处理器里直接调 togglePlay。

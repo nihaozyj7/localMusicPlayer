@@ -96,6 +96,15 @@ const DEFAULT_CONFIG = {
   loudnessTarget: -16, // 目标整合响度 LUFS（-16 接近流媒体常用值）
   loudnessLimit: true, // 真峰值保护，避免抬升后削波
 
+  /* 音效（见 Go 侧 internal/audioplay/effects.go）
+     ------------------------------------------------------------------
+     档位：off | vocal（清澈人声） | bass（低音增强）
+           | surround（3D 环绕） | live（现场感） | hall（大厅混响）
+
+     默认 off：音效会改变听到的声音（EQ 调整频响），必须由用户明确开启，
+     与「响度均衡」「跳过静音」同一立场。 */
+  effectPreset: "off",
+
   /* 在线功能 */
   // 下载保存目录。后端默认给的是「系统音乐目录 / downloads」，
   // 启动后会用后端返回的真实值覆盖这个占位。
@@ -2227,6 +2236,7 @@ const SYNCED_KEYS = [
   "skipSilenceHead",
   "skipSilenceTail",
   "trackGapSeconds",
+  "effectPreset",
 ];
 
 let syncTimer = null;

@@ -278,6 +278,20 @@ type Config struct {
 	// 0 表示不留间隔（播完立刻接上）。
 	TrackGapSeconds float64 `json:"trackGapSeconds"`
 
+	// EffectPreset 是当前的音效档位（见 internal/audioplay/effects.go）。
+	//
+	// 取值：off | vocal | bass | surround | live | hall
+	//
+	// ★ 默认 off 是刻意的，与「响度均衡」「跳过静音」同一立场：
+	// 任何改动音频本身的处理都必须由用户明确开启。开音效会改变用户
+	// 听到的声音（EQ 会调整频响），默认开就等于"每个用户都被静音地
+	// 加了一层处理"——那是不可接受的。
+	//
+	// 存字符串而不是数字：这个值要落盘、要传给前端、要出现在诊断信息里。
+	// 数字在配置文件里完全不可读，而字符串写错了能一眼看出来
+	//（非法值由 audioplay.NormalizeEffectPreset 收敛到 off）。
+	EffectPreset string `json:"effectPreset"`
+
 	// —— 封面轮播（播放详情页）——
 	// CoverCarousel 是否轮播多张封面。
 	// 刻意做成**全局偏好**而不是每首一份：一首歌有几张封面是数据，
@@ -484,6 +498,10 @@ func DefaultConfig() *Config {
 		// 与「下一首开始」在听感上分得开，而不是硬接在一起。
 		TrackGapSeconds: DefaultTrackGapSeconds,
 
+		// 音效默认关闭：与「响度均衡」「跳过静音」同一立场 ——
+		// 任何改动音频本身的处理都必须由用户明确开启。
+		EffectPreset: "off",
+
 		// 版本更新：启动时静默检查一次；下载通道默认 auto（直连优先，
 		// 失败自动换代理）；没有跳过的版本。
 		UpdateCheckOnStart: true,
@@ -575,6 +593,33 @@ func NormalizeTrackGapSeconds(seconds float64) float64 {
 	// 保留一位小数：设置界面的滑块是 0.1 秒一档，多余的精度只会让
 	// config.json 里出现 1.5000000000000002 这种值。
 	return float64(int(seconds*10+0.5)) / 10
+}
+
+// EffectPresets 是全部合法的音效档位。
+//
+// ★ 这里刻意**再写一遍**而不是从 internal/audioplay 导入：
+// bootstrap 是最底层的配置包，让配置层依赖一个业务包会把依赖方向弄反
+// （同样的理由见上面 UpdateChannel 的注释）。
+//
+// 两边的一致性由测试守住（见 config_effect_test.go）：
+// 它会比对这里的列表与 audioplay.EffectPresets 是否完全相同 ——
+// 那样既能保持依赖方向，又不会出现"后端认 5 个档、配置层只认 4 个"
+// 这种很难发现的不一致。
+var EffectPresets = []string{"off", "vocal", "bass", "surround", "live", "hall"}
+
+// NormalizeEffectPreset 把音效档位收敛到合法值，非法值落回 off。
+//
+// 手改配置、从旧版本升上来、前端传了个已删除的档位名 —— 都会走到这里。
+// 返回 off 而不是报错：音效是"锦上添花"的功能，为一个非法字符串
+// 让播放失败是本末倒置。
+func NormalizeEffectPreset(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	for _, ok := range EffectPresets {
+		if v == ok {
+			return v
+		}
+	}
+	return "off"
 }
 
 // ListDensities 列表密度可选值
@@ -1048,6 +1093,10 @@ func normalize(cfg *Config) {
 	// 切歌间隔：手改配置写成负数 / 超大值时收敛到合法范围。
 	// 注意 0 是合法值，NormalizeTrackGapSeconds 内部已经区分了「0」与「非法」。
 	cfg.TrackGapSeconds = NormalizeTrackGapSeconds(cfg.TrackGapSeconds)
+	// 音效档位：已删除的档位名 / 手改写成乱码一律落回 off，
+	// 否则前端拿到的值在分段控件里匹配不上任何按钮 —— 表现为
+	//「设置里一个音效都没选中，但声音确实是处理过的」，很难排查。
+	cfg.EffectPreset = NormalizeEffectPreset(cfg.EffectPreset)
 	cfg.AnimationsSpeed = NormalizeAnimationsSpeed(cfg.AnimationsSpeed)
 	cfg.SkinPerformanceMode = NormalizeSkinPerformanceMode(cfg.SkinPerformanceMode)
 	// 更新下载通道：手改成别的值（或者旧版本里存着一个已经下架的代理 id）

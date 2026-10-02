@@ -188,7 +188,15 @@ func (s *PlayerService) setConfigProvider(fn func() bootstrap.Config) {
 	// 立刻把「切歌间隔」同步给引擎：用户改完设置不必重启，
 	// 下一首自动切歌就该按新值停顿。
 	if fn != nil && s.engine != nil {
-		s.engine.SetTrackGapSeconds(fn().TrackGapSeconds)
+		cfg := fn()
+		s.engine.SetTrackGapSeconds(cfg.TrackGapSeconds)
+		// 音效档位同样在启动时对齐一次。
+		//
+		// ★ 这一步是必需的：Engine.Open 时音效链刚 prepare 成 off，
+		// 而用户的档位偏好存在配置里。不对齐的话表现为
+		//「上次开着清澈人声，这次启动设置界面显示开着、实际没生效」——
+		// 直到用户重新点一次按钮才恢复。
+		s.engine.SetEffect(audioplay.EffectPreset(bootstrap.NormalizeEffectPreset(cfg.EffectPreset)))
 	}
 }
 
@@ -550,6 +558,59 @@ func (s *PlayerService) SetLoudnessGain(gainDB float64) {
 	s.applyGainLocked()
 }
 
+// SetEffect 设置音效档位（清澈人声 / 3D 环绕 / 混响等）。
+//
+// 取值见 audioplay.EffectPresets；非法值会被收敛到 off，不报错 ——
+// 音效是"锦上添花"的功能，为一个非法字符串让播放失败是本末倒置。
+//
+// 这个方法**不需要**在装载时一起传（不像 SetGain）：音效是跨歌的偏好，
+// 换歌时引擎会清空 DSP 状态但保留档位（见 audioplay.Engine.Load）。
+// 所以前端只需在设置变化时调一次。
+//
+// 返回载荷里带上实际生效的档位与中文名，供设置界面回显 ——
+// 前端传了非法值时能立刻看到"其实落回了关闭"，而不是界面显示一套、
+// 实际生效另一套。
+func (s *PlayerService) SetEffect(preset string) map[string]any {
+	normalized := bootstrap.NormalizeEffectPreset(preset)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.engine == nil {
+		return map[string]any{
+			"preset":  normalized,
+			"applied": false,
+			"reason":  "引擎未就绪",
+		}
+	}
+
+	// 引擎内部用原子快照转交给音频线程（见 audioplay.Engine.SetEffect），
+	// 这里拿到的 changed 只是"请求有没有变"，不代表音频线程已经应用 ——
+	// 实际应用最多晚一个缓冲周期（23ms），对用户不可感知。
+	changed := s.engine.SetEffect(audioplay.EffectPreset(normalized))
+	return map[string]any{
+		"preset":  normalized,
+		"applied": true,
+		"changed": changed,
+		"label":   audioplay.EffectPresetLabel(audioplay.EffectPreset(normalized)),
+	}
+}
+
+// Effect 返回当前音效档位（供前端挂载时对齐状态）。
+//
+// 同时返回"请求值"与"音频线程实际生效值"：两者在切换后可能差一个
+// 缓冲周期，正常情况下应当一致；不一致说明音频回调没有在推进
+// （声卡没开、或者引擎卡住了），诊断时很有用。
+func (s *PlayerService) Effect() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.engine == nil {
+		return map[string]any{"preset": "off", "label": "关闭"}
+	}
+	d := s.engine.EffectDiagnostics()
+	return d
+}
+
 // State 返回当前播放状态 + 位置锚点。
 // 前端在挂载、从后台恢复、或怀疑自己漂移时调一次重新对齐。
 func (s *PlayerService) State() map[string]any {
@@ -619,6 +680,10 @@ func (s *PlayerService) Diagnostics() map[string]any {
 		// 切歌间隔：用户报「切歌时停了一下」时可以在这里确认是不是间隔在起作用
 		out["trackGapSeconds"] = s.engine.GapSeconds()
 		out["trackGapActive"] = s.engine.TrackGapActive()
+		// 音效：用户报「开了音效没效果 / 关了还有效果」时看这里。
+		// requested 是控制线程的请求值，applied 是音频线程实际生效值 ——
+		// 两者不一致说明音频回调没有在推进（声卡没开或引擎卡住）。
+		out["effect"] = s.engine.EffectDiagnostics()
 	}
 	return out
 }

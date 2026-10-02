@@ -69,7 +69,7 @@ import { closeSettings, doRescan, settingsLayerOpen } from "../shell.js";
 import { applyGlassAlpha } from "../theme.js";
 import { createSlider } from "../slider.js";
 // 跳过静音 / 切歌间隔都在后端生效，这里只负责把改动推下去（见 audio.js）
-import { applyPlaybackOptions } from "../audio.js";
+import { applyPlaybackOptions, effectState } from "../audio.js";
 
 /* --------------------------------------------------------------------------
    设置分区
@@ -110,6 +110,55 @@ const LOUDNESS_MODES = [
   { value: "track", label: "逐曲均衡" },
   { value: "album", label: "同专辑统一" },
 ];
+
+/* --------------------------------------------------------------------------
+   音效档位
+   --------------------------------------------------------------------------
+   ★ 这份列表必须与 Go 侧 audioplay.EffectPresets / bootstrap.EffectPresets
+     完全一致（值、顺序）。三处列表靠两侧的测试守住：
+       · internal/bootstrap/config_effect_test.go（比对前两处）
+       · frontend/tests/settings-effect.test.js（比对前端这一处）
+     值写错的表现是"点了没反应"（后端收敛成 off），顺序不同的表现是
+     按钮排列与后端文档不符 —— 都属于很难一眼看出的漂移。
+   -------------------------------------------------------------------------- */
+const EFFECT_PRESETS = [
+  { value: "off", label: "关闭" },
+  { value: "vocal", label: "清澈人声" },
+  { value: "bass", label: "低音增强" },
+  { value: "surround", label: "3D 环绕" },
+  { value: "live", label: "现场感" },
+  { value: "hall", label: "大厅混响" },
+];
+
+/**
+ * 每个档位"做了什么"的说明。
+ *
+ * 写出来是因为这些名字（尤其是"3D 环绕"）在不同播放器里做法差别很大，
+ * 用户点之前想知道它到底会做什么。文案与 Go 侧 presetSpecs 的参数对应，
+ * 改了参数就该同步改这里 —— 否则说明书会与实现脱节。
+ */
+const EFFECT_DESCRIPTIONS = {
+  vocal: {
+    label: "清澈人声",
+    text: "切掉 120Hz 以下的低频、轻削 250Hz 的浑浊感，并抬起 3kHz 的清晰度频段，让人声从伴奏里浮出来。",
+  },
+  bass: {
+    label: "低音增强",
+    text: "切掉扬声器放不出来的超低频（避免白耗功放），再抬起 80~150Hz 的鼓点与贝斯基频，低频更有冲击力而不是更糊。",
+  },
+  surround: {
+    label: "3D 环绕",
+    text: "拉宽立体声、给一侧加少量延迟（Haas 效应）并加入轻微串扰，声场更宽、更有包围感。对单声道老录音也有效。",
+  },
+  live: {
+    label: "现场感",
+    text: "适度的空间感与混响，模拟小型演出场地（爵士酒吧 / livehouse）。",
+  },
+  hall: {
+    label: "大厅混响",
+    text: "较长的混响尾巴、较暗的高频，模拟音乐厅一类的较大空间。",
+  },
+};
 
 /* --------------------------------------------------------------------------
    小组件
@@ -423,7 +472,8 @@ class MpSettingsLayer extends MpElement {
                 )}
               </div>
               ${this.foldersCard()} ${this.rulesCard()} ${this.themeCard()} ${this.playerCard()}
-              ${this.playbackCard()} ${this.lyricsCard()} ${this.loudnessCard()} ${this.onlineCard()} ${this.aiCard()}
+              ${this.playbackCard()} ${this.effectCard()} ${this.lyricsCard()} ${this.loudnessCard()}
+              ${this.onlineCard()} ${this.aiCard()}
               ${this.systemCard()} ${this.aboutCard()} ${this.updateCard()} ${this.techCard()}
               ${this.libsCard()} ${this.licenseCard()} ${this.creditsCard()}
             </div>
@@ -1270,6 +1320,69 @@ class MpSettingsLayer extends MpElement {
           响度来源：<b>${available ? sourceText : "不可用"}</b>
         </div>
       </div>
+    </section>`;
+  }
+
+  /* ========================================================================
+     音效
+     ========================================================================
+     音效是"后处理"（均衡器 + 空间处理 + 混响，见 Go 侧
+     internal/audioplay/effects.go），与「响度均衡」的区别：
+
+       · 响度均衡是**校正**（让不同来源的歌一样响），目标是"听不出被处理过"；
+       · 音效是**修饰**（改变音色与声场），目标就是"听得出变化"。
+
+     两者都在后端原生播放链路上生效，所以后端不可用时都无法工作 ——
+     卡片里显式提示这一点，而不是让用户点了按钮却听不出区别。
+     ======================================================================== */
+  effectCard() {
+    const cfg = state.config;
+    const es = effectState();
+    const preset = cfg.effectPreset || "off";
+    const desc = EFFECT_DESCRIPTIONS[preset] || "";
+
+    return html` <section class="card" id="sec-effect" data-section="player">
+      <div class="card__head">
+        <h2 class="card__title">${icon("headphones")}<span>音效</span></h2>
+        <p class="card__desc">
+          给播放加上音色与声场上的修饰。关掉即回到完全原始的音频（不做任何处理）。
+        </p>
+      </div>
+
+      <div class="setting setting--stack">
+        <div class="setting__label">
+          <span>音效档位</span>
+          <small class="u-fs-xs u-dim">选中即生效，切换时会在约 30ms 内平滑过渡，不会有"啪"的一声</small>
+        </div>
+        <div class="setting__control">
+          <div class="segmented segmented--wrap" data-segment="effectPreset">
+            ${EFFECT_PRESETS.map(
+              (p) =>
+                html`<button
+                  class="segmented__btn"
+                  type="button"
+                  data-value=${p.value}
+                  aria-pressed=${String(p.value === preset)}
+                >
+                  ${p.label}
+                </button>`
+            )}
+          </div>
+        </div>
+      </div>
+
+      ${desc
+        ? html`<div class="setting setting--stack">
+            <div class="setting__hint"><b>${desc.label}</b>：${desc.text}</div>
+          </div>`
+        : nothing}
+      ${es.backend
+        ? nothing
+        : html`<div class="setting setting--stack">
+            <div class="setting__hint u-warning">
+              后端原生音频不可用，音效当前不会生效（声音由浏览器内核直接输出）。
+            </div>
+          </div>`}
     </section>`;
   }
 
@@ -2226,4 +2339,14 @@ class MpSettingsLayer extends MpElement {
 
 define("mp-settings-layer", MpSettingsLayer);
 
-export const _internals = { settingRow, switchControl, segmented, rangeSlider };
+export const _internals = {
+  settingRow,
+  switchControl,
+  segmented,
+  rangeSlider,
+  // 音效档位表导出给测试用：它必须与 Go 侧 audioplay.EffectPresets
+  // 逐项一致（值 + 顺序），而那种漂移在界面上表现为"某个按钮点了没反应"，
+  // 很难靠肉眼发现。见 frontend/tests/settings-effect.test.js。
+  EFFECT_PRESETS,
+  EFFECT_DESCRIPTIONS,
+};
