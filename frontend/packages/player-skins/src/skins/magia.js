@@ -1155,19 +1155,24 @@ let inst = null;
 let uidSeq = 0;
 
 /* --------------------------------------------------------------------------
-   帧循环预算与空闲停止
+   帧率预算与空闲停止
    --------------------------------------------------------------------------
-   与 arcanum 同一套做法（见 arcanum.js 的 FPS_PLAYING / FPS_IDLE / IDLE_STOP_MS）。
+   ★ 帧率由用户在设置里选的档位决定（ctx.options().performanceMode）：
 
-   为什么必须加：这个循环原来是**无条件续帧**的 —— 暂停、窗口被切到后台、
-   详情页收起来之前，它都会以屏幕刷新率一直跑下去（120Hz 屏就是 120fps），
-   而暂停时画面上唯一还在动的只有粒子与相机微漂移。
-   在这类皮肤上这不只是「白烧 CPU」：magia 每次换行都要重建字素、每帧写十来个
-   CSS 变量，持续满帧会直接推高笔记本的功耗与风扇转速。
+     smooth（默认，流畅优先）
+       不限帧 —— 交给 rAF，120Hz 屏就跑 120fps。这个背景动画的每帧工作量
+       已经做过优化（CSS 变量脏检查、sprite 粒子、单次 clearRect），
+       现代核显跑满高刷通常仍有余量。
 
-   为什么是 6 秒：与 arcanum 对齐。暂停后用户可能马上又按播放（切歌、接电话），
-   立刻停会让「再按一次播放」多等一帧重新起势；6 秒足以滤掉这种抖动，
-   又能在真正离开时把占用降到 0。
+     performance（性能优先，省电档）
+       播放中 45fps、空闲 22fps（与 arcanum 对齐）。
+
+   两个档位**都**保留「暂停 6 秒后停帧」：它省的是「静止画面持续重绘」，
+   与流畅度不冲突。
+
+   为什么必须有这个开关：原来是无条件 45/22 档，在 120Hz 屏上比屏幕慢 2.7 倍，
+   用户能明确感知到不流畅（而这条限制原本是为省电写的，注释里也承认
+   「45 与 60 肉眼无差别」—— 那个前提只在 60Hz 屏上成立）。
    -------------------------------------------------------------------------- */
 const FPS_PLAYING = 45;
 const FPS_IDLE = 22;
@@ -1207,11 +1212,15 @@ function step(now) {
   /* 帧预算：播放中 45fps、空闲 22fps。
      省下来的帧不是「少画一点」而是「完全不做」—— 下面的运镜/粒子/歌词
      全部在这之后，所以提前 return 就是实打实的节省。 */
+  /* 帧预算：smooth 档是 0（不限帧，交给 rAF，高刷屏就跑满）；
+     performance 档才按 fps 分档。见文件上方 FPS_* 常量的说明。
+     省下来的帧不是「少画一点」而是「完全不做」—— 下面的运镜/粒子/歌词
+     全部在这之后，所以提前 return 就是实打实的节省。 */
   const playing = inst.playing && inst.anim;
-  const minFrame = 1000 / (playing ? FPS_PLAYING : FPS_IDLE);
+  const minFrame = inst.perfMode === "performance" ? 1000 / (playing ? FPS_PLAYING : FPS_IDLE) : 0;
   if (!inst.last) inst.last = now - 1000 / 30;
   const since = now - inst.last;
-  if (since < minFrame - 1) {
+  if (minFrame > 0 && since < minFrame - 1) {
     inst.raf = requestAnimationFrame(step);
     return;
   }
@@ -1356,6 +1365,11 @@ function applyOptions(ctx) {
   const o = ctx.options() || {};
   const wasAnim = inst.anim;
   inst.anim = o.animations !== false;
+  // 背景动效档位：只有明确是 performance 才降档，其余（含 undefined）都按流畅档。
+  // 兜底成 smooth 的理由与 Go 侧一致：静默降级成省电档会被误读成「还是卡」。
+  const mode = o.performanceMode === "performance" ? "performance" : "smooth";
+  const modeChanged = inst.perfMode !== mode;
+  inst.perfMode = mode;
   const size = clamp(Number(o.lyricsFontSize) || 16, 12, 40);
   const value = inst.anim ? "1" : "0";
   inst.refs.shell.style.setProperty("--mg-lyric-size", `${size}px`);
@@ -1369,6 +1383,10 @@ function applyOptions(ctx) {
     // 同 refreshPalette：底色固定为夜色，screen 始终成立
     inst.refs.artLayer.dataset.blend = "screen";
   }
+
+  // 档位切换时清掉「上一帧时刻」，否则新预算会拿旧的时间差去比，
+  // 让切换后的第一帧被误判成「还没到下一帧」而多等一帧。
+  if (modeChanged) inst.last = 0;
 
   // 「动效开关」也决定循环要不要跑（与 arcanum 的 setEnabled 同一语义）：
   // 关掉动效时不该留着循环空转，重新打开时要把停掉的循环起回来。
@@ -1454,6 +1472,9 @@ export default defineSkin({
       lyricIndex: -2,
       playing: false,
       anim: true,
+      // 背景动效档位（见 applyOptions 与上方「帧率预算与空闲停止」）。
+      // 初值 smooth：mount 后紧接着就会用真实设置覆盖它。
+      perfMode: "smooth",
       closed: false,
       pulse: 0,
       cut: 0,

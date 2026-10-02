@@ -730,6 +730,23 @@ function mediaSnapshot() {
   };
 }
 
+/**
+ * 皮肤能看到的「显示相关设置」快照。
+ *
+ * 显式标注 `performanceMode` 为字面量联合类型：三元表达式的推断结果是宽化的
+ * `string`，而皮肤契约里它是 `"smooth" | "performance"` —— 不标注就会让
+ * 这个快照与 SkinContext 不兼容（tsc 报 TS2345）。
+ *
+ * @returns {{
+ *   showLyrics: boolean,
+ *   lyricsFontSize: number,
+ *   animations: boolean,
+ *   coverCarousel: boolean,
+ *   coverCarouselInterval: number,
+ *   interactive: boolean,
+ *   performanceMode: "smooth" | "performance",
+ * }}
+ */
 function optionsSnapshot() {
   return {
     showLyrics: state.config.showLyrics !== false,
@@ -740,6 +757,12 @@ function optionsSnapshot() {
     // 主窗口永远是可交互的。桌面背景歌词窗口用同一个快照并把这一项改成 false
     // （见 desktop-wallpaper.js），皮肤据此把可点/可聚焦的东西去掉。
     interactive: true,
+    // 背景动效档位：smooth（跟随刷新率，默认）| performance（省电档）。
+    // 见 contract.js 的 SkinOptions.performanceMode —— 皮肤收到 smooth 应当
+    // 「不限帧」，收到 performance 才套自己的省电预算。
+    // 兜底 smooth 与 Go 侧 NormalizeSkinPerformanceMode 一致：静默降级成
+    // 省电档会被用户误读成「还是卡 / 程序坏了」。
+    performanceMode: state.config.skinPerformanceMode === "performance" ? "performance" : "smooth",
   };
 }
 
@@ -1055,7 +1078,8 @@ function pushOptions() {
     lastPushed.options.animations === options.animations &&
     lastPushed.options.coverCarousel === options.coverCarousel &&
     lastPushed.options.coverCarouselInterval === options.coverCarouselInterval &&
-    lastPushed.options.interactive === options.interactive
+    lastPushed.options.interactive === options.interactive &&
+    lastPushed.options.performanceMode === options.performanceMode
   ) {
     return;
   }

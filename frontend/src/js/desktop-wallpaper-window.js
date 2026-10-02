@@ -71,6 +71,9 @@ const state = {
     // 与详情页的唯一区别：这个窗口收不到输入事件（它垫在桌面图标之下），
     // 皮肤据此把可点 / 可聚焦 / 悬停反馈一起去掉。
     interactive: false,
+    // 背景动效档位：真实值由主窗口经 options 补丁推来（见 applyPatch），
+    // 这里只是「还没收到推送时」的初值，与 Go 侧默认值保持一致。
+    performanceMode: "smooth",
   },
 };
 
@@ -415,6 +418,8 @@ function applyPatch(payload) {
     Object.assign(state.options, payload.options);
     // interactive 由这个窗口说了算：主窗口推来的是 true（详情页用），
     // 直接照抄会让歌词行在这里也变回可点的按钮。
+    // （performanceMode **不要**在这里覆盖：桌面背景同样是「皮肤在画背景」，
+    //   它应当跟随用户在设置里选的档位，否则桌面上会与详情页表现不一致。）
     state.options.interactive = false;
     syncLyricsVisibility();
   }

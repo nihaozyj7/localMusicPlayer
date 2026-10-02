@@ -96,6 +96,7 @@ export function createCamera(target, opts = {}) {
     addLayer: () => () => {},
     pulse() {},
     setEnabled() {},
+    setMaxFps() {},
     destroy() {},
     sample: () => null,
     get enabled() {
@@ -108,7 +109,8 @@ export function createCamera(target, opts = {}) {
   const p1 = o.seed * 1.37 + 0.7;
   const p2 = o.seed * 2.11 + 2.3;
   const p3 = o.seed * 0.73 + 4.1;
-  const minFrame = o.maxFps > 0 ? 1000 / o.maxFps - 1 : 0;
+  // 帧预算：可运行期修改（见 setMaxFps）。0 = 不限帧。
+  let minFrame = o.maxFps > 0 ? 1000 / o.maxFps - 1 : 0;
 
   /**
    * 参与视差的层。depth 是「离相机多近」：
@@ -290,6 +292,21 @@ export function createCamera(target, opts = {}) {
       } else {
         start();
       }
+    },
+    /**
+     * 改运行期的帧率上限。`fps <= 0` 表示不限帧（交给 rAF）。
+     *
+     * 为什么需要它：这个上限原来只有构造时的 `maxFps`（默认 60），而皮肤
+     * 要在「流畅优先 / 性能优先」之间切换（见 contract.js 的 performanceMode）。
+     * 只改常量做不到运行期切换，所以把 minFrame 变成可写状态。
+     *
+     * 注意：改完要把 last 清 0，否则新预算会拿上一次的帧间隔去比，
+     * 让切换后的第一帧被误判成「还没到下一帧」而多等一帧。
+     */
+    setMaxFps(fps) {
+      const n = Number(fps);
+      minFrame = Number.isFinite(n) && n > 0 ? 1000 / n - 1 : 0;
+      last = 0;
     },
     destroy() {
       destroyed = true;

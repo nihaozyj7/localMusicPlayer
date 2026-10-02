@@ -49,6 +49,7 @@ import {
   ANIMATION_SPEEDS,
   LIST_DENSITIES,
   ROW_CLICK_ACTIONS,
+  SKIN_PERFORMANCE_MODES,
   WINDOW_CORNERS,
   cacheSummary,
   embedHintText,
@@ -809,6 +810,19 @@ class MpSettingsLayer extends MpElement {
           label: "过渡速度",
           hint: "弹出层、菜单、面板的进出动画时长；默认快速 0.25 秒",
           control: segmented("animationsSpeed", ANIMATION_SPEEDS, state.config.animationsSpeed || "fast"),
+        })}
+        ${settingRow({
+          label: "背景动效（播放界面）",
+          hint:
+            "只影响播放详情页里样式绘制的背景动画。" +
+            "「流畅优先」跟随屏幕刷新率（高刷屏更顺滑）；" +
+            "「性能优先」限制帧率并让暂停后的画面停住，更省电。" +
+            "其他界面（设置、曲库列表）始终满帧，不受此项影响。",
+          control: segmented(
+            "skinPerformanceMode",
+            SKIN_PERFORMANCE_MODES,
+            state.config.skinPerformanceMode || "smooth"
+          ),
         })}
         ${settingRow({
           label: "主题色跟随封面",

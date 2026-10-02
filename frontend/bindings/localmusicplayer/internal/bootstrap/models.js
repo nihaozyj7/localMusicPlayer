@@ -13,6 +13,7 @@
  * @property {string} windowCorners - WindowCorners 主窗口圆角：system | round | small | square（见 NormalizeWindowCorners）。 同样是 Windows 11 的能力，但它改的是运行期可写的 DWM 属性，改完立刻生效、不用重启。
  * @property {boolean} animations
  * @property {string} animationsSpeed - AnimationsSpeed 界面过渡速度：fast（0.25s）| medium（0.5s）| slow（0.75s）。 前端把它换算成 --dur 令牌，全站动效（含各种弹出层）都从这一个令牌取值。
+ * @property {string} skinPerformanceMode - SkinPerformanceMode 播放界面**背景动效**的帧率档位：smooth | performance。 只作用于「播放详情页里皮肤自己画的背景动画」（canvas / rAF 循环）： smooth（默认）—— 跟随显示刷新率（120Hz 屏就跑到 120fps），最流畅； performance  —— 播放中 45fps / 空闲 22fps / 暂停 6 秒后完全停帧，省电。 为什么默认 smooth：这两个档位的差别只有「要更流畅」还是「要更省电」， 而用户在高刷屏上最容易感知到的就是不够流畅。省电档保留给笔记本用户。 为什么**只管背景**：设置界面、曲库列表等非播放器界面本来就没有 canvas 与 rAF 循环（它们不挂皮肤），天然就是满帧的，不需要也不应该受这个开关影响。
  * @property {boolean} accentFromCover
  * @property {boolean} showAlbumColumn
  * @property {boolean} showLyrics

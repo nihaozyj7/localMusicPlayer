@@ -81,6 +81,18 @@ export const ANIMATION_SPEEDS = [
   { value: "slow", label: "缓慢 0.75s" },
 ];
 
+/**
+ * 播放界面背景动效的帧率档位（与 Go 侧 bootstrap.SkinPerformanceModes 一致）。
+ *
+ * ★ 只管「播放详情页里皮肤自己画的背景动画」（canvas / rAF 循环）。
+ *   设置界面、曲库列表等不挂皮肤的界面天然满帧，与此项无关 —— 文案里必须写清楚，
+ *   否则用户会以为「选了性能优先，整个软件都变省电模式了」。
+ */
+export const SKIN_PERFORMANCE_MODES = [
+  { value: "smooth", label: "流畅优先" },
+  { value: "performance", label: "性能优先" },
+];
+
 /** 歌词来源的中文名（与 Go 侧 internal/lyrics 的来源常量一一对应） */
 export const LYRICS_SOURCE_LABELS = {
   embedded: "内嵌歌词",

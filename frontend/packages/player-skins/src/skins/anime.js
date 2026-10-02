@@ -34,11 +34,20 @@ let inst = null;
 
    注意：fx-camera 内部已经处理了 document.hidden（见它的 onVisibility），
    这里只管「播放/暂停」这一维，两者互不冲突。
+
+   ★ 帧率档位（见 contract.js 的 performanceMode）：
+     smooth（默认）→ 不限帧，让运镜跟满显示刷新率；
+     performance   → 60fps（fx-camera 的历史默认，省电用）。
+   原来无条件 60fps，在 120Hz 屏上运镜只有屏幕的一半帧率。
    -------------------------------------------------------------------------- */
 function syncCamera() {
   if (!inst) return;
+  inst.camera.setMaxFps(inst.perfMode === "performance" ? CAMERA_FPS_PERFORMANCE : 0);
   inst.camera.setEnabled(inst.animOn === true && inst.playing === true);
 }
+
+/** performance 档下相机的帧率上限（smooth 档传 0 = 不限帧） */
+const CAMERA_FPS_PERFORMANCE = 60;
 
 /** 飘落花瓣：纯 CSS 元素动画，确定性随机（固定种子，挂载多次构图一致） */
 function buildPetals(count) {
@@ -299,6 +308,8 @@ const skin = defineSkin({
       /* 动效开关（来自 options.animations）。相机是否运行 = animOn && playing —— 
          见 syncCamera 的说明。 */
       animOn: true,
+      /* 背景动效档位（来自 options.performanceMode）：决定相机帧率上限。 */
+      perfMode: "smooth",
 
       /* 当前显示的是哪首歌。宿主在挂载后会补推一次 song（内容就是当前这首歌），
          靠它区分「真的换歌了」和「只是补推」，避免一打开详情页就播推进动画。 */
@@ -330,6 +341,8 @@ const skin = defineSkin({
           el.style.setProperty("--an-lsize", size + "px");
         }
         inst.animOn = on;
+        // 档位：只有明确 performance 才限帧，其余（含 undefined）都不限帧
+        inst.perfMode = o.performanceMode === "performance" ? "performance" : "smooth";
         syncCamera();
       },
 

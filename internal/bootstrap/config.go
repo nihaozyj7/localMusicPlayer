@@ -111,9 +111,21 @@ type Config struct {
 	// AnimationsSpeed 界面过渡速度：fast（0.25s）| medium（0.5s）| slow（0.75s）。
 	// 前端把它换算成 --dur 令牌，全站动效（含各种弹出层）都从这一个令牌取值。
 	AnimationsSpeed string `json:"animationsSpeed"`
-	AccentFromCover bool   `json:"accentFromCover"`
-	ShowAlbumColumn bool   `json:"showAlbumColumn"`
-	ShowLyrics      bool   `json:"showLyrics"`
+	// SkinPerformanceMode 播放界面**背景动效**的帧率档位：smooth | performance。
+	//
+	// 只作用于「播放详情页里皮肤自己画的背景动画」（canvas / rAF 循环）：
+	//   smooth（默认）—— 跟随显示刷新率（120Hz 屏就跑到 120fps），最流畅；
+	//   performance  —— 播放中 45fps / 空闲 22fps / 暂停 6 秒后完全停帧，省电。
+	//
+	// 为什么默认 smooth：这两个档位的差别只有「要更流畅」还是「要更省电」，
+	// 而用户在高刷屏上最容易感知到的就是不够流畅。省电档保留给笔记本用户。
+	//
+	// 为什么**只管背景**：设置界面、曲库列表等非播放器界面本来就没有 canvas
+	// 与 rAF 循环（它们不挂皮肤），天然就是满帧的，不需要也不应该受这个开关影响。
+	SkinPerformanceMode string `json:"skinPerformanceMode"`
+	AccentFromCover     bool   `json:"accentFromCover"`
+	ShowAlbumColumn     bool   `json:"showAlbumColumn"`
+	ShowLyrics          bool   `json:"showLyrics"`
 
 	PlayMode       string  `json:"playMode"` // sequence | loop-all | loop-one | shuffle
 	Volume         float64 `json:"volume"`
@@ -386,16 +398,19 @@ func DefaultConfig() *Config {
 		WindowCorners:   "system",
 		Animations:      true,
 		AnimationsSpeed: "fast",
-		ShowAlbumColumn: true,
-		ShowLyrics:      true,
-		PlayMode:        "sequence",
-		Volume:          0.8,
-		PlayerViewMode:  "classic",
-		AutoScanOnStart: true,
-		WatchFolders:    true,
-		ScanConcurrency: 4,
-		LyricsFontSize:  16,
-		LyricsLines:     7,
+		// 播放界面背景动效默认「流畅优先」：跟随显示刷新率。
+		// 高刷屏用户最容易感知到的就是不够流畅，而省电档随时可以自己切。
+		SkinPerformanceMode: "smooth",
+		ShowAlbumColumn:     true,
+		ShowLyrics:          true,
+		PlayMode:            "sequence",
+		Volume:              0.8,
+		PlayerViewMode:      "classic",
+		AutoScanOnStart:     true,
+		WatchFolders:        true,
+		ScanConcurrency:     4,
+		LyricsFontSize:      16,
+		LyricsLines:         7,
 		// 歌词来源优先级：内嵌 → 同目录 .lrc → 本程序缓存 → 在线自动匹配。
 		// 与 internal/lyrics.DefaultSources 保持一致；normalize() 会补齐缺项，
 		// 因此从旧版本升级上来的配置也能拿到 cache 这一层。
@@ -509,6 +524,29 @@ func NormalizeAnimationsSpeed(v string) string {
 		}
 	}
 	return "fast"
+}
+
+// SkinPerformanceModes 播放界面背景动效的帧率档位可选值。
+//   - smooth      流畅优先：背景动画跟随显示刷新率（120Hz 屏跑满 120fps）
+//   - performance 性能优先：播放 45fps / 空闲 22fps / 暂停 6 秒后完全停帧
+//
+// 注意作用域：**只影响播放详情页里由皮肤绘制的背景动画（canvas / rAF）**。
+// 设置界面、曲库列表等界面不挂皮肤、没有 rAF 循环，天然满帧，与此开关无关。
+var SkinPerformanceModes = []string{"smooth", "performance"}
+
+// NormalizeSkinPerformanceMode 规范化背景动效档位，非法值落回 smooth。
+//
+// 为什么兜底是 smooth 而不是 performance：这是「流畅度」开关，一个拼错的
+// 值如果落回省电档，用户看到的就是「我明明没开省电，怎么还是卡」——
+// 这类静默降级最难排查。落回流畅档至少不会让人误以为程序坏了。
+func NormalizeSkinPerformanceMode(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	for _, ok := range SkinPerformanceModes {
+		if ok == v {
+			return v
+		}
+	}
+	return "smooth"
 }
 
 // normalizeLyricsSources 规范化歌词来源优先级。
@@ -939,6 +977,7 @@ func normalize(cfg *Config) {
 	cfg.RowClickAction = NormalizeRowClickAction(cfg.RowClickAction)
 	cfg.ListDensity = NormalizeListDensity(cfg.ListDensity)
 	cfg.AnimationsSpeed = NormalizeAnimationsSpeed(cfg.AnimationsSpeed)
+	cfg.SkinPerformanceMode = NormalizeSkinPerformanceMode(cfg.SkinPerformanceMode)
 	// 更新下载通道：手改成别的值（或者旧版本里存着一个已经下架的代理 id）
 	// 一律落回 auto —— 否则下载会拿着一个非法通道名去查表，
 	// 表现为「点下载没有任何反应」。

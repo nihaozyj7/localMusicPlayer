@@ -35,6 +35,13 @@ const DEFAULT_CONFIG = {
   // 过渡速度：fast（0.25s，默认）| medium（0.5s）| slow（0.75s）。
   // 与 Go 侧 bootstrap.Config.AnimationsSpeed 保持一致。
   animationsSpeed: "fast",
+  // 播放界面**背景动效**的帧率档位：smooth（流畅优先，跟随刷新率，默认）
+  // | performance（性能优先，省电档）。
+  //
+  // ★ 作用域只限「播放详情页/桌面背景里皮肤绘制的动画（canvas / rAF）」。
+  //   设置界面、曲库列表不挂皮肤、没有 rAF 循环，天然满帧，不受它影响。
+  // 与 Go 侧 bootstrap.Config.SkinPerformanceMode 保持一致。
+  skinPerformanceMode: "smooth",
   sidebarWidth: 232,
   accentFromCover: false,
   // 封面取色的结果（#rrggbb）。由前端解码封面得到，然后随配置写回后端 ——
@@ -2163,6 +2170,7 @@ const SYNCED_KEYS = [
   "minimizeToTray",
   "animations",
   "animationsSpeed",
+  "skinPerformanceMode",
   "accentFromCover",
   "coverSeed",
   "coverSeed2",

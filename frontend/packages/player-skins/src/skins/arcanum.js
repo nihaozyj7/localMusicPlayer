@@ -62,11 +62,22 @@ const ID = "arcanum";
 /* --------------------------------------------------------------------------
    帧率与生命周期预算
    --------------------------------------------------------------------------
-   画布在「整窗背景」（桌面 2560×1440）上也要跑，所以帧率分三档：
-     播放中 45fps（法阵转得很慢，45 与 60 肉眼无差别，但省掉四分之一的合成）
-     暂停中 22fps（只有粒子在飘、法阵在慢慢变暗）
-     暂停超过 6 秒 → 画完最后一帧彻底停下（用户的电脑不该为一张静止画面转风扇）
-   歌词的入场动画是 CSS 动画，走合成器，不受这个帧率影响。
+   ★ 帧率由用户在设置里选的档位决定（ctx.options().performanceMode）：
+
+     smooth（默认，流畅优先）
+       不限帧 —— 交给 rAF，屏幕上 120Hz 就跑 120fps，144Hz 就跑 144fps。
+       高刷屏上「不够流畅」是最容易被感知到的问题，而现代核显跑这个
+       背景动画（一次全屏合成 + 少量粒子）通常仍有充足余量。
+
+     performance（性能优先，省电档）
+       播放中 45fps（法阵转得很慢，45 与 60 肉眼难辨，省掉约四分之一的合成）
+       暂停中 22fps（只有粒子在飘、法阵在慢慢变暗）
+       暂停超过 6 秒 → 画完最后一帧彻底停下（静止画面不该让风扇转起来）
+
+   注意「不限帧」不等于「烧满 CPU」：暂停 6 秒后停帧这条在**两个档位下都生效**
+   （它省的是「静止画面持续重绘」，与流畅度无关）。
+
+   歌词的入场动画是 CSS 动画，走合成器，本来就跟满刷新率，不受这个开关影响。
    -------------------------------------------------------------------------- */
 const FPS_PLAYING = 45;
 const FPS_IDLE = 22;
@@ -878,8 +889,14 @@ function applyOptions() {
   const size = clamp(Number(o.lyricsFontSize) || 16, 12, 40);
   const interactive = o.interactive !== false;
   const showLyrics = o.showLyrics !== false;
+  // 背景动效档位：只有明确是 performance 才降档，其余（含 undefined）都按流畅档。
+  // 兜底成 smooth 的理由与 Go 侧 NormalizeSkinPerformanceMode 一致：
+  // 静默降级成省电档会被误读成「程序坏了/还是卡」。
+  const mode = o.performanceMode === "performance" ? "performance" : "smooth";
+  const modeChanged = inst.perfMode !== mode;
 
   inst.anim = anim;
+  inst.perfMode = mode;
   inst.interactive = interactive;
   inst.showLyrics = showLyrics;
   inst.shell.dataset.anim = anim ? "on" : "off";
@@ -904,6 +921,11 @@ function applyOptions() {
     inst.settled = false;
     inst.idleSince = nowMs();
     schedule();
+  } else if (modeChanged) {
+    // 档位切换时把「上一帧时刻」清掉，否则刚切到 performance 的那一帧会
+    // 用旧的时间差去比预算（可能立刻被判定为「还没到下一帧」而多等一帧）。
+    // 另外从 performance 切到 smooth 时如果循环正停着，上面的分支已经把它起回来了。
+    inst.last = 0;
   }
 }
 
@@ -1075,11 +1097,13 @@ function step(now) {
   inst.raf = 0;
   if (inst.closed) return;
 
+  // 帧预算：smooth 档是 0（不限帧，交给 rAF）；performance 档才按 fps 分档。
+  // 见文件上方「帧率与生命周期预算」的说明。
   const playing = inst.playing && inst.anim;
-  const minFrame = 1000 / (playing ? FPS_PLAYING : FPS_IDLE);
+  const minFrame = inst.perfMode === "performance" ? 1000 / (playing ? FPS_PLAYING : FPS_IDLE) : 0;
   if (!inst.last) inst.last = now - 1000 / 30;
   const since = now - inst.last;
-  if (since < minFrame - 1) {
+  if (minFrame > 0 && since < minFrame - 1) {
     schedule();
     return;
   }
@@ -1087,7 +1111,9 @@ function step(now) {
   inst.last = now;
   paint(now, dt);
 
-  // 暂停久了就停下来：画完最后一帧，不再占用 rAF
+  // 暂停久了就停下来：画完最后一帧，不再占用 rAF。
+  // ★ 这条**两个档位都生效** —— 它省的是「静止画面持续重绘」，
+  //   与「流畅优先」不冲突（暂停时本来就该静止）。
   if (!inst.playing && now - inst.idleSince > IDLE_STOP_MS) {
     inst.settled = true;
     stopLoop();
@@ -1197,6 +1223,9 @@ export default defineSkin({
       position: 0,
       playing: false,
       anim: true,
+      // 背景动效档位（见 applyOptions 与文件上方「帧率与生命周期预算」）。
+      // 初值 smooth：mount 后紧接着就会调 applyOptions() 用真实设置覆盖它。
+      perfMode: "smooth",
       interactive,
       showLyrics: true,
       closed: false,
