@@ -34,6 +34,20 @@ const (
 	// 正常情况下文件里不会有超过「正面 + 背面 + 盘面」这么多张，
 	// 真有异常文件也不至于把内存和界面拖垮。
 	maxPictures = 12
+
+	// maxCoverScanBytes 读取内嵌封面前允许的最大文件尺寸。
+	//
+	// 为什么需要：ReadPictures 是**整文件**读进内存再解析的（各容器的封面块
+	// 位置没有统一的可预读长度头）。曲库扫描并发 4（默认 scanConcurrency），
+	// 若遇到几个上百 MB 的文件，峰值内存就是「并发数 × 文件大小」——
+	// 实测过的场景是 4 × 100MB = 400MB 瞬时占用。
+	//
+	// 64MB 的依据：常见无损单曲（FLAC/ALAC，10 分钟）通常在 30~60MB，
+	// 内嵌封面本身几乎不会超过几 MB；超过这个尺寸的通常是「整轨专辑文件」
+	// 或异常文件，此时跳过封面解析（返回空切片）比把内存顶上去更划算。
+	// 注意：跳过只影响「封面列表」这一条旁路功能，不影响曲库扫描与播放
+	// （时长/标签走的是 meta.Read，不是这里）。
+	maxCoverScanBytes = 64 << 20
 )
 
 // ReadPictures 读取音频文件里所有的内嵌封面。
@@ -42,6 +56,10 @@ const (
 // 调用方（封面列表）只关心「有几张」，没有就是没有。
 func ReadPictures(path string) []Picture {
 	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	// 先看大小再读：见 maxCoverScanBytes 的说明（防「并发数 × 文件大小」的峰值内存）
+	if st, err := os.Stat(path); err != nil || st.Size() > maxCoverScanBytes {
 		return nil
 	}
 	raw, err := os.ReadFile(path)

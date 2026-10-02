@@ -14,7 +14,6 @@
 package ffmpeg
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -288,6 +287,16 @@ func newBoundedBuffer(max int) *boundedBuffer {
 	return &boundedBuffer{max: max}
 }
 
+// NewBoundedBuffer 导出版本：供同样要收集 ffmpeg stderr 的兄弟包使用
+// （internal/loudness 的 analyse 就是一处，它不能直接 new 包内类型）。
+//
+// 为什么值得导出而不是各自再写一个：上限逻辑有个容易写错的细节 ——
+// Write 必须返回 len(p) 而不是实际写入字节数（见下面 Write 的注释），
+// 两个实现各写一遍就等于给这个坑留了第二次踩的机会。
+func NewBoundedBuffer(max int) *boundedBuffer {
+	return newBoundedBuffer(max)
+}
+
 func (b *boundedBuffer) Write(p []byte) (int, error) {
 	if len(b.buf) < b.max {
 		room := b.max - len(b.buf)
@@ -520,8 +529,11 @@ func TranscodeToWAV(ctx context.Context, ffmpegPath, src, out string) error {
 		"-f", "s16le",
 		tmpPCM,
 	)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	// 用带上限的 buffer 而不是裸 bytes.Buffer：转码是整首歌的过程，ffmpeg
+	// 出错时可能刷出大量 stderr（进度、逐帧告警），裸 buffer 会跟着音轨长度长。
+	// 与 Probe / SoundDurationMS 保持一致（8KB 足够装下真正的错误行）。
+	stderr := NewBoundedBuffer(maxStderrBytes)
+	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		_ = os.Remove(tmpPCM)
 		msg := strings.TrimSpace(stderr.String())

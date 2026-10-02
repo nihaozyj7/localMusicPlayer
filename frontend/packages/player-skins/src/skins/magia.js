@@ -1154,6 +1154,25 @@ function emptyTextFor(lyrics) {
 let inst = null;
 let uidSeq = 0;
 
+/* --------------------------------------------------------------------------
+   帧循环预算与空闲停止
+   --------------------------------------------------------------------------
+   与 arcanum 同一套做法（见 arcanum.js 的 FPS_PLAYING / FPS_IDLE / IDLE_STOP_MS）。
+
+   为什么必须加：这个循环原来是**无条件续帧**的 —— 暂停、窗口被切到后台、
+   详情页收起来之前，它都会以屏幕刷新率一直跑下去（120Hz 屏就是 120fps），
+   而暂停时画面上唯一还在动的只有粒子与相机微漂移。
+   在这类皮肤上这不只是「白烧 CPU」：magia 每次换行都要重建字素、每帧写十来个
+   CSS 变量，持续满帧会直接推高笔记本的功耗与风扇转速。
+
+   为什么是 6 秒：与 arcanum 对齐。暂停后用户可能马上又按播放（切歌、接电话），
+   立刻停会让「再按一次播放」多等一帧重新起势；6 秒足以滤掉这种抖动，
+   又能在真正离开时把占用降到 0。
+   -------------------------------------------------------------------------- */
+const FPS_PLAYING = 45;
+const FPS_IDLE = 22;
+const IDLE_STOP_MS = 6000;
+
 /** 只在值真的变了才写 CSS 变量：每帧无脑写十几个变量会白白触发样式失效 */
 function putVars(el, prev, vars) {
   for (const key in vars) {
@@ -1175,13 +1194,29 @@ function startLoop() {
   if (!inst || inst.raf) return;
   if (typeof requestAnimationFrame !== "function") return;
   inst.last = 0;
+  inst.settled = false;
+  inst.idleSince = nowMs();
   inst.raf = requestAnimationFrame(step);
 }
 
 function step(now) {
   if (!inst) return;
-  inst.raf = requestAnimationFrame(step);
-  const dt = inst.last ? Math.min(50, now - inst.last) : 16;
+  inst.raf = 0;
+  if (inst.closed) return;
+
+  /* 帧预算：播放中 45fps、空闲 22fps。
+     省下来的帧不是「少画一点」而是「完全不做」—— 下面的运镜/粒子/歌词
+     全部在这之后，所以提前 return 就是实打实的节省。 */
+  const playing = inst.playing && inst.anim;
+  const minFrame = 1000 / (playing ? FPS_PLAYING : FPS_IDLE);
+  if (!inst.last) inst.last = now - 1000 / 30;
+  const since = now - inst.last;
+  if (since < minFrame - 1) {
+    inst.raf = requestAnimationFrame(step);
+    return;
+  }
+
+  const dt = Math.min(50, since);
   inst.last = now;
   const s = dt / 1000;
   const t = now / 1000;
@@ -1227,6 +1262,52 @@ function step(now) {
     pulse: inst.pulse,
     live: inst.anim && !inst.closed,
   });
+
+  /* 暂停久了就停下来：画完最后一帧，不再占用 rAF。
+     与 arcanum 同款收尾 —— 重新播放时由 update("state") 里的 applyPlayback
+     把 settled 清掉并重新 startLoop（见下面的 resumeLoopIfSettled）。 */
+  if (!inst.playing && nowMs() - inst.idleSince > IDLE_STOP_MS) {
+    inst.settled = true;
+    stopLoop(inst);
+    return;
+  }
+  inst.raf = requestAnimationFrame(step);
+}
+
+/** 单调时钟（performance.now 不可用时退回 Date.now） */
+function nowMs() {
+  return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+}
+
+/* --------------------------------------------------------------------------
+   可见性：窗口被切到后台时立刻停帧
+   --------------------------------------------------------------------------
+   后台标签页本来会被浏览器降频到 ~1fps，但这个应用是 WebView2 里的**多窗口**
+   场景：详情页可能仍被判定为「可见」（只是被别的窗口挡住），于是循环继续
+   以满帧空转。显式停掉比依赖浏览器的降频更可靠。
+   -------------------------------------------------------------------------- */
+function onVisibility() {
+  if (!inst) return;
+  if (document.hidden) {
+    stopLoop(inst);
+  } else if (inst.anim && !inst.closed) {
+    startLoop();
+  }
+}
+
+/**
+ * 播放状态变化后，如果循环因为暂停空闲而停掉了，就重新起势。
+ * @param {boolean} wasPlaying 变化前的播放状态
+ */
+function resumeLoopIfSettled(wasPlaying) {
+  if (!inst) return;
+  if (!wasPlaying && inst.playing) {
+    inst.idleSince = nowMs();
+    if (inst.settled) startLoop();
+  } else if (wasPlaying && !inst.playing) {
+    // 刚刚暂停：从这一刻起算空闲
+    inst.idleSince = nowMs();
+  }
 }
 
 function setCover(ctx, src) {
@@ -1273,6 +1354,7 @@ function refreshPalette() {
 function applyOptions(ctx) {
   if (!inst) return;
   const o = ctx.options() || {};
+  const wasAnim = inst.anim;
   inst.anim = o.animations !== false;
   const size = clamp(Number(o.lyricsFontSize) || 16, 12, 40);
   const value = inst.anim ? "1" : "0";
@@ -1286,6 +1368,14 @@ function applyOptions(ctx) {
   if (inst.refs.artLayer) {
     // 同 refreshPalette：底色固定为夜色，screen 始终成立
     inst.refs.artLayer.dataset.blend = "screen";
+  }
+
+  // 「动效开关」也决定循环要不要跑（与 arcanum 的 setEnabled 同一语义）：
+  // 关掉动效时不该留着循环空转，重新打开时要把停掉的循环起回来。
+  if (!inst.anim) {
+    if (inst.raf) stopLoop(inst);
+  } else if (!inst.closed && !wasAnim) {
+    startLoop();
   }
 }
 
@@ -1370,6 +1460,9 @@ export default defineSkin({
       beat: beatState(),
       raf: 0,
       last: 0,
+      // 循环生命周期（见 FPS_PLAYING / IDLE_STOP_MS 的说明）
+      settled: false,
+      idleSince: nowMs(),
       observer: null,
       offFns: [],
       shellVars: {},
@@ -1401,6 +1494,12 @@ export default defineSkin({
       });
       ro.observe(bg);
       inst.observer = ro;
+    }
+
+    /* 可见性：切到后台就停帧（见 onVisibility 的说明） */
+    if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+      document.addEventListener("visibilitychange", onVisibility);
+      inst.offFns.push(() => document.removeEventListener("visibilitychange", onVisibility));
     }
 
     /* —— 首次铺数据：宿主随后还会推一次 mount 全量快照 —— */
@@ -1490,12 +1589,16 @@ export default defineSkin({
         }
         break;
       }
-      case "state":
+      case "state": {
         applyPlayback(patch);
+        const wasPlaying = inst.playing;
         inst.playing = Boolean(patch.playing);
         inst.refs.shell.dataset.playing = inst.playing ? "true" : "false";
         inst.pulse = Math.max(inst.pulse, 0.6);
+        // 暂停 → 起算空闲；恢复播放 → 若循环已停则重新起势（见 resumeLoopIfSettled）
+        resumeLoopIfSettled(wasPlaying);
         break;
+      }
       case "options":
         applyOptions(ctx);
         break;

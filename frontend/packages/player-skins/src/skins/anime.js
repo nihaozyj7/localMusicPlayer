@@ -24,6 +24,22 @@ import "./anime.css";
 
 let inst = null;
 
+/* --------------------------------------------------------------------------
+   相机的运行条件：动效开关 **且** 正在播放
+   --------------------------------------------------------------------------
+   为什么必须同时看 playing：fx-camera 自己的 stop() 只挂在 setEnabled(false)
+   与 destroy() 上，而原来 setEnabled 只由 options.animations 驱动 ——
+   于是「暂停播放」时相机层依旧每帧写 7 个视差层的 style.transform。
+   暂停时画面本来就该静止，继续跑只是白烧 CPU（与 magia 的循环是同一类问题）。
+
+   注意：fx-camera 内部已经处理了 document.hidden（见它的 onVisibility），
+   这里只管「播放/暂停」这一维，两者互不冲突。
+   -------------------------------------------------------------------------- */
+function syncCamera() {
+  if (!inst) return;
+  inst.camera.setEnabled(inst.animOn === true && inst.playing === true);
+}
+
 /** 飘落花瓣：纯 CSS 元素动画，确定性随机（固定种子，挂载多次构图一致） */
 function buildPetals(count) {
   let seed = 0x9e3779b9;
@@ -280,6 +296,9 @@ const skin = defineSkin({
       panel,
       playing: false,
       pop,
+      /* 动效开关（来自 options.animations）。相机是否运行 = animOn && playing —— 
+         见 syncCamera 的说明。 */
+      animOn: true,
 
       /* 当前显示的是哪首歌。宿主在挂载后会补推一次 song（内容就是当前这首歌），
          靠它区分「真的换歌了」和「只是补推」，避免一打开详情页就播推进动画。 */
@@ -310,7 +329,8 @@ const skin = defineSkin({
           el.style.setProperty("--an-anim", on ? "1" : "0");
           el.style.setProperty("--an-lsize", size + "px");
         }
-        camera.setEnabled(on);
+        inst.animOn = on;
+        syncCamera();
       },
 
       /* 窗口适配比例（见 fit.js）：写到舞台上，整棵子树继承；
@@ -335,8 +355,7 @@ const skin = defineSkin({
   update(ctx, patch) {
     if (!inst) return;
     switch (patch.type) {
-      case "mount":
-      case "song": {
+      case "mount":      case "song": {
         // 换歌判定要在 paintSong() **之前**取（它会更新 inst.songId）。
         // 打开详情页时宿主也会补推一次 song（内容就是当前这首歌），
         // 那种「没换歌」的补推不该播分镜推进动画。
@@ -349,6 +368,7 @@ const skin = defineSkin({
         if (songChanged) inst.pop();
         inst.playing = Boolean(ctx.playback().playing);
         inst.panel.dataset.playing = inst.playing ? "true" : "false";
+        syncCamera();
         break;
       }
       case "media":
@@ -366,6 +386,7 @@ const skin = defineSkin({
       case "state":
         inst.playing = Boolean(patch.playing);
         inst.panel.dataset.playing = inst.playing ? "true" : "false";
+        syncCamera();
         break;
       case "options":
         inst.paintOptions();

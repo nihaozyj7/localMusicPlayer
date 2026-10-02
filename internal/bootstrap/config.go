@@ -50,7 +50,7 @@ type Song struct {
 	Bitrate    int    `json:"bitrate"`
 	AddedAt    int64  `json:"addedAt"`
 	PlayCount  int    `json:"playCount"`
-	Cover      string `json:"cover"` // data URL；无封面时为空字符串
+	Cover      string `json:"cover,omitempty"` // data URL；无封面时为空字符串
 	// CoverURL 是同源封面地址（形如 /cover/<内容hash>.jpg?t=…），指向封面缓存
 	// 目录里的内容寻址文件。
 	//

@@ -13,7 +13,7 @@
 
 import { MpElement, define, html, nothing, repeat, requestAppUpdate, icon } from "./base.js";
 import { openModal, toast } from "./overlays.js";
-import { seek, songById, state, togglePlay } from "../store.js";
+import { seek, songById, state, subscribe, togglePlay } from "../store.js";
 import {
   applyOnlineLyrics,
   currentLyricsInfo,
@@ -62,10 +62,19 @@ const draft = {
   stale: false,
 };
 class MpLyricsPanel extends MpElement {
+  // ★ deps 里**刻意没有** s.position（与 ui/playerbar.js 同一个理由）。
+  //
+  // position 每 250ms 变一次，而它是 commit/notify 都会碰的字段。把它放进 deps
+  // 的代价是：**每 250ms 整个歌词面板模板重跑一遍** —— 包括三个面板的模板字面量、
+  // 头部、标签数组，以及「手动编辑」页对**全部草稿行**的 repeat()。
+  // 播放期间这是每秒 4 次的全量重绘，而实际变化的只有「当前唱到哪一行」。
+  //
+  // 位置相关的那点更新（微调预览跟随 / 编辑器当前行高亮）现在由下面的
+  // _onTick() 直接调增量绘制函数完成 —— 那两个函数本来就是为这件事写的
+  // （见 paintNudgeFollow / paintEditorFollow 的注释），放进 deps 等于让它们白写。
   static deps = (s) => [
     s.lyricsOpen,
     s.currentId,
-    s.position,
     s.playing,
     activeTab,
     lyricsPanelTick,
@@ -95,6 +104,18 @@ class MpLyricsPanel extends MpElement {
     // 必须抢在快捷键之前拦下来
     this._onKeyDownCapture = (e) => this.onPanelKeyDown(e);
     document.addEventListener("keydown", this._onKeyDownCapture, true);
+
+    // 位置相关的增量绘制（见 deps 上面的说明：position 不进 deps）。
+    // 直接订阅 store，而不是靠整组件重绘 —— 与 playerbar 同一套做法
+    // （base.js 的 _unsubscribers 会在 disconnectedCallback 里统一注销）。
+    // 两个 paint 函数各自都有节流/变化判定，所以按 250ms 调用是安全的。
+    this._unsubscribers.push(
+      subscribe(() => {
+        if (!this.open) return;
+        if (activeTab === "nudge") this.paintNudgeFollow();
+        else if (activeTab === "edit") this.paintEditorFollow();
+      }),
+    );
   }
 
   onDisconnected() {

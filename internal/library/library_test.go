@@ -385,3 +385,109 @@ func TestDropSongThenRescanFindsItAgain(t *testing.T) {
 		t.Errorf("重新扫描后文件应重新入库（磁盘文件没被删），实际 %d 首", len(m.Songs()))
 	}
 }
+
+/* --------------------------------------------------------------------------
+   Songs() 排序快照的失效
+   --------------------------------------------------------------------------
+   背景：Songs() 现在缓存「按 AddedAt 倒序」的快照（省掉每次调用的整库排序，
+   实测 10k 首 2.48ms → 0.50ms）。代价是**每一处改动 m.songs 的地方都必须
+   标记快照失效**，漏一处就会返回过期列表 —— 这类 bug 不会崩、只会「界面少一首
+   或者删了还在」，非常难查。这组测试就是为它钉的。
+   -------------------------------------------------------------------------- */
+
+// TestSongsSnapshotReflectsDrop 摘歌后快照必须立刻反映（本轮真实踩到过的漏标）
+func TestSongsSnapshotReflectsDrop(t *testing.T) {
+	m, store, _ := newTestManager(t)
+	music := t.TempDir()
+	writeWAV(t, filepath.Join(music, "a.wav"), 1)
+	writeWAV(t, filepath.Join(music, "b.wav"), 1)
+	if err := store.Update(func(c *bootstrap.Config) {
+		c.Folders = []bootstrap.Folder{{ID: "f1", Path: music}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m = NewManager(store)
+	if _, err := m.Scan(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	songs := m.Songs()
+	if len(songs) != 2 {
+		t.Fatalf("应有 2 首，实际 %d", len(songs))
+	}
+
+	// 先读一次让快照建立，再删 —— 这一步正是回归点：
+	// 如果 DropSong 没标脏，下面会读到那条已经被删掉的歌。
+	if !m.DropSong(songs[0].ID) {
+		t.Fatal("DropSong 应返回 true")
+	}
+	got := m.Songs()
+	if len(got) != 1 {
+		t.Fatalf("摘掉 1 首后应剩 1 首，实际 %d（快照未失效）", len(got))
+	}
+	if got[0].ID == songs[0].ID {
+		t.Errorf("被摘掉的那首仍出现在 Songs() 里：%s", got[0].ID)
+	}
+	// 逐 id 查询也必须同步（走的是 m.songs 本身，与快照是两条路径）
+	if _, ok := m.SongByID(songs[0].ID); ok {
+		t.Errorf("SongByID 仍能查到被摘掉的 %s", songs[0].ID)
+	}
+}
+
+// TestSongsSnapshotIsCopy 调用方改返回值不能污染后续请求
+func TestSongsSnapshotIsCopy(t *testing.T) {
+	m, store, _ := newTestManager(t)
+	music := t.TempDir()
+	writeWAV(t, filepath.Join(music, "a.wav"), 1)
+	if err := store.Update(func(c *bootstrap.Config) {
+		c.Folders = []bootstrap.Folder{{ID: "f1", Path: music}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m = NewManager(store)
+	if _, err := m.Scan(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+
+	first := m.Songs()
+	if len(first) != 1 {
+		t.Fatalf("应有 1 首，实际 %d", len(first))
+	}
+	first[0].Title = "被调用方改坏了"
+
+	second := m.Songs()
+	if second[0].Title == "被调用方改坏了" {
+		t.Error("Songs() 返回的必须是拷贝：调用方一改就污染了内部快照")
+	}
+}
+
+// TestSongsSnapshotOrderIsStable 快照命中时顺序必须与重建时一致（AddedAt 倒序）
+func TestSongsSnapshotOrderIsStable(t *testing.T) {
+	m, store, _ := newTestManager(t)
+	music := t.TempDir()
+	for _, name := range []string{"a.wav", "b.wav", "c.wav"} {
+		writeWAV(t, filepath.Join(music, name), 1)
+	}
+	if err := store.Update(func(c *bootstrap.Config) {
+		c.Folders = []bootstrap.Folder{{ID: "f1", Path: music}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m = NewManager(store)
+	if _, err := m.Scan(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+
+	// 连读多次（第 2 次起命中快照），顺序必须完全一致
+	base := m.Songs()
+	for i := 0; i < 5; i++ {
+		again := m.Songs()
+		if len(again) != len(base) {
+			t.Fatalf("第 %d 次读取长度不一致：%d vs %d", i+2, len(again), len(base))
+		}
+		for j := range base {
+			if again[j].ID != base[j].ID {
+				t.Fatalf("第 %d 次读取顺序变了：位置 %d 是 %s，期望 %s", i+2, j, again[j].ID, base[j].ID)
+			}
+		}
+	}
+}

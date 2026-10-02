@@ -13,7 +13,7 @@
 
 import { MpElement, define, html, nothing, repeat, icon } from "./base.js";
 import { toast } from "./overlays.js";
-import { commit, currentSong, state } from "../store.js";
+import { commit, currentSong, state, subscribe } from "../store.js";
 import { coverVersion } from "../store.js";
 import {
   availableSkins,
@@ -25,12 +25,19 @@ import {
 } from "../playerhost.js";
 
 class MpPlayerview extends MpElement {
+  // ★ deps 里**刻意没有** s.position（与 ui/playerbar.js / ui/lyrics.js 同一理由）。
+  //
+  // 这个组件整个模板只是「外壳」：头部按钮、返回、样式按钮组、舞台容器 ——
+  // 没有一处内容随播放进度变化。而 s.position 每 250ms 变一次，把它放进 deps
+  // 的代价是外壳模板（含对皮肤按钮组的 repeat()）每秒重跑 4 次。
+  //
+  // 皮肤确实需要按进度推数据，但那件事由下面的 subscribe（_pushSkin）负责，
+  // 与「外壳要不要重绘」是两件不相干的事 —— 原来把两者绑在一起了。
   static deps = (s) => [
     s.playerOpen,
     s.pvMode,
     s.currentId,
     s.playing,
-    s.position,
     s.duration,
     s.config.showLyrics,
     s.config.coverCarousel,
@@ -39,9 +46,16 @@ class MpPlayerview extends MpElement {
     skinRegistryVersion(),
   ];
 
+  onConnected() {
+    // 把进度推给皮肤。放在 store 订阅里而不是 updated()：
+    // updated() 是「外壳重绘」的钩子，用它顺带做推送会让两者互相拖累。
+    // renderPlayerView 内部有 host.skin / playerOpen 的早退，空跑很便宜。
+    this._unsubscribers.push(subscribe(() => renderPlayerView()));
+  }
+
   updated() {
-    // 与原 main.js#tick 同频：进度 / 歌名 / 歌词都靠它推给皮肤。
-    // 组件只在 position 等依赖变化时才会走到这里，因此推的频率与播放进度一致。
+    // 外壳自身重绘时也要推一次（换皮肤、开关详情页、换封面等都会走到这里）。
+    // 与上面的 subscribe 重复调用是安全的：renderPlayerView 内部按快照去重。
     renderPlayerView();
   }
 

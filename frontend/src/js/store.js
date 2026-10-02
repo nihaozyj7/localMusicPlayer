@@ -691,14 +691,60 @@ let songIndexSource = null;
  */
 let songIndex = new Map();
 
-/** 真正要花时间的那部分：取上下文 + 过滤 + 排序 */
-function computeVisible() {
-  const list = currentSongList();
-  const q = state.query.trim().toLowerCase();
-  let out = list;
+/* --------------------------------------------------------------------------
+   曲库筛选的「小写索引」
+   --------------------------------------------------------------------------
+   为什么需要：筛选框每敲一个字都要拿 query 与每首歌的 title/artist/album/ext
+   比一次，而原来的写法对**每首歌每次**都调 4 次 toLowerCase() ——
+   10,000 首 × 每键 4 次 = 每次按键 4 万次字符串分配。
 
-  if (q) {
-    out = out.filter(
+   改法：把「每首歌的小写拼接串」缓存成一张 Map，按 **曲库数组引用**失效
+   （state.songs 永远整体替换、从不原地改字段，所以引用比较是可靠的判据，
+   与 songIndex / visibleInputs 用的是同一套约定）。
+
+   为什么拼成一个串而不是存 4 个字段：筛选语义是「任一项命中即保留」，
+   拼成 `title\0artist\0album\0ext` 后一次 includes() 就能判定，
+   把每首歌的比较从 4 次降到 1 次。用 \0 分隔是为了避免
+   ["ab","c"] 与 ["a","bc"] 这种跨界误命中（与 visibleFingerprint 同思路）。
+   -------------------------------------------------------------------------- */
+let haystackSource = null;
+let haystackIndex = new Map();
+
+/** 筛选用的分隔符。用 \0 是避免 ["ab","c"] 与 ["a","bc"] 这种跨界误命中。 */
+const HAY_SEP = "\u0000";
+
+function ensureHaystack(list) {
+  if (haystackSource === list) return haystackIndex;
+  const next = new Map();
+  for (const s of list) {
+    next.set(
+      s.id,
+      `${s.title}${HAY_SEP}${s.artist}${HAY_SEP}${s.album}${HAY_SEP}${s.ext}`.toLowerCase()
+    );
+  }
+  haystackSource = list;
+  haystackIndex = next;
+  return next;
+}
+
+/**
+ * 按查询词筛选（导出以便直接测试 —— 这是「静默少歌」最该被钉住的一处）。
+ *
+ * 语义与迁移前逐字段比较**完全一致**：query 命中 title/artist/album/ext 任一项即保留。
+ * 索引只是把「4 次 toLowerCase + 4 次 includes」换成「1 次 includes」。
+ *
+ * @param {Array} list 待筛选的歌曲
+ * @param {string} query 原始查询词（内部自行 trim + 小写）
+ */
+export function filterByQuery(list, query) {
+  const q = String(query ?? "").trim().toLowerCase();
+  if (!q) return list;
+
+  // 查询串含分隔符时不能走索引：\0 天然出现在拼接处，会让 includes("\0")
+  // 命中**所有**歌曲，与逐字段比较的结果不同。正常输入不可能含 \0，
+  // 但语义必须严格一致，所以这里显式退回慢路径。
+  if (q.includes(HAY_SEP)) {
+    return list.filter(
       (s) =>
         s.title.toLowerCase().includes(q) ||
         s.artist.toLowerCase().includes(q) ||
@@ -706,6 +752,27 @@ function computeVisible() {
         s.ext.toLowerCase().includes(q)
     );
   }
+
+  const hay = ensureHaystack(list);
+  return list.filter((s) => {
+    const h = hay.get(s.id);
+    // 索引缺失（理论上不该发生）时退回逐字段比较，绝不因为索引问题漏歌
+    if (h === undefined) {
+      return (
+        s.title.toLowerCase().includes(q) ||
+        s.artist.toLowerCase().includes(q) ||
+        s.album.toLowerCase().includes(q) ||
+        s.ext.toLowerCase().includes(q)
+      );
+    }
+    return h.includes(q);
+  });
+}
+
+/** 真正要花时间的那部分：取上下文 + 过滤 + 排序 */
+function computeVisible() {
+  const list = currentSongList();
+  const out = filterByQuery(list, state.query);
 
   // 播放列表（队列）视图**不排序**：队列顺序本身就是数据（用户拖拽排序的结果），
   // 再按 sortKey 排一次会把拖拽效果整个抹掉 —— 这正是「拖拽后提示成功、

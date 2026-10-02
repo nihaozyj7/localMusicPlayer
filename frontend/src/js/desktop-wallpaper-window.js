@@ -151,6 +151,23 @@ function makeCtx() {
    -------------------------------------------------------------------------- */
 
 function unmountSkin() {
+  // 先发 close 再 destroy，与 playerhost.js 的卸载路径对齐。
+  //
+  // 为什么两步都要：皮肤契约把 close 与 destroy 分成两件事 —— close 表示
+  // 「这个界面收起来了」（皮肤据此停掉帧循环、隐藏整窗背景），destroy 表示
+  // 「实例要没了」（释放 canvas / observer / 监听器）。
+  // 原来这里只调 destroy，于是每个皮肤的 close 分支在桌面壁纸窗口里是**死代码**
+  // （magia 停帧循环的 stopLoop 就写在 close 里）。
+  // destroy 本身也会停循环，所以这条不是「不停帧」的修复，而是让两侧宿主
+  // 对皮肤的生命周期语义保持一致 —— 第三方皮肤若把重要清理写在 close 里，
+  // 只调 destroy 就会漏掉。
+  if (skin?.update && ctx) {
+    try {
+      skin.update(ctx, { type: "close" });
+    } catch (err) {
+      console.warn(`[desktop-wallpaper] ${mountedId} 收起时出错（继续销毁）`, err);
+    }
+  }
   if (skin?.destroy) {
     try {
       skin.destroy(ctx);

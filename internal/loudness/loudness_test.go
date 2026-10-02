@@ -207,8 +207,6 @@ func TestInvalidateTargetDropsStale(t *testing.T) {
 	m.mu.Lock()
 	m.items[k1] = Measurement{Path: songs[0].Path, Size: 1, ModTime: 1, Target: -16, Algo: AlgoVersion, Integrated: -20}
 	m.items[k2] = Measurement{Path: songs[1].Path, Size: 1, ModTime: 1, Target: -23, Algo: AlgoVersion, Integrated: -18}
-	m.byPath[songs[0].Path] = k1
-	m.byPath[songs[1].Path] = k2
 	m.mu.Unlock()
 
 	dropped := m.InvalidateTarget(-23)
@@ -240,8 +238,12 @@ func TestClear(t *testing.T) {
 	}
 }
 
-// TestInvalidateTargetRebuildsPathIndex 失效重建后按路径索引仍要可用
-func TestInvalidateTargetRebuildsPathIndex(t *testing.T) {
+// TestInvalidateTargetKeepsMatchingEntries 失效后与目标一致的记录仍可按路径查到
+//
+// 注：这个测试原来断言的是 m.byPath（一张 path→key 的辅助表）。那张表在生产代码里
+// **只写不读**，已随性能审查一并删除（它随每次测量无限增长，10 万首约 10MB）。
+// 断言改成走真正的查询入口 Get()，验的是同一件事、且是对外可观察的行为。
+func TestInvalidateTargetKeepsMatchingEntries(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, 2)
 	keep := bootstrap.Song{ID: "b", Path: `D:\m\b.flac`, Size: 1, ModTime: 1}
@@ -250,25 +252,19 @@ func TestInvalidateTargetRebuildsPathIndex(t *testing.T) {
 	m.mu.Lock()
 	m.items[keyFor(keep.Path, 1, 1)] = Measurement{Path: keep.Path, Size: 1, ModTime: 1, Target: -23, Algo: AlgoVersion, Integrated: -18}
 	m.items[keyFor(drop.Path, 1, 1)] = Measurement{Path: drop.Path, Size: 1, ModTime: 1, Target: -16, Algo: AlgoVersion, Integrated: -20}
-	m.byPath[keep.Path] = keyFor(keep.Path, 1, 1)
-	m.byPath[drop.Path] = keyFor(drop.Path, 1, 1)
 	m.mu.Unlock()
 
 	if n := m.InvalidateTarget(-23); n != 1 {
 		t.Fatalf("应丢弃 1 条，实际 %d", n)
 	}
-	m.mu.RLock()
-	_, hasKept := m.byPath[keep.Path]
-	_, hasDropped := m.byPath[drop.Path]
-	m.mu.RUnlock()
-	if !hasKept {
-		t.Error("保留项的路径索引应重建")
-	}
-	if hasDropped {
-		t.Error("丢弃项的路径索引应清掉")
-	}
 	if _, ok := m.Get(keep, -23); !ok {
-		t.Error("保留项仍应可查")
+		t.Error("与目标一致的记录应保留且仍可查到")
+	}
+	if _, ok := m.Get(drop, -16); ok {
+		t.Error("旧标准的记录应被丢弃，不该还能查到")
+	}
+	if m.Count() != 1 {
+		t.Errorf("失效后应剩 1 条，实际 %d", m.Count())
 	}
 }
 
@@ -446,6 +442,65 @@ func TestMeasureRealFileOnDemand(t *testing.T) {
 	gain := GainDB(item, -30)
 	if gain >= 0 {
 		t.Errorf("目标 -30 比实测 %.1f 轻，增益应为负，实际 %.2f", item.Integrated, gain)
+	}
+}
+
+/* --------------------------------------------------------------------------
+   懒加载
+   --------------------------------------------------------------------------
+   NewManager 不再同步读缓存（那会拖慢首帧），改成第一次真正用到时才读
+   （ensureLoaded + sync.Once）。这组测试钉住两件事：
+     · 盘上有缓存时，第一次查询就能读到（不能因为"懒"而读不到）；
+     · 多次调用只读一次盘（sync.Once 的语义），且后续写入可见。
+   -------------------------------------------------------------------------- */
+
+// TestLazyLoadReadsCacheOnFirstUse 首次查询必须能读到盘上的缓存
+func TestLazyLoadReadsCacheOnFirstUse(t *testing.T) {
+	dir := t.TempDir()
+	song := bootstrap.Song{ID: "a", Path: `D:\m\a.flac`, Size: 1, ModTime: 1}
+
+	// 第一个 manager 写入一条并落盘
+	m1 := NewManager(dir, 2)
+	m1.mu.Lock()
+	m1.items[keyFor(song.Path, 1, 1)] = Measurement{
+		Path: song.Path, Size: 1, ModTime: 1,
+		Target: testTarget, Algo: AlgoVersion, Integrated: -16, Measured: true,
+	}
+	m1.dirty = true
+	m1.mu.Unlock()
+	if err := m1.Save(); err != nil {
+		t.Fatalf("落盘失败: %v", err)
+	}
+
+	// 第二个 manager 构造时**不该**读盘；第一次 Get 时才读
+	m2 := NewManager(dir, 2)
+	if _, ok := m2.Get(song, testTarget); !ok {
+		t.Error("首次查询应能通过懒加载读到盘上的缓存")
+	}
+}
+
+// TestLazyLoadOnlyOnce 多次查询只读一次盘（构造函数里不该有阻塞读）
+func TestLazyLoadOnlyOnce(t *testing.T) {
+	dir := t.TempDir()
+	song := bootstrap.Song{ID: "a", Path: `D:\m\a.flac`, Size: 1, ModTime: 1}
+	m := NewManager(dir, 2)
+
+	// 第一次调用触发 load；之后即使把盘上的文件删掉，也不该再读（已 loaded）
+	if got := m.Count(); got != 0 {
+		t.Fatalf("空目录应得到 0 条，实际 %d", got)
+	}
+	m.mu.Lock()
+	m.items[keyFor(song.Path, 1, 1)] = Measurement{
+		Path: song.Path, Size: 1, ModTime: 1,
+		Target: testTarget, Algo: AlgoVersion, Integrated: -16, Measured: true,
+	}
+	m.mu.Unlock()
+
+	// 再查多次：内存里那条必须在（不会被第二次 load 覆盖掉）
+	for i := 0; i < 3; i++ {
+		if _, ok := m.Get(song, testTarget); !ok {
+			t.Fatalf("第 %d 次查询丢了内存里的记录（说明又 load 了一次，把内存覆盖了）", i+1)
+		}
 	}
 }
 

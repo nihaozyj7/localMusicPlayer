@@ -141,6 +141,53 @@ func TestReadPicturesM4A(t *testing.T) {
 	}
 }
 
+// 超大文件要跳过封面解析，而不是整文件读进内存。
+//
+// 为什么值得测：ReadPictures 是整文件读入再解析的，曲库扫描并发 4，
+// 几个上百 MB 的文件就能把瞬时内存顶到几百 MB。加了 maxCoverScanBytes
+// 门槛之后，这里钉住「超过门槛 → 返回空且不读盘」的行为，防止后续
+// 有人"顺手"把门槛去掉。
+func TestReadPicturesSkipsOversizedFile(t *testing.T) {
+	// 造一个比门槛大的文件：用稀疏内容，不真的占满磁盘
+	path := filepath.Join(t.TempDir(), "huge.m4a")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 直接 Truncate 到「门槛 + 1」，得到一个稀疏文件（快、不占空间）
+	if err := f.Truncate(maxCoverScanBytes + 1); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ReadPictures(path)
+	if len(got) != 0 {
+		t.Errorf("超过门槛的文件应跳过封面解析，实际读到 %d 张", len(got))
+	}
+}
+
+// 刚好等于门槛的文件仍应尝试解析（门槛是「大于才跳过」）
+func TestReadPicturesAllowsFileAtThreshold(t *testing.T) {
+	raw := buildMinimalM4A()
+	path := writeTemp(t, "small.m4a", raw)
+	if _, err := metacache.EmbedCovers(path, []metacache.CoverImage{
+		{MIME: "image/jpeg", Data: testCover(0x44, 300)},
+	}, ""); err != nil {
+		t.Fatalf("写回封面失败: %v", err)
+	}
+	if st, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	} else if st.Size() > maxCoverScanBytes {
+		t.Fatalf("样本文件意外超过门槛（%d 字节），这个用例失去意义", st.Size())
+	}
+	if got := ReadPictures(path); len(got) != 1 {
+		t.Errorf("门槛内的文件应正常解析出 1 张，实际 %d", len(got))
+	}
+}
+
 // 同一个 covr 里塞多个 data box（iTunes 早期写法）也必须全部读出来。
 func TestReadPicturesMP4MultipleDataInOneCovr(t *testing.T) {
 	a := testCover(0x44, 128)

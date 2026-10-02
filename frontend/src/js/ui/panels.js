@@ -185,6 +185,19 @@ class MpQueuePanel extends MpPanel {
     // 面板关着的时候不渲染列表：否则往队列里加一首歌就会连隐藏面板一起更新。
     // 打开时 state.queueOpen 变化会触发重绘，内容照样是齐的。
     const list = state.queueOpen ? state.queue.map((id) => songById(id)).filter(Boolean) : [];
+    // ★ id → 在 state.queue 里的下标，一次建好。
+    //
+    // 为什么不能像原来那样在 item() 里写 state.queue.indexOf(song.id)：
+    // item() 被 repeat() **每行调一次**，于是渲染队列是 O(n²) ——
+    // 5,000 首队列就是 1,250 万次比较，而且这个面板的 deps 含 currentId/playing，
+    // 每次切歌、每次播放暂停都要重渲染一遍。建一次 Map 是 O(n)。
+    //
+    // 注意必须用 state.queue 的下标（而不是 list 的下标）：list 过滤掉了
+    // songById 查不到的项，两者长度可能不同，而拖拽与「第几首」都按 queue 走。
+    const posById = new Map();
+    if (state.queueOpen) {
+      for (let i = 0; i < state.queue.length; i += 1) posById.set(state.queue[i], i);
+    }
     return html`
       <section
         class="queue-panel"
@@ -243,7 +256,7 @@ class MpQueuePanel extends MpPanel {
               ? repeat(
                   list,
                   (song) => song.id,
-                  (song) => this.item(song)
+                  (song) => this.item(song, posById.get(song.id) ?? -1)
                 )
               : html`<div class="queue-panel__empty">播放列表是空的<br />从曲库把歌曲加进来</div>`
           }
@@ -252,8 +265,13 @@ class MpQueuePanel extends MpPanel {
     `;
   }
 
-  item(song) {
-    const index = state.queue.indexOf(song.id);
+  /**
+   * 一行队列项。
+   * @param {object} song
+   * @param {number} index 该曲在 state.queue 里的下标（由 render 一次算好，
+   *   避免每行一次 O(n) 的 indexOf —— 见 render 里的 posById 说明）。-1 表示查不到。
+   */
+  item(song, index) {
     const current = song.id === state.currentId;
     return html`
       <div

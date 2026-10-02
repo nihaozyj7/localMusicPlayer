@@ -20,7 +20,7 @@ import { MpElement, define, html, nothing, icon } from "./base.js";
 import { animationMs, setRuntimeToken } from "../runtime-tokens.js";
 import { toast } from "./overlays.js";
 import { applyRules, commit, compileRegex, flushConfigSync, state } from "../store.js";
-import { fmtCount, fmtSize } from "../utils.js";
+import { fmtCount, fmtSize, rafThrottle } from "../utils.js";
 import { providerName } from "../provider-names.js";
 import {
   APP_COPYRIGHT,
@@ -178,6 +178,16 @@ function rangeSlider(id, key, ariaLabel) {
   </div>`;
 }
 
+/** 逐项 === 比较两个依赖数组（与 base.js#sameDeps 同一语义，此处独立一份以免循环依赖） */
+function sameRefList(a, b) {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 class MpSettingsLayer extends MpElement {
   static deps = (s) => [
     s.settingsOpen,
@@ -220,6 +230,78 @@ class MpSettingsLayer extends MpElement {
     this._navPausedUntil = 0;
     this._navResumeTimer = null;
     this._sliders = new WeakMap();
+    /* render() 里三处「随曲库规模线性增长」的派生值的记忆（见 settingsDerived） */
+    this._derivedKey = null;
+    this._derived = null;
+    /* 滚动跟随节流（rAF 版）：见 onScroll */
+    this._throttledNavFollow = rafThrottle((scroll) => this.navFollow(scroll));
+  }
+
+  /* ------------------------------------------------------------------------
+     render() 里三处按曲库规模线性增长的派生值 —— 记忆化
+     ------------------------------------------------------------------------
+     三处分别是：
+       · foldersCard 的「每个文件夹有多少首」（O(文件夹 × 曲库)）
+       · rulesCard 的 applyRules(全库, 规则)（每首歌 × 每条规则一次正则）
+       · aboutCard 的时长/体积两个 reduce（两遍全库）
+
+     为什么必须记忆：deps 里的 s.updateRev 在**每次 commit() 都会自增**
+     （store.js:376，切歌、调音量、播放暂停都会触发），于是设置界面打开时
+     任何一次 store 变更都会把这三段重跑一遍 —— 10,000 首时是
+     「几万次 startsWith + 上万次正则 + 两次全库遍历」。
+
+     失效键用**引用比较**：songs / allSongsRaw / folders / filterRules 在 store 里
+     都是整体替换、从不原地改（与 store.js 的 visibleInputs 同一套约定），
+     所以引用变了就等于内容变了。长度也一起比，兜住「原地增删」的意外情况。
+
+     注意：这个记忆只在组件实例内有效（设置界面是常驻单例），
+     不跨实例共享 —— 避免多实例之间互相污染。
+     ------------------------------------------------------------------------ */
+  settingsDerived() {
+    const key = [
+      state.songs,
+      state.allSongsRaw,
+      state.folders,
+      state.filterRules,
+      state.songs.length,
+      state.allSongsRaw.length,
+    ];
+    if (this._derivedKey && sameRefList(this._derivedKey, key)) return this._derived;
+
+    // 每个文件夹的曲目数。
+    // ★ 语义必须与原来的 `state.songs.filter(s => s.path.startsWith(f.path)).length`
+    //   逐字一致，两处细节都不能"顺手优化"：
+    //   · 一首歌若同时落在多个嵌套文件夹下，**每个**匹配的文件夹都要计入
+    //     （所以不能 break —— 那会漏计嵌套目录）；
+    //   · 直接传 f.path，**不要**做 `?? ""` 或 `if (f.path)` 这类归一化 ——
+    //     startsWith 对空串恒真（计数=全库）、对 undefined 会按 "undefined"
+    //     去比（计数=0），两者行为不同，加守卫就会改变结果。
+    //   外层 O(文件夹 × 曲库) 不变，但只在输入变化时算一次并被复用。
+    const perFolder = new Map();
+    for (const f of state.folders) {
+      let n = 0;
+      for (const s of state.songs) {
+        if (s.path.startsWith(f.path)) n += 1;
+      }
+      perFolder.set(f.id, n);
+    }
+
+    const rules = applyRules(state.allSongsRaw, state.filterRules);
+    let totalDuration = 0;
+    let totalBytes = 0;
+    for (const x of state.songs) {
+      totalDuration += x.duration;
+      totalBytes += x.size;
+    }
+
+    this._derivedKey = key;
+    this._derived = {
+      perFolder,
+      rules,
+      totalDuration,
+      totalBytes,
+    };
+    return this._derived;
   }
 
   get open() {
@@ -343,6 +425,7 @@ class MpSettingsLayer extends MpElement {
      曲库
      ======================================================================== */
   foldersCard() {
+    const derived = this.settingsDerived();
     const rows = state.folders.length
       ? state.folders.map((f) => {
           const chip =
@@ -353,7 +436,7 @@ class MpSettingsLayer extends MpElement {
               : f.status === "missing"
                 ? html`<span class="chip chip--error"><i class="chip__dot"></i>路径不存在</span>`
                 : html`<span class="chip chip--warn"><i class="chip__dot"></i>无访问权限</span>`;
-          const count = state.songs.filter((s) => s.path.startsWith(f.path)).length;
+          const count = derived.perFolder.get(f.id) ?? 0;
           return html` <div class="pathrow" data-folder=${f.id}>
             <svg class="pathrow__icon" aria-hidden="true"><use href="#i-folder"></use></svg>
             <div class="pathrow__main">
@@ -591,7 +674,7 @@ class MpSettingsLayer extends MpElement {
   }
 
   rulesCard() {
-    const { kept, excluded, total } = applyRules(state.allSongsRaw, state.filterRules);
+    const { kept, excluded, total } = this.settingsDerived().rules;
     return html` <section class="card" id="sec-filters" data-section="library">
       <div class="card__head">
         <div class="card__icon">${icon("filter")}</div>
@@ -1334,8 +1417,7 @@ class MpSettingsLayer extends MpElement {
   aboutCard() {
     const version = state.appVersion || APP_VERSION_FALLBACK;
     const s = state.lastScan;
-    const total = state.songs.reduce((sum, x) => sum + x.duration, 0);
-    const bytes = state.songs.reduce((sum, x) => sum + x.size, 0);
+    const { totalDuration: total, totalBytes: bytes } = this.settingsDerived();
     return html` <section class="card" id="sec-about" data-section="about">
       <div class="card__head">
         <div class="card__icon">${icon("info")}</div>
@@ -1929,9 +2011,22 @@ class MpSettingsLayer extends MpElement {
     if (this._navPausedUntil) {
       // 程序化滚动（点导航条）期间不跟随：滚动还在继续就不断续期，
       // 直到它真正停下来再把跟随交还回去 —— 平滑滚动的尾帧不会改写刚点中的高亮。
+      // ★ 这一段必须**每次都跑**，不能被节流：deferNavResume 就是靠「每个滚动
+      //   事件都续一次期」来判断"滚动还在继续"的。所以它留在节流之外。
       this.deferNavResume();
       return;
     }
+    // 节流到每帧一次：scroll 事件在触控板/高 DPI 下可以一帧触发多次，而下面
+    // 每个分区都要 getBoundingClientRect()（强制同步布局），与上一次 paintNav()
+    // 的属性写入交替就成了读-写-读的 layout thrashing。
+    this._throttledNavFollow(scroll);
+  }
+
+  /** 真正做「导航条跟随」的那段（已节流到每帧一次，见 onScroll） */
+  navFollow(scroll) {
+    // 用户可能在节流窗口内已经点了导航条（此时处于暂停期）——
+    // 帧回调晚到时不能再抢走高亮。
+    if (this._navPausedUntil) return;
     const top = scroll.getBoundingClientRect().top + 80;
     let current = SECTIONS[0].id;
     for (const s of SECTIONS) {

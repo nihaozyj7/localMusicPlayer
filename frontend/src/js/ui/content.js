@@ -40,6 +40,48 @@ export const VIEW_TITLES = {
   playlist: "歌单",
 };
 
+/* --------------------------------------------------------------------------
+   曲库筛选输入框的防抖
+   --------------------------------------------------------------------------
+   为什么必须防抖：`state.query` 一变，commit() 就会走完整条派生链 ——
+   recalcVisible() 全库过滤 + 全量重排（Intl.Collator），visibleVersion 随之 +1，
+   于是 <mp-track-table> 的 repeat() 把**所有匹配行**重建一遍。
+   实测（本机 Node 22）：10,000 首光「过滤 + 排序」纯计算就是 2.6 ms，
+   而真正的大头是随后的 DOM 重建（每行 28 个元素节点）。
+   不加防抖时打字速度 8~12 键/秒 ⇒ 每秒十几次全表重建，输入框自己都在掉帧。
+
+   为什么保留「立刻写 state.query」而不是把输入框做成非受控：
+   .value=${state.query} 是受控绑定，如果按键不立刻反映到 state，
+   Lit 下一轮会把输入框回滚成旧值（表现为「打不进去字」）。
+   所以：**state.query 立刻更新（保证手感），只有昂贵的 commit 被推迟**。
+   清空按钮 / Esc 走的是 clearLocalFilter()（另一条路径，不受影响）。
+   -------------------------------------------------------------------------- */
+const FILTER_DEBOUNCE_MS = 120;
+
+/**
+ * 带 flush() 的防抖 commit（每个组件实例一份；模块级会在多实例间串扰）。
+ *
+ * 为什么不用 utils.js#debounce：那个版本没有 flush()，而这里需要
+ * 「组件卸载时把挂起的 commit 补跑一次」（否则用户打完字立刻切视图，
+ * 那次 commit 会被丢掉，列表停在旧过滤结果上）。
+ * 保持 utils.js 的通用实现不变，把这点差异留在本文件里。
+ */
+function makeFilterCommit() {
+  let timer = null;
+  const run = () => {
+    if (timer === null) return;
+    clearTimeout(timer);
+    timer = null;
+    commit();
+  };
+  const debounced = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(run, FILTER_DEBOUNCE_MS);
+  };
+  debounced.flush = run;
+  return debounced;
+}
+
 /** 「添加音乐文件夹」空态按钮要走的设置动作 */
 const SETTINGS_CTX = { commit, rescan: () => doRescan({ manual: true }) };
 
@@ -61,6 +103,23 @@ class MpContent extends MpElement {
     s.lastScan?.at ?? 0,
     s.config.listDensity,
   ];
+
+  constructor() {
+    super();
+    /** 筛选输入框的防抖 commit（见文件上方说明） */
+    this._commitFilter = makeFilterCommit();
+  }
+
+  /**
+   * 组件卸载时把还没落地的筛选 commit 立刻补上。
+   *
+   * 不补的话：用户在输入框里打完字后**立刻切视图/关窗口**（120ms 内），
+   * 那个 debounce 就被丢掉，state.query 已改但派生列表没重算 ——
+   * 表现是「回来以后列表还是旧的过滤结果」。补跑一次是幂等的。
+   */
+  onDisconnected() {
+    this._commitFilter?.flush?.();
+  }
 
   render() {
     const v = state.view;
@@ -94,8 +153,10 @@ class MpContent extends MpElement {
                   aria-label="筛选本地歌曲"
                   .value=${state.query}
                   @input=${(e) => {
+                    // 立即写入（受控绑定要跟手），commit 防抖（派生链很贵）——
+                    // 见文件上方 FILTER_DEBOUNCE_MS 的说明。
                     state.query = e.target.value;
-                    commit();
+                    this._commitFilter();
                   }}
                   @keydown=${(e) => {
                     if (e.key !== "Escape") return;

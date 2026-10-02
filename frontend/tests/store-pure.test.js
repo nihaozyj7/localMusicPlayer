@@ -12,7 +12,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyRules, compileRegex, matchRules } from "../src/js/store.js";
+import { applyRules, compileRegex, filterByQuery, matchRules } from "../src/js/store.js";
 
 /** 造一首歌（只带规则会用到的字段） */
 function song(over = {}) {
@@ -210,4 +210,102 @@ test("applyRules：1 万首规模下结果稳定（含 Unicode 路径）", () =>
   assert.equal(total, 10_000);
   assert.equal(kept.length + excluded, 10_000);
   assert.equal(excluded, 5_000);
+});
+
+/* --------------------------------------------------------------------------
+   filterByQuery —— 曲库筛选框的匹配语义
+   --------------------------------------------------------------------------
+   为什么必须钉住：这个函数在性能优化里被改成「小写拼接串 + 一次 includes」
+   （原来是 4 次 toLowerCase + 4 次 includes）。索引化最容易出的错是
+   **跨界误命中**（["ab","c"] 与 ["a","bc"] 被当成同一个串），
+   而这类错误表现为「多出几首不该出现的歌」，不会崩、不会报错 ——
+   正是最需要回归测试兜住的一类。
+   -------------------------------------------------------------------------- */
+
+const hay = (over = {}) => ({
+  id: over.id || "s1",
+  title: over.title ?? "",
+  artist: over.artist ?? "",
+  album: over.album ?? "",
+  ext: over.ext ?? "",
+});
+
+test("filterByQuery：空查询返回原列表（同一引用）", () => {
+  const list = [hay({ id: "a", title: "abc" })];
+  assert.equal(filterByQuery(list, ""), list);
+  assert.equal(filterByQuery(list, "   "), list);
+  assert.equal(filterByQuery(list, null), list);
+});
+
+test("filterByQuery：命中 title/artist/album/ext 任一项即保留", () => {
+  const list = [
+    hay({ id: "t", title: "夜航西飞" }),
+    hay({ id: "a", artist: "某歌手" }),
+    hay({ id: "b", album: "专辑名" }),
+    hay({ id: "e", ext: "flac" }),
+    hay({ id: "n", title: "无关" }),
+  ];
+  assert.deepEqual(filterByQuery(list, "夜航").map((s) => s.id), ["t"]);
+  assert.deepEqual(filterByQuery(list, "某歌手").map((s) => s.id), ["a"]);
+  assert.deepEqual(filterByQuery(list, "专辑名").map((s) => s.id), ["b"]);
+  assert.deepEqual(filterByQuery(list, "flac").map((s) => s.id), ["e"]);
+});
+
+test("filterByQuery：大小写不敏感（查询与数据两侧）", () => {
+  const list = [hay({ id: "x", title: "TEST" }), hay({ id: "y", title: "test" })];
+  assert.deepEqual(filterByQuery(list, "test").map((s) => s.id), ["x", "y"]);
+  assert.deepEqual(filterByQuery(list, "TeSt").map((s) => s.id), ["x", "y"]);
+});
+
+test("filterByQuery：不跨界误命中（分隔符生效）", () => {
+  // 这两首在「无分隔符拼接」下都会变成 "abc"，用 "bc" 查会两首都命中。
+  // 正确语义：title 命中任一字段即算，两首本来就都该命中 —— 所以换一个
+  // 只有跨界才能命中的查询来钉住分隔符。
+  const list = [hay({ id: "1", title: "ab", artist: "c" }), hay({ id: "2", title: "a", artist: "bc" })];
+  // "ab" + "c" 跨界拼成 "abc"：查 "bc" 时，第 1 首的 title "ab" 不含、artist "c" 不含 ⇒ 不该命中
+  assert.deepEqual(filterByQuery(list, "bc").map((s) => s.id), ["2"]);
+  assert.deepEqual(filterByQuery(list, "abc").map((s) => s.id), []);
+});
+
+test("filterByQuery：查询串含分隔符时退回逐字段比较（不误命中全部）", () => {
+  const list = [hay({ id: "1", title: "abc" }), hay({ id: "2", title: "xyz" })];
+  // \0 出现在索引拼接处，走索引会让 includes("\0") 命中所有歌曲。
+  assert.deepEqual(filterByQuery(list, "\u0000").map((s) => s.id), []);
+});
+
+test("filterByQuery：查询词首尾空格被 trim", () => {
+  const list = [hay({ id: "1", title: "abc" })];
+  assert.deepEqual(filterByQuery(list, "  abc  ").map((s) => s.id), ["1"]);
+});
+
+test("filterByQuery：索引按曲库引用失效（换一批歌后结果正确）", () => {
+  const first = [hay({ id: "1", title: "aaa" })];
+  assert.deepEqual(filterByQuery(first, "aaa").map((s) => s.id), ["1"]);
+  // 整体替换（store 的约定），旧索引必须失效
+  const second = [hay({ id: "2", title: "bbb" })];
+  assert.deepEqual(filterByQuery(second, "aaa").map((s) => s.id), []);
+  assert.deepEqual(filterByQuery(second, "bbb").map((s) => s.id), ["2"]);
+});
+
+test("filterByQuery：1 万首规模结果与逐字段实现一致", () => {
+  const songs = Array.from({ length: 10_000 }, (_, i) =>
+    hay({ id: `s${i}`, title: `歌曲标题${i}`, artist: `歌手${i % 200}`, album: `专辑${i % 500}`, ext: "flac" })
+  );
+  const naive = (list, q) => {
+    const query = q.trim().toLowerCase();
+    return list.filter(
+      (s) =>
+        s.title.toLowerCase().includes(query) ||
+        s.artist.toLowerCase().includes(query) ||
+        s.album.toLowerCase().includes(query) ||
+        s.ext.toLowerCase().includes(query)
+    );
+  };
+  for (const q of ["歌3", "歌手7", "专辑42", "flac", "zzz", "FLAC"]) {
+    assert.deepEqual(
+      filterByQuery(songs, q).map((s) => s.id),
+      naive(songs, q).map((s) => s.id),
+      `查询 ${q} 的索引实现与逐字段实现结果不一致`
+    );
+  }
 });

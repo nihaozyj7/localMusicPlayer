@@ -76,9 +76,80 @@ const LYRICS_STATUS_TEXT = {
   none: "暂无歌词",
 };
 
-let lyricsCache = new Map(); // songId -> { lines, text, source, status }
+/* --------------------------------------------------------------------------
+   歌词缓存的上限（LRU）
+   --------------------------------------------------------------------------
+   这几个缓存原来都是**无上限**的：每播一首新歌就往 lyricsCache 里塞一条
+   （含整份歌词行数组），autoMatched / lyricsOffsets 同理。长时间挂着播放
+   （或者开着自动匹配连续切歌）会一直涨，而它们缓存的数据**丢了完全能重建**
+   （重新读一次本地 / 再匹配一次），所以用 LRU 封顶是纯收益。
+
+   上限取 300 首：远大于「一个会话里会来回切的那几十首」，又能把内存封死。
+   store.js 的 PROGRESS_MAX=1500 是同一思路的先例。
+
+   为什么不用 Map 的插入顺序就够了：Map 保持插入序，重写一个 key 不会把它
+   移到末尾。所以读取时显式 delete + set 一次，把它刷成「最近使用」——
+   这是 LRU 与 FIFO 的唯一差别，而它对「来回听同一批歌」的场景很关键。
+   -------------------------------------------------------------------------- */
+const LYRICS_CACHE_MAX = 300;
+
+/**
+ * 带上限的 Map：set 之后自动淘汰最旧的一条。
+ *
+ * 为什么用子类而不是在每个写入点手动 trim：写入点有 6 处以上，漏一处就是
+ * 一个静默的无界增长 —— 与 base.js 用 deps 数组取代「手工 renderKey」是同一个
+ * 理由：把纪律放进一个漏斗里，就不可能漏。
+ */
+class BoundedMap extends Map {
+  constructor(max, entries) {
+    super(entries);
+    this.max = max;
+  }
+  set(key, value) {
+    // 先删再插：保证「重写已有 key」也把它刷成最近使用（LRU 而非 FIFO）
+    if (super.has(key)) super.delete(key);
+    super.set(key, value);
+    while (this.size > this.max) {
+      const oldest = super.keys().next();
+      if (oldest.done) break;
+      super.delete(oldest.value);
+    }
+    return this;
+  }
+  /** 标记为最近使用（读取路径调用） */
+  touch(key) {
+    if (!super.has(key)) return undefined;
+    const v = super.get(key);
+    this.set(key, v);
+    return v;
+  }
+}
+
+/**
+ * 带上限的 Set（同样是「插入后淘汰最旧」）。
+ * autoMatched 只用来回答「这首歌已经联网匹配过了吗」，丢了最坏就是再匹配一次，
+ * 所以淘汰是安全的；不封顶则会在长时间连续切歌时持续增长。
+ */
+class BoundedSet extends Set {
+  constructor(max, values) {
+    super(values);
+    this.max = max;
+  }
+  add(value) {
+    if (super.has(value)) return this;
+    super.add(value);
+    while (this.size > this.max) {
+      const oldest = super.values().next();
+      if (oldest.done) break;
+      super.delete(oldest.value);
+    }
+    return this;
+  }
+}
+
+let lyricsCache = new BoundedMap(LYRICS_CACHE_MAX); // songId -> { lines, text, source, status }
 /** 已经做过在线匹配的歌曲（避免同一首歌反复联网） */
-const autoMatched = new Set();
+const autoMatched = new BoundedSet(LYRICS_CACHE_MAX);
 const lyricsPending = new Set();
 
 /**
@@ -204,7 +275,8 @@ export function invalidateLyrics(songId) {
     // 偏移也要一起清：它只是「对旧文本的临时修正」，文本换了再叠加就错了
     lyricsOffsets.delete(songId);
   } else {
-    lyricsCache = new Map();
+    // 必须是 BoundedMap：换成裸 Map 会静默丢掉上限（见 BoundedMap 的说明）
+    lyricsCache = new BoundedMap(LYRICS_CACHE_MAX);
     autoMatched.clear();
     lyricsOffsets.clear();
   }
@@ -224,7 +296,7 @@ export function invalidateLyrics(songId) {
    点「应用到歌词」时才把偏移烙进时间戳并写盘（见 lyrics-panel.js），
    所以这里不需要任何持久化，进程重启后归零是正确行为。
    -------------------------------------------------------------------------- */
-const lyricsOffsets = new Map(); // songId -> 毫秒（正数 = 整体延后）
+const lyricsOffsets = new BoundedMap(LYRICS_CACHE_MAX); // songId -> 毫秒（正数 = 整体延后）
 
 /** 取某首歌当前生效的待应用偏移（毫秒） */
 export function lyricsOffsetOf(songId) {
@@ -588,6 +660,22 @@ function coverListOf(song) {
   const list = Array.isArray(items) ? items.map((i) => i.preview).filter(Boolean) : [];
   if (list.length) return list;
   return [coverOf(song)];
+}
+
+/**
+ * 只取「当前唱到第几行」，不建完整快照。
+ *
+ * 为什么单独抽出来：syncPlaybackState 在播放期间每 250ms 走一次，它只需要
+ * 这一个整数。原来它调 lyricsSnapshot() 拿到 .index 就把对象丢掉 ——
+ * 那份对象含 6 个字段（lines/text/source/status/statusText/index），
+ * 每条进度 tick 白白分配一次。findLyricIndex 本身是二分查找（lrc.js），很便宜。
+ *
+ * @param {object|null} song
+ * @returns {number} 行号，-1 表示还没唱到任何一行
+ */
+function lyricIndexOf(song) {
+  if (!song) return -1;
+  return findLyricIndex(linesForSong(song), state.position);
 }
 
 function lyricsSnapshot(song) {
@@ -955,9 +1043,23 @@ function pushMedia(extra = {}) {
 
 function pushOptions() {
   const options = optionsSnapshot();
-  const serialized = JSON.stringify(options);
-  if (serialized === lastPushed.options) return;
-  lastPushed.options = serialized;
+  // 逐字段比较，不用 JSON.stringify：
+  // 这个函数在「详情页打开时的每次进度 tick」上被调（见 renderPlayerView），
+  // 而为了一次比较把整个对象序列化成字符串，是纯粹的浪费与瞬时垃圾。
+  // options 是固定几个原始字段（见 optionsSnapshot），逐项 === 更便宜也更直白。
+  // 新增字段时**必须**同时加到这里 —— 否则该字段变化不会被推给皮肤（漏推是静默的）。
+  if (
+    lastPushed.options &&
+    lastPushed.options.showLyrics === options.showLyrics &&
+    lastPushed.options.lyricsFontSize === options.lyricsFontSize &&
+    lastPushed.options.animations === options.animations &&
+    lastPushed.options.coverCarousel === options.coverCarousel &&
+    lastPushed.options.coverCarouselInterval === options.coverCarouselInterval &&
+    lastPushed.options.interactive === options.interactive
+  ) {
+    return;
+  }
+  lastPushed.options = options;
   push({ type: "options", options });
 }
 
@@ -1171,14 +1273,26 @@ function resetPushed() {
    播放状态同步（进度 → 皮肤）
    -------------------------------------------------------------------------- */
 
-export function syncPlaybackState({ force = false } = {}) {
+/**
+ * 把当前播放状态（进度 / 歌名 / 歌词行号）推给已挂载的皮肤。
+ *
+ * @param {{force?: boolean, lyricIndex?: number}} [opts]
+ *   force —— 即使播放状态没变也推一次 state 补丁；
+ *   lyricIndex —— 调用方已经算好的歌词行号。省略时本函数自己算（二分查找）。
+ * @returns {void}
+ */
+export function syncPlaybackState({ force = false, lyricIndex } = {}) {
   if (!state.playerOpen || !host.skin) return;
   const playback = playbackSnapshot();
   if (lastPushed.playing !== playback.playing || force) {
     lastPushed.playing = playback.playing;
     push({ type: "state", ...playback });
   }
-  push({ type: "progress", ...playback, lyricIndex: lyricsSnapshot(currentSong()).index });
+  // 只需要 lyricIndex 一个整数，就不要为了它建一份完整的歌词快照
+  // （lyricsSnapshot 会跑 linesForSong + findLyricIndex 并分配 6 个字段的对象，
+  //   而这条路径在播放期间每 250ms 走一次）。调用方若已经算过就直接传进来。
+  const idx = typeof lyricIndex === "number" ? lyricIndex : lyricIndexOf(currentSong());
+  push({ type: "progress", ...playback, lyricIndex: idx });
   pushSpectrum(playback.playing);
 }
 

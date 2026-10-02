@@ -25,8 +25,27 @@ import { coverOf } from "./utils.js";
 
 /** 上次取色的封面地址（同时也是「这一轮取到哪了」的状态） */
 let accentCoverSrc = "";
-/** coverSrc → 种子色；空串代表「这张取不到色」。避免同一张图反复解码。 */
-const seedCache = new Map();
+
+/**
+ * coverSrc → 种子色；空串代表「这张取不到色」。避免同一张图反复解码。
+ *
+ * 带上限：每换一张封面就多一条，而取色结果丢了只是「再解码一次」，
+ * 所以淘汰是安全的。不封顶的话，长时间听歌（尤其自动轮播封面）会一直涨。
+ */
+const SEED_CACHE_MAX = 200;
+class BoundedSeedCache extends Map {
+  set(key, value) {
+    if (super.has(key)) super.delete(key);
+    super.set(key, value);
+    while (this.size > SEED_CACHE_MAX) {
+      const oldest = super.keys().next();
+      if (oldest.done) break;
+      super.delete(oldest.value);
+    }
+    return this;
+  }
+}
+const seedCache = new BoundedSeedCache();
 /** coverSrc → Promise<string>：同一张图并发只解码一次 */
 const seedJobs = new Map();
 
