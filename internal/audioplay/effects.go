@@ -311,18 +311,41 @@ func (e *eqSection) prepare(sampleRate int) {
 	e.reset()
 }
 
-// reset 清空滤波器状态与平滑进度（切歌时调用）。
+// reset 清空**滤波器状态**（切歌 / seek 时调用）。
+//
+// ★★ 绝对不能碰系数（targets / current）—— 这是本文件出过的最严重的一个
+// bug，写在这里作为警示。
+//
+// 症状：**切歌之后完全没声音，但进度条正常走**。
+// 原因：初版这里把 targets/current 一并清成 biquadCoeffs{}（零值），
+// 而零值的 b0 = 0 —— 传递函数变成 H(z) = 0，输出恒为 0，也就是静音。
+// 更糟的是零值系数**不满足** isIdentity()（那要求 b0 == 1），
+// 所以 eqSection.process 里"直通段跳过"的快速路径**不会**跳过它们，
+// 这些零系数滤波器照常参与运算，把信号整块乘成 0。
+//
+// 为什么症状是"切歌后"而不是"一开始就没声"：第一次装载之前链是
+// off 档位、系数是全直通（prepare 里 applyPreset(off) + snapCoeffs 设好的），
+// 所以首曲正常；一旦 Load 调到这里，系数被清零，此后**永远**没有声音 ——
+// 直到用户重新点一次音效按钮（那会触发 applyPreset 重写系数）。
+//
+// 进度条为什么不受影响：位置推进（positionFrame）与音频内容完全无关，
+// 它只是按帧计数。所以"进度正常但没声音"是这个 bug 的典型特征。
+//
+// 教训：reset 的语义是"清历史状态"，不是"恢复初始值"。系数属于**配置**，
+// 历史（x1/x2/y1/y2）才属于**状态**。两者必须分开清 ——
+// 见 biquad.reset()（它只清 8 个延迟单元，保留 5 个系数），
+// 本函数应该与它保持同一个语义。
+//
+// 现在改为逐段调用 biquad.reset()：它内部用 `*b = biquad{b0: ..., a2: ...}`
+// 只保留系数、丢掉历史，正是这里想要的效果。
 func (e *eqSection) reset() {
 	for i := range e.bands {
-		e.bands[i] = biquad{}
-		e.targets[i] = biquadCoeffs{}
-		e.current[i] = biquadCoeffs{}
+		e.bands[i].reset()
 	}
-	e.hp = biquad{}
-	e.hpCur = biquadCoeffs{}
-	e.hpTgt = biquadCoeffs{}
-	e.hpOn = false
-	e.hpTgtOn = false
+	e.hp.reset()
+	// hpOn 是"当前生效的开关"，属于配置而不是状态，同样保留。
+	// smoothLeft（平滑进度）归零：切歌后没有"正在过渡"可言，
+	// 且归零会让 stepOnce 直接返回，走稳态路径。
 	e.smoothLeft = 0
 }
 
@@ -574,8 +597,13 @@ func (c *Chain) Prepared() bool { return c.prepared }
 
 // Reset 清空全部 DSP 状态（切歌 / seek 时调用）。
 //
-// ★ 只清滤波器状态与延迟线，**不动档位**：用户的音效偏好必须跨歌保留
-// （"我给这首歌开了大厅混响" 的意图是"我要一直用大厅混响"）。
+// ★ 只清滤波器历史与延迟线，**绝不动档位与系数**：
+//
+//	· 档位是用户的跨歌偏好（"我给这首歌开了大厅混响" 的意图是
+//	  "我要一直用大厅混响"），清掉就等于每次切歌都自动关音效；
+//	· 系数属于配置，清掉会让滤波器变成 H(z)=0 的静音器 ——
+//	  这正是"切歌后没声音、进度条还在走"那个 bug 的成因，
+//	  完整说明见 eqSection.reset 的注释。
 //
 // ★ 淡化中的两条链一起清。只清活动链的话，另一条链里残留的上一首的
 // 混响尾巴会在下一次切换时冒出来。
@@ -589,11 +617,6 @@ func (c *Chain) Reset() {
 	c.chainB.eq.reset()
 	c.chainB.stereo.reset()
 	c.chainB.rev.reset()
-
-	// 清完立刻把 off 之外的档位参数重新写一遍：reset 只清"状态"
-	//（延迟线内容、滤波器历史），不清系数，所以这里不需要重新 apply。
-	// 但平滑进度被重置成 0（已收敛），如果当前档位不是 off，
-	// 系数已经是对的了 —— 这是 reset 与 apply 的分工。
 }
 
 // RequestPreset 请求切换音效档位（从控制线程调用）。

@@ -23,6 +23,7 @@ package audioplay
 import (
 	"encoding/binary"
 	"math"
+	"path/filepath"
 	"testing"
 )
 
@@ -1324,6 +1325,262 @@ func TestProcessStereoAllocsZero(t *testing.T) {
 			t.Errorf("切换档位时 ProcessStereo 分配 %.1f 次，期望 0", got)
 		}
 	})
+}
+
+// TestChainResetKeepsWorking 是"切歌后没声音"那个 bug 的回归测试。
+//
+// ★★ 这是本项目出过的最严重的一个 bug，症状是：
+//
+//	**切换歌曲之后完全没有声音，但进度条正常前进。**
+//
+// 根因：Chain.Reset()（切歌 / seek 时调用）转调 eqSection.reset()，
+// 而那一版把**系数**（targets / current）也清成了零值。
+// biquadCoeffs{} 的 b0 = 0，传递函数变成 H(z) = 0 —— 输出恒为 0，
+// 也就是静音。而且零值系数不满足 isIdentity()（那要求 b0 == 1），
+// 所以"直通段跳过"的快速路径不会跳过它们，零系数滤波器照常
+// 把信号整块乘成 0。
+//
+// 为什么表现为"切歌后"而不是"一开始就没声"：首次装载前链是 off 档位、
+// 系数由 prepare 设成全直通，所以第一首正常；一旦 Load 触发 Reset，
+// 系数被清零，此后永远没声音 —— 直到用户重新点一次音效按钮。
+//
+// 进度条为什么照走：positionFrame 只按帧计数，与音频内容无关。
+//
+// 这条测试对**每个档位**都验证"reset 之后还有声音"。只测 off 不够：
+// off 档位的系数在 reset 前就是直通，清零后的行为差异不明显；
+// 而带 EQ 的档位（vocal / bass）清零后是彻底静音，最能暴露问题。
+func TestChainResetKeepsWorking(t *testing.T) {
+	const amp = 0.5
+	makeInput := func() []byte {
+		return makeStereoSamples(PeriodFrames, func(i int) (float64, float64) {
+			v := sineAt(i, 440, amp)
+			return v, v
+		})
+	}
+	rmsOf := func(buf []byte) float64 {
+		var sum float64
+		frames := len(buf) / FrameSize
+		for i := 0; i < frames; i++ {
+			off := i * FrameSize
+			l := float64(int16(binary.LittleEndian.Uint16(buf[off:]))) / 32768.0
+			r := float64(int16(binary.LittleEndian.Uint16(buf[off+2:]))) / 32768.0
+			sum += l*l + r*r
+		}
+		return math.Sqrt(sum / float64(frames*2))
+	}
+
+	for _, p := range EffectPresets {
+		t.Run(string(p), func(t *testing.T) {
+			var c Chain
+			c.prepare(SampleRate)
+			c.RequestPreset(p)
+
+			// 跑几个缓冲让切换与系数 slew 收敛到稳态
+			for i := 0; i < 5; i++ {
+				c.ProcessStereo(makeInput())
+			}
+
+			before := makeInput()
+			c.ProcessStereo(before)
+			beforeRMS := rmsOf(before)
+			if beforeRMS < 0.05 {
+				t.Fatalf("reset 之前就没声音（RMS=%.5f）—— 测试前提不成立", beforeRMS)
+			}
+
+			// ★ 关键一步：模拟切歌
+			c.Reset()
+
+			after := makeInput()
+			c.ProcessStereo(after)
+			afterRMS := rmsOf(after)
+
+			// reset 之后必须**仍然有信号**，而且量级不能塌掉。
+			// 门限取"reset 前的 20%"：reset 清的是历史状态，
+			// 理论上不影响稳态幅度，正常应该几乎相等；留出余量是为了
+			// 容忍滤波器瞬态（清空历史后需要几个样本重新进入稳态）。
+			if afterRMS < beforeRMS*0.2 {
+				t.Errorf("切歌（Reset）之后输出 RMS 从 %.5f 掉到 %.5f —— "+
+					"reset 把系数也清了？这会表现为「切歌后没声音、进度条照走」",
+					beforeRMS, afterRMS)
+			}
+			// 档位必须保持不变（音效是跨歌偏好）
+			if got := c.CurrentPreset(); got != p {
+				t.Errorf("切歌后档位从 %s 变成了 %s —— reset 不该动档位", p, got)
+			}
+		})
+	}
+}
+
+// TestEqSectionResetPreservesCoeffs 直接钉住"reset 只清状态、不清系数"。
+//
+// ★ 上一条测试从"有没有声音"这个**现象**去验证；
+// 这一条直接检查**不变量本身**，失败信息更直接地指向原因。
+//
+// 两者都保留是刻意的：现象测试能抓住"用别的方式把声音搞没了"，
+// 而不变量测试能抓住"系数被改了但碰巧还有声音"（比如被设成全直通 ——
+// 那样音效就静默失效了，同样是个 bug，但现象测试不会报警）。
+func TestEqSectionResetPreservesCoeffs(t *testing.T) {
+	var e eqSection
+	e.prepare(SampleRate)
+	e.apply(presetSpecs[EffectVocal])
+	// 收敛到稳态系数
+	for i := 0; i < eqSlewFrames+10; i++ {
+		e.stepOnce()
+	}
+
+	// 记录 reset 之前的状态。
+	//
+	// ★ current 与 targets 要**分别**记录、分别比对：
+	// 它们本来就不相等 —— targets 是设计出来的目标系数，
+	// current 是逐帧逼近的结果（slew 收敛后两者应当非常接近，
+	// 但浮点上不一定逐位相等）。曾经把两者混着比，测试直接误报。
+	wantCurrent := make([]biquadCoeffs, len(e.current))
+	copy(wantCurrent, e.current)
+	wantTargets := make([]biquadCoeffs, len(e.targets))
+	copy(wantTargets, e.targets)
+	wantHpOn := e.hpOn
+	wantHpCur := e.hpCur
+	wantHpTgt := e.hpTgt
+
+	// 让滤波器积累一些历史，确保 reset 确实有东西要清
+	for i := 0; i < 100; i++ {
+		e.process(sineAt(i, 440, 0.5), sineAt(i, 440, 0.5))
+	}
+
+	e.reset()
+
+	// ① 当前系数必须原样保留
+	for i := range wantCurrent {
+		if e.current[i] != wantCurrent[i] {
+			t.Errorf("reset 改动了第 %d 段的当前系数：%+v → %+v",
+				i, wantCurrent[i], e.current[i])
+		}
+	}
+	// ② 目标系数也必须原样保留（reset 不是"重新回到初始值"）
+	for i := range wantTargets {
+		if e.targets[i] != wantTargets[i] {
+			t.Errorf("reset 改动了第 %d 段的目标系数：%+v → %+v",
+				i, wantTargets[i], e.targets[i])
+		}
+	}
+	// ③ 高通段的系数与启用状态同样保留（它们属于配置）
+	if e.hpOn != wantHpOn {
+		t.Errorf("reset 改动了高通启用状态：%v → %v", wantHpOn, e.hpOn)
+	}
+	if e.hpCur != wantHpCur {
+		t.Errorf("reset 改动了高通的当前系数：%+v → %+v", wantHpCur, e.hpCur)
+	}
+	if e.hpTgt != wantHpTgt {
+		t.Errorf("reset 改动了高通的目标系数：%+v → %+v", wantHpTgt, e.hpTgt)
+	}
+	// ④ 系数不能退化成"静音器"（b0=0）—— 这是那个 bug 的直接特征
+	for i := range e.current {
+		if e.current[i].b0 == 0 && e.current[i].b1 == 0 && e.current[i].b2 == 0 {
+			t.Errorf("第 %d 段的当前系数是全零（H(z)=0 = 静音）：%+v", i, e.current[i])
+		}
+	}
+	// ⑤ 历史状态必须真的被清掉（reset 的本职工作）
+	for i := range e.bands {
+		b := &e.bands[i]
+		if b.x1l != 0 || b.x2l != 0 || b.y1l != 0 || b.y2l != 0 ||
+			b.x1r != 0 || b.x2r != 0 || b.y1r != 0 || b.y2r != 0 {
+			t.Errorf("第 %d 段的历史状态没被清空：%+v", i, *b)
+		}
+	}
+	if e.smoothLeft != 0 {
+		t.Errorf("reset 之后 smoothLeft = %d，期望 0", e.smoothLeft)
+	}
+}
+
+// TestChainResetAfterSongSwitchStillAudible 走完整的 Engine.Load 路径，
+// 模拟真实的"切歌"（而不仅仅是 Chain.Reset()）。
+//
+// ★ 前面两条测试直接调 Chain.Reset()，但用户触发的是 Engine.Load()。
+// 如果 Load 里漏调了 Reset —— 或者反过来多调了什么 —— 只有这条能抓到。
+// 它验证的是端到端行为："引擎层面的切歌不会让音效链变成静音器"。
+func TestChainResetAfterSongSwitchStillAudible(t *testing.T) {
+	for _, p := range []EffectPreset{EffectOff, EffectVocal, EffectHall} {
+		t.Run(string(p), func(t *testing.T) {
+			dir := t.TempDir()
+			a := writeToneWAV(t, dir, "a.wav", 440)
+			b := writeToneWAV(t, dir, "b.wav", 660)
+
+			e := New()
+			e.effects.prepare(SampleRate)
+			e.SetEffect(p)
+
+			out := make([]byte, PeriodFrames*FrameSize)
+			rms := func() float64 {
+				for i := range out {
+					out[i] = 0
+				}
+				e.onData(out, nil, PeriodFrames)
+				var sum float64
+				for i := 0; i+1 < len(out); i += 2 {
+					v := float64(int16(binary.LittleEndian.Uint16(out[i:])))
+					sum += v * v
+				}
+				return math.Sqrt(sum / float64(PeriodFrames))
+			}
+			// 等 feeder 把环形缓冲填上（上限 300 个缓冲，足够）
+			settle := func() float64 {
+				var last float64
+				for i := 0; i < 300; i++ {
+					last = rms()
+					if last > 100 {
+						break
+					}
+				}
+				return last
+			}
+
+			if err := e.Load(a, 0, 0, 1.0); err != nil {
+				t.Fatalf("装载第一首失败: %v", err)
+			}
+			e.Play()
+			first := settle()
+			if first < 100 {
+				t.Fatalf("第一首就没声音（RMS=%.1f）—— 测试前提不成立", first)
+			}
+
+			// 切歌
+			if err := e.Load(b, 0, 0, 1.0); err != nil {
+				t.Fatalf("装载第二首失败: %v", err)
+			}
+			e.Play()
+			after := settle()
+
+			e.Close()
+
+			if after < 100 {
+				t.Errorf("切歌后没有声音（RMS=%.1f，第一首是 %.1f）—— "+
+					"这正是「切歌后无声、进度条照走」那个 bug", after, first)
+			}
+		})
+	}
+}
+
+// writeToneWAV 在 dir 下写一个 44 字节标准头的测试 WAV（20000 幅度的正弦）。
+//
+// 复用 silence_test.go 里的 writeWAV 写头（它已经处理了"头长恰好 44 字节"
+// 这个引擎硬依赖），这里只负责生成正弦 PCM。
+// 为什么不直接用 playback_integration_test.go 的 writeTestWAV：
+// 那个函数内部会开声卡做真实播放测试用的目录，而本文件只需要一个文件。
+func writeToneWAV(t *testing.T, dir, name string, freq float64) string {
+	t.Helper()
+	const seconds = 1.0
+	const amp = 20000
+
+	path := filepath.Join(dir, name)
+	frames := int(float64(SampleRate) * seconds)
+	pcm := make([]byte, frames*FrameSize)
+	for i := 0; i < frames; i++ {
+		v := int16(amp * math.Sin(2*math.Pi*freq*float64(i)/float64(SampleRate)))
+		binary.LittleEndian.PutUint16(pcm[i*FrameSize:], uint16(v))
+		binary.LittleEndian.PutUint16(pcm[i*FrameSize+2:], uint16(v))
+	}
+	writeWAV(t, path, pcm)
+	return path
 }
 
 // TestChainAfterPrepareHasNoSilentOutput 验证 prepare 之后链不是"静音"的。

@@ -398,3 +398,83 @@ func TestRealPlaybackReloadSwitchesSong(t *testing.T) {
 		t.Errorf("换歌后时长 = %dms，期望约 2000ms（还是上一首的？）", durMs)
 	}
 }
+
+// TestRealPlaybackSwitchWithEffectStaysAudible 是"切歌后没声音"那个 bug
+// 在**真实声卡**上的端到端回归测试。
+//
+// ★ 为什么在已有 TestRealPlaybackReloadSwitchesSong 之外还要这一条：
+// 那条测试只验证"位置归零 + 时长正确"，也就是**进度条**的行为。
+// 而被报的那个 bug 恰恰是"进度条完全正常、但没有任何声音"——
+// 只断言位置的测试根本抓不到它。
+//
+// 这里补上真正的判据：**频谱能量**。Analyzer 喂的是送进声卡之前的
+// 最终 PCM，所以它有能量就等于"真的在出声"。
+//
+// 覆盖影响面：那个 bug 在**所有档位**下都会发生（Reset 把 EQ 系数清零，
+// 而每个档位的 off 之外都有 EQ 段），所以逐个档位都过一遍。
+func TestRealPlaybackSwitchWithEffectStaysAudible(t *testing.T) {
+	for _, preset := range []EffectPreset{EffectOff, EffectVocal, EffectBass, EffectSurround, EffectLive, EffectHall} {
+		t.Run(string(preset), func(t *testing.T) {
+			e, closeEngine := openEngineOrSkip(t)
+			defer closeEngine()
+
+			dir, err := os.MkdirTemp("", "audioplay-effect-switch")
+			if err != nil {
+				t.Fatalf("建临时目录失败: %v", err)
+			}
+			defer func() { closeEngine(); cleanupDir(dir) }()
+
+			a := filepath.Join(dir, "a.wav")
+			b := filepath.Join(dir, "b.wav")
+			writeTestWAV(t, a, 440, 3.0)
+			writeTestWAV(t, b, 660, 3.0)
+
+			e.SetEffect(preset)
+
+			// energy 取一段时间内频谱的总能量峰值。
+			//
+			// 用"多次采样取最大"而不是单次采样：频谱是 30Hz 的滑动窗口，
+			// 起播初期窗口还没填满会返回 nil，单次采样容易假失败。
+			// 只要**曾经**有过能量，就说明确实在出声。
+			energy := func() float64 {
+				var best float64
+				for i := 0; i < 10; i++ {
+					if bands := e.Spectrum(32); bands != nil {
+						var sum float64
+						for _, v := range bands {
+							sum += v
+						}
+						if sum > best {
+							best = sum
+						}
+					}
+					time.Sleep(60 * time.Millisecond)
+				}
+				return best
+			}
+
+			if err := e.Load(a, 0, 0, 1); err != nil {
+				t.Fatalf("装载 a 失败: %v", err)
+			}
+			e.SetGain(1.0)
+			e.Play()
+			first := energy()
+			if first <= 0 {
+				t.Fatalf("第一首（%s）就没有声音 —— 测试前提不成立", preset)
+			}
+
+			// ★ 切歌 —— 这正是触发 bug 的动作
+			if err := e.Load(b, 0, 0, 1); err != nil {
+				t.Fatalf("装载 b 失败: %v", err)
+			}
+			e.SetGain(1.0)
+			e.Play()
+			after := energy()
+
+			if after <= 0 {
+				t.Errorf("切歌后没有声音（频谱能量 %.4f，切歌前是 %.4f）—— "+
+					"这正是「切歌后无声、进度条照走」的 bug", after, first)
+			}
+		})
+	}
+}
