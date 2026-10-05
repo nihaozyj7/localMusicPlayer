@@ -165,3 +165,40 @@ func TestAILyricsCleanTogglePersists(t *testing.T) {
 		t.Fatal("aiLyricsClean=false 未落盘")
 	}
 }
+
+// TestAIDownloadTagTogglePersists 「下载歌曲时用 AI 整理元数据」开关要落盘。
+//
+// 与上一个开关同一类陷阱（设计约束 #8）：前端 SYNCED_KEYS 里加了键、
+// Go 侧 Config 字段或 applyPatch 白名单漏了一处，就会被静默丢弃。
+//
+// 这个开关漏掉的后果比歌词清洗更严重：它管的是**写回用户文件**。
+// 用户在设置里关掉它，重启后又被打开 —— 下次下载会在他不知情的情况下
+// 改写文件标签，而且写回是不可撤销的。
+func TestAIDownloadTagTogglePersists(t *testing.T) {
+	svc, _ := newCfgFixture(t)
+	if !svc.Get().AIDownloadTag {
+		t.Fatal("AIDownloadTag 默认应为 true（整理在下载结束后后台进行，不占用户等待时间）")
+	}
+	if _, err := svc.Set(map[string]any{"aiDownloadTag": false}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := bootstrap.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Get().AIDownloadTag {
+		t.Fatal("aiDownloadTag=false 未落盘（重启后会自动改写用户的音乐文件）")
+	}
+
+	// 再打开也要落盘（两个方向都测，避免只写死了「false」这一条路径）
+	if _, err := svc.Set(map[string]any{"aiDownloadTag": true}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := bootstrap.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !again.Get().AIDownloadTag {
+		t.Fatal("aiDownloadTag=true 未落盘")
+	}
+}

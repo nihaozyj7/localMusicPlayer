@@ -39,6 +39,29 @@ func RandomID(prefix string) string {
 	return fmt.Sprintf("%s_%s", prefix, hex.EncodeToString(buf))
 }
 
+// SongIDForPath 由文件路径派生歌曲 id。
+//
+// ★ 必须与曲库给本地歌曲算 id 的方式**逐字节一致**
+// （internal/library/library.go#songFromCandidate：`StableID(c.path, "t")`）。
+// 不一致的后果是按 id 索引的附属数据（响度挡位增益）与曲库里的歌对不上号，
+// 用户看到的就是「补偿怎么都不生效」。
+//
+// 这里刻意**不做路径规范化**（不转小写、不换分隔符）：曲库那边直接用
+// filepath.WalkDir 给出的原始路径算 id，任何"更聪明"的规范化都会让两边
+// 对不上。要保一致，最省事的做法就是原样照抄同一套算法。
+//
+// 存在的意义：响度缓存要把「挡位增益」按**歌曲**存起来（而不是按
+// 「路径+大小+修改时间」存）。路径派生 id 对同一首歌是稳定的 —— 文件内容
+// 改动（重新抓轨、换掉同名文件）不会换 id，而 size/modTime 会换。
+// 于是「增益按歌存放、过期与否由测量记录判定」这件事才能成立。
+func SongIDForPath(path string) string {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return ""
+	}
+	return StableID(p, "t")
+}
+
 // AudioExtensions 支持的音频扩展名（小写，不含点）
 var AudioExtensions = []string{
 	"mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma", "ape", "alac", "aiff", "aif", "dsf",

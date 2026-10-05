@@ -69,7 +69,11 @@ import { closeSettings, doRescan, settingsLayerOpen } from "../shell.js";
 import { applyGlassAlpha } from "../theme.js";
 import { createSlider } from "../slider.js";
 // 跳过静音 / 切歌间隔都在后端生效，这里只负责把改动推下去（见 audio.js）
-import { applyPlaybackOptions, effectState } from "../audio.js";
+import { applyPlaybackOptions } from "../audio.js";
+// 音效档位表（选项面板也用它），见 effect-presets.js
+import { EFFECT_PRESETS } from "./effect-presets.js";
+// 歌词字号量程（选项面板也用它），见 ui/lyric-size.js
+import { LYRIC_SIZE_MAX, LYRIC_SIZE_MIN } from "./lyric-size.js";
 
 /* --------------------------------------------------------------------------
    设置分区
@@ -114,51 +118,12 @@ const LOUDNESS_MODES = [
 /* --------------------------------------------------------------------------
    音效档位
    --------------------------------------------------------------------------
-   ★ 这份列表必须与 Go 侧 audioplay.EffectPresets / bootstrap.EffectPresets
-     完全一致（值、顺序）。三处列表靠两侧的测试守住：
-       · internal/bootstrap/config_effect_test.go（比对前两处）
-       · frontend/tests/settings-effect.test.js（比对前端这一处）
-     值写错的表现是"点了没反应"（后端收敛成 off），顺序不同的表现是
-     按钮排列与后端文档不符 —— 都属于很难一眼看出的漂移。
+   档位表已经搬到 effect-presets.js：按钮现在渲染在**播放选项面板**里
+   （底栏「选项」按钮），设置界面不再有音效卡片。这里只做 re-export，
+   让原本从本模块取这份表的测试（frontend/tests/settings-effect.test.js）
+   与调用方继续可用，避免同一份列表出现两个来源。
    -------------------------------------------------------------------------- */
-const EFFECT_PRESETS = [
-  { value: "off", label: "关闭" },
-  { value: "vocal", label: "清澈人声" },
-  { value: "bass", label: "低音增强" },
-  { value: "surround", label: "3D 环绕" },
-  { value: "live", label: "现场感" },
-  { value: "hall", label: "大厅混响" },
-];
-
-/**
- * 每个档位"做了什么"的说明。
- *
- * 写出来是因为这些名字（尤其是"3D 环绕"）在不同播放器里做法差别很大，
- * 用户点之前想知道它到底会做什么。文案与 Go 侧 presetSpecs 的参数对应，
- * 改了参数就该同步改这里 —— 否则说明书会与实现脱节。
- */
-const EFFECT_DESCRIPTIONS = {
-  vocal: {
-    label: "清澈人声",
-    text: "切掉 120Hz 以下的低频、轻削 250Hz 的浑浊感，并抬起 3kHz 的清晰度频段，让人声从伴奏里浮出来。",
-  },
-  bass: {
-    label: "低音增强",
-    text: "切掉扬声器放不出来的超低频（避免白耗功放），再抬起 80~150Hz 的鼓点与贝斯基频，低频更有冲击力而不是更糊。",
-  },
-  surround: {
-    label: "3D 环绕",
-    text: "拉宽立体声、给一侧加少量延迟（Haas 效应）并加入轻微串扰，声场更宽、更有包围感。对单声道老录音也有效。",
-  },
-  live: {
-    label: "现场感",
-    text: "适度的空间感与混响，模拟小型演出场地（爵士酒吧 / livehouse）。",
-  },
-  hall: {
-    label: "大厅混响",
-    text: "较长的混响尾巴、较暗的高频，模拟音乐厅一类的较大空间。",
-  },
-};
+export { EFFECT_PRESETS };
 
 /* --------------------------------------------------------------------------
    小组件
@@ -472,7 +437,7 @@ class MpSettingsLayer extends MpElement {
                 )}
               </div>
               ${this.foldersCard()} ${this.rulesCard()} ${this.themeCard()} ${this.playerCard()}
-              ${this.playbackCard()} ${this.effectCard()} ${this.lyricsCard()} ${this.loudnessCard()}
+              ${this.playbackCard()} ${this.lyricsCard()} ${this.loudnessCard()}
               ${this.onlineCard()} ${this.aiCard()}
               ${this.systemCard()} ${this.aboutCard()} ${this.updateCard()} ${this.techCard()}
               ${this.libsCard()} ${this.licenseCard()} ${this.creditsCard()}
@@ -1326,65 +1291,15 @@ class MpSettingsLayer extends MpElement {
   /* ========================================================================
      音效
      ========================================================================
+     音效卡片已经整体搬到**播放选项面板**（底栏「选项」按钮，见 ui/panels.js
+     的 MpOptionsPanel）：它属于「边听边调」的操作，与播放控件放一起比埋在
+     设置页里更顺手，也让设置页少一张需要解释的卡片。
+
      音效是"后处理"（均衡器 + 空间处理 + 混响，见 Go 侧
      internal/audioplay/effects.go），与「响度均衡」的区别：
-
        · 响度均衡是**校正**（让不同来源的歌一样响），目标是"听不出被处理过"；
        · 音效是**修饰**（改变音色与声场），目标就是"听得出变化"。
-
-     两者都在后端原生播放链路上生效，所以后端不可用时都无法工作 ——
-     卡片里显式提示这一点，而不是让用户点了按钮却听不出区别。
      ======================================================================== */
-  effectCard() {
-    const cfg = state.config;
-    const es = effectState();
-    const preset = cfg.effectPreset || "off";
-    const desc = EFFECT_DESCRIPTIONS[preset] || "";
-
-    return html` <section class="card" id="sec-effect" data-section="player">
-      <div class="card__head">
-        <h2 class="card__title">${icon("headphones")}<span>音效</span></h2>
-        <p class="card__desc">
-          给播放加上音色与声场上的修饰。关掉即回到完全原始的音频（不做任何处理）。
-        </p>
-      </div>
-
-      <div class="setting setting--stack">
-        <div class="setting__label">
-          <span>音效档位</span>
-          <small class="u-fs-xs u-dim">选中即生效，切换时会在约 30ms 内平滑过渡，不会有"啪"的一声</small>
-        </div>
-        <div class="setting__control">
-          <div class="segmented segmented--wrap" data-segment="effectPreset">
-            ${EFFECT_PRESETS.map(
-              (p) =>
-                html`<button
-                  class="segmented__btn"
-                  type="button"
-                  data-value=${p.value}
-                  aria-pressed=${String(p.value === preset)}
-                >
-                  ${p.label}
-                </button>`
-            )}
-          </div>
-        </div>
-      </div>
-
-      ${desc
-        ? html`<div class="setting setting--stack">
-            <div class="setting__hint"><b>${desc.label}</b>：${desc.text}</div>
-          </div>`
-        : nothing}
-      ${es.backend
-        ? nothing
-        : html`<div class="setting setting--stack">
-            <div class="setting__hint u-warning">
-              后端原生音频不可用，音效当前不会生效（声音由浏览器内核直接输出）。
-            </div>
-          </div>`}
-    </section>`;
-  }
 
   /* ========================================================================
      在线与缓存
@@ -1546,6 +1461,15 @@ class MpSettingsLayer extends MpElement {
             "aiLyricsClean",
             state.config.aiLyricsClean !== false,
             "自动匹配歌词时使用 AI 清洗元数据"
+          ),
+        })}
+        ${settingRow({
+          label: "下载歌曲时用 AI 整理元数据",
+          hint: "下载完成（直接下载或从试听缓存搬运）后，在后台把文件名与现有信息交给 AI，还原出真实的标题 / 歌手 / 专辑并写回歌曲文件。整理在下载结束后才发生，不会拖慢下载；写回会改写文件标签且不可撤销，只在 AI 给出非空字段时才写。支持 m4a / flac，其它格式只更新曲库",
+          control: switchControl(
+            "aiDownloadTag",
+            state.config.aiDownloadTag !== false,
+            "下载歌曲时用 AI 整理元数据"
           ),
         })}
         <div class="setting__hint">
@@ -2266,12 +2190,15 @@ class MpSettingsLayer extends MpElement {
     const isAlpha = key === "glassAlpha";
     const isCarousel = key === "coverCarouselInterval";
     const isTrackGap = key === "trackGapSeconds";
+    // 歌词字号的量程与播放选项面板共用一份常量（见 ui/lyric-size.js）：
+    // 两处不一致会让用户以为「设置里拖到头了，面板里还能更大」是故障。
+    const isLyricSize = key === "lyricsFontSize";
     const min = isTrackGap
       ? 0
       : isCarousel
         ? 2
-        : key === "lyricsFontSize"
-          ? 12
+        : isLyricSize
+          ? LYRIC_SIZE_MIN
           : isBlur
             ? 0
             : isAlpha
@@ -2281,8 +2208,8 @@ class MpSettingsLayer extends MpElement {
       ? 10
       : isCarousel
         ? 60
-        : key === "lyricsFontSize"
-          ? 26
+        : isLyricSize
+          ? LYRIC_SIZE_MAX
           : isBlur
             ? 48
             : isAlpha
@@ -2347,6 +2274,6 @@ export const _internals = {
   // 音效档位表导出给测试用：它必须与 Go 侧 audioplay.EffectPresets
   // 逐项一致（值 + 顺序），而那种漂移在界面上表现为"某个按钮点了没反应"，
   // 很难靠肉眼发现。见 frontend/tests/settings-effect.test.js。
+  // 档位表本体在 effect-presets.js（选项面板也用它），这里转发一份。
   EFFECT_PRESETS,
-  EFFECT_DESCRIPTIONS,
 };

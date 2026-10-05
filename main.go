@@ -66,6 +66,8 @@ type appState struct {
 	// updateSvc 负责「检测 GitHub Release → 下载 → 自替换安装」
 	// （见 services_update.go）
 	updateSvc *UpdateService
+	// aiTagSvc 负责「下载完成后用 AI 提取元数据并回写文件」（见 ai_tags.go）
+	aiTagSvc *AITagService
 }
 
 var state *appState
@@ -211,6 +213,45 @@ func main() {
 	state.windowSvc = NewWindowService(store, themeMgr)
 	state.appSvc = NewAppService()
 	state.loudnessSvc = NewLoudnessService(loudMgr, lib)
+	// 响度服务要能解析在线试听曲目，否则它们完全不受响度均衡约束
+	// （曲库里查不到 ⇒ Get/Measure 直接以「歌曲不存在」失败）。
+	// 复用 media 的虚拟表：它登记的 Path/Size/ModTime 正是测量需要的三要素。
+	state.loudnessSvc.setVirtualResolver(mediaSrv.VirtualSong)
+
+	// ★ 把「转码时顺手算响度」接起来（这是响度测量提速的关键一环）。
+	//
+	// 后端播放必然要把整首歌转成 PCM WAV（见 mediaSrv.PlayableFile），
+	// 那份 PCM 是整首歌唯一一次完整流过我们代码的机会。响度测量挂在这条
+	// 既有的数据流上之后，就不再需要「另起一个 ffmpeg 把同一个文件解码
+	// 第二遍」—— 实测每首歌省 1 秒以上，且完全不额外占一个核。
+	//
+	// 只对**本地曲库**曲目写缓存：在线试听曲目走虚拟表，它们的
+	// Size/ModTime 与曲库记录口径不同，硬写进去只会留下一条很快过期的记录；
+	// 它们仍然走原有的按需测量路径。
+	mediaSrv.SetLoudnessSink(func(song bootstrap.Song, scan *ffmpeg.LoudnessScanner) {
+		if song.ID == "" {
+			return
+		}
+		// 在线试听曲目跳过：它们的 Size/ModTime 来自虚拟表，与曲库记录口径
+		// 不同，硬写进去只会留下一条很快就过期的记录。它们仍走按需测量路径。
+		// 判据复用 onlineBVID —— 与播放链路识别在线曲目是同一个函数。
+		if _, isOnline := onlineBVID(song.ID); isOnline {
+			return
+		}
+		res := scan.Result()
+		// 拿曲库里的权威记录覆盖 Size/ModTime：转码用的 Song 可能来自
+		// 虚拟表或者一次旧的快照，而缓存有效性判定认的就是这两个值。
+		if authoritative, ok := songs(song.ID); ok {
+			song = authoritative
+		}
+		state.loudnessSvc.StoreMeasurement(song, loudness.Measurement{
+			Integrated: res.Integrated,
+			TruePeak:   res.TruePeak,
+			LRA:        res.LRA,
+			Threshold:  res.Threshold,
+		})
+	})
+
 	state.downloadSvc = NewDownloadService(store, onlineClient)
 	// 下载与试听**共用同一份缓存**：用户在搜索结果里试听过的歌，
 	// 点下载时可以直接从缓存搬到下载目录，不必重新走一遍网络。
@@ -385,6 +426,15 @@ func main() {
 				log.Printf("[download] 新文件入库失败: %v", err)
 			}
 		}()
+	})
+	// 下载完成后（无论网络下载还是从试听缓存搬运）用 AI 整理元数据并回写文件。
+	// 由 DownloadService 在后台 goroutine 里调，所以这里直接同步执行即可 ——
+	// 它内部会串行化并自己处理「开关关掉 / AI 未配置 / 格式不支持」的跳过。
+	state.aiTagSvc = NewAITagService(store)
+	state.aiTagSvc.setAI(aiSvc)
+	state.aiTagSvc.setLibrary(state.lib)
+	state.downloadSvc.setOnDownloaded(func(path string) {
+		state.aiTagSvc.Process(path)
 	})
 	// 封面服务需要应用句柄来弹「选择本地图片」的文件对话框
 	state.coverSvc.app = app

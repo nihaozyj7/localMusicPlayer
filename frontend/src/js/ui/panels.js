@@ -1,7 +1,7 @@
 /* ==========================================================================
    ui/panels.js — 底栏之上的四个浮层
      · <mp-queue-panel>     播放列表面板
-     · <mp-options-panel>   播放选项（字号 / 桌面歌词 / 透明度 / 模糊）
+     · <mp-options-panel>   播放选项（歌词字号 / 桌面歌词 / 音效 / 背景不透明度）
      · <mp-sleep-panel>     定时停止
      · <mp-download-panel>  下载任务
    --------------------------------------------------------------------------
@@ -17,18 +17,20 @@ import { coverSrc } from "./track-table.js";
 import { toast } from "./overlays.js";
 import { animationMs } from "../runtime-tokens.js";
 import { createSlider } from "../slider.js";
-import { applyGlassAlpha, resolvedGlassAlpha, resolvedGlassBlur } from "../theme.js";
+import { applyGlassAlpha, resolvedGlassAlpha } from "../theme.js";
 import { setRuntimeToken } from "../runtime-tokens.js";
+import { applyEffectPreset } from "../audio.js";
 import { commit, coverVersion, isLiked, playSong, removeFromQueue, reorderQueue, songById, state } from "../store.js";
 import { coverOf } from "../utils.js";
 import { markDragEnd, shouldIgnoreRowClick } from "../tracks.js";
 import { clearQueue } from "../store.js";
+import { DESKTOP_MODE, applyDesktopMode, currentDesktopMode } from "../desktop-mode.js";
+import { EFFECT_PRESETS } from "./effect-presets.js";
+import { LYRIC_SIZE_MAX, LYRIC_SIZE_MIN } from "./lyric-size.js";
 import {
   applySleepMinutes,
   clearSleepTimer,
   setSleepAfterSong,
-  toggleDesktopLyrics,
-  toggleDesktopWallpaper,
   toggleOptionsPanel,
   toggleQueuePanel,
   toggleSleepPanel,
@@ -42,6 +44,54 @@ import {
 } from "../downloads.js";
 import { locateCurrentQueueItem } from "../tracks.js";
 import { mirrorPlayerSurface } from "../playerhost.js";
+
+/* --------------------------------------------------------------------------
+   桌面歌词三选一 [关闭 | 悬浮 | 背景]
+   --------------------------------------------------------------------------
+   取值与 Go 侧 desktopModeOff / desktopModeLyrics / desktopModeWallpaper
+   一一对应（见 desktop-mode.js 的 DESKTOP_MODE）。
+   -------------------------------------------------------------------------- */
+const DESKTOP_MODE_OPTIONS = [
+  {
+    id: "opt-desktop-off",
+    value: DESKTOP_MODE.off,
+    label: "关闭",
+    tip: "不在桌面上显示歌词",
+  },
+  {
+    id: "opt-desktop-lyrics",
+    value: DESKTOP_MODE.lyrics,
+    label: "悬浮",
+    tip: "在桌面上显示一行置顶歌词（独立透明窗口，可拖动）",
+  },
+  {
+    id: "opt-desktop-wallpaper",
+    value: DESKTOP_MODE.wallpaper,
+    label: "背景",
+    tip: "把播放界面的背景铺满桌面、垫在桌面图标之下，歌词跟着画在上面（仅 Windows）",
+  },
+];
+
+/**
+ * 切到指定桌面模式并提示结果。
+ *
+ * 为什么等结果再提示、而不是点了就先说「已开启」：这两个模式都要真实创建
+ * 窗口，而桌面背景歌词还依赖系统的桌面窗口结构 —— 它确实会失败。
+ * 逻辑与 playerbar.js#toggleDesktopModeWithToast 相同，但那边绑死了
+ * 「开关取反」的语义，三选一需要直接指定目标模式。
+ */
+async function switchDesktopMode(mode) {
+  const res = await applyDesktopMode(mode);
+  commit();
+  const label = DESKTOP_MODE_OPTIONS.find((o) => o.value === mode)?.label || "";
+  if (res.ok !== false) {
+    toast(mode === DESKTOP_MODE.off ? "已关闭桌面歌词" : `桌面歌词：${label}`, { duration: 1400 });
+    return res;
+  }
+  toast(`打不开：${res.reason || res.error || "未知原因"}`, { tone: "warning", duration: 3200 });
+  if (res.restored) toast("已保留原来的桌面歌词设置", { duration: 1800 });
+  return res;
+}
 
 /* ==========================================================================
    基类：浮层开合（hidden + data-state 两段式过渡）
@@ -326,14 +376,27 @@ define("mp-queue-panel", MpQueuePanel);
 
 /* ==========================================================================
    ② 播放选项面板
+   ==========================================================================
+   面板内容刻意保持**简洁**：只有「边听边调」的几个控制，不放任何说明文字。
+
+   现在有四项：
+     · 歌词字号       —— 滑条（14~72）
+     · 桌面歌词       —— 三选一：[关闭 | 悬浮 | 背景]
+     · 音效           —— 档位按钮（这一组是从设置页搬过来的）
+     · 背景不透明度   —— 滑条
+
+   「桌面歌词 / 桌面背景歌词」合成一组三选一，是因为它们在**后端本来就是
+   互斥的**（见 desktop-mode.js：两个各占一个真实窗口，同时开会叠成一团）。
+   原来表示成两个独立开关，用户完全看不出这层约束，只能靠点了之后
+   「另一个怎么自己灭了」去猜。三段式单选把约束直接画在界面上。
    ========================================================================== */
 class MpOptionsPanel extends MpPanel {
   static deps = (s) => [
     s.optionsOpen,
     s.config.lyricsFontSize,
     s.config.glassAlpha,
-    s.config.glassBlur,
-    s.config.glassBlurCustom,
+    s.config.glassAlphaCustom,
+    s.config.effectPreset,
     s.config.showDesktopLyrics,
     s.config.showDesktopWallpaper,
   ];
@@ -354,8 +417,8 @@ class MpOptionsPanel extends MpPanel {
     this.bindDismiss("#btn-options");
     this._sliders = {
       size: createSlider(this.querySelector("#opt-lyric-size"), {
-        min: 12,
-        max: 26,
+        min: LYRIC_SIZE_MIN,
+        max: LYRIC_SIZE_MAX,
         step: 1,
         value: state.config.lyricsFontSize,
         format: (v) => `${Math.round(v)}px`,
@@ -380,20 +443,6 @@ class MpOptionsPanel extends MpPanel {
         },
         onCommit: () => commit(),
       }),
-      blur: createSlider(this.querySelector("#opt-blur"), {
-        min: 0,
-        max: 48,
-        step: 1,
-        value: state.config.glassBlurCustom ? state.config.glassBlur : resolvedGlassBlur(),
-        format: (v) => `${Math.round(v)}px`,
-        onChange: (v) => {
-          state.config.glassBlur = v;
-          state.config.glassBlurCustom = true;
-          setRuntimeToken("--glass-blur", `${v}px`);
-          this.requestUpdate();
-        },
-        onCommit: () => commit(),
-      }),
     };
   }
 
@@ -405,7 +454,7 @@ class MpOptionsPanel extends MpPanel {
   render() {
     const size = Math.round(state.config.lyricsFontSize);
     const alpha = Math.round(state.config.glassAlphaCustom ? state.config.glassAlpha : resolvedGlassAlpha());
-    const blur = Math.round(state.config.glassBlurCustom ? state.config.glassBlur : resolvedGlassBlur());
+    const mode = currentDesktopMode();
     return html`
       <section
         class="options-panel"
@@ -433,7 +482,7 @@ class MpOptionsPanel extends MpPanel {
           <div class="option-row">
             <span class="option-row__label">歌词字号</span>
             <div class="rangeslider">
-              <div class="slider" id="opt-lyric-size" role="slider" tabindex="0" aria-label="调节">
+              <div class="slider" id="opt-lyric-size" role="slider" tabindex="0" aria-label="歌词字号">
                 <div class="slider__rail"><div class="slider__fill"></div></div>
                 <div class="slider__thumb"></div>
                 <div class="slider__bubble"></div>
@@ -443,30 +492,52 @@ class MpOptionsPanel extends MpPanel {
           </div>
           <div class="option-row">
             <span class="option-row__label">桌面歌词</span>
-            <button
-              class="switch"
-              id="opt-desktop-lyrics"
-              type="button"
-              role="switch"
-              aria-checked=${String(Boolean(state.config.showDesktopLyrics))}
-              @click=${() => toggleDesktopLyrics()}
-            ></button>
+            <div class="segmented" role="radiogroup" aria-label="桌面歌词">
+              ${DESKTOP_MODE_OPTIONS.map(
+                (opt) =>
+                  html`<button
+                    class="segmented__btn"
+                    type="button"
+                    role="radio"
+                    id=${opt.id}
+                    data-mode=${opt.value}
+                    aria-checked=${String(opt.value === mode)}
+                    ?disabled=${
+                      opt.value === DESKTOP_MODE.wallpaper && state.desktopWallpaperSupport?.supported === false
+                    }
+                    data-tip=${
+                      opt.value === DESKTOP_MODE.wallpaper && state.desktopWallpaperSupport?.supported === false
+                        ? state.desktopWallpaperSupport.reason
+                        : opt.tip
+                    }
+                    @click=${() => this.pickDesktopMode(opt)}
+                  >
+                    ${opt.label}
+                  </button>`
+              )}
+            </div>
           </div>
-          <div class="option-row">
-            <span class="option-row__label">桌面背景歌词</span>
-            <button
-              class="switch"
-              id="opt-desktop-wallpaper"
-              type="button"
-              role="switch"
-              aria-checked=${String(Boolean(state.config.showDesktopWallpaper))}
-              @click=${() => toggleDesktopWallpaper()}
-            ></button>
+          <div class="option-row option-row--stack">
+            <span class="option-row__label">音效</span>
+            <div class="segmented segmented--wrap" data-segment="effectPreset">
+              ${EFFECT_PRESETS.map(
+                (p) =>
+                  html`<button
+                    class="segmented__btn"
+                    type="button"
+                    data-value=${p.value}
+                    aria-pressed=${String(p.value === (state.config.effectPreset || "off"))}
+                    @click=${() => this.pickEffect(p.value)}
+                  >
+                    ${p.label}
+                  </button>`
+              )}
+            </div>
           </div>
           <div class="option-row">
             <span class="option-row__label">背景不透明度</span>
             <div class="rangeslider">
-              <div class="slider" id="opt-alpha" role="slider" tabindex="0" aria-label="调节">
+              <div class="slider" id="opt-alpha" role="slider" tabindex="0" aria-label="背景不透明度">
                 <div class="slider__rail"><div class="slider__fill"></div></div>
                 <div class="slider__thumb"></div>
                 <div class="slider__bubble"></div>
@@ -474,20 +545,36 @@ class MpOptionsPanel extends MpPanel {
               <span class="rangeslider__value" id="opt-alpha-val">${alpha}%</span>
             </div>
           </div>
-          <div class="option-row">
-            <span class="option-row__label">模糊程度</span>
-            <div class="rangeslider">
-              <div class="slider" id="opt-blur" role="slider" tabindex="0" aria-label="调节">
-                <div class="slider__rail"><div class="slider__fill"></div></div>
-                <div class="slider__thumb"></div>
-                <div class="slider__bubble"></div>
-              </div>
-              <span class="rangeslider__value" id="opt-blur-val">${blur}px</span>
-            </div>
-          </div>
         </div>
       </section>
     `;
+  }
+
+  /**
+   * 选一个桌面模式。
+   *
+   * 已在目标模式上时**不做事**：applyDesktopMode 内部虽然也会判「没变化」，
+   * 但让它走一趟再弹一条「已开启桌面歌词」的提示，会让「点了没反应的东西」
+   * 看起来像出了故障。这里提前挡掉，点当前项等于什么都没发生。
+   */
+  pickDesktopMode(opt) {
+    if (opt.value === currentDesktopMode()) return;
+    switchDesktopMode(opt.value);
+  }
+
+  /**
+   * 切音效档位。
+   *
+   * 与设置界面原来的行为一致：立即生效（后端在下一个音频缓冲内切换，
+   * 自带 30ms 交叉淡化），且**不等待** promise —— 切档位必须手感即时。
+   */
+  pickEffect(value) {
+    if (value === (state.config.effectPreset || "off")) return;
+    state.config.effectPreset = value;
+    // 音效是跨歌的偏好，后端在换歌时会把它重新推下去（见 audio.js），
+    // 这里只需要推这一次 + 让按钮的选中态跟上。
+    applyEffectPreset();
+    commit();
   }
 }
 define("mp-options-panel", MpOptionsPanel);

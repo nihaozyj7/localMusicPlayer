@@ -324,6 +324,14 @@ type Config struct {
 	// 而歌词自动匹配发生在每次切歌的路径上 —— 所以必须给用户一个开关，
 	// 让他在「命中率」与「等待时间」之间自己选。
 	AILyricsClean bool `json:"aiLyricsClean"`
+	// AIDownloadTag 下载歌曲时，是否让 AI 提取元数据并写回文件。
+	//
+	// 与 AILyricsClean 的区别：那个开关管的是「匹配歌词前要不要等 AI」，
+	// 发生在**用户盯着界面等**的路径上；这个管的是「下载完成后要不要顺手把
+	// 文件名里的信息还原成真正的标签」，发生在下载**已经结束之后**的后台，
+	// 用户不必等它 —— 所以它可以默认开启，但仍然必须能被关掉：
+	// 写标签会改写用户的音乐文件，这是不可撤销的操作。
+	AIDownloadTag bool `json:"aiDownloadTag"`
 
 	Folders     []Folder     `json:"folders"`
 	FilterRules []FilterRule `json:"filterRules"`
@@ -521,6 +529,10 @@ func DefaultConfig() *Config {
 		// 默认开启：配置了 AI 的用户，自动匹配歌词时会先清洗元数据，
 		// 与加入这个开关之前的行为一致（关掉即回到「只用本地整形」）。
 		AILyricsClean: true,
+		// 默认开启：下载完成后在后台用 AI 整理元数据并写回文件。
+		// 它不占用用户任何等待时间（下载已经结束），而下载来的文件通常
+		// 标题就是 B 站视频标题、歌手/专辑全空 —— 不整理等于全程脏数据。
+		AIDownloadTag: true,
 	}
 }
 

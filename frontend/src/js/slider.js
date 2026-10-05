@@ -24,6 +24,19 @@ export function createSlider(root, opts = {}) {
   const thumbEl = root.querySelector(".slider__thumb");
   const bubbleEl = root.querySelector(".slider__bubble");
 
+  // ★ aria-valuemin / aria-valuemax 必须由**这里**写，而且写的是**真实取值范围**。
+  //
+  // 之前只有 paint() 在写 aria-valuenow，而它写的是**百分比**（0~100）：
+  // 对音量恰好等于取值范围所以看起来没问题，对进度（0..duration）、
+  // 歌词字号（14..72）、定时分钟数（0..300）全都是错的 —— 屏幕阅读器读到的
+  // 数值没有意义（见 docs/05-BUG审查报告.md 的同一条）。
+  //
+  // 量程是**构造时**就定死的（滑条不支持运行期改量程），所以放在这里写一次，
+  // 不必每帧重写。aria-valuenow 的百分比问题属于另一个更深的语义问题
+  // （要改成真实值就得同时改所有调用方的读法），不在本次改动范围内。
+  root.setAttribute("aria-valuemin", String(min));
+  root.setAttribute("aria-valuemax", String(max));
+
   function paint() {
     const pct = max === min ? 0 : ((value - min) / (max - min)) * 100;
     // 填充用 transform: scaleX()（可合成），不用 width（布局属性 + 会重启过渡，

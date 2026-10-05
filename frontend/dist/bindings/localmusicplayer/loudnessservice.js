@@ -13,6 +13,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails
 
 /**
  * AlbumGains 返回按专辑聚合的补偿增益（「整张专辑统一」模式）
+ * 
+ * 与 GainMap 同理，只对曲库内歌曲分组：在线试听曲目不属于任何本地专辑，
+ * 在 album 模式下它们保持不补偿（「查不到就不抬升也不压低」，与
+ * frontend/src/js/audio.js#gainDBFor 的既有安全语义一致）。
  * @param {number} targetLUFS
  * @returns {$CancellablePromise<{ [_ in string]?: number } | null>}
  */
@@ -41,6 +45,11 @@ export function Clear() {
  * 
  * 只包含当前标准下**有效**的缓存；没测过的歌不在其中，
  * 前端播到那首时会走 Measure 按需补算。
+ * 
+ * 注意这里刻意**只遍历曲库**：在线试听曲目没有稳定的「专辑归属」，
+ * 把它们塞进批量表既会让这张随曲库变化的映射多出易失条目，也会让
+ * 「按专辑统一」失去意义。在线曲目走 Get/Measure 的按需路径（track 模式），
+ * 测出来的记录同样进缓存、下次试听直接命中。
  * @param {number} targetLUFS
  * @returns {$CancellablePromise<{ [_ in string]?: number } | null>}
  */
@@ -50,6 +59,9 @@ export function GainMap(targetLUFS) {
 
 /**
  * Get 取一首歌的测量结果与补偿增益（当前标准下未测量则 measured=false）
+ * 
+ * 在线试听曲目也走这里（经 songByID 的虚拟表兜底）：它们的音频在本地
+ * 缓存里，测量条件与本地曲目完全一样。
  * @param {string} songID
  * @param {number} targetLUFS
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
@@ -71,6 +83,11 @@ export function InvalidateTarget(targetLUFS) {
 /**
  * Measure 测量单首歌 —— 这是常规路径：用户播到哪首就测哪首，不预先全库扫描。
  * 前端在开始播放时调用，测完立刻套用补偿。
+ * 
+ * 在线试听曲目同样支持：只要它的音频已经下载到本地缓存（前端播放在线曲目
+ * 时后端会先 EnsureCached），就能像本地文件一样测量。测出的记录按
+ * Path/Size/ModTime 进同一个缓存 —— 这几个量对在线曲目是稳定的，
+ * 所以第二次试听同一首歌会直接命中缓存，不会重复跑 ffmpeg。
  * @param {string} songID
  * @param {number} targetLUFS
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}

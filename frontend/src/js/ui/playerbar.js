@@ -38,8 +38,6 @@ import { coverVersion } from "../store.js";
 import {
   MODE_META,
   checkSleepTimer,
-  toggleDesktopLyrics,
-  toggleDesktopWallpaper,
   toggleOptionsPanel,
   toggleQueuePanel,
   toggleSleepPanel,
@@ -55,6 +53,11 @@ class MpPlayerbar extends MpElement {
   // 并让 Lit 对全部 part 做一次 diff，而实际变化的只有那一个数字。
   // 这个文件开头就写过「迁移后 Lit 只更新变化的 part」，position 是唯一
   // 违反该设计的字段。移出之后进度刷新只剩「写一个文本节点 + 一次滑块样式」。
+  //
+  // ★ 这里也**没有** showDesktopLyrics / showDesktopWallpaper /
+  // desktopWallpaperSupport / autoStartDesktopWallpaper：那两个桌面模式的入口
+  // 已经从底栏搬进播放选项面板（见 ui/panels.js），底栏不再有任何一处
+  // 依赖它们 —— 留着只会让「切模式」白白重建一遍整条底栏模板。
   static deps = (s) => [
     s.currentId,
     s.playing,
@@ -68,11 +71,6 @@ class MpPlayerbar extends MpElement {
     s.optionsOpen,
     s.sleepOpen,
     s.sleepTimer,
-    s.config.showDesktopLyrics,
-    s.config.showDesktopWallpaper,
-    // 提示语里会说明「重启后是否会自动出现」，所以它也参与依赖
-    s.config.autoStartDesktopWallpaper,
-    s.desktopWallpaperSupport,
     s.lyricsOpen,
     coverVersion(),
   ];
@@ -371,36 +369,6 @@ class MpPlayerbar extends MpElement {
               @click=${() => toggleLyricsPanel()}
             >
               ${icon("lyric-match")}
-            </button>
-            <button
-              class="mode-btn"
-              id="btn-desktop-lyrics"
-              type="button"
-              aria-pressed=${String(Boolean(state.config.showDesktopLyrics))}
-              data-tip="桌面歌词"
-              aria-label="桌面歌词"
-              @click=${() => toggleDesktopLyrics()}
-            >
-              ${icon("desktop-lyrics")}
-            </button>
-            <button
-              class="mode-btn"
-              id="btn-desktop-wallpaper"
-              type="button"
-              aria-pressed=${String(Boolean(state.config.showDesktopWallpaper))}
-              ?disabled=${state.desktopWallpaperSupport?.supported === false}
-              aria-disabled=${state.desktopWallpaperSupport?.supported === false ? "true" : nothing}
-              data-tip=${
-                state.desktopWallpaperSupport?.supported === false
-                  ? state.desktopWallpaperSupport.reason
-                  : state.config.autoStartDesktopWallpaper === false
-                    ? "桌面背景歌词（未开启「启动时自动启用」，重启后不会自动出现）"
-                    : "桌面背景歌词"
-              }
-              aria-label="桌面背景歌词"
-              @click=${() => toggleDesktopWallpaper()}
-            >
-              ${icon("desktop-wallpaper")}
             </button>
             <button
               class="mode-btn"

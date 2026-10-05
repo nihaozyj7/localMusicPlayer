@@ -761,6 +761,16 @@ async function loadSong(song) {
     // 记下"已经推下去的值"，让随后的 applyGainForSong 不再重复推一遍
     lastAppliedGain = backendGain();
 
+    // ★ 按需测量。以前这里**没有**这一步，于是走引擎链路的曲目（也就是
+    // 现在的常态路径，含全部在线试听）只可能在别处被顺手测过 —— 结果是
+    // 「响度均衡对在线试听不生效」。
+    //
+    // 为什么不 await：测量要跑一次 ffmpeg（几百毫秒到数秒），await 会把
+    // 起播一起拖住。补偿在测出来之后由 setGain 即时套上（它会走
+    // applyGainForSong 推送），所以「先以 0 dB 起播、几百毫秒后落到正确
+    // 电平」是这里刻意接受的取舍 —— 换来的是起播不被测量阻塞。
+    requestLoudness(song.id);
+
     if (state.playing) {
       await backend.playerPlay();
     }
@@ -1374,7 +1384,10 @@ async function syncLegacy() {
     node.load();
     ensureLegacyGraph(node);
     applyVolumeLegacy();
-    if (!song.online) requestLoudness(song.id);
+    // 在线曲目同样要请求响度补偿 —— 它以前在这里被 `if (!song.online)`
+    // 排除掉，而那只是「后端查不到在线曲目」的症状回避：真正的修法是让
+    // 后端能解析到它（见 services.go#songByID 的虚拟表兜底）。
+    requestLoudness(song.id);
     if (state.playing && node.paused) {
       node.play().catch((err) => {
         const name = err?.name || "";

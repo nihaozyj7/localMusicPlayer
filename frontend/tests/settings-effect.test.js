@@ -1,4 +1,4 @@
-﻿/* ==========================================================================
+/* ==========================================================================
    settings-effect.test.js — 音效档位表在前后端之间的一致性
    --------------------------------------------------------------------------
    音效档位这个名字存在**三处**：
@@ -149,22 +149,25 @@ test("音效档位：默认档位是 off 且排在第一个", () => {
   assert.equal(_internals.EFFECT_PRESETS[0].value, "off");
 });
 
-test("音效档位：除 off 外每个档位都有说明文案", () => {
-  // 说明文案是"用户点之前能知道会发生什么"的唯一途径，
-  // 尤其是"3D 环绕"这种各家做法差别很大的名字。
-  for (const p of _internals.EFFECT_PRESETS) {
-    if (p.value === "off") continue;
-    const desc = _internals.EFFECT_DESCRIPTIONS[p.value];
-    assert.ok(desc, `档位 ${p.value} 没有说明文案`);
-    assert.ok(desc.label && desc.text, `档位 ${p.value} 的说明不完整`);
-  }
-});
+test("音效档位：说明文案已经随卡片一起移除，界面上不再渲染", () => {
+  // 音效卡片从设置页搬进了播放选项面板，而面板刻意保持简洁 ——
+  // 「这一档做了什么」的长文案整体删掉了（见 settings-view.js 的 effectCard
+  // 注释与 ui/panels.js 的面板说明）。
+  //
+  // 这条测试是为了防止文案以「残留」的形式回来：settings-view 里既不该有
+  // EFFECT_DESCRIPTIONS，也不该有任何地方再引用它。留着的话会出现
+  // 「代码里维护着一份没人看的说明」，下次改档位参数时也没人知道要同步它。
+  assert.equal(
+    _internals.EFFECT_DESCRIPTIONS,
+    undefined,
+    "EFFECT_DESCRIPTIONS 已删除：选项面板不再展示档位说明，别把它加回来"
+  );
 
-test("音效档位：没有多余的说明文案（防止留着已删除档位的残留）", () => {
-  const values = new Set(_internals.EFFECT_PRESETS.map((p) => p.value));
-  for (const key of Object.keys(_internals.EFFECT_DESCRIPTIONS)) {
-    assert.ok(values.has(key), `说明文案里的 ${key} 不是一个合法档位（档位被删了但文案没删？）`);
-  }
+  const src = readFileSync(join(repoRoot, "frontend/src/js/ui/settings-view.js"), "utf8");
+  assert.ok(
+    !src.includes("EFFECT_DESCRIPTIONS"),
+    "settings-view.js 里仍然引用了 EFFECT_DESCRIPTIONS（说明文案的残留？）"
+  );
 });
 
 test("音效档位：store 的默认配置与档位表一致", async () => {

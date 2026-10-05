@@ -1050,6 +1050,24 @@ type LoudnessService struct {
 	lib *library.Manager
 	app *application.App
 
+	// virtual 按 id 取「不在曲库里、但磁盘上有真实文件」的歌曲（在线试听）。
+	//
+	// ★ 为什么响度服务也需要它（真实缺口）：
+	//
+	//	在线试听曲目的 id 形如 bili:BVxxx，而 lib.SongByID 只认扫描出来的
+	//	本地曲目 —— 于是 Get/Measure 一律以「歌曲不存在」失败，在线试听
+	//	**完全不受响度均衡约束**。
+	//
+	//	修这条链路时前端曾经用 `if (!song.online)` 把在线曲目挡在门外，
+	//	那只让「查不到」变得不再报错，代价是功能彻底缺失。正解是让这类
+	//	曲目也能被解析到：音频其实已经落在磁盘上（见
+	//	media.Server.RegisterVirtual），响度测量只要有路径就能跑。
+	//
+	// 注入的是读取函数而不是 media.Server 本身：响度服务不该依赖 HTTP
+	// 服务层，测试里也能用一个假函数喂虚拟曲目。为 nil 时安全降级为
+	// 「只认曲库」（即修复前的行为）。
+	virtual func(id string) (bootstrap.Song, bool)
+
 	mu        sync.Mutex
 	cancel    context.CancelFunc
 	measuring bool
@@ -1061,6 +1079,39 @@ type LoudnessService struct {
 // NewLoudnessService 构造服务
 func NewLoudnessService(mgr *loudness.Manager, lib *library.Manager) *LoudnessService {
 	return &LoudnessService{mgr: mgr, lib: lib, lastTarget: defaultTarget}
+}
+
+// setVirtualResolver 注入「在线试听曲目」的来源（main.go 装配时调用）。
+// 不注入时行为与修复前一致：只认曲库。
+func (s *LoudnessService) setVirtualResolver(fn func(string) (bootstrap.Song, bool)) {
+	s.mu.Lock()
+	s.virtual = fn
+	s.mu.Unlock()
+}
+
+// songByID 解析一首歌：先查曲库，再查在线虚拟表。
+//
+// 顺序与 media.Server.lookupSong 保持一致（曲库优先）。两者不可能撞 id：
+// 本地 id 是路径派生，在线 id 带 bili: 前缀。
+//
+// 查不到时返回的 error 文案保持原样，前端依赖它区分「真的没有这首歌」
+// 与「测量失败」。
+func (s *LoudnessService) songByID(songID string) (bootstrap.Song, error) {
+	if song, ok := s.lib.SongByID(songID); ok {
+		return song, nil
+	}
+	// 在线曲目走这里。注意虚拟表只在音频**已经落到本地缓存**之后才有条目
+	// （EnsureCached 下载完才登记），所以「查不到」是正常时序而非错误 ——
+	// 前端稍后会重试一次，届时条目已就位。
+	s.mu.Lock()
+	lookup := s.virtual
+	s.mu.Unlock()
+	if lookup != nil {
+		if song, ok := lookup(songID); ok {
+			return song, nil
+		}
+	}
+	return bootstrap.Song{}, fmt.Errorf("歌曲不存在: %s", songID)
 }
 
 // defaultTarget 前端没给目标值时的兜底（与前端 DEFAULT_CONFIG 保持一致）
@@ -1091,82 +1142,128 @@ func (s *LoudnessService) State() map[string]any {
 	t := s.mgr.Tools()
 	songs := s.lib.Songs()
 	target := s.currentTarget()
-	// 注意：「已测量」必须按当前标准统计 —— 用户换了补偿标准后
-	// 旧缓存全部失效，这里要立刻反映出来，否则界面会撒谎。
-	valid := s.mgr.CountValid(songs, target)
+	// ★ 「已测量」不再按标准统计：测量与挡位无关（见 internal/loudness 的
+	// 包注释）。用户在四个挡位之间切换都不会让这个数字变化 —— 因为它本来
+	// 描述的就是「有多少首歌已经量过响度」。
+	measured := s.mgr.CountValid(songs)
 	return map[string]any{
 		"available": s.mgr.Available(),
 		"source":    t.Source,
 		"describe":  t.Describe(),
 		"path":      t.FFmpeg,
-		"measured":  valid,
+		"measured":  measured,
 		"cached":    s.mgr.Count(),
-		"missing":   len(songs) - valid,
+		"missing":   len(songs) - measured,
 		"total":     len(songs),
 		"target":    target,
 		"algo":      loudness.AlgoVersion,
 		"measuring": s.isMeasuring(),
 		"cachePath": s.mgr.CachePath(),
 		"onDemand":  true,
+		// concurrency 是实际生效的测量并发（默认 2，刻意压小以免风扇狂转）
+		"concurrency": s.mgr.Concurrency(),
+		// gains 是已缓存的挡位增益条数（一万首 × 四挡 = 四万），
+		// 用来回答「换挡位到底要不要重算」——正常情况下它只增不减。
+		"gains": s.mgr.GainCount(),
 	}
 }
 
-// Get 取一首歌的测量结果与补偿增益（当前标准下未测量则 measured=false）
+// Get 取一首歌的测量结果与补偿增益。
+//
+// ★ 换挡位是零成本的：测量结果与挡位无关，所以这里要么直接命中已缓存的
+// 该挡位增益，要么用已有的测量结果现场算一次（纯算术），**绝不会**因为
+// 「换了个挡位」就重新测量。
+//
+// 在线试听曲目也走这里（经 songByID 的虚拟表兜底）：它们的音频在本地
+// 缓存里，测量条件与本地曲目完全一样。
 func (s *LoudnessService) Get(songID string, targetLUFS float64) (map[string]any, error) {
-	song, ok := s.lib.SongByID(songID)
-	if !ok {
-		return nil, fmt.Errorf("歌曲不存在: %s", songID)
-	}
-	target := s.normTarget(targetLUFS)
-
-	item, ok := s.mgr.Get(song, target)
-	if !ok {
-		return map[string]any{"measured": false, "target": target}, nil
-	}
-	return map[string]any{
-		"measured":   true,
-		"integrated": item.Integrated,
-		"truePeak":   item.TruePeak,
-		"lra":        item.LRA,
-		"gainDB":     loudness.GainDB(item, target),
-		"target":     target,
-	}, nil
-}
-
-// Measure 测量单首歌 —— 这是常规路径：用户播到哪首就测哪首，不预先全库扫描。
-// 前端在开始播放时调用，测完立刻套用补偿。
-func (s *LoudnessService) Measure(songID string, targetLUFS float64) (map[string]any, error) {
-	song, ok := s.lib.SongByID(songID)
-	if !ok {
-		return nil, fmt.Errorf("歌曲不存在: %s", songID)
-	}
-	target := s.normTarget(targetLUFS)
-	if !s.mgr.Available() {
-		return nil, fmt.Errorf("ffmpeg 不可用，无法测量响度")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-
-	item, err := s.mgr.Measure(ctx, song, target)
+	song, err := s.songByID(songID)
 	if err != nil {
 		return nil, err
 	}
-	// 单曲测量也要落盘，下次播放直接命中缓存
+	target := s.normTarget(targetLUFS)
+
+	gain, ok := s.mgr.GainFor(song, target)
+	if !ok {
+		return map[string]any{"measured": false, "target": target}, nil
+	}
+	item, _ := s.mgr.Get(song)
 	_ = s.mgr.Save()
 	return map[string]any{
 		"measured":   true,
 		"integrated": item.Integrated,
 		"truePeak":   item.TruePeak,
 		"lra":        item.LRA,
-		"gainDB":     loudness.GainDB(item, target),
+		"gainDB":     gain,
 		"target":     target,
 	}, nil
 }
 
-// InvalidateTarget 让不等于给定标准的缓存全部失效。
-// 设置界面改了目标响度/算法后调用：清掉旧补偿，之后播放时按需重算。
+// Measure 测量单首歌 —— 这是常规路径：用户播到哪首就测哪首，不预先全库扫描。
+// 前端在开始播放时调用，测完立刻套用补偿。
+//
+// 在线试听曲目同样支持：只要它的音频已经下载到本地缓存（前端播放在线曲目
+// 时后端会先 EnsureCached），就能像本地文件一样测量。测出的记录按
+// Path/Size/ModTime 进同一个缓存 —— 这几个量对在线曲目是稳定的，
+// 所以第二次试听同一首歌会直接命中缓存，不会重复跑 ffmpeg。
+//
+// ★ 走的是**高优先级**队列（PriorityInterrupt）：如果后台正在批量预热整库，
+// 这首歌会插到队首 —— 这正是「优先处理正在播放的那首歌」。
+func (s *LoudnessService) Measure(songID string, targetLUFS float64) (map[string]any, error) {
+	song, err := s.songByID(songID)
+	if err != nil {
+		return nil, err
+	}
+	target := s.normTarget(targetLUFS)
+
+	// 已经测过（含转码时顺手算出来的）就直接返回，不进队列、不起 ffmpeg。
+	if g, ok := s.mgr.GainFor(song, target); ok {
+		item, _ := s.mgr.Get(song)
+		_ = s.mgr.Save()
+		return measureResult(item, g, target), nil
+	}
+	if !s.mgr.Available() {
+		return nil, fmt.Errorf("ffmpeg 不可用，无法测量响度")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	item, err := s.mgr.Submit(ctx, song, loudness.PriorityInterrupt)
+	if err != nil {
+		return nil, err
+	}
+	gain, _ := s.mgr.GainFor(song, target)
+	// 单曲测量也要落盘，下次播放直接命中缓存
+	_ = s.mgr.Save()
+	return measureResult(item, gain, target), nil
+}
+
+// measureResult 组装单曲测量的返回结构（字段名是前端契约，不要改）
+func measureResult(item loudness.Measurement, gain, target float64) map[string]any {
+	return map[string]any{
+		"measured":   true,
+		"integrated": item.Integrated,
+		"truePeak":   item.TruePeak,
+		"lra":        item.LRA,
+		"gainDB":     gain,
+		"target":     target,
+	}
+}
+
+// InvalidateTarget 兼容旧接口。
+//
+// ★ 它现在**什么都不删**（返回 dropped=0）。
+//
+// 历史上这个方法是「把 target 不等于当前值的记录全删掉」，代价是用户每换
+// 一次挡位就丢掉整库已算好的结果 —— 四个挡位来回切就是反复重算同一批歌，
+// 那正是用户报的「从较响改回默认时，较响算好的补偿丢了」。
+//
+// 现在测量与挡位解耦：换挡位只意味着增益按新目标现算（纯算术，几纳秒），
+// 没有任何缓存需要失效。保留这个方法只是为了不动前端绑定。
 func (s *LoudnessService) InvalidateTarget(targetLUFS float64) map[string]any {
 	target := s.normTarget(targetLUFS)
+	// 仍然做一次自校验清理（只丢"目标值与自述不符"的坏条目），
+	// 但正常情况下这里永远是 0 条。
 	dropped := s.mgr.InvalidateTarget(target)
 	if dropped > 0 {
 		_ = s.mgr.Save()
@@ -1180,8 +1277,11 @@ func (s *LoudnessService) InvalidateTarget(targetLUFS float64) map[string]any {
 
 // MeasureAll 后台批量预热整个曲库（可选，正常使用不需要）。
 // 异步执行，进度通过 loudness:progress 事件推送。
+//
+// ★ 它走**低优先级**队列：一旦用户点开某首歌（走 Measure 的高优先级通道），
+// 预热会让出槽位，先测用户正在听的那首。并发默认压到 2，避免把 CPU 铺满。
 func (s *LoudnessService) MeasureAll(targetLUFS float64) map[string]any {
-	target := s.normTarget(targetLUFS)
+	s.normTarget(targetLUFS)
 	if !s.mgr.Available() {
 		return map[string]any{"started": false, "reason": "ffmpeg 不可用"}
 	}
@@ -1205,7 +1305,7 @@ func (s *LoudnessService) MeasureAll(targetLUFS float64) map[string]any {
 			_ = s.mgr.Save()
 		}()
 
-		done, failed, err := s.mgr.MeasureAll(ctx, songs, target, func(p loudness.Progress) {
+		done, failed, err := s.mgr.MeasureAll(ctx, songs, func(p loudness.Progress) {
 			s.emit("loudness:progress", map[string]any{
 				"done": p.Done, "total": p.Total,
 				"failed": p.Failed, "current": p.Current, "finished": p.Finished,
@@ -1240,8 +1340,17 @@ func (s *LoudnessService) Clear() error {
 
 // GainMap 返回「songId → 补偿增益 dB」映射，供前端批量套用。
 //
-// 只包含当前标准下**有效**的缓存；没测过的歌不在其中，
-// 前端播到那首时会走 Measure 按需补算。
+// ★ 换挡位零成本的落点：这张表由**已有的测量结果**现算出来，
+// 不需要为另一个挡位重新测量任何一首歌。用户从「较响」切到「默认」时，
+// 整个曲库的补偿在这一个调用里就全部就位（每首几纳秒的算术），
+// 而不是排一个几十分钟的队。
+//
+// 没测过的歌不在其中，前端播到那首时会走 Measure 按需补算。
+//
+// 注意这里刻意**只遍历曲库**：在线试听曲目没有稳定的「专辑归属」，
+// 把它们塞进批量表既会让这张随曲库变化的映射多出易失条目，也会让
+// 「按专辑统一」失去意义。在线曲目走 Get/Measure 的按需路径（track 模式），
+// 测出来的记录同样进缓存、下次试听直接命中。
 func (s *LoudnessService) GainMap(targetLUFS float64) map[string]float64 {
 	target := s.normTarget(targetLUFS)
 	out := map[string]float64{}
@@ -1250,10 +1359,16 @@ func (s *LoudnessService) GainMap(targetLUFS float64) map[string]float64 {
 			out[song.ID] = g
 		}
 	}
+	// 把这一挡位新算出的增益落盘，下次启动直接命中（每个挡位只写一次）
+	_ = s.mgr.Save()
 	return out
 }
 
 // AlbumGains 返回按专辑聚合的补偿增益（「整张专辑统一」模式）
+//
+// 与 GainMap 同理，只对曲库内歌曲分组：在线试听曲目不属于任何本地专辑，
+// 在 album 模式下它们保持不补偿（「查不到就不抬升也不压低」，与
+// frontend/src/js/audio.js#gainDBFor 的既有安全语义一致）。
 func (s *LoudnessService) AlbumGains(targetLUFS float64) map[string]float64 {
 	target := s.normTarget(targetLUFS)
 	// 按专辑分组
@@ -1268,7 +1383,7 @@ func (s *LoudnessService) AlbumGains(targetLUFS float64) map[string]float64 {
 
 	out := map[string]float64{}
 	for name, songs := range groups {
-		s.mgr.UpdateAlbum(name, songs, target)
+		s.mgr.UpdateAlbum(name, songs)
 		if g, ok := s.mgr.AlbumGainDB(name, target); ok {
 			for _, song := range songs {
 				out[song.ID] = g
@@ -1277,6 +1392,27 @@ func (s *LoudnessService) AlbumGains(targetLUFS float64) map[string]float64 {
 	}
 	_ = s.mgr.Save()
 	return out
+}
+
+// StoreMeasurement 把「转码时顺手算出来」的测量结果记进缓存。
+//
+// 由 main 装配层挂在 media.Server 的扫描钩子上（见 SetLoudnessSink）。
+// 它是响度测量**唯一不需要跑 ffmpeg 的入口**：转码播放本来就要解码整首歌，
+// 顺手把响度算出来即可，不再需要第二遍解码。
+//
+// 这里同时把当前挡位的增益算好记下（GainFor 会做），这样播放到这首歌时
+// 补偿已经就位 —— 用户感受到的是「响度均衡不需要等待」。
+func (s *LoudnessService) StoreMeasurement(song bootstrap.Song, res loudness.Measurement) {
+	if !res.Measured && res.Integrated == 0 && res.TruePeak == 0 {
+		// 空结果（解码失败/全静音）：不写入，免得留下一条"测过但没有数据"
+		// 的记录挡住后续的正常测量。
+		return
+	}
+	res.Measured = true
+	target := s.currentTarget()
+	s.mgr.StoreAndGain(song, res, target)
+	// 落盘：这一步很便宜（只有变化时才写），但能让结论跨进程复用。
+	_ = s.mgr.Save()
 }
 
 // RefreshTools 重新探测 ffmpeg（设置界面点「重新检测」时用）
@@ -2180,6 +2316,9 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 		case "aiLyricsClean":
 			// 自动匹配歌词时是否先用 AI 清洗元数据（AI 慢，用户可关）
 			c.AILyricsClean = asBool(raw, c.AILyricsClean)
+		case "aiDownloadTag":
+			// 下载完成后是否用 AI 提取元数据并写回文件（会改写用户文件，可关）
+			c.AIDownloadTag = asBool(raw, c.AIDownloadTag)
 		}
 	}
 }

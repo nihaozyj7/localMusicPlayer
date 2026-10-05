@@ -14,6 +14,9 @@ import (
 // fatal error: concurrent map iteration and map write（不可 recover），
 // 不是可以被 -race 温和报告的普通数据竞争。
 //
+// ★ 现在多了一张 gains（两级 map），Save 同样必须锁内深拷贝它 ——
+// 这个用例把它一起覆盖了：写者会同时写 items / gains / albums。
+//
 // 这个用例必须与 -race 一起跑才有意义：
 //
 //	go test -race ./internal/loudness/
@@ -31,12 +34,18 @@ func TestSaveConcurrentWithWrites(t *testing.T) {
 			for i := 0; i < rounds; i++ {
 				path := filepath.Join("album", fmt.Sprintf("song-%d-%d.mp3", w, i))
 				key := keyFor(path, int64(i), int64(w))
+				id := fmt.Sprintf("t_%d_%d", w, i)
+				item := Measurement{
+					Path: path, Size: int64(i), ModTime: int64(w),
+					Algo: AlgoVersion, Integrated: -14.5, Measured: true,
+				}
 
 				m.mu.Lock()
-				m.items[key] = Measurement{
-					Path: path, Size: int64(i), ModTime: int64(w),
-					Target: -14, Integrated: -14.5, Measured: true,
-				}
+				m.items[key] = item
+				// 每首歌写两个挡位的增益：Save 必须把两级 map 都深拷贝，
+				// 不然 json.Marshal 会在第二层 map 上撞见并发写入。
+				m.putGainLocked(id, -14, -0.5)
+				m.putGainLocked(id, -16, -1.5)
 				m.albums["album"] = Album{Integrated: -14, Count: i + 1, Target: -14}
 				m.dirty = true
 				m.mu.Unlock()

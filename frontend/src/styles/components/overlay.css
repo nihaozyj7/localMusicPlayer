@@ -315,6 +315,14 @@
   gap: var(--sp-3);
 }
 
+/* 竖排的选项行：控件要在标签下方占满整行。
+   音效有 6 档、换行后要占两行，横向排会把标签挤成竖着的一列字。 */
+.option-row--stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-2);
+}
+
 .option-row__label {
   flex: none;
   width: 88px;
@@ -322,9 +330,33 @@
   color: var(--text-2);
 }
 
+/* 竖排行里的标签不再需要固定宽度（它自己占满一行） */
+.option-row--stack .option-row__label {
+  width: auto;
+}
+
 .options-panel .rangeslider {
   flex: 1;
   width: auto;
+}
+
+/* 三选一与音效档位在面板里要占满剩余宽度（面板本身很窄，inline-flex 会因为
+   内容宽度不足而留出空白）。 */
+.options-panel .segmented {
+  flex: 1;
+  min-width: 0;
+}
+
+.options-panel .segmented__btn {
+  flex: 1 1 0;
+  padding: 0 var(--sp-2);
+  min-width: 0;
+}
+
+/* 档位按钮的文字不能换行：换行会让两行按钮高度不齐（"清澈人声" vs "关闭"）。 */
+.options-panel .segmented--wrap .segmented__btn {
+  flex: 1 1 auto;
+  min-width: 4.5em;
 }
 
 /* --------------------------------------------------------------------------

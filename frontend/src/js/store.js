@@ -88,6 +88,9 @@ const DEFAULT_CONFIG = {
   aiModelId: "",
   // 自动匹配歌词时先用 AI 清洗元数据（关掉后只做本地整形，不再等 8~18 秒的 AI）
   aiLyricsClean: true,
+  // 下载歌曲完成后，在后台用 AI 提取元数据并写回文件标签。
+  // 与 aiLyricsClean 不同：它不占用户等待时间（下载已经结束），所以默认开启。
+  aiDownloadTag: true,
   cacheDir: "%APPDATA%\\LocalMusicPlayer\\cache",
   scanConcurrency: 4,
 
@@ -2220,6 +2223,7 @@ const SYNCED_KEYS = [
   "aiVendor",
   "aiModelId",
   "aiLyricsClean",
+  "aiDownloadTag",
   "cacheDir",
   "loudnessMode",
   "loudnessTarget",

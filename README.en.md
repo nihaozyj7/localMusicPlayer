@@ -62,6 +62,10 @@ library, cover art and lyric cache all live on your own disk.
   the decoded PCM and is cached per file, so replaying a track costs nothing;
 - **Track gap**: a pause between automatically consecutive tracks (1.5 s by default, 0–10 s). It is timed on
   the audio thread, so a busy UI never makes it drift;
+- **Sound effects**: clear vocals / bass boost / 3D surround / live / hall reverb, switched from the player
+  options panel with a ~30 ms crossfade ("off" means completely untouched audio);
+- **Player options panel** (the bar's "Options" button): lyrics font size, desktop-lyrics mode, sound
+  effect preset and background opacity;
 - Drag-and-drop queue reordering, playlists, likes, a sleep timer and configurable keyboard shortcuts;
 - Frameless window with native materials (Mica / Acrylic), rounded corners and minimise-to-tray.
 
@@ -80,8 +84,9 @@ library, cover art and lyric cache all live on your own disk.
 - **Lyrics workbench**: online matching, whole-song nudging (±10s), and manual timing (tap space while playing);
 - **Desktop lyrics**: a separate transparent, always-on-top window that only becomes a "normal window"
   with a style dropdown when the mouse enters; its position is remembered;
-- **Wallpaper lyrics**: a full-screen layer that sits under the desktop icons (mutually exclusive with
-  desktop lyrics).
+- **Wallpaper lyrics**: a full-screen layer that sits under the desktop icons.
+  The two are mutually exclusive, so they share one three-way switch in the player-bar
+  **Options** panel: **desktop lyrics [off | floating | wallpaper]**.
 
 ### Interface
 
@@ -103,7 +108,10 @@ library, cover art and lyric cache all live on your own disk.
   in your queue decode and play exactly like a local one. Hitting download then simply moves that cached
   file into your download folder instead of fetching it twice;
 - **AI metadata cleanup** (optional): point it at any OpenAI-compatible endpoint and it will recover the
-  real title / artist from messy file names before online matching runs.
+  real title / artist from messy file names before online matching runs;
+- **AI metadata tagging after download** (optional, on by default): once a download finishes (either a
+  direct download or a move out of the preview cache) it asks the AI for the real title / artist / album
+  and writes them back into the file. m4a and flac are supported; other formats only update the library.
 
 ---
 

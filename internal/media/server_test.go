@@ -216,7 +216,17 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// fakeFFmpegHelper 模拟 wails 被调用的 ffmpeg：往最后一个参数（输出文件）写 WAV
+// fakeFFmpegHelper 模拟 wails 被调用的 ffmpeg：把假 PCM 写到输出目标。
+//
+// 输出目标有两种形态，两种都要支持：
+//
+//	· 最后一个参数是**文件路径**（TranscodeToWAV 的老路径）
+//	· 最后一个参数是 "-" （TranscodeToWAVWithScan：写 stdout，
+//	  让调用方在落盘的同时顺手做响度/静音扫描）
+//
+// 后者是新路径：转码产出的 PCM 是整首歌唯一一次完整流过我们代码的机会，
+// 响度测量挂在它上面就不必再单独解码一遍。测试替身必须跟上，
+// 否则「转码顺手测量」这条路在单测里是盲区。
 func fakeFFmpegHelper() {
 	size := 844
 	if v := os.Getenv(helperSizeEn); v != "" {
@@ -239,6 +249,14 @@ func fakeFFmpegHelper() {
 	buf := make([]byte, size)
 	if size >= 4 {
 		copy(buf, "RIFF")
+	}
+
+	if out == "-" {
+		// stdout 形态：写到标准输出
+		if _, err := os.Stdout.Write(buf); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 	if err := os.WriteFile(out, buf, 0o644); err != nil {
 		os.Exit(1)

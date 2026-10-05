@@ -52,6 +52,14 @@ type DownloadService struct {
 	seq int
 	// onFileAdded 下载成功后的回调（把新文件纳入曲库）。由主程序注入。
 	onFileAdded func(path string)
+
+	// onDownloaded 下载**真正完成之后**的回调（文件已经在下载目录里）。
+	//
+	// 与 onFileAdded 的分工：那个负责「入库」，是功能正确性的必要条件；
+	// 这个是「下载后 AI 整理元数据」，属于可选增强（见 ai_tags.go）。
+	// 两条下载路径 —— 网络下载与缓存搬运 —— 都调它，用户看到的结果
+	// 不该因为「文件是怎么来的」而不同。
+	onDownloaded func(path string)
 }
 
 // 下载任务状态。
@@ -122,6 +130,29 @@ func (s *DownloadService) setOnFileAdded(fn func(path string)) {
 	s.mu.Lock()
 	s.onFileAdded = fn
 	s.mu.Unlock()
+}
+
+// setOnDownloaded 注册「下载完成后」回调（主程序用它做下载后的 AI 元数据整理）。
+//
+// 与 onFileAdded 分成两个回调，是因为它们对时序的要求不同：入库要在
+// 「用户能看到列表变化」之前发生，而 AI 整理要在入库之后（它需要曲库里的
+// 现有元数据当输入），且可以慢慢跑。合成一个回调会让调用方被迫在里面
+// 又开一层 goroutine，时序关系反而更不清晰。
+func (s *DownloadService) setOnDownloaded(fn func(path string)) {
+	s.mu.Lock()
+	s.onDownloaded = fn
+	s.mu.Unlock()
+}
+
+// notifyDownloaded 触发「下载完成」回调。**调用方负责在后台 goroutine 里调它**
+// —— 回调链上带着 8~18 秒的 AI 调用，绝不能占住下载流程。
+func (s *DownloadService) notifyDownloaded(path string) {
+	s.mu.Lock()
+	fn := s.onDownloaded
+	s.mu.Unlock()
+	if fn != nil {
+		fn(path)
+	}
 }
 
 func (s *DownloadService) setEmitter(fn func(string, any)) {
@@ -519,6 +550,16 @@ func (s *DownloadService) run(taskID, bvid, title string, durationMS int64, dir 
 	if s.onFileAdded != nil {
 		s.onFileAdded(target)
 	}
+
+	// 入库之后再交给 AI 整理元数据（下载后整理的增强路径，可以失败）。
+	//
+	// 顺序不能反：AI 整理要读曲库里这首歌的现有标题/歌手当输入，也要在
+	// 写回标签后触发一次增量重扫 —— 让它排在入库后面，两条路径（下载 / 搬运）
+	// 的时序才一致。
+	//
+	// ★ 必须在 goroutine 里调：回调链上有一次 8~18 秒的 AI 请求，
+	//   直接调会让下面那句 log 都等十几秒，任务收尾也跟着变慢。
+	go s.notifyDownloaded(target)
 }
 
 // tryMoveFromCache 尝试把试听缓存里的文件直接搬到下载目录。
@@ -608,6 +649,9 @@ func (s *DownloadService) tryMoveFromCache(taskID, bvid, title, dir string) bool
 	if s.onFileAdded != nil {
 		s.onFileAdded(target)
 	}
+	// 与网络下载一致：入库之后再交给 AI 整理元数据。
+	// 两条路径的差别只在于「文件从哪来」，用户看到的结果必须一样。
+	go s.notifyDownloaded(target)
 	return true
 }
 

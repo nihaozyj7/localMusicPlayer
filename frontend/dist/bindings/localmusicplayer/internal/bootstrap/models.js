@@ -63,6 +63,7 @@
  * @property {string} aiModelId
  * @property {string} aiVendor - AIVendor 模型类型（厂商）。思考模式的开关字段各家不同 （reasoning_effort / thinking / enable_thinking / reasoning …）， 必须知道调的是哪家才能发出正确的请求体；auto = 按接口地址与模型名猜。 取值见 ai_vendor.go 的 aiVendorCatalog。
  * @property {boolean} aiLyricsClean - AILyricsClean 自动匹配歌词时，是否先用 AI 清洗元数据。 AI 清洗能明显提高脏文件名的歌词命中率，但一次调用要 8~18 秒， 而歌词自动匹配发生在每次切歌的路径上 —— 所以必须给用户一个开关， 让他在「命中率」与「等待时间」之间自己选。
+ * @property {boolean} aiDownloadTag - AIDownloadTag 下载歌曲时，是否让 AI 提取元数据并写回文件。 与 AILyricsClean 的区别：那个开关管的是「匹配歌词前要不要等 AI」， 发生在**用户盯着界面等**的路径上；这个管的是「下载完成后要不要顺手把 文件名里的信息还原成真正的标签」，发生在下载**已经结束之后**的后台， 用户不必等它 —— 所以它可以默认开启，但仍然必须能被关掉： 写标签会改写用户的音乐文件，这是不可撤销的操作。
  * @property {Folder[] | null} folders
  * @property {FilterRule[] | null} filterRules
  * @property {string[] | null} likedIds

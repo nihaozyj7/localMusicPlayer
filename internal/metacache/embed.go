@@ -81,6 +81,47 @@ func EmbedMeta(path, mime string, cover []byte, lyrics string) (EmbedResult, err
 	return EmbedCovers(path, covers, lyrics)
 }
 
+// TextTags 要写回歌曲文件的文本标签（标题 / 歌手 / 专辑）。
+//
+// 为什么要单独一个类型而不是三个 string 参数：它现在的唯一来源是
+// AI 元数据整理（见 ai_tags.go），空字段的语义是「这一项不确定，别动文件里
+// 原来的值」—— 三个裸 string 很容易被调用方随手传空而误删用户标签。
+type TextTags struct {
+	Title  string
+	Artist string
+	Album  string
+}
+
+// Empty 三个字段都是空（没有任何要写的标签）时返回 true。
+func (t TextTags) Empty() bool {
+	return strings.TrimSpace(t.Title) == "" && strings.TrimSpace(t.Artist) == "" && strings.TrimSpace(t.Album) == ""
+}
+
+// EmbedTextTags 只把标题 / 歌手 / 专辑写回歌曲文件自身的标签，不动封面与歌词。
+//
+// 与 EmbedCovers 共用同一套写入实现：每写一次都要读一遍整个文件、重拼一遍
+// moov / FLAC metadata，分两次写既慢又会让中间的半成品短暂可见。
+func EmbedTextTags(path string, tags TextTags) (EmbedResult, error) {
+	return EmbedTags(path, nil, "", tags)
+}
+
+// EmbedTags 把封面、歌词与文本标签一次性写进音频文件（任意项都可以为空）。
+//
+// 这是本包写回能力的总入口：EmbedCovers / EmbedMeta / EmbedTextTags 都是它的
+// 薄封装，保证「一次操作只读写一遍文件」这条性质在新增字段时也不会被破坏。
+//
+// 空字段的语义一律是「这次没有要写的内容」，**不是**「把文件里原来的值删掉」：
+// 只有真的要写的项才会进 drop 集合（见 embedMetaMP4 / embedMetaFLAC）。
+func EmbedTags(path string, covers []CoverImage, lyrics string, tags TextTags) (res EmbedResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			res = EmbedResult{Message: fmt.Sprintf("解析音频文件结构时出错，已放弃写入以免损坏文件: %v", r)}
+			err = fmt.Errorf("写入元数据失败（文件结构异常）: %v", r)
+		}
+	}()
+	return embedTags(path, covers, lyrics, tags)
+}
+
 // EmbedCovers 把多张封面 + 歌词一次写进音频文件。
 //
 // 顺序就是写进文件的顺序：第一张 = 封面正面（FLAC 的 PICTURE 类型 3、
@@ -88,25 +129,19 @@ func EmbedMeta(path, mime string, cover []byte, lyrics string) (EmbedResult, err
 // 写之前先把文件里旧的 covr / PICTURE 全部丢掉，再按这里的顺序写回去，
 // 否则用户换几次封面，文件里就会攒下一串再也删不掉的旧图。
 //
-// ★ 这个函数外面套了 recover：它处理的输入是**用户磁盘上的任意音频文件**，
-// 而文件里那些 box / block 长度字段完全不可信。历史上这里出过
+// 它不动标题 / 歌手 / 专辑（TextTags 传空），见 EmbedTags。
+//
+// ★ 实际的写入（含 recover）在 EmbedTags 里：它处理的输入是**用户磁盘上的
+// 任意音频文件**，而文件里那些 box / block 长度字段完全不可信。历史上这里出过
 // 「畸形 udta/meta 长度 → slice 越界 panic」，而调用链
 // （services_cover.go 的写回封面）没有 recover，于是坏标签能让整个应用崩溃。
 // 现在两层防护：boxSizeAt 做全量边界校验（正面拦），recover 兜底（背面拦）。
 // 任何解析异常都退化成「返回错误、不写文件」，绝不崩进程、绝不写坏文件。
 func EmbedCovers(path string, covers []CoverImage, lyrics string) (res EmbedResult, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			// 不带堆栈地转成错误：这里的目标是「不崩 + 不写文件」，
-			// 排查细节由上层日志与 .bak 现场负责。
-			res = EmbedResult{Message: fmt.Sprintf("解析音频文件结构时出错，已放弃写入以免损坏文件: %v", r)}
-			err = fmt.Errorf("写入元数据失败（文件结构异常）: %v", r)
-		}
-	}()
-	return embedCovers(path, covers, lyrics)
+	return EmbedTags(path, covers, lyrics, TextTags{})
 }
 
-func embedCovers(path string, covers []CoverImage, lyrics string) (EmbedResult, error) {
+func embedTags(path string, covers []CoverImage, lyrics string, tags TextTags) (EmbedResult, error) {
 	if strings.TrimSpace(path) == "" {
 		return EmbedResult{}, errors.New("文件路径为空")
 	}
@@ -121,7 +156,7 @@ func embedCovers(path string, covers []CoverImage, lyrics string) (EmbedResult, 
 		images = append(images, c)
 	}
 
-	if len(images) == 0 && lyrics == "" {
+	if len(images) == 0 && lyrics == "" && tags.Empty() {
 		return EmbedResult{}, errors.New("没有要写入的内容")
 	}
 	// 注意用 TrimPrefix（去掉开头的点）而不是 TrimSuffix：
@@ -130,12 +165,12 @@ func embedCovers(path string, covers []CoverImage, lyrics string) (EmbedResult, 
 	ext = strings.TrimSpace(ext)
 
 	if ext == "m4a" || ext == "mp4" || ext == "m4b" || ext == "alac" || ext == "aac" {
-		res, err := embedMetaMP4(path, images, lyrics)
+		res, err := embedMetaMP4(path, images, lyrics, tags)
 		res.Format = "m4a"
 		return res, err
 	}
 	if ext == "flac" {
-		res, err := embedMetaFLAC(path, images, lyrics)
+		res, err := embedMetaFLAC(path, images, lyrics, tags)
 		res.Format = "flac"
 		return res, err
 	}
@@ -178,7 +213,7 @@ type mp4Node struct {
 	start   int
 }
 
-func embedMetaMP4(path string, covers []CoverImage, lyrics string) (EmbedResult, error) {
+func embedMetaMP4(path string, covers []CoverImage, lyrics string, tags TextTags) (EmbedResult, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return EmbedResult{}, fmt.Errorf("读取文件失败: %w", err)
@@ -188,7 +223,7 @@ func embedMetaMP4(path string, covers []CoverImage, lyrics string) (EmbedResult,
 		return EmbedResult{}, errors.New("不是有效的 MP4/M4A：找不到 moov")
 	}
 
-	// covr 与 ©lyr 是同级的 ilst 条目，拼在一起（顺序无所谓）。
+	// covr / ©lyr / ©nam… 是同级的 ilst 条目，拼在一起（顺序无所谓）。
 	// 多张封面 = 多个 covr box，每个里面各有一个 data box。
 	var atoms []byte
 	for _, c := range covers {
@@ -200,7 +235,8 @@ func embedMetaMP4(path string, covers []CoverImage, lyrics string) (EmbedResult,
 	if lyrics != "" {
 		atoms = append(atoms, box("\xa9lyr", buildTextDataBox([]byte(lyrics)))...)
 	}
-	note := metaNote(covers, lyrics)
+	atoms = append(atoms, buildMP4TextAtoms(tags)...)
+	note := metaNote(covers, lyrics, tags)
 
 	// moov 的载荷：从 moovStart+8 到 moovEnd
 	moovPayload := raw[moovStart+8 : moovEnd]
@@ -267,6 +303,7 @@ func embedMetaMP4(path string, covers []CoverImage, lyrics string) (EmbedResult,
 	// ilst 已存在：只为「这次真的要写」的条目做替换，剩下的原样保留。
 	// 关键细节：lyrics 为空时**不能**把已有的 ©lyr 摘掉 —— 空字符串的含义是
 	// 「这次没有歌词要写」，而不是「把文件里的歌词删掉」。
+	// 文本标签同理（见 TextTags.Empty）。
 	//
 	// covr 这里只 drop 一次：drop 是「整个 ilst 里所有 covr 条目都丢掉」，
 	// 而新的多张 covr 是在过滤完成后一次性 append 上去的，所以不会被误删。
@@ -276,6 +313,9 @@ func embedMetaMP4(path string, covers []CoverImage, lyrics string) (EmbedResult,
 	}
 	if lyrics != "" {
 		drop["\xa9lyr"] = true
+	}
+	for _, key := range mp4TextAtomKeys(tags) {
+		drop[key] = true
 	}
 	ilstEnd := ilstEndOf(raw, ilst, metaEnd)
 	filtered := filterIlst(raw, ilst, ilstEnd, drop)
@@ -344,11 +384,53 @@ func buildTextDataBox(text []byte) []byte {
 	return append(out, text...)
 }
 
+/* --------------------------------------------------------------------------
+   MP4 文本标签（标题 / 歌手 / 专辑）
+   --------------------------------------------------------------------------
+   iTunes 的 ilst 用 © 开头的四字节原子名承载文本字段：
+     ©nam = 标题、©ART = 歌手、©alb = 专辑
+   注意 © 是 U+00A9，在 UTF-8 里是 0xC2 0xA9 两个字节，但这里必须按
+   **Latin-1 单字节 0xA9** 写 —— MP4 的 box 类型是 4 字节定长，写成两个字节
+   会让整个 ilst 的 box 边界全部错位（解析器读到的是错位字节，表现为
+   标题乱码或标签整块丢失）。所以字面量写作 "\xa9nam" 而不是 "©nam"。
+   -------------------------------------------------------------------------- */
+
+// mp4TextAtomKeys 返回这次真的要写的 ilst 键（供 filterIlst 精确剔除旧值）。
+func mp4TextAtomKeys(tags TextTags) []string {
+	var keys []string
+	if strings.TrimSpace(tags.Title) != "" {
+		keys = append(keys, "\xa9nam")
+	}
+	if strings.TrimSpace(tags.Artist) != "" {
+		keys = append(keys, "\xa9ART")
+	}
+	if strings.TrimSpace(tags.Album) != "" {
+		keys = append(keys, "\xa9alb")
+	}
+	return keys
+}
+
+// buildMP4TextAtoms 按「有值才写」的顺序拼出文本标签的 ilst 条目。
+func buildMP4TextAtoms(tags TextTags) []byte {
+	var out []byte
+	append1 := func(key, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		out = append(out, box(key, buildTextDataBox([]byte(value)))...)
+	}
+	append1("\xa9nam", tags.Title)
+	append1("\xa9ART", tags.Artist)
+	append1("\xa9alb", tags.Album)
+	return out
+}
+
 // metaNote 拼一条人话的结果说明（设置界面会直接显示这句）。
 //
 // 覆盖多张时会带上张数：只报总字节数的话，用户看到「已写入封面（1234567 字节）」
 // 完全不知道到底写进去几张。
-func metaNote(covers []CoverImage, lyrics string) string {
+func metaNote(covers []CoverImage, lyrics string, tags TextTags) string {
 	count, total := 0, 0
 	for _, c := range covers {
 		if len(c.Data) == 0 {
@@ -368,16 +450,27 @@ func metaNote(covers []CoverImage, lyrics string) string {
 	if lyrics != "" {
 		lyricsPart = fmt.Sprintf("歌词（%d 字）", len([]rune(lyrics)))
 	}
-	switch {
-	case coverPart != "" && lyricsPart != "":
-		return coverPart + "与" + lyricsPart
-	case coverPart != "":
-		return coverPart
-	case lyricsPart != "":
-		return "已写入" + lyricsPart
-	default:
+	tagPart := ""
+	if n := len(mp4TextAtomKeys(tags)); n > 0 {
+		// 说明用「几项」而不是具体字段名：本包同时服务 m4a 与 FLAC，
+		// 两边的字段名不同，这里说「元数据」才对两种格式都成立。
+		tagPart = fmt.Sprintf("元数据（%d 项）", n)
+	}
+	return joinMetaNote(coverPart, lyricsPart, tagPart)
+}
+
+// joinMetaNote 把若干段说明用「与」连起来（空段直接跳过）。
+func joinMetaNote(parts ...string) string {
+	kept := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	if len(kept) == 0 {
 		return "没有要写入的内容"
 	}
+	return "已写入" + strings.Join(kept, "与")
 }
 
 // buildCovrPayload 生成一个完整的 covr box。
@@ -545,7 +638,7 @@ const (
 	flacBlockPicture       = 6
 )
 
-func embedMetaFLAC(path string, covers []CoverImage, lyrics string) (EmbedResult, error) {
+func embedMetaFLAC(path string, covers []CoverImage, lyrics string, tags TextTags) (EmbedResult, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return EmbedResult{}, fmt.Errorf("读取文件失败: %w", err)
@@ -605,11 +698,15 @@ func embedMetaFLAC(path string, covers []CoverImage, lyrics string) (EmbedResult
 	}
 	audio := raw[off:]
 
-	if len(comments) > 0 || lyrics != "" {
+	if len(comments) > 0 || lyrics != "" || !tags.Empty() {
 		merged := comments
 		if lyrics != "" {
 			merged = setVorbisField(merged, "LYRICS", lyrics)
 		}
+		// 文本标签：空字段**不覆盖**文件里原有的同名注释（见 TextTags 的说明）。
+		merged = setVorbisFieldIfAny(merged, "TITLE", tags.Title)
+		merged = setVorbisFieldIfAny(merged, "ARTIST", tags.Artist)
+		merged = setVorbisFieldIfAny(merged, "ALBUM", tags.Album)
 		if len(merged) > 0 {
 			blocks = append(blocks, block{
 				kind: flacBlockVorbisComment,
@@ -644,7 +741,7 @@ func embedMetaFLAC(path string, covers []CoverImage, lyrics string) (EmbedResult
 	if err := writeFileAtomic(path, out); err != nil {
 		return EmbedResult{}, err
 	}
-	return EmbedResult{OK: true, Message: metaNote(covers, lyrics), Bytes: len(out)}, nil
+	return EmbedResult{OK: true, Message: metaNote(covers, lyrics, tags), Bytes: len(out)}, nil
 }
 
 /* --------------------------------------------------------------------------
@@ -705,6 +802,18 @@ func setVorbisField(comments [][2]string, key, value string) [][2]string {
 		}
 	}
 	return append(out, [2]string{key, value})
+}
+
+// setVorbisFieldIfAny 与 setVorbisField 相同，但值为空时**原样返回**。
+//
+// 空值的语义是「这一项没提取出来」，不是「把用户的标题删掉」——
+// 两者混起来会让一次 AI 整理把文件里正确的 TITLE / ARTIST 清空。
+func setVorbisFieldIfAny(comments [][2]string, key, value string) [][2]string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return comments
+	}
+	return setVorbisField(comments, key, value)
 }
 
 // vendorString 是写入 VORBIS_COMMENT 的编码器标识。

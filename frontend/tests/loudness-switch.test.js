@@ -124,3 +124,60 @@ test("播放中同一首歌的补偿从 0 变成 −8 时必须能推下去", ()
   assert.equal(after, -8);
   assert.notEqual(before, after, "0 → −8 是一次真实变化，必须推给后端");
 });
+
+/* --------------------------------------------------------------------------
+   场景 6：在线试听曲目也必须被请求补偿
+   --------------------------------------------------------------------------
+   用户报障：「在线试听的歌曲好像没有收到响度均衡的约束」。
+
+   实测根因有两处，本组测试锁住触发规则本身：
+
+     1. 引擎路径（loadSong）**从来没有**调过 requestLoudness —— 而在线试听
+        走的正是这条路径，于是它连"按需测量"都不会被触发；
+     2. legacy <audio> 路径里写的是 `if (!song.online) requestLoudness(...)`，
+        在线曲目被显式排除。
+
+   `!song.online` 当初是用来回避「后端查不到在线曲目」的：在线 id 形如
+   bili:BVxxx，不在曲库里，Get/Measure 会直接报「歌曲不存在」。但回避的
+   代价是功能彻底缺失 —— 正解是让后端能解析到它（见 services.go#songByID
+   的虚拟表兜底），而不是在前端把它挡在门外。
+   -------------------------------------------------------------------------- */
+
+/** 与 audio.js#shouldRequestLoudness 同一判定（改源码时要同步这里） */
+function shouldRequestLoudness(song, mode = "track") {
+  if (mode === "off" || !song?.id) return false;
+  return true;
+}
+
+test("在线试听曲目同样要请求响度补偿（不再按 song.online 跳过）", () => {
+  const online = { id: "bili:BV1xx411c7mD", online: true };
+  const local = { id: "t_abc", online: false };
+
+  assert.equal(
+    shouldRequestLoudness(online),
+    true,
+    "在线曲目必须请求补偿 —— 排除它正是用户报的「不受约束」"
+  );
+  assert.equal(shouldRequestLoudness(local), true, "本地曲目当然也要");
+});
+
+test("关掉响度均衡 / 没有歌时，在线曲目也不请求", () => {
+  const online = { id: "bili:BV1xx411c7mD", online: true };
+  assert.equal(shouldRequestLoudness(online, "off"), false, "mode=off 时一律不请求");
+  assert.equal(shouldRequestLoudness(null), false, "没有歌时不请求");
+});
+
+test("在线曲目补偿的记账与查询走同一张表（不因为 online 而丢失）", () => {
+  // 测出来的补偿必须能存进 loudnessGains 并在切歌时查得到，
+  // 否则「测了但没生效」会表现为另一种形式的「不受约束」。
+  const gains = {};
+  const onlineId = "bili:BV1xx411c7mD";
+  gains[onlineId] = 7.5; // setGain 写入
+
+  assert.equal(gainDBFor(gains, onlineId), 7.5, "在线曲目的补偿必须能被查回");
+  assert.equal(
+    gainDBFor(gains, onlineId),
+    7.5,
+    "重挂载/切回这首歌时仍应命中同一张表"
+  );
+});

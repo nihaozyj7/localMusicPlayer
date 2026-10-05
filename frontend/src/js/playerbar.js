@@ -13,8 +13,6 @@
 
 import { commit, currentSong, nextIndex, songById, state, togglePlay } from "./store.js";
 import { toast } from "./ui/overlays.js";
-import { applyDesktopMode } from "./desktop-mode.js";
-import { DESKTOP_MODE } from "./desktop-mode.js";
 
 export const MODE_META = {
   // 顺序播放 = 列表循环（按列表顺序播完回到开头）
@@ -49,39 +47,16 @@ export function toggleSleepPanel(force) {
 }
 
 /* --------------------------------------------------------------------------
-   桌面歌词 / 桌面背景歌词（一组单选按钮）
+   桌面歌词 / 桌面背景歌词（一组三选一）
+   --------------------------------------------------------------------------
+   两个原来的独立开关函数（toggleDesktopLyrics / toggleDesktopWallpaper）已经
+   移除：桌面模式的入口现在只有两处，都直接调 applyDesktopMode ——
+     · 播放选项面板的三选一（ui/panels.js）；
+     · 设置界面的两个开关（settings.js，它是「开关取反」语义，本来就没用它们）。
+   留着这两个「取反」包装只会多一份必须与三选一保持一致的语义。
+
+   真正的切换把关在 desktop-mode.js（详见那里的说明）。
    -------------------------------------------------------------------------- */
-export function toggleDesktopLyrics() {
-  return toggleDesktopModeWithToast(state.config.showDesktopLyrics ? DESKTOP_MODE.off : DESKTOP_MODE.lyrics, {
-    on: "已开启桌面歌词",
-    off: "已关闭桌面歌词",
-  });
-}
-
-export function toggleDesktopWallpaper() {
-  return toggleDesktopModeWithToast(state.config.showDesktopWallpaper ? DESKTOP_MODE.off : DESKTOP_MODE.wallpaper, {
-    on: "已开启桌面背景歌词",
-    off: "已关闭桌面背景歌词",
-  });
-}
-
-/**
- * 切模式并提示结果。
- *
- * 为什么要等结果再提示、而不是点了就先说「已开启」：这两个模式都要真实创建
- * 窗口，而桌面背景歌词还依赖系统的桌面窗口结构 —— 它确实会失败。
- */
-async function toggleDesktopModeWithToast(mode, { on, off }) {
-  const res = await applyDesktopMode(mode);
-  commit();
-  if (res.ok !== false) {
-    toast(mode === DESKTOP_MODE.off ? off : on, { duration: 1400 });
-    return res;
-  }
-  toast(`打不开：${res.reason || res.error || "未知原因"}`, { tone: "warning", duration: 3200 });
-  if (res.restored) toast("已保留原来的桌面歌词设置", { duration: 1800 });
-  return res;
-}
 
 /* --------------------------------------------------------------------------
    定时停止
