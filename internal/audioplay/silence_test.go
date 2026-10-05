@@ -275,6 +275,145 @@ func TestLoadSilenceInfoMissingFile(t *testing.T) {
 }
 
 /* --------------------------------------------------------------------------
+   2b. 预登记（转码顺手扫出来的结论）
+   --------------------------------------------------------------------------
+   转码播放链路本来就要把整首歌解码一遍，顺手已把首尾静音扫了
+   （见 internal/media 的 transcode）。装载时若再调 LoadSilenceInfo 去扫文件，
+   就是拿同一份数据又读一次盘 —— 一首 10 分钟的歌是 105MB。
+   PrimeSilenceInfo 让那份结论直接进缓存，于是装载路径一次盘都不用读。
+   -------------------------------------------------------------------------- */
+
+// TestPrimeSilenceInfoSkipsFileRead 预登记后 LoadSilenceInfo 必须直接命中，
+// 不再去读文件。
+//
+// 验法是「先把文件删掉」：如果实现仍然去扫描文件，就会因为文件不存在而报错；
+// 而正确的实现应当照样返回预登记的那份结论。
+func TestPrimeSilenceInfoSkipsFileRead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "primed.wav")
+	// 文件内容故意与预登记的值**不一致**：如果实现真去扫了文件，
+	// 拿到的就会是扫描结果（全静音 → 头尾都被判成静音），而不是我们填的值。
+	writeWAV(t, path, silentFrames(msFrames(5000)))
+
+	wantHead := int64(msFrames(1200))
+	wantTail := int64(msFrames(800))
+	wantTotal := int64(msFrames(20000))
+	PrimeSilenceInfo(path, wantHead, wantTail, wantTotal)
+
+	// 删掉文件：扫描路径必然失败，只有"命中缓存"才能成功
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	info, err := LoadSilenceInfo(path)
+	if err != nil {
+		t.Fatalf("预登记后应当直接命中缓存（文件已删，说明还是去扫了盘）: %v", err)
+	}
+	if info.HeadFrames != wantHead || info.TailFrames != wantTail || info.TotalFrames != wantTotal {
+		t.Errorf("返回的是 %+v，期望 head=%d tail=%d total=%d（预登记的值没生效？）",
+			info, wantHead, wantTail, wantTotal)
+	}
+}
+
+// TestPrimeSilenceInfoInvalidatedByFileChange 文件变了之后预登记必须失效。
+//
+// key 与真扫描共用「路径 + 大小 + 修改时间」，所以换过文件之后不能再采用
+// 旧结论 —— 否则用户会听到「换过的歌还用着上一首的掐点」。
+func TestPrimeSilenceInfoInvalidatedByFileChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "swapped.wav")
+
+	writeWAV(t, path, concat(silentFrames(msFrames(1000)), loudFrames(msFrames(2000))))
+	// 预登记一份"头部 1000ms 静音"（与真实内容一致）
+	PrimeSilenceInfo(path, int64(msFrames(1000)), 0, int64(msFrames(3000)))
+
+	info, err := LoadSilenceInfo(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !nearMs(info.HeadMs(), 1000) {
+		t.Fatalf("预登记应生效：头部 = %dms，期望 ≈1000ms", info.HeadMs())
+	}
+
+	// 换成"开头就是声音"的文件（大小不同 → key 变了）
+	writeWAV(t, path, concat(loudFrames(msFrames(4000)), silentFrames(msFrames(300))))
+	after, err := LoadSilenceInfo(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.HeadMs() != 0 {
+		t.Errorf("文件已替换，头部静音应为 0，实际 %dms（预登记没失效？）", after.HeadMs())
+	}
+}
+
+// TestPrimeSilenceInfoRejectsBadInput 非法输入必须被忽略，而不是写进坏结论。
+//
+// 「跳过静音」一旦拿到错的结论就会掐掉音乐本身 —— 那比慢一点严重得多，
+// 所以这里宁可什么都不做（退回真扫描）。
+func TestPrimeSilenceInfoRejectsBadInput(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.wav")
+	writeWAV(t, path, concat(silentFrames(msFrames(1000)), loudFrames(msFrames(2000))))
+
+	// 负数：忽略
+	PrimeSilenceInfo(path, -1, 0, 100)
+	PrimeSilenceInfo(path, 0, -1, 100)
+	PrimeSilenceInfo(path, 0, 0, -1)
+	// 空路径：忽略
+	PrimeSilenceInfo("", 10, 10, 100)
+
+	// 上面都不该写进缓存 —— 真扫描拿到的应当是文件真实内容（头 1000ms）
+	info, err := LoadSilenceInfo(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !nearMs(info.HeadMs(), 1000) {
+		t.Errorf("非法预登记不该生效：头部 = %dms，期望真扫描得到的 ≈1000ms", info.HeadMs())
+	}
+}
+
+// TestPrimeSilenceInfoClampsOverlap 头尾相加超过总长时要收口。
+//
+// 整首歌都静音时，头尾各自都会被判成"全部"；相加超过总长会让
+// PlanSilenceTrim 算出一个负长度区间（EndFrame < StartFrame），
+// 进而让进度条除以零长度、用户看到"点了没反应"。
+func TestPrimeSilenceInfoClampsOverlap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "overlap.wav")
+	writeWAV(t, path, silentFrames(msFrames(1000)))
+
+	total := int64(msFrames(1000))
+	// 头 900 + 尾 900 > total 1000：必须被收口
+	PrimeSilenceInfo(path, 900, 900, total)
+
+	info, err := LoadSilenceInfo(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HeadFrames+info.TailFrames > info.TotalFrames {
+		t.Errorf("头 %d + 尾 %d 超过了总长 %d（没收口）",
+			info.HeadFrames, info.TailFrames, info.TotalFrames)
+	}
+	// 掐点方案必须是合法的（不能出现 EndFrame < StartFrame）
+	trim := PlanSilenceTrim(info, true, true)
+	if trim.EndFrame < trim.StartFrame {
+		t.Errorf("掐点区间非法: [%d, %d)", trim.StartFrame, trim.EndFrame)
+	}
+}
+
+// TestPrimeSilenceInfoMissingFileNoop 文件不存在时预登记应当安静地什么都不做。
+//
+// 这条路会在"转码产物被 LRU 淘汰掉"时走到：那时 ScanSilence 给的路径已经
+// 不在了，预登记无从谈起（拿不到 size/modTime 做 key），直接跳过即可。
+func TestPrimeSilenceInfoMissingFileNoop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gone.wav")
+	// 不该 panic，也不该产生任何缓存条目
+	PrimeSilenceInfo(path, 100, 100, 1000)
+	if _, err := LoadSilenceInfo(path); err == nil {
+		t.Error("文件不存在时 LoadSilenceInfo 仍应报错（说明预登记凭空造了条目）")
+	}
+}
+
+/* --------------------------------------------------------------------------
    3. 决策（开关 → 掐点）
    -------------------------------------------------------------------------- */
 

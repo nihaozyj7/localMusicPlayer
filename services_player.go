@@ -299,6 +299,10 @@ func (s *PlayerService) Load(songID string) (map[string]any, error) {
 	}
 
 	// 解析放在锁外：转码可能耗时数秒，不能卡住其他调用（比如 Stop）
+	//
+	// ★ resolve 内部会顺手把「转码时算好的首尾静音」喂进 audioplay 的缓存
+	// （见 setSilencePrimer），所以下面 planTrimLocked 里的 LoadSilenceInfo
+	// 是**直接命中**的，不需要再读一遍文件。
 	path, durationMs, err := s.resolve(songID)
 	if err != nil {
 		s.fail(songID, err)

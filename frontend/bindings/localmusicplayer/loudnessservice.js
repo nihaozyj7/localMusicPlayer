@@ -11,6 +11,13 @@
 // @ts-ignore: Unused imports
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails/runtime.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as bootstrap$0 from "./internal/bootstrap/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as loudness$0 from "./internal/loudness/models.js";
+
 /**
  * AlbumGains 返回按专辑聚合的补偿增益（「整张专辑统一」模式）
  * 
@@ -43,8 +50,12 @@ export function Clear() {
 /**
  * GainMap 返回「songId → 补偿增益 dB」映射，供前端批量套用。
  * 
- * 只包含当前标准下**有效**的缓存；没测过的歌不在其中，
- * 前端播到那首时会走 Measure 按需补算。
+ * ★ 换挡位零成本的落点：这张表由**已有的测量结果**现算出来，
+ * 不需要为另一个挡位重新测量任何一首歌。用户从「较响」切到「默认」时，
+ * 整个曲库的补偿在这一个调用里就全部就位（每首几纳秒的算术），
+ * 而不是排一个几十分钟的队。
+ * 
+ * 没测过的歌不在其中，前端播到那首时会走 Measure 按需补算。
  * 
  * 注意这里刻意**只遍历曲库**：在线试听曲目没有稳定的「专辑归属」，
  * 把它们塞进批量表既会让这张随曲库变化的映射多出易失条目，也会让
@@ -58,7 +69,11 @@ export function GainMap(targetLUFS) {
 }
 
 /**
- * Get 取一首歌的测量结果与补偿增益（当前标准下未测量则 measured=false）
+ * Get 取一首歌的测量结果与补偿增益。
+ * 
+ * ★ 换挡位是零成本的：测量结果与挡位无关，所以这里要么直接命中已缓存的
+ * 该挡位增益，要么用已有的测量结果现场算一次（纯算术），**绝不会**因为
+ * 「换了个挡位」就重新测量。
  * 
  * 在线试听曲目也走这里（经 songByID 的虚拟表兜底）：它们的音频在本地
  * 缓存里，测量条件与本地曲目完全一样。
@@ -71,8 +86,16 @@ export function Get(songID, targetLUFS) {
 }
 
 /**
- * InvalidateTarget 让不等于给定标准的缓存全部失效。
- * 设置界面改了目标响度/算法后调用：清掉旧补偿，之后播放时按需重算。
+ * InvalidateTarget 兼容旧接口。
+ * 
+ * ★ 它现在**什么都不删**（返回 dropped=0）。
+ * 
+ * 历史上这个方法是「把 target 不等于当前值的记录全删掉」，代价是用户每换
+ * 一次挡位就丢掉整库已算好的结果 —— 四个挡位来回切就是反复重算同一批歌，
+ * 那正是用户报的「从较响改回默认时，较响算好的补偿丢了」。
+ * 
+ * 现在测量与挡位解耦：换挡位只意味着增益按新目标现算（纯算术，几纳秒），
+ * 没有任何缓存需要失效。保留这个方法只是为了不动前端绑定。
  * @param {number} targetLUFS
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
@@ -88,6 +111,9 @@ export function InvalidateTarget(targetLUFS) {
  * 时后端会先 EnsureCached），就能像本地文件一样测量。测出的记录按
  * Path/Size/ModTime 进同一个缓存 —— 这几个量对在线曲目是稳定的，
  * 所以第二次试听同一首歌会直接命中缓存，不会重复跑 ffmpeg。
+ * 
+ * ★ 走的是**高优先级**队列（PriorityInterrupt）：如果后台正在批量预热整库，
+ * 这首歌会插到队首 —— 这正是「优先处理正在播放的那首歌」。
  * @param {string} songID
  * @param {number} targetLUFS
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
@@ -99,6 +125,9 @@ export function Measure(songID, targetLUFS) {
 /**
  * MeasureAll 后台批量预热整个曲库（可选，正常使用不需要）。
  * 异步执行，进度通过 loudness:progress 事件推送。
+ * 
+ * ★ 它走**低优先级**队列：一旦用户点开某首歌（走 Measure 的高优先级通道），
+ * 预热会让出槽位，先测用户正在听的那首。并发默认压到 2，避免把 CPU 铺满。
  * @param {number} targetLUFS
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
@@ -120,4 +149,21 @@ export function RefreshTools() {
  */
 export function State() {
     return $Call.ByID(162640547);
+}
+
+/**
+ * StoreMeasurement 把「转码时顺手算出来」的测量结果记进缓存。
+ * 
+ * 由 main 装配层挂在 media.Server 的扫描钩子上（见 SetLoudnessSink）。
+ * 它是响度测量**唯一不需要跑 ffmpeg 的入口**：转码播放本来就要解码整首歌，
+ * 顺手把响度算出来即可，不再需要第二遍解码。
+ * 
+ * 这里同时把当前挡位的增益算好记下（GainFor 会做），这样播放到这首歌时
+ * 补偿已经就位 —— 用户感受到的是「响度均衡不需要等待」。
+ * @param {bootstrap$0.Song} song
+ * @param {loudness$0.Measurement} res
+ * @returns {$CancellablePromise<void>}
+ */
+export function StoreMeasurement(song, res) {
+    return $Call.ByID(3202837413, song, res);
 }

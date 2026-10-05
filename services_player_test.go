@@ -1204,6 +1204,47 @@ func TestPlayerServiceSkipSilenceBoth(t *testing.T) {
 	}
 }
 
+// TestPlayerServiceUsesPrimedSilenceInfo 预登记的首尾静音必须真的被装载路径采用。
+//
+// ★ 这是「转码顺手扫的结论不许白算」的端到端回归测试。
+//
+// 转码时已经扫过首尾静音（media.Server.transcode），装配层把它喂给
+// audioplay.PrimeSilenceInfo（见 main.go 的 resolve）。这条链路如果断了，
+// 装载会退回"自己再扫一遍文件"—— 结果一样、但白做一次 I/O，
+// 而且**这种"悄悄退回去"是不会有任何报错的**，只能靠测试钉住。
+//
+// 验法：喂一份与文件真实内容**故意不同**的结论（文件开头就是声音，
+// 但预登记说"头部静音 1 秒"）。装载后起播位置应当落在 1 秒处 ——
+// 说明用的是预登记的值，而不是扫描出来的 0。
+func TestPlayerServiceUsesPrimedSilenceInfo(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "primed.wav")
+	// 文件真实内容：0.5 秒声音 + 0.5 秒声音（全程有声，真扫描会得到 head=0）
+	writeSilenceWAV(t, wav, 0, 1000, 0)
+
+	// 预登记一份"头部静音 600ms"的结论（与文件真实内容不一致，便于区分来源）
+	const primedHeadMs = 600
+	audioplay.PrimeSilenceInfo(wav, int64(audioplay.SampleRate)*primedHeadMs/1000, 0,
+		int64(audioplay.SampleRate)*1000/1000)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 1000)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, true, false, 0)
+
+	res, err := svc.Load("song-primed")
+	if err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	if got := res["positionMs"].(int64); got < 550 || got > 650 {
+		t.Errorf("起播位置 = %dms，期望约 %d（预登记的值没被采用，说明装载时又去扫了文件）",
+			got, primedHeadMs)
+	}
+	if got := res["skippedHeadMs"].(int64); got < 550 || got > 650 {
+		t.Errorf("skippedHeadMs = %d，期望约 %d（同一条链路）", got, primedHeadMs)
+	}
+}
+
 // TestPlayerServiceSilencePlaysToTrimmedEnd 开了跳过结尾之后，
 // EOF 必须在掐点触发，而不是等整首文件播完。
 //
