@@ -92,7 +92,18 @@ jobs:
             libx11-dev \
             libxkbcommon-dev \
             libasound2-dev \
+            xvfb \
             pkg-config
+
+      # ★ 还要一个虚拟显示：某个依赖的剪贴板包在初始化时要求能连上 X11，
+      #   否则直接 panic（"Failed to initialize the X11 display"）——
+      #   那不是在某个测试里失败，而是把整个测试二进制打挂。
+      #   装 libx11-dev 只给了编译期头文件，运行期还需要一个真的 display。
+      #   xvfb 就是官方提示的做法（见那句 panic 信息里的建议）。
+      - name: 启动 Xvfb 虚拟显示
+        run: |
+          Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
 
       # gofmt 门禁。注意：仓库里 *.go 已显式 eol=lf，因此 Linux 上不存在
       # 行尾符造成的假红灯（这才是这个检查能长期有效的前提）。

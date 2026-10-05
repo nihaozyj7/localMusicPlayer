@@ -25,6 +25,7 @@ import (
 	"math"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 /* --------------------------------------------------------------------------
@@ -1634,14 +1635,32 @@ func TestChainResetAfterSongSwitchStillAudible(t *testing.T) {
 				}
 				return math.Sqrt(sum / float64(PeriodFrames))
 			}
-			// 等 feeder 把环形缓冲填上（上限 300 个缓冲，足够）
+			// 等 feeder 把环形缓冲填上。
+			//
+			// ★ 必须按**真实时间**等，不能只数迭代次数。
+			//
+			// 原来的写法是「最多转 300 圈，每圈 rms() 一次」，而 rms() 只是
+			// 调一次 onData —— 它**不阻塞**，转 300 圈可能连 1ms 都不到。
+			// 而 feeder 是个真正读磁盘的 goroutine，它在缓冲满时会
+			// time.After(10ms) 等一下（见 startFeedLocked）。于是这个循环
+			// 经常在 feeder 还没喂进第一块数据时就转完了，判定成
+			// 「第一首就没声音（RMS=0.0）—— 测试前提不成立」。
+			//
+			// 实测：Windows 本机（文件缓存热）能过，CI 的 Linux 容器上
+			// surround 那一条稳定失败 —— 单纯因为那边更慢。
+			// 这是**测试的时序假设**错了，不是引擎的问题。
+			//
+			// 现在给它一个明确的时间预算，并且每圈让出 CPU，
+			// 避免忙等把 feeder 饿死。
 			settle := func() float64 {
 				var last float64
-				for i := 0; i < 300; i++ {
+				deadline := time.Now().Add(5 * time.Second)
+				for time.Now().Before(deadline) {
 					last = rms()
 					if last > 100 {
-						break
+						return last
 					}
+					time.Sleep(time.Millisecond)
 				}
 				return last
 			}
