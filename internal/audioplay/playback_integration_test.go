@@ -413,7 +413,7 @@ func TestRealPlaybackReloadSwitchesSong(t *testing.T) {
 // 覆盖影响面：那个 bug 在**所有档位**下都会发生（Reset 把 EQ 系数清零，
 // 而每个档位的 off 之外都有 EQ 段），所以逐个档位都过一遍。
 func TestRealPlaybackSwitchWithEffectStaysAudible(t *testing.T) {
-	for _, preset := range []EffectPreset{EffectOff, EffectVocal, EffectBass, EffectSurround, EffectLive, EffectHall} {
+	for _, preset := range []EffectPreset{EffectOff, EffectVocal, EffectBass, EffectSurround} {
 		t.Run(string(preset), func(t *testing.T) {
 			e, closeEngine := openEngineOrSkip(t)
 			defer closeEngine()

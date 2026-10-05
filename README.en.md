@@ -62,8 +62,8 @@ library, cover art and lyric cache all live on your own disk.
   the decoded PCM and is cached per file, so replaying a track costs nothing;
 - **Track gap**: a pause between automatically consecutive tracks (1.5 s by default, 0–10 s). It is timed on
   the audio thread, so a busy UI never makes it drift;
-- **Sound effects**: clear vocals / bass boost / 3D surround / live / hall reverb, switched from the player
-  options panel with a ~30 ms crossfade ("off" means completely untouched audio);
+- **Sound effects**: clear vocals / bass boost / 3D surround (spatial widening tuned for headphones),
+  switched from the player options panel with a ~30 ms crossfade ("off" means completely untouched audio);
 - **Player options panel** (the bar's "Options" button): lyrics font size, desktop-lyrics mode, sound
   effect preset and background opacity;
 - Drag-and-drop queue reordering, playlists, likes, a sleep timer and configurable keyboard shortcuts;

@@ -121,6 +121,44 @@ test("底栏不再有桌面歌词 / 桌面背景歌词按钮", () => {
   assert.doesNotMatch(playerbarSrc, /s\.config\.showDesktopWallpaper/, "底栏 deps 里不该再依赖 showDesktopWallpaper");
 });
 
+test("分段控件的选中高亮同时覆盖 aria-pressed 与 aria-checked", () => {
+  // ★ 这是「桌面歌词三选一不会高亮当前项」那个 bug 的回归测试。
+  //
+  // 症状：点「悬浮」/「背景」之后按钮没有任何视觉变化，用户看不出
+  // 当前选的是哪一档（虽然功能本身是生效的）。
+  //
+  // 根因是**标记与样式的属性名对不上**，而不是样式写错：
+  //   · 音效档位那组是开关组，用 aria-pressed；
+  //   · 桌面歌词三选一是 role="radiogroup" + role="radio"，
+  //     按 ARIA 规范用 aria-checked（radio 配 aria-pressed 不合法）。
+  // 而 CSS 里只写了 [aria-pressed="true"] 一条选择器，
+  // 于是桌面歌词那组永远匹配不上。
+  //
+  // 这类 bug 很难靠渲染测试发现（按钮确实渲染了、点击也确实生效了），
+  // 所以这里直接钉住「选择器必须覆盖两个属性」。
+  const cssSrc = read("frontend/src/styles/components/settings.css");
+  const segRule = cssSrc.slice(cssSrc.indexOf(".segmented__btn["));
+
+  assert.match(
+    segRule,
+    /\.segmented__btn\[aria-pressed="true"\]/,
+    "分段控件的选中态必须覆盖 aria-pressed（音效档位那组用的是它）"
+  );
+  assert.match(
+    segRule,
+    /\.segmented__btn\[aria-checked="true"\]/,
+    "分段控件的选中态必须覆盖 aria-checked —— 桌面歌词三选一是 " +
+      'role="radio"，用 aria-checked 表达选中态，漏掉这条它就不会高亮'
+  );
+
+  // 两端也要对得上：面板里桌面歌词那组必须真的输出 aria-checked。
+  assert.match(
+    panelsSrc,
+    /aria-checked=\$\{String\(opt\.value === mode\)\}/,
+    "桌面歌词三选一必须按当前模式输出 aria-checked"
+  );
+});
+
 /* ==========================================================================
    三、选项面板的项目增删
    ========================================================================== */

@@ -615,9 +615,13 @@ func NormalizeTrackGapSeconds(seconds float64) float64 {
 //
 // 两边的一致性由测试守住（见 config_effect_test.go）：
 // 它会比对这里的列表与 audioplay.EffectPresets 是否完全相同 ——
-// 那样既能保持依赖方向，又不会出现"后端认 5 个档、配置层只认 4 个"
+// 那样既能保持依赖方向，又不会出现"后端认 4 个档、配置层只认 3 个"
 // 这种很难发现的不一致。
-var EffectPresets = []string{"off", "vocal", "bass", "surround", "live", "hall"}
+//
+// ★ 曾经的 "live"（现场感）与 "hall"（大厅混响）两个混响档位已按用户
+// 要求整体移除。老配置里的这两个值会被 NormalizeEffectPreset 收敛成
+// "off"（而不是报错）—— 这正是该函数"非法值落回 off"语义要覆盖的场景。
+var EffectPresets = []string{"off", "vocal", "bass", "surround"}
 
 // NormalizeEffectPreset 把音效档位收敛到合法值，非法值落回 off。
 //

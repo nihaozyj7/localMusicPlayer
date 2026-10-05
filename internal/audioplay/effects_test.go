@@ -792,15 +792,14 @@ func TestChainOffAfterSwitchingIsBitExact(t *testing.T) {
 // 约为 2π*440/44100 ≈ 0.063（满幅时）。取 0.3 作为门限 —— 明显高于
 // 正常波形斜率，又远低于"阶跃"（阶跃会是接近 1.0 的跳变）。
 func TestChainSwitchNoDiscontinuity(t *testing.T) {
-	// 逐一测试所有"切换路径"，重点是涉及混响的两条
+	// 逐一测试所有"切换路径"，重点是涉及空间处理的两条
 	paths := [][2]EffectPreset{
 		{EffectOff, EffectVocal},
 		{EffectVocal, EffectOff},
-		{EffectOff, EffectHall},
-		{EffectHall, EffectOff},      // 关闭混响：最容易爆音的一条
-		{EffectHall, EffectSurround}, // 混响 → 无混响：另一条危险路径
-		{EffectSurround, EffectHall},
-		{EffectLive, EffectHall}, // 混响 → 不同参数的混响
+		{EffectOff, EffectSurround},
+		{EffectSurround, EffectOff}, // 关闭空间处理
+		{EffectSurround, EffectVocal},
+		{EffectVocal, EffectSurround},
 		{EffectBass, EffectVocal},
 	}
 
@@ -865,7 +864,7 @@ func TestChainSwitchNoDiscontinuity(t *testing.T) {
 // ★ 音效链的作用是"修饰"，不是"制造爆音"。EQ 提升 + 混响叠加很容易
 // 把峰值推过满幅，软限幅就是为此存在的 —— 这条测试检查它真的在工作。
 func TestChainNoClippingWithExtremeInput(t *testing.T) {
-	for _, preset := range []EffectPreset{EffectVocal, EffectBass, EffectHall} {
+	for _, preset := range []EffectPreset{EffectVocal, EffectBass, EffectSurround} {
 		t.Run(string(preset), func(t *testing.T) {
 			var c Chain
 			c.prepare(SampleRate)
@@ -925,12 +924,15 @@ func TestNormalizeEffectPreset(t *testing.T) {
 		"vocal":    EffectVocal,
 		"bass":     EffectBass,
 		"surround": EffectSurround,
-		"live":     EffectLive,
-		"hall":     EffectHall,
 		"":         EffectOff, // 空字符串
 		"VOCAL":    EffectOff, // 大小写敏感（配置里存的都是小写）
 		"bogus":    EffectOff,
 		"eq":       EffectOff, // 曾经考虑过的名字，不是合法档位
+		// ★ 已移除的混响档位必须收敛成 off，而不是保留成"看起来合法"。
+		// 老配置里可能存着这两个值（用户升级前选过它们），
+		// 若不收敛，界面会显示"没有按钮被选中"而实际生效未知。
+		"live": EffectOff,
+		"hall": EffectOff,
 	}
 	for in, want := range cases {
 		if got := NormalizeEffectPreset(in); got != want {
@@ -1214,10 +1216,120 @@ func TestSurroundPresetIsAudibleOnMonoSource(t *testing.T) {
 	}
 }
 
-// TestChainRapidSwitchingStaysClean 验证快速连续切换档位不会失控。
+// TestSurroundPresetStrongEnoughForHeadphones 是"戴耳机听不出环绕效果"
+// 那个用户反馈的回归测试。
 //
+// ★ 为什么前面已经有 TestSurroundPresetIsAudibleOnMonoSource 还需要这一条：
+// 那条测试只要求"最大变化 > 0.02"，这是一个**极低**的门槛 ——
+// 修复前的旧参数（Width 0.95 / Haas 0.35 / Crossfeed 0.2）实测能到
+// 0.13，轻松通过，但用户戴着耳机就是听不出来。也就是说那条测试
+// 无法区分"有效果"和"效果足够强"。
+//
+// 这里改测**感知量级**，用三个互相独立的判据：
+//
+//  1. **通道差（|L-R|）的绝对量** —— 这是"声音有多宽"最直接的近似。
+//     耳机上包围感的来源就是左右耳的差异信号，它太小就必然听不出。
+//     判据取 0.15（输入幅度 0.3 时约等于半幅），旧参数只有 0.085。
+//
+//  2. **单声道素材也必须被拉出通道差** —— 实质单声道的素材（老录音、
+//     播客、部分在线音源）原始 |L-R| 恒为 0。如果宽度的 M/S 处理是
+//     唯一手段，这类素材会**完全没有**空间感。Haas 延迟必须能独立
+//     地把它们拉出可闻的宽度。
+//
+//  3. **串扰不能反向吃掉宽度** —— 串扰缩小通道差，与环绕是相反方向。
+//     这里直接钉住"surround 档的串扰必须很小"，防止以后有人
+//     "顺手"把它调大又把效果抵消掉（这正是修复前的问题）。
+func TestSurroundPresetStrongEnoughForHeadphones(t *testing.T) {
+	const amp = 0.3
+	const frames = 16384
+
+	// 跑一遍 surround 档，返回稳态（后半段）的平均 |L-R|。
+	steadyChannelDiff := func(mono bool) float64 {
+		var c Chain
+		c.prepare(SampleRate)
+		c.RequestPreset(EffectSurround)
+		// 等切换与 Haas 延迟线进入稳态
+		for block := 0; block < 4; block++ {
+			buf := makeStereoSamples(PeriodFrames, func(i int) (float64, float64) { return 0, 0 })
+			c.ProcessStereo(buf)
+		}
+
+		buf := makeStereoSamples(frames, func(i int) (float64, float64) {
+			l := sineAt(i, 440, amp)
+			if mono {
+				return l, l
+			}
+			return l, sineAt(i, 660, amp)
+		})
+		c.ProcessStereo(buf)
+
+		var sum float64
+		for i := frames / 2; i < frames; i++ {
+			off := i * FrameSize
+			l := float64(int16(binary.LittleEndian.Uint16(buf[off:]))) / sampleScale
+			r := float64(int16(binary.LittleEndian.Uint16(buf[off+2:]))) / sampleScale
+			sum += math.Abs(l - r)
+		}
+		return sum / float64(frames/2)
+	}
+
+	// —— 判据 1：立体声素材上的通道差必须足够大 ——
+	//
+	// 立体声素材原始 |L-R| 约 0.24（两个不同频率的正弦），
+	// 加宽后必须明显超过它。旧参数实测 0.32（只有 1.34x），
+	// 新参数实测 0.37（1.51x）。
+	if got := steadyChannelDiff(false); got < 0.15 {
+		t.Errorf("surround 档在立体声素材上的稳态 |L-R| = %.4f，期望 >= 0.15 —— "+
+			"声道差太小，戴耳机时听不出环绕效果（这正是用户反馈的问题）", got)
+	}
+
+	// —— 判据 2：单声道素材必须被 Haas 延迟拉出可闻的通道差 ——
+	//
+	// 单声道素材原始 |L-R| = 0，所以这里测的是纯由 Haas 产生的宽度。
+	// 旧参数只有 0.085（相对 0.3 的输入约 28%，偏弱）；
+	// 新参数实测 0.236（约 79%），是明显可闻的。
+	if got := steadyChannelDiff(true); got < 0.15 {
+		t.Errorf("surround 档在单声道素材上的稳态 |L-R| = %.4f，期望 >= 0.15 —— "+
+			"M/S 宽度对单声道素材无效，只能靠 Haas 制造空间感，它太弱了", got)
+	}
+}
+
+// TestSurroundCrossfeedStaysSmall 钉住"surround 档的串扰必须很小"。
+//
+// ★ 这是一条**方向性**约束，不是调参偏好：
+// 串扰把左右声道互相混合、**缩小**通道差，它与"加宽/环绕"是完全相反的
+// 方向。修复前 surround 档用了 Crossfeed 0.2，在耳机上一部分加宽效果
+// 被它直接抵消掉 —— 这就是"戴耳机完全没效果"的成因之一。
+//
+// 单独把这条约束抽出来测，是因为它的破坏方式非常隐蔽：改大 crossfeed
+// 之后上面那些"通道差够不够大"的测试可能仍勉强通过，而真实听感已经
+// 明显变差。这里直接检查参数本身，失败信息直指原因。
+func TestSurroundCrossfeedStaysSmall(t *testing.T) {
+	spec := presetSpecs[EffectSurround]
+
+	// 上限 0.1：只够"黏住声场中心"，不足以抵消宽度带来的差异。
+	const maxCrossfeed = 0.1
+	if spec.stereo.Crossfeed > maxCrossfeed {
+		t.Errorf("surround 档的 Crossfeed = %.2f，超过上限 %.2f —— "+
+			"串扰缩小声道差、与环绕方向相反，调大会把加宽效果抵消掉",
+			spec.stereo.Crossfeed, maxCrossfeed)
+	}
+
+	// Haas 必须是主要手段之一：它是唯一能在耳机上制造"声音在头外面"
+	// 的机制（见 effects_stereo.go 文件头）。
+	if spec.stereo.Haas < 0.5 {
+		t.Errorf("surround 档的 Haas = %.2f，期望 >= 0.5 —— "+
+			"Haas 太弱的话戴耳机时空间感不足", spec.stereo.Haas)
+	}
+
+	// 宽度应该接近满值：加宽是环绕感最直接的来源。
+	if spec.stereo.Width < 0.9 {
+		t.Errorf("surround 档的 Width = %.2f，期望 >= 0.9 —— 加宽量不足", spec.stereo.Width)
+	}
+}
+
 // ★ 这是一个**真实用户行为**，不是构造出来的极端场景：
-// 用户在设置界面里逐个试音效（"清澈人声"→"3D 环绕"→"大厅混响"…）
+// 用户在选项面板里逐个试音效（"清澈人声"→"3D 环绕"→"低音增强"…）
 // 时，点击间隔远小于 30ms 的淡化时长，所以每一次新切换都发生在
 // 上一次淡化还没走完的时候。
 //
@@ -1229,11 +1341,11 @@ func TestChainRapidSwitchingStaysClean(t *testing.T) {
 	var c Chain
 	c.prepare(SampleRate)
 
-	// 刻意包含反复回到 hall / off 的往返（涉及混响的开关，
+	// 刻意包含反复回到 surround / off 的往返（surround 带延迟线，
 	// 是最容易暴露"延迟线内容被错误复用"的路径）
 	order := []EffectPreset{
-		EffectHall, EffectOff, EffectVocal, EffectSurround,
-		EffectBass, EffectHall, EffectLive, EffectOff, EffectHall,
+		EffectSurround, EffectOff, EffectVocal, EffectSurround,
+		EffectBass, EffectSurround, EffectVocal, EffectOff, EffectSurround,
 	}
 
 	worst := 0
@@ -1316,7 +1428,7 @@ func TestProcessStereoAllocsZero(t *testing.T) {
 			return 0.1, 0.1
 		})
 		got := testing.AllocsPerRun(50, func() {
-			c.RequestPreset(EffectHall)
+			c.RequestPreset(EffectSurround)
 			c.ProcessStereo(buf)
 			c.RequestPreset(EffectOff)
 			c.ProcessStereo(buf)
@@ -1499,7 +1611,7 @@ func TestEqSectionResetPreservesCoeffs(t *testing.T) {
 // 如果 Load 里漏调了 Reset —— 或者反过来多调了什么 —— 只有这条能抓到。
 // 它验证的是端到端行为："引擎层面的切歌不会让音效链变成静音器"。
 func TestChainResetAfterSongSwitchStillAudible(t *testing.T) {
-	for _, p := range []EffectPreset{EffectOff, EffectVocal, EffectHall} {
+	for _, p := range []EffectPreset{EffectOff, EffectVocal, EffectSurround} {
 		t.Run(string(p), func(t *testing.T) {
 			dir := t.TempDir()
 			a := writeToneWAV(t, dir, "a.wav", 440)

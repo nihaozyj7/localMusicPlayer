@@ -43,8 +43,8 @@
    输出按 fade 在 30ms 内从前者过渡到后者。
 
    ★ 为什么不能只做"干信号 ↔ 处理后信号"的淡化（那样只需一条链）：
-   在**音效到音效**的切换上是错的。比如"大厅混响 → 3D 环绕"，
-   若淡出端是干净干信号，那 1~2 秒的混响尾巴会被一刀切断，
+   在**音效到音效**的切换上是错的。比如"3D 环绕 → 关闭"，
+   若淡出端是干净干信号，那 Haas 延迟线里积攒的空间尾巴会被一刀切断，
    比不做淡化还明显。详见 Chain 类型注释。
 
    EQ 系数另外还有一层 slew 平滑（见 eqSection 的 target/current 双份系数）：
@@ -89,21 +89,15 @@ const (
 
 	// EffectSurround 3D 环绕：Haas 延迟 + 宽度 + 串扰。
 	EffectSurround EffectPreset = "surround"
-
-	// EffectLive 现场感：中等混响 + 宽度（模拟小型演出场地）。
-	EffectLive EffectPreset = "live"
-
-	// EffectHall 大厅混响：更长的尾巴 + 较暗的高频。
-	EffectHall EffectPreset = "hall"
 )
 
 // EffectPresets 是全部合法档位，顺序即设置界面的展示顺序。
 //
 // ★ 导出这个切片是为了让"哪些档位合法"只有一个事实来源：
 // 校验函数、设置界面、测试都从这里取，不会出现
-// "后端认 5 个档、前端画了 6 个按钮"这种不一致。
+// "后端认 4 个档、前端画了 5 个按钮"这种不一致。
 var EffectPresets = []EffectPreset{
-	EffectOff, EffectVocal, EffectBass, EffectSurround, EffectLive, EffectHall,
+	EffectOff, EffectVocal, EffectBass, EffectSurround,
 }
 
 // NormalizeEffectPreset 把任意字符串收敛到合法档位，非法值返回 off。
@@ -129,10 +123,6 @@ func EffectPresetLabel(p EffectPreset) string {
 		return "低音增强"
 	case EffectSurround:
 		return "3D 环绕"
-	case EffectLive:
-		return "现场感"
-	case EffectHall:
-		return "大厅混响"
 	default:
 		return "关闭"
 	}
@@ -229,31 +219,35 @@ var presetSpecs = map[EffectPreset]presetSpec{
 
 	// 3D 环绕
 	//
-	// 三个手段叠加（见 effects_stereo.go 文件头）：
-	//   · Width 0.95 → 约 1.9 倍中侧宽度，声场明显拉开；
-	//   · Haas 0.35 → 约 5ms 有效延迟量，落在感知融合区；
-	//   · Crossfeed 0.2 → 轻微串扰，把声场中心"黏"住，
-	//     避免加宽之后中间出现一个空洞（人声还在中间但变虚）。
+	// ★ 参数是为**耳机**调的，这一点决定了全部取值的量级。
+	//
+	// 曾经的参数（Width 0.95 / Haas 0.35 / Crossfeed 0.2）在扬声器上勉强
+	// 能听出一点变化，戴耳机时几乎完全无效 —— 用户实测的反馈就是
+	// "戴耳机完全没有环绕效果"。根因是三个量都太小，而且**串扰的方向反了**：
+	//
+	//   · 串扰对耳机做的是"左右互馈"，它的作用是**缩小**声道差、
+	//     把声音从"包住脑袋"拉回到"面前"（消除头中效应）。
+	//     也就是说串扰与"环绕/包围感"是**相反**的方向 —— 在耳机上
+	//     一边加宽一边串扰，两边互相抵消，这正是"听不出效果"的主因。
+	//     所以这里把串扰降到 0.06（仅保留一点点，防止极端加宽后
+	//     中间出现空洞），把预算全部让给宽度与 Haas。
+	//
+	//   · Width 0.98 → 约 1.96 倍中侧宽度。加宽是"环绕感"最直接的来源：
+	//     侧信号（混响尾巴、立体声乐器）被抬起来后，声场才会明显
+	//     超出两耳的连线。
+	//
+	//   · Haas 0.8 → 右声道混入约 0.8 倍于直达声的 15ms 延迟信号。
+	//     这是**戴着耳机时唯一能真正制造"声音在头外面"的机制**：
+	//     直达声与延迟声在耳廓/头部产生方向线索，人耳把它解释成
+	//     "声源在侧后方"，而不是贴在耳朵上。
+	//     0.8 是我实测能明显听出包络感、又还没开始被听成"回声"
+	//     （分离成两个声音）的取值。
+	//
+	// 三个量叠加后，单声道老录音也会产生明确的通道差与相位差 ——
+	// 见 TestSurroundPresetIsAudibleOnMonoSource，它把"用户应能听出区别"
+	// 这件事钉成了断言。
 	EffectSurround: {
-		stereo: StereoParams{Width: 0.95, Haas: 0.35, Crossfeed: 0.2},
-	},
-
-	// 现场感：小场地（爵士酒吧 / livehouse）
-	EffectLive: {
-		bands: []eqBandSpec{
-			// 现场录音的中低频容易堆，轻削一点换取人声与乐器的分离度
-			{eqKindPeaking, 300, 1.0, -1.5},
-		},
-		stereo:       StereoParams{Width: 0.75, Crossfeed: 0.15},
-		enableReverb: true,
-		reverb:       ReverbParams{Amount: 0.22, Size: 0.35, Damp: 0.45},
-	},
-
-	// 大厅混响：大空间 + 较暗的高频（大教堂/音乐厅的高频会被空气吸收）
-	EffectHall: {
-		stereo:       StereoParams{Width: 0.7},
-		enableReverb: true,
-		reverb:       ReverbParams{Amount: 0.34, Size: 0.92, Damp: 0.62},
+		stereo: StereoParams{Width: 0.98, Haas: 0.8, Crossfeed: 0.06},
 	},
 }
 
@@ -437,11 +431,12 @@ func (c biquadCoeffs) isIdentity() bool {
 // 最省事的做法是只维护一条链，切换时在"原始干信号"和"处理后的信号"之间
 // 淡化。但那在**音效到音效**的切换上是错的：
 //
-//	大厅混响 → 3D 环绕
+//	3D 环绕 → 关闭
 //
-// 若淡出端是"干净干信号"，那混响是在一个淡化周期里被**直接抽走**的 ——
-// 而混响的尾巴本来会自然衰减一两秒。听感是"混响被一刀切断"，
-// 比不做淡化还明显（不做淡化至少两端都是瞬变，还能被当成"切换动作"）。
+// 若淡出端是"干净干信号"，那 Haas 延迟线里积攒的空间尾巴是在一个淡化
+// 周期里被**直接抽走**的 —— 而它本来会自然衰减出几十毫秒的余韵。
+// 听感是"空间感被一刀切断"，比不做淡化还明显（不做淡化至少两端都是
+// 瞬变，还能被当成"切换动作"）。
 //
 // 所以这里维护两套 DSP 状态：旧的（fading out）与新的（fading in）。
 // 每条路径各自完整地处理输入，输出按 fade 混合。代价是切换期间 CPU
@@ -502,7 +497,7 @@ type Chain struct {
 	prepared bool
 }
 
-// chainState 是一条独立的 DSP 链路（EQ + 空间 + 混响）。
+// chainState 是一条独立的 DSP 链路（EQ + 空间处理 + 混响）。
 type chainState struct {
 	eq     eqSection
 	stereo stereoStage
@@ -515,9 +510,16 @@ type chainState struct {
 	// 原因：淡出中的那条链，它的 preset 已经被下一次切换改写了
 	//（见 applyPendingLocked 对 inactive 的复用）。如果处理时现查，
 	// 就会用"新档位的混响开关"去决定"旧档位的数据要不要过混响器"——
-	// 大厅→关闭 时那个判断会从 true 变成 false，于是延迟线里积攒的
-	// 混响能量在**一个样本之内**被整块丢弃，输出跳变 4 万多
-	//（满幅的 1.3 倍），听感就是一声爆响。
+	// 那个判断从 true 变成 false 时，延迟线里积攒的混响能量会在
+	// **一个样本之内**被整块丢弃，输出跳变 4 万多（满幅的 1.3 倍），
+	// 听感就是一声爆响。
+	//
+	// ★ 当前全部档位都不启用混响（"现场感"与"大厅混响"两个混响档位
+	// 已按用户要求移除），所以这个字段恒为 false、混响器整块旁路。
+	// 保留它（而不是连同 reverb 一起删掉）是刻意的：它的取值来自
+	// presetSpec.enableReverb，只要将来有档位重新启用混响，
+	// 上面那条"必须随 preset 固化"的约束立刻生效 —— 删掉字段就等于
+	// 把这条踩过坑的约束一起删了。
 	runReverb bool
 	// needsApply 表示参数还没写进去（prepare 后或刚被清空时）
 	needsApply bool
@@ -599,8 +601,8 @@ func (c *Chain) Prepared() bool { return c.prepared }
 //
 // ★ 只清滤波器历史与延迟线，**绝不动档位与系数**：
 //
-//	· 档位是用户的跨歌偏好（"我给这首歌开了大厅混响" 的意图是
-//	  "我要一直用大厅混响"），清掉就等于每次切歌都自动关音效；
+//	· 档位是用户的跨歌偏好（"我给这首歌开了 3D 环绕" 的意图是
+//	  "我要一直用 3D 环绕"），清掉就等于每次切歌都自动关音效；
 //	· 系数属于配置，清掉会让滤波器变成 H(z)=0 的静音器 ——
 //	  这正是"切歌后没声音、进度条还在走"那个 bug 的成因，
 //	  完整说明见 eqSection.reset 的注释。
@@ -816,8 +818,8 @@ func (c *Chain) processFading(buf []byte, frames int) {
 		// —— 旧链 ——
 		//
 		// ★ 旧链必须**继续跑完整的效果**，而不是只取一份干信号。
-		// 这正是"大厅混响 → 3D 环绕"能自然过渡的原因：旧链里的混响
-		// 尾巴在自己的延迟线里继续衰减，淡化只是把它整体往下压。
+		// 这正是"3D 环绕 → 关闭"能自然过渡的原因：旧链里的 Haas
+		// 延迟线在自己的缓冲里继续衰减，淡化只是把它整体往下压。
 		// 换成"干信号淡出"的话，那 1~2 秒的混响尾巴会被一刀切断。
 		if from.eq.smoothLeft > 0 {
 			from.eq.stepOnce()

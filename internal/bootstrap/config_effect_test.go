@@ -54,17 +54,21 @@ func TestNormalizeEffectPresetConfig(t *testing.T) {
 		"vocal":    "vocal",
 		"bass":     "bass",
 		"surround": "surround",
-		"live":     "live",
-		"hall":     "hall",
 		// 大小写与空白要能容忍（手改配置文件很容易带上）
-		"  VOCAL  ": "vocal",
-		"Hall":      "hall",
+		"  VOCAL  ":  "vocal",
+		" Surround ": "surround",
 		// 非法值一律落回 off
 		"":        "off",
 		"bogus":   "off",
 		"eq":      "off",
 		"reverb!": "off",
 		"offf":    "off",
+		// ★ 已移除的混响档位也必须落回 off。
+		// 老配置里可能存着这两个值（用户升级前选过），若不收敛，
+		// 界面会显示"没有任何按钮被选中"，而实际生效的档位不明。
+		"live": "off",
+		"hall": "off",
+		"Hall": "off", // 大写形式同样不合法（收敛在大小写处理后进行）
 	}
 	for in, want := range cases {
 		if got := NormalizeEffectPreset(in); got != want {
@@ -103,7 +107,7 @@ func TestNormalizeConfigEffectPreset(t *testing.T) {
 // 永远存不住 —— 而那种错误在纯内存测试里完全看不出来。
 func TestEffectPresetRoundTripThroughJSON(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.EffectPreset = "hall"
+	cfg.EffectPreset = "surround"
 
 	raw, err := json.Marshal(cfg)
 	if err != nil {
@@ -114,7 +118,7 @@ func TestEffectPresetRoundTripThroughJSON(t *testing.T) {
 	if err := json.Unmarshal(raw, &back); err != nil {
 		t.Fatalf("反序列化失败: %v", err)
 	}
-	if back.EffectPreset != "hall" {
-		t.Errorf("JSON 往返之后 = %q，期望 hall（json tag 可能写错了）", back.EffectPreset)
+	if back.EffectPreset != "surround" {
+		t.Errorf("JSON 往返之后 = %q，期望 surround（json tag 可能写错了）", back.EffectPreset)
 	}
 }

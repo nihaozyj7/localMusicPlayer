@@ -1,14 +1,13 @@
 /* ==========================================================================
-   settings.css — 设置界面（分区 + 卡片，不换页）
-   ========================================================================== */
+   settings.css �?设置界面（分�?+ 卡片，不换页�?   ========================================================================== */
 
 .settings {
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
   max-width: 940px;
-  /* 设置页是直接渲染进 .content-body 的（不像其它视图外面还套一层 .page），
-     所以内边距必须在这里给 —— 否则卡片会贴着窗口边缘。 */
+  /* 设置页是直接渲染�?.content-body 的（不像其它视图外面还套一�?.page），
+     所以内边距必须在这里给 —�?否则卡片会贴着窗口边缘�?*/
   padding: var(--sp-5) var(--sp-5) var(--sp-7);
 }
 
@@ -21,17 +20,16 @@
   border-radius: var(--r-md);
   background: var(--surface-1);
   border: var(--hairline);
-  /* 需求：导航按钮栏居中（原来是 flex-start 靠左） */
+  /* 需求：导航按钮栏居中（原来�?flex-start 靠左�?*/
   align-self: center;
   max-width: 100%;
   position: sticky;
-  /* 需求：吸附锚点改为 0（原来留了 --sp-2 的缝，滚动时会看到一条空档） */
+  /* 需求：吸附锚点改为 0（原来留�?--sp-2 的缝，滚动时会看到一条空档） */
   top: 0;
   z-index: 3;
   backdrop-filter: var(--panel-blur);
   -webkit-backdrop-filter: var(--panel-blur);
-  /* 导航条底部与卡片之间的间距交给 flex gap（--sp-4）；这里不再加 margin，
-     否则「导航栏离顶部太远」会因为上下都留白而更明显。 */
+  /* 导航条底部与卡片之间的间距交�?flex gap�?-sp-4）；这里不再�?margin�?     否则「导航栏离顶部太远」会因为上下都留白而更明显�?*/
 }
 
 .settings__nav-item {
@@ -54,7 +52,7 @@
   font-weight: var(--fw-medium);
 }
 
-/* —— 卡片 —— */
+/* —�?卡片 —�?*/
 .card {
   position: relative;
   border-radius: var(--panel-radius);
@@ -145,7 +143,7 @@
   color: var(--text-3);
 }
 
-/* —— 设置行 —— */
+/* —�?设置�?—�?*/
 .setting {
   display: flex;
   align-items: center;
@@ -160,19 +158,19 @@
   background: var(--surface-hover);
 }
 
-/* 分组起点：用分隔线代替行内 margin */
+/* 分组起点：用分隔线代替行�?margin */
 .setting--group-start {
   margin-top: var(--sp-1);
   border-top: var(--hairline);
   border-radius: 0 0 var(--r-sm) var(--r-sm);
 }
 
-/* 多行说明文字（如「添加自定义主题」的步骤） */
+/* 多行说明文字（如「添加自定义主题」的步骤�?*/
 .setting__hint--steps {
   line-height: 1.75;
 }
 
-/* 提示词文本框（设置 → 播放界面样式 → 自定义）：等宽、可整段选中复制 */
+/* 提示词文本框（设�?�?播放界面样式 �?自定义）：等宽、可整段选中复制 */
 .prompt-box {
   width: 100%;
   min-height: 132px;
@@ -191,8 +189,8 @@
   overflow: auto;
 }
 
-/* —— 响度测量的进度条 —— */
-/* 条宽由 data-value(0-100) 驱动，用 CSSOM 写入规则，不写行内样式 */
+/* —�?响度测量的进度条 —�?*/
+/* 条宽�?data-value(0-100) 驱动，用 CSSOM 写入规则，不写行内样�?*/
 .setting--stack {
   flex-direction: column;
   align-items: stretch;
@@ -224,7 +222,7 @@
   gap: var(--sp-2);
 }
 
-/* —— 路径行 —— */
+/* —�?路径�?—�?*/
 .pathrow {
   display: flex;
   align-items: center;
@@ -273,9 +271,7 @@
   color: var(--text-3);
 }
 
-/* —— 放不出来的文件（播放时实测失败的清单） ——
-   折叠时只占一行，展开后是可滚动的行列表。空态刻意做得非常轻：
-   绝大多数用户永远看不到它，不该让设置页常年挂着一块大方块。 */
+/* —�?放不出来的文件（播放时实测失败的清单�?—�?   折叠时只占一行，展开后是可滚动的行列表。空态刻意做得非常轻�?   绝大多数用户永远看不到它，不该让设置页常年挂着一块大方块�?*/
 .unplayable {
   margin: var(--sp-3) var(--sp-4) var(--sp-4);
   border-radius: var(--r-sm);
@@ -312,7 +308,7 @@
   opacity: 0.8;
 }
 
-/* 折叠头（整行可点） */
+/* 折叠头（整行可点�?*/
 .unplayable__head {
   display: flex;
   align-items: center;
@@ -375,7 +371,7 @@
   border-top: var(--hairline);
 }
 
-/* 行列表：清单可能很长（整库坏文件），限高滚动而不是把设置页撑爆 */
+/* 行列表：清单可能很长（整库坏文件），限高滚动而不是把设置页撑�?*/
 .unplayable__rows {
   max-height: 320px;
   overflow-y: auto;
@@ -435,7 +431,7 @@
   user-select: text;
 }
 
-/* 失败原因可能很长（ffmpeg 的 stderr），折行显示但限两行 */
+/* 失败原因可能很长（ffmpeg �?stderr），折行显示但限两行 */
 .unplayable__reason {
   font-size: var(--fs-xs);
   color: var(--text-2);
@@ -474,7 +470,7 @@
   color: var(--text-1);
 }
 
-/* —— 状态徽标 —— */
+/* —�?状态徽�?—�?*/
 .chip {
   display: inline-flex;
   align-items: center;
@@ -512,7 +508,7 @@
   color: var(--danger);
 }
 
-/* —— 过滤规则行 —— */
+/* —�?过滤规则�?—�?*/
 .rule {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) 116px 96px auto auto;
@@ -615,7 +611,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* —— 开关 —— */
+/* —�?开�?—�?*/
 .switch {
   position: relative;
   width: 38px;
@@ -649,7 +645,7 @@
   background: var(--accent-contrast);
 }
 
-/* —— 分段控件 —— */
+/* —�?分段控件 —�?*/
 .segmented {
   display: inline-flex;
   gap: 2px;
@@ -672,16 +668,23 @@
   color: var(--text-1);
 }
 
-.segmented__btn[aria-pressed="true"] {
+/* 选中态的高亮�?   --------------------------------------------------------------------------
+   �?这里必须**同时**匹配 aria-pressed �?aria-checked，两者不是重复的�?
+     · .segmented__btn 用作「开关组」时（音效档位）�?aria-pressed�?     · 用作「单选组」时（桌面歌词三选一 [关闭|悬浮|背景]，容器带
+       role="radiogroup"）按 ARIA 规范应当�?aria-checked，role="radio"
+       �?aria-pressed 是不合法的�?
+   原先只写�?aria-pressed 一条，于是桌面歌词那组按钮**永远不高�?* —�?   用户看不出当前选的是「关闭」还是「悬浮」。这不是样式没生效，
+   而是选择器与标记的属性名对不上�?
+   两条规则合并成一条选择器，避免以后有人只改一边又漏掉另一组�?*/
+.segmented__btn[aria-pressed="true"],
+.segmented__btn[aria-checked="true"] {
   background: var(--accent);
   color: var(--accent-text);
   font-weight: var(--fw-medium);
 }
 
-/* 换行版分段控件：选项多（音效有 6 档）而卡片宽度有限时用。
-   默认的 .segmented 是 inline-flex 且不换行，6 个按钮会直接溢出卡片
-   边界（表现为按钮压到卡片外面）。改成 flex + wrap + 等宽填满，
-   窄窗口下自动折成两行。 */
+/* 换行版分段控件：选项较多而卡片宽度有限时用�?   默认�?.segmented �?inline-flex 且不换行，多个按钮会直接溢出卡片
+   边界（表现为按钮压到卡片外面）。改�?flex + wrap + 等宽填满�?   窄窗口下自动折成两行�?*/
 .segmented--wrap {
   display: flex;
   flex-wrap: wrap;
@@ -690,14 +693,12 @@
 
 .segmented--wrap .segmented__btn {
   flex: 1 1 auto;
-  /* 下限保证文字不被压到换行（"清澈人声"四个字） */
+  /* 下限保证文字不被压到换行�?清澈人声"四个字） */
   min-width: 5.5em;
 }
 
-/* —— 播放界面样式（皮肤）卡片 ——
-   卡片本身是 <div>，里面两个按钮：占满卡片的「选中」按钮 + 右上角的「移除」。
-   之所以不再是「整张卡片就是一个 <button>」：直接在按钮里再放一个按钮是非法
-   HTML，解析器会把外层按钮提前闭合，卡片结构会散。 */
+/* —�?播放界面样式（皮肤）卡片 —�?   卡片本身�?<div>，里面两个按钮：占满卡片的「选中」按�?+ 右上角的「移除」�?   之所以不再是「整张卡片就是一�?<button>」：直接在按钮里再放一个按钮是非法
+   HTML，解析器会把外层按钮提前闭合，卡片结构会散�?*/
 .skincard {
   position: relative;
   display: flex;
@@ -771,7 +772,7 @@
   font-size: 10px;
 }
 
-/* —— 主题选择卡片 —— */
+/* —�?主题选择卡片 —�?*/
 .themes {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
@@ -793,7 +794,7 @@
     transform var(--dur-fast) var(--ease);
 }
 
-/* 与 .skincard__pick 同样的道理：选中热区是内层按钮，移除按钮在外层 */
+/* �?.skincard__pick 同样的道理：选中热区是内层按钮，移除按钮在外�?*/
 .themecard__pick {
   display: flex;
   flex-direction: column;
@@ -852,10 +853,7 @@
   font-weight: var(--fw-semibold);
 }
 
-/* —— 卡片右下角的「移除」按钮 ——
-   放在右下角而不是右上角：右上角是「内置 / 第三方」徽标的位置，两者叠在一起
-   会互相盖住。文字行（id）通常很短，右下角正好空着。
-   常显而不是悬停才出现：它就是这个设置的入口，藏起来会让人以为没有这个功能。 */
+/* —�?卡片右下角的「移除」按�?—�?   放在右下角而不是右上角：右上角是「内�?/ 第三方」徽标的位置，两者叠在一�?   会互相盖住。文字行（id）通常很短，右下角正好空着�?   常显而不是悬停才出现：它就是这个设置的入口，藏起来会让人以为没有这个功能�?*/
 .carddel {
   position: absolute;
   right: var(--sp-2);
@@ -917,7 +915,7 @@
   height: 20px;
 }
 
-/* —— 长滑杆（毛玻璃强度等）—— */
+/* —�?长滑杆（毛玻璃强度等）—�?*/
 .rangeslider {
   display: flex;
   align-items: center;
@@ -938,7 +936,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* —— 关于信息表 —— */
+/* —�?关于信息�?—�?*/
 .kv {
   display: grid;
   grid-template-columns: 140px minmax(0, 1fr);
@@ -959,14 +957,11 @@
 }
 
 /* ==========================================================================
-   关于（应用信息 / 技术栈 / 开源依赖 / 开源协议 / 参考与致谢）
-   --------------------------------------------------------------------------
+   关于（应用信�?/ 技术栈 / 开源依�?/ 开源协�?/ 参考与致谢�?   --------------------------------------------------------------------------
    这一组卡片的结构都是「一行一条」的清单，所以复用同一套行 / 说明块样式，
-   只是密度不同：about-row 是一行一项（技术栈、数据来源），about-note 是
-   带说明段落的块（协议说明、致谢）。
-   ========================================================================== */
+   只是密度不同：about-row 是一行一项（技术栈、数据来源），about-note �?   带说明段落的块（协议说明、致谢）�?   ========================================================================== */
 
-/* —— 顶部：名称 / 版本 / 协议 + 跳转按钮 —— */
+/* —�?顶部：名�?/ 版本 / 协议 + 跳转按钮 —�?*/
 .about-hero {
   display: flex;
   align-items: flex-start;
@@ -1022,9 +1017,8 @@
   flex-wrap: wrap;
 }
 
-/* —— 可点的外部链接文本（依赖名 / 数据来源名）——
-   不用 --accent 表示悬停：默认主题下强调色就是白色，和正文一个颜色，
-   下划线在深浅两套主题里都读得出来。 */
+/* —�?可点的外部链接文本（依赖�?/ 数据来源名）—�?   不用 --accent 表示悬停：默认主题下强调色就是白色，和正文一个颜色，
+   下划线在深浅两套主题里都读得出来�?*/
 .linkbtn {
   display: inline-flex;
   align-items: center;
@@ -1052,7 +1046,7 @@
   color: var(--text-1);
 }
 
-/* —— 许可证小标签 —— */
+/* —�?许可证小标签 —�?*/
 .tagchip {
   display: inline-flex;
   align-items: center;
@@ -1074,7 +1068,7 @@
   color: var(--warning);
 }
 
-/* —— 一行一项（技术栈 / 数据来源）—— */
+/* —�?一行一项（技术栈 / 数据来源）—�?*/
 .about-row {
   display: flex;
   gap: var(--sp-3);
@@ -1113,7 +1107,7 @@
   line-height: 1.55;
 }
 
-/* —— 依赖清单表 —— */
+/* —�?依赖清单�?—�?*/
 .libtable {
   display: flex;
   flex-direction: column;
@@ -1185,7 +1179,7 @@
   font-size: var(--fs-xs);
 }
 
-/* —— 带说明段落的块（协议说明 / 致谢）—— */
+/* —�?带说明段落的块（协议说明 / 致谢）—�?*/
 .about-note {
   display: flex;
   flex-direction: column;
@@ -1210,7 +1204,7 @@
   line-height: 1.65;
 }
 
-/* —— 分组小标题 —— */
+/* —�?分组小标�?—�?*/
 .about-subtitle {
   padding: var(--sp-3) var(--sp-3) var(--sp-1);
   color: var(--text-2);
@@ -1224,7 +1218,7 @@
   border-top: var(--hairline);
 }
 
-/* 页脚放多行说明（免责声明）时改成上下排 */
+/* 页脚放多行说明（免责声明）时改成上下�?*/
 .card__foot--stack {
   flex-direction: column;
   align-items: flex-start;

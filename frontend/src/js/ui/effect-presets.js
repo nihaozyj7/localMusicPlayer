@@ -18,6 +18,4 @@ export const EFFECT_PRESETS = [
   { value: "vocal", label: "清澈人声" },
   { value: "bass", label: "低音增强" },
   { value: "surround", label: "3D 环绕" },
-  { value: "live", label: "现场感" },
-  { value: "hall", label: "大厅混响" },
 ];

@@ -155,7 +155,7 @@ try {
       loudnessTarget: -14,
       loudnessLimit: false,
       onlineCover: false,
-      effectPreset: "hall",
+      effectPreset: "surround",
     });
     return {
       mode: cfg?.loudnessMode,
@@ -174,7 +174,7 @@ try {
     written.mode === "track" && written.target === -14 && written.limit === false,
     JSON.stringify(written)
   );
-  check("写入音效档位后后端立即返回 hall", written.effect === "hall", `effectPreset=${written.effect}`);
+  check("写入音效档位后后端立即返回 surround", written.effect === "surround", `effectPreset=${written.effect}`);
 
   // 非法档位必须被收敛成 off，而不是原样存下来 ——
   // 否则界面会出现「一个音效都没选中，但声音确实被处理过」。
@@ -188,10 +188,10 @@ try {
     bogus.effect === "off",
     `effectPreset=${JSON.stringify(bogus.effect)}（期望 off）`
   );
-  // 收敛测试会把值改掉，写回我们真正要验证的 hall
+  // 收敛测试会把值改掉，写回我们真正要验证的 surround
   await first.evalJs(`
     const { backend } = await import("/js/bridge.js");
-    await backend.setConfig({ effectPreset: "hall" });
+    await backend.setConfig({ effectPreset: "surround" });
     return true;
   `);
 
@@ -212,10 +212,10 @@ try {
     engine?.after?.requested === "surround",
     JSON.stringify(engine?.after)
   );
-  // 还原成 hall（重启后要验证的是它）
+  // 还原成 surround（重启后要验证的是它）
   await first.evalJs(`
     const { backend } = await import("/js/bridge.js");
-    await backend.playerSetEffect("hall");
+    await backend.playerSetEffect("surround");
     return true;
   `);
 
@@ -247,7 +247,7 @@ try {
   await sleep(600);
   const ui = await first.evalJs(`
     const btn = document.querySelector('[data-segment="loudnessMode"] [data-value="track"]');
-    const effBtn = document.querySelector('[data-segment="effectPreset"] [data-value="hall"]');
+    const effBtn = document.querySelector('[data-segment="effectPreset"] [data-value="surround"]');
     const effSegment = document.querySelector('[data-segment="effectPreset"]');
     const layer = document.getElementById("settings-layer");
     return {
@@ -273,8 +273,8 @@ try {
   // 少了这张卡片，用户根本没法开音效。
   check("设置界面有「音效」卡片", ui.hasEffectCard === true, `sections=${JSON.stringify(ui.sections)}`);
   check(
-    "音效卡片有全部 6 个档位按钮且 hall 为选中态",
-    ui.effectOptions.length === 6 && ui.effectOptions.includes("hall") && ui.effectPressed === "true",
+    "音效卡片有全部 4 个档位按钮且 surround 为选中态",
+    ui.effectOptions.length === 4 && ui.effectOptions.includes("surround") && ui.effectPressed === "true",
     JSON.stringify({ options: ui.effectOptions, pressed: ui.effectPressed })
   );
   check(
@@ -320,13 +320,13 @@ try {
   //   2. 引擎启动时**真的装载**了它（不然界面显示开着、实际没声音差别）。
   // 只查第 1 层会漏掉"setConfigProvider 忘了同步给引擎"这种 bug。
   check(
-    "重启后音效档位仍是 hall（配置层）",
-    after.effect === "hall",
+    "重启后音效档位仍是 surround（配置层）",
+    after.effect === "surround",
     `effectPreset=${JSON.stringify(after.effect)}（启动时没同步的话这里可能是 off）`
   );
   check(
-    "重启后引擎装载的也是 hall（运行期）",
-    after.effectRequested === "hall",
+    "重启后引擎装载的也是 surround（运行期）",
+    after.effectRequested === "surround",
     `引擎 requested=${JSON.stringify(after.effectRequested)}（setConfigProvider 没同步给引擎？）`
   );
   check(

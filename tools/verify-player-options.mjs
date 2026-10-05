@@ -355,9 +355,9 @@ try {
 
   check("面板可见", panel.visible);
   check(
-    "面板里有全部 6 个音效档位按钮",
-    panel.options.length === 6 &&
-      ["off", "vocal", "bass", "surround", "live", "hall"].every((v) => panel.options.includes(v)),
+    "面板里有全部 4 个音效档位按钮",
+    panel.options.length === 4 &&
+      ["off", "vocal", "bass", "surround"].every((v) => panel.options.includes(v)),
     JSON.stringify(panel.options)
   );
   check(
@@ -385,17 +385,17 @@ try {
     `实际 ${sliderRange.min}~${sliderRange.max}`
   );
 
-  /* ---- ⑤ 真实鼠标点音效「大厅混响」 ---- */
-  await first.clickAt('[data-segment="effectPreset"] [data-value="hall"]');
+  /* ---- ⑤ 真实鼠标点音效「3D 环绕」 ---- */
+  await first.clickAt('[data-segment="effectPreset"] [data-value="surround"]');
   await sleep(600);
-  const hallPressed = await first.evalJs(`
+  const surroundPressed = await first.evalJs(`
     const seg = document.querySelector('[data-segment="effectPreset"]');
     return Array.from(seg.querySelectorAll('.segmented__btn[aria-pressed="true"]')).map((b) => b.dataset.value);
   `);
   check(
-    "点「大厅混响」后它是唯一选中项",
-    hallPressed.length === 1 && hallPressed[0] === "hall",
-    JSON.stringify(hallPressed)
+    "点「3D 环绕」后它是唯一选中项",
+    surroundPressed.length === 1 && surroundPressed[0] === "surround",
+    JSON.stringify(surroundPressed)
   );
 
   /* ---- ⑥ 真实鼠标点「背景」桌面模式 ---- */
@@ -438,8 +438,8 @@ try {
     };
   `);
   check(
-    "重启后音效「大厅混响」仍是选中态",
-    restart.pressed.length === 1 && restart.pressed[0] === "hall",
+    "重启后音效「3D 环绕」仍是选中态",
+    restart.pressed.length === 1 && restart.pressed[0] === "surround",
     `选中=${JSON.stringify(restart.pressed)}（若为 ["off"] 说明没存住）`
   );
 } finally {
@@ -458,8 +458,8 @@ if (existsSync(cfgPath)) {
   }
   const value = parsed?.effectPreset;
   check(
-    'config.json 里 effectPreset 的值是 "hall"',
-    value === "hall",
+    'config.json 里 effectPreset 的值是 "surround"',
+    value === "surround",
     value === undefined ? "键不存在" : `effectPreset=${JSON.stringify(value)}`
   );
   check(

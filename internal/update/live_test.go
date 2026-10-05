@@ -61,7 +61,7 @@ func TestLiveCheckAgainstRealRepo(t *testing.T) {
 	// 自洽性：拿返回的「最新版本」再查一次，不该再报有更新。
 	//
 	// 这一条同时覆盖了「tag 的 v 前缀」与「构建元数据」两种写法能否对齐
-	// （GitHub 给的是 `v0.1.3`，而 appVersion 常量是 `0.1.3`）。
+	// （GitHub 给的是 `v0.1.4`，而 appVersion 常量是 `0.1.4`）。
 	same, err := c.Check(context.Background(), res.Latest, false)
 	if err != nil {
 		t.Fatalf("Check 失败：%v", err)

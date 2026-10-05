@@ -12,7 +12,7 @@ info:
   copyright: "Copyright 2026 The localMusicPlayer Authors" # Copyright text
   comments: "Licensed under the Apache License, Version 2.0" # Comments
   # 版本号与 Go 侧常量 services_app.go#appVersion 保持一致
-  version: "0.1.3" # The application version
+  version: "0.1.4" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension
   #                               # If not set and Assets.car exists, defaults to "appicon"

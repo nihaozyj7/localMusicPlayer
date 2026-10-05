@@ -1,6 +1,6 @@
 {
   "name": "@localmusicplayer/player-skins",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "type": "module",
   "description": "播放详情界面的背景与歌词渲染包（皮肤）：统一的皮肤接口 + 内置多种样式",

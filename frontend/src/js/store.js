@@ -101,8 +101,10 @@ const DEFAULT_CONFIG = {
 
   /* 音效（见 Go 侧 internal/audioplay/effects.go）
      ------------------------------------------------------------------
-     档位：off | vocal（清澈人声） | bass（低音增强）
-           | surround（3D 环绕） | live（现场感） | hall（大厅混响）
+     档位：off | vocal（清澈人声） | bass（低音增强） | surround（3D 环绕）
+
+     曾经的 live（现场感）与 hall（大厅混响）两个混响档位已移除；
+     配置里若残留这两个值，后端会收敛成 off。
 
      默认 off：音效会改变听到的声音（EQ 调整频响），必须由用户明确开启，
      与「响度均衡」「跳过静音」同一立场。 */
