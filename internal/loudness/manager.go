@@ -33,8 +33,7 @@ import (
 	"localmusicplayer/internal/bootstrap"
 	"localmusicplayer/internal/executil"
 	"localmusicplayer/internal/ffmpeg"
-)// AlgoVersion 测量算法的版本号。
-//
+) // AlgoVersion 测量算法的版本号。
 // 只要测量方式变了（解码路径、滤镜、门限、单位换算…），就把它 +1，
 // 旧的缓存会自动判为过期并重算 —— 否则用户升级后会拿到用旧算法算出的
 // 补偿值，且完全看不出来。

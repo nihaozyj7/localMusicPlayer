@@ -98,10 +98,10 @@ const (
 //	gains   的 key 是曲库 songID（路径派生、稳定），所以文件内容变化后
 //	        它会指向一条已失效的测量，读取时被丢弃（见 validGainLocked）。
 type cacheFile struct {
-	Version int                              `json:"version"`
-	Entries map[string]Measurement           `json:"entries"`
-	Gains   map[string]map[string]GainEntry  `json:"gains,omitempty"`
-	Albums  map[string]Album                 `json:"albums,omitempty"`
+	Version int                             `json:"version"`
+	Entries map[string]Measurement          `json:"entries"`
+	Gains   map[string]map[string]GainEntry `json:"gains,omitempty"`
+	Albums  map[string]Album                `json:"albums,omitempty"`
 }
 
 // cacheVersion 是**磁盘格式**版本，与 AlgoVersion（测量算法版本）无关。
@@ -542,8 +542,8 @@ func GainDB(item Measurement, targetLUFS float64) float64 {
 //
 // ★ 这是「换挡位零成本」的落点，两级命中：
 //
-//	1. 增益表里有这个挡位的记录 → 直接返回（**不起 ffmpeg、不重算**）；
-//	2. 没有但测量结果在 → 用 GainDB 现算一次（纯算术）并记进表里。
+//  1. 增益表里有这个挡位的记录 → 直接返回（**不起 ffmpeg、不重算**）；
+//  2. 没有但测量结果在 → 用 GainDB 现算一次（纯算术）并记进表里。
 //
 // 第 2 条保证了「在 -14 测过、切到 -16」时隔一个函数调用就有结果，
 // 而不是排一次队、再跑一遍 ffmpeg —— 那正是用户报的「补偿丢了」。

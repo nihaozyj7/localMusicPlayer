@@ -218,7 +218,7 @@ func TestCacheInvalidatedOnAlgoChange(t *testing.T) {
 	m.mu.Lock()
 	m.items[keyFor(song.Path, 1000, 100)] = Measurement{
 		Path: song.Path, Size: 1000, ModTime: 100,
-		Algo: AlgoVersion - 1, // 旧算法
+		Algo:       AlgoVersion - 1, // 旧算法
 		Integrated: -20, Measured: true,
 	}
 	m.mu.Unlock()
@@ -331,9 +331,10 @@ func TestCacheRoundTrip(t *testing.T) {
 // TestMigrateLegacyCache 这是「升级后数据不丢」的回归测试。
 //
 // v1 格式把 target/gain 直接放在测量记录里。迁移必须做到：
-//   · 固有量进新表（不重测）；
-//   · 记录里那个 gain 归到它当时的 target 挡位下（用户在"较响"算过的
-//     补偿，升级后仍然是"较响"的补偿）。
+//
+//	· 固有量进新表（不重测）；
+//	· 记录里那个 gain 归到它当时的 target 挡位下（用户在"较响"算过的
+//	  补偿，升级后仍然是"较响"的补偿）。
 func TestMigrateLegacyCache(t *testing.T) {
 	dir := t.TempDir()
 	song := bootstrap.Song{ID: "t_1", Path: `D:\m\a.flac`, Size: 1000, ModTime: 100}
@@ -350,7 +351,7 @@ func TestMigrateLegacyCache(t *testing.T) {
 				"path": song.Path, "size": 1000, "modTime": 100,
 				"target": -14.0, "algo": AlgoVersion,
 				"integrated": -20.5, "truePeak": -8.0, "lra": 5.0,
-				"gain": 6.5,
+				"gain":     6.5,
 				"measured": true, "measuredAt": 111,
 			},
 		},

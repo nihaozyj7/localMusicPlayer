@@ -41,7 +41,7 @@ import (
 //
 // 字段与 internal/loudness 的 Measurement 的固有量部分一一对应，
 // 但这里**不导入** loudness 包：依赖方向必须是 loudness → ffmpeg
-//（loudness 要用 ffmpeg 跑兜底测量），反过来会成环。
+// （loudness 要用 ffmpeg 跑兜底测量），反过来会成环。
 type LoudnessResult struct {
 	// Integrated 整合响度（LUFS）。0 表示整段静音或过短、拿不到数据。
 	Integrated float64
