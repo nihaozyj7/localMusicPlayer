@@ -47,6 +47,20 @@ func windowsAsset(tag string) Asset {
 	}
 }
 
+// assetNamed 用给定的文件名造一个资产（体积与地址都是占位值）。
+//
+// 为什么需要它：windowsAsset 写死了 windows-x64，而 PickAsset 是按
+// runtime.GOOS 挑档位的 —— 在 Linux/macOS 上那个资产永远匹配不上。
+// 需要「当前平台能挑中」的测试应该用 currentPlatformAssetName()
+// （定义在 mirror_test.go，同属 update 包）再配这个构造器。
+func assetNamed(name, tag string) Asset {
+	return Asset{
+		Name:               name,
+		Size:               1024,
+		BrowserDownloadURL: "https://github.com/o/r/releases/download/" + tag + "/" + name,
+	}
+}
+
 // newAPIServer 起一个只提供 releases 列表的假 API。
 func newAPIServer(t *testing.T, releases []Release, status int) *httptest.Server {
 	t.Helper()
@@ -86,7 +100,19 @@ func newTestClient(srv *httptest.Server) *Client {
    -------------------------------------------------------------------------- */
 
 func TestCheckReportsUpdateAvailable(t *testing.T) {
-	srv := newAPIServer(t, []Release{fakeRelease("v0.2.0", []Asset{windowsAsset("v0.2.0")}, false, false)}, 0)
+	// ★ 资产必须带**当前平台**的关键字。
+	//
+	// PickAsset 按 runtime.GOOS 选档位（见 release.go 的 platformKinds）：
+	// 在 Linux 上喂一个纯 windows.exe 的列表，正确结果就是「没有当前平台的
+	// 安装包」——Check 会据此填 res.Error 并置 Available=false。
+	// 原测试写死了 windowsAsset，在 Linux 上因此失败
+	//（CI 此前因 gofmt 红灯从未真正跑到测试，所以一直没暴露）。
+	name := currentPlatformAssetName()
+	if name == "" {
+		t.Skipf("未知平台 %s，platformKinds 没有对应档位", runtime.GOOS)
+	}
+
+	srv := newAPIServer(t, []Release{fakeRelease("v0.2.0", []Asset{assetNamed(name, "v0.2.0")}, false, false)}, 0)
 	c := newTestClient(srv)
 
 	res, err := c.Check(context.Background(), "0.1.1", false)
@@ -114,16 +140,16 @@ func TestCheckReportsUpdateAvailable(t *testing.T) {
 	if res.PublishedAt == 0 {
 		t.Fatal("应当解析出发布时间")
 	}
-	if runtime.GOOS == "windows" {
-		if !res.Available {
-			t.Fatal("Windows 上应当能找到可下载的资产")
-		}
-		if res.AssetSizeText == "" {
-			t.Fatal("应当带上体积文本")
-		}
-		if res.DownloadURL == "" {
-			t.Fatal("应当带上下载地址")
-		}
+	// 既然喂的就是当前平台的资产，任何平台上都应该挑得出来 ——
+	// 不再需要 `if runtime.GOOS == "windows"` 这种平台分支。
+	if !res.Available {
+		t.Fatalf("应当能找到可下载的资产（平台 %s，喂的是 %s）", runtime.GOOS, name)
+	}
+	if res.AssetSizeText == "" {
+		t.Fatal("应当带上体积文本")
+	}
+	if res.DownloadURL == "" {
+		t.Fatal("应当带上下载地址")
 	}
 }
 

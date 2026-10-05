@@ -321,40 +321,86 @@ func TestQueueRespectsConcurrency(t *testing.T) {
 
 // TestQueueConcurrentSubmitIsSafe 并发入队不能丢任务。
 //
-// 注意断言的是「队列 + 已在跑」的总数，而不是纯队列长度：
-// enqueue 会立刻把能跑的任务交给调度器（最多 concurrency 个），
-// 所以有些请求入队即开跑，不再留在等待队列里。真正要保证的是
-// **没有请求被无声丢弃**，而且没有重复。
+// ★ 断言方式必须与调度器的记账语义对齐，否则会变成一条**时序敏感**的
+// 假失败（在 Windows 上恰好通过、在 Linux CI 上失败）。
+//
+// 调度器的记账是分段的（见 manager.go）：
+//
+//	入队    → q.queued[key]=true，进 q.queue / q.urgent
+//	出队    → dropQueuedLocked 立刻把 key 从 q.queued 删掉，再交给 goroutine
+//	跑完    → q.running--，close(req.Done)
+//
+// 也就是说「queued + running」**只在任务还没跑完时有意义**。原实现把断言
+// 放在 wg.Wait() 之后，而在 Linux 上这些请求会用不存在的路径（`D:\m\...`）
+// 立刻失败跑完 —— 于是它们既不在 queued 里、也不在 running 里，
+// 总数自然凑不齐 50（实测 30）。那不是并发 bug，是断言用错了量。
+//
+// 这里改成等**每个请求自己的 Done**：每个 Done 必须恰好被关闭一次，
+// 这就直接证明了「没有请求被无声丢弃、也没有被重复处理」——
+// 与平台、与任务跑得快慢都无关。
 func TestQueueConcurrentSubmitIsSafe(t *testing.T) {
 	m := NewManager(t.TempDir(), 2)
 	const n = 50
+
+	// 每个请求各带一个 Done，收集起来统一等待。
+	reqs := make([]*Request, n)
+	for i := 0; i < n; i++ {
+		reqs[i] = &Request{
+			Song: bootstrap.Song{
+				ID:   fmt.Sprintf("t_%d", i),
+				Path: fmt.Sprintf(`D:\m\song-%d.flac`, i),
+				Size: int64(i), ModTime: 1,
+			},
+			Priority: PriorityNormal,
+			Done:     make(chan struct{}),
+		}
+	}
+
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			s := bootstrap.Song{
-				ID:   fmt.Sprintf("t_%d", i),
-				Path: fmt.Sprintf(`D:\m\song-%d.flac`, i),
-				Size: int64(i), ModTime: 1,
-			}
-			m.enqueue(&Request{Song: s, Priority: PriorityNormal, Done: make(chan struct{})})
+			m.enqueue(reqs[i])
 		}(i)
 	}
 	wg.Wait()
 
+	// ★ 核心断言：每个请求都必须**恰好完成一次**。
+	//
+	// 用 Done 而不是队列长度：Done 由调度器在任务真正跑完之后关闭，
+	// 它是"这个请求被处理过了"的唯一可靠证据。若某个请求被丢弃，
+	// 它的 Done 永远不会关闭，这里就会超时失败。
+	done := make(chan struct{}, n)
+	for _, r := range reqs {
+		go func(r *Request) {
+			<-r.Done
+			done <- struct{}{}
+		}(r)
+	}
+
+	deadline := time.After(30 * time.Second)
+	for i := 0; i < n; i++ {
+		select {
+		case <-done:
+		case <-deadline:
+			t.Fatalf("等第 %d/%d 个请求完成超时 —— 有请求被无声丢弃了", i+1, n)
+		}
+	}
+
+	// 去重集合不该超过请求数（重复入队会让它多计）
 	q := &m.q
 	q.mu.Lock()
+	seen := len(q.queued)
 	queued := len(q.urgent) + len(q.queue)
 	running := q.running
-	seen := len(q.queued)
 	q.mu.Unlock()
 
-	if got := queued + running; got != n {
-		t.Errorf("入队 %d 条应全部在「等待 + 运行中」，实际 %d（排队 %d + 运行 %d）",
-			n, got, queued, running)
-	}
 	if seen > n {
 		t.Errorf("去重集合不该超过 %d，实际 %d", n, seen)
+	}
+	// 全部跑完之后，队列里不该还压着东西
+	if queued != 0 || running != 0 {
+		t.Errorf("全部请求完成后队列应为空，实际 排队 %d + 运行 %d", queued, running)
 	}
 }

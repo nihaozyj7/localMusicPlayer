@@ -1,6 +1,7 @@
 package update
 
 import (
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -176,13 +177,52 @@ func TestMirrorTableIntegrity(t *testing.T) {
    release_test.go — 资产挑选
    -------------------------------------------------------------------------- */
 
-// realAssets 是 v0.1.1 发布里真实存在的资产（名字与体积取自 GitHub API）。
+// ★ 这些测试必须按**运行平台**构造资产，不能只造 Windows 的。
+//
+// PickAsset 内部按 runtime.GOOS 选一档平台特征（见 release.go 的
+// platformKinds），所以喂一个纯 Windows 的资产列表、却在 Linux 上跑，
+// 得到的正确结果就是「找不到安装包」。发版只在 Windows 上做，
+// 但 CI 跑在 Linux 上 —— 早期这两条测试写死了 windows-exe，
+// 在 Linux 上必然失败（此前 gofmt 一直红灯，测试从没真正跑过，
+// 所以一直没暴露）。
+//
+// 这里提供按平台的构造器，让断言在两种平台上都仍然有意义：
+// 测的是「能挑出当前平台的包」，而不是「能挑出 Windows 的包」。
+const (
+	windowsAssetName = "LMPlayer-v0.1.1-windows-x64.exe"
+	// ★ 必须用 "darwin" 而不是 "macos"：platformKinds 里 darwin 的**首选**
+	// 档位是 {os:"darwin"}，{os:"macos"} 只是次选。currentPlatformAssetName
+	// 的语义是「首选档位应当挑中的那个」，写 macos 会让断言与首选档位错位。
+	darwinAssetName = "LMPlayer-v0.1.1-darwin-arm64.dmg"
+	linuxAssetName  = "LMPlayer-v0.1.1-linux-x64.AppImage"
+)
+
+// currentPlatformAssetName 返回当前平台**应当**被挑中的那个资产名。
+//
+// 与 platformKinds 一一对应：每个平台的首选档位对应的文件名。
+func currentPlatformAssetName() string {
+	switch runtime.GOOS {
+	case "windows":
+		return windowsAssetName
+	case "darwin":
+		return darwinAssetName
+	case "linux":
+		return linuxAssetName
+	default:
+		return ""
+	}
+}
+
+// realAssets 是发布里真实存在的资产（名字与体积取自 GitHub API）。
+//
+// 在真实的两项之外，按当前平台补一个该平台的包 —— 这样
+// TestPickAssetFindsWindowsExe 在哪个平台上都测得到「能挑出本平台的包」。
 func realAssets() []Asset {
-	return []Asset{
+	sets := []Asset{
 		{
-			Name:               "LMPlayer-v0.1.1-windows-x64.exe",
+			Name:               windowsAssetName,
 			Size:               17851904,
-			BrowserDownloadURL: "https://github.com/nihaozyj7/localMusicPlayer/releases/download/v0.1.1/LMPlayer-v0.1.1-windows-x64.exe",
+			BrowserDownloadURL: "https://github.com/nihaozyj7/localMusicPlayer/releases/download/v0.1.1/" + windowsAssetName,
 		},
 		{
 			Name:               "SHA256SUMS.txt",
@@ -190,15 +230,33 @@ func realAssets() []Asset {
 			BrowserDownloadURL: "https://github.com/nihaozyj7/localMusicPlayer/releases/download/v0.1.1/SHA256SUMS.txt",
 		},
 	}
+	// 非 Windows 平台再补一条本平台的（Windows 上已经有了，不重复加）
+	if name := currentPlatformAssetName(); name != "" && name != windowsAssetName {
+		sets = append(sets, Asset{
+			Name:               name,
+			Size:               17000000,
+			BrowserDownloadURL: "https://github.com/nihaozyj7/localMusicPlayer/releases/download/v0.1.1/" + name,
+		})
+	}
+	return sets
 }
 
+// TestPickAssetFindsWindowsExe 验证能从真实资产列表里挑出**本平台**的安装包。
+//
+// 函数名保留了 Windows 字样（历史原因），但断言已经改成平台无关：
+// 它测的是 PickAsset 能在真实形状的列表里挑中当前平台该装的那个。
 func TestPickAssetFindsWindowsExe(t *testing.T) {
+	want := currentPlatformAssetName()
+	if want == "" {
+		t.Skipf("未知平台 %s，platformKinds 没有对应档位", runtime.GOOS)
+	}
+
 	a, ok := PickAsset(realAssets())
 	if !ok {
-		t.Fatal("应当能从真实资产列表里挑出安装包")
+		t.Fatalf("应当能从真实资产列表里挑出安装包（平台 %s）", runtime.GOOS)
 	}
-	if a.Name != "LMPlayer-v0.1.1-windows-x64.exe" {
-		t.Fatalf("挑错了资产：%s", a.Name)
+	if a.Name != want {
+		t.Fatalf("挑错了资产：得到 %s，期望 %s（平台 %s）", a.Name, want, runtime.GOOS)
 	}
 }
 
@@ -233,9 +291,24 @@ func TestIsChecksumAsset(t *testing.T) {
 func TestPickAssetPrefersLargestInSameTier(t *testing.T) {
 	// 同档命中多个时取体积最大的：发行时可能同时留了安装包与历史副本，
 	// 大的那个才是真正要装的绿色版。
+	//
+	// ★ 文件名必须带**当前平台**的关键字，否则 PickAsset 一档都匹配不上
+	//（它按 runtime.GOOS 选档位）。这里只拼两段后缀，平台关键字由
+	// currentPlatformAssetName() 提供。
+	base := currentPlatformAssetName()
+	if base == "" {
+		t.Skipf("未知平台 %s，platformKinds 没有对应档位", runtime.GOOS)
+	}
+	// 去掉扩展名再拼 "-installer"，保证两条资产落在**同一档**里
+	ext := ""
+	stem := base
+	if i := strings.LastIndex(base, "."); i > 0 {
+		stem, ext = base[:i], base[i:]
+	}
+
 	assets := []Asset{
-		{Name: "LMPlayer-windows-x64.exe", Size: 100},
-		{Name: "LMPlayer-windows-x64-installer.exe", Size: 9000},
+		{Name: stem + ext, Size: 100},
+		{Name: stem + "-installer" + ext, Size: 9000},
 	}
 	a, ok := PickAsset(assets)
 	if !ok {
@@ -335,18 +408,57 @@ func TestFormatTag(t *testing.T) {
 
 func TestSafeFileNameBlocksTraversal(t *testing.T) {
 	// 资产名来自远端 JSON：一个 "../../evil.exe" 不能写到临时目录外面去。
-	cases := map[string]string{
-		"../../evil.exe":     "evil.exe",
-		"..\\..\\evil.exe":   "evil.exe",
-		"/etc/passwd":        "passwd",
-		"C:\\Windows\\x.exe": "x.exe",
-		"":                   "update.bin",
-		"..":                 "update.bin",
+	//
+	// ★ 断言的是**安全性质**（结果里不含任何路径分隔符、且不是 "." / ".."），
+	// 而不是某个写死的期望字符串。原因是 filepath.Base 的行为**依平台而异**：
+	//
+	//	· Windows 上 `\` 与 `/` 都是分隔符，Base("..\\..\\evil.exe") = "evil.exe"；
+	//	· Linux 上只有 `/` 是分隔符，Base 得到整串 "..\\..\\evil.exe"，
+	//	  随后实现里的 ReplaceAll("\\", "_") 把它变成 ".._.._evil.exe"。
+	//
+	// 两种结果都**安全**（都不含分隔符、都落在目标目录内），只是字面不同。
+	// 原测试写死了 Windows 的字面结果，在 Linux 上必然失败 ——
+	// 而它本该守住的是「不会逃出目录」这件事，不是某个平台的具体拼法。
+	cases := []string{
+		"../../evil.exe",
+		"..\\..\\evil.exe",
+		"/etc/passwd",
+		"C:\\Windows\\x.exe",
+		"",
+		"..",
+		".",
+		"a/b/c.exe",
 	}
-	for in, want := range cases {
-		if got := safeFileName(in); got != want {
-			t.Errorf("safeFileName(%q) = %q，期望 %q", in, got, want)
+	for _, in := range cases {
+		got := safeFileName(in)
+
+		if got == "" {
+			t.Errorf("safeFileName(%q) 返回空串 —— 调用方会拼出一个目录路径", in)
+			continue
 		}
+		// 结果里不能残留任何分隔符（两种平台的分隔符都要查）
+		if strings.ContainsAny(got, `/\`) {
+			t.Errorf("safeFileName(%q) = %q，仍含路径分隔符 —— 可能写出目录外", in, got)
+		}
+		// 不能是 "." / ".."（它们会让 filepath.Join 退到父目录）
+		if got == "." || got == ".." {
+			t.Errorf("safeFileName(%q) = %q，会让 Join 退到父目录", in, got)
+		}
+		// 再加一道端到端保证：拼出来的路径必须仍在目标目录内
+		base := t.TempDir()
+		joined := filepath.Join(base, got)
+		if filepath.Dir(joined) != base {
+			t.Errorf("safeFileName(%q) = %q，Join 之后跑到了 %q 外面", in, got, base)
+		}
+	}
+
+	// 正常文件名必须原样保留（不能为了安全把所有名字都改写）
+	if got := safeFileName("LMPlayer-v0.1.4-windows-x64.exe"); got != "LMPlayer-v0.1.4-windows-x64.exe" {
+		t.Errorf("正常文件名被改写了：%q", got)
+	}
+	// 空 / 点号这类退化输入要有兜底名
+	if got := safeFileName(""); got != "update.bin" {
+		t.Errorf("空名字应当兜底成 update.bin，得到 %q", got)
 	}
 }
 
