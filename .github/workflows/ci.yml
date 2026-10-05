@@ -63,6 +63,37 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # ★ 必须装这些系统库，否则后端根本编译不过（CGO 依赖它们的头文件）。
+      #
+      # 包名是从依赖源码里的 pkg-config 指令逐项核对出来的，不是猜的：
+      #   wails v3 internal/assetserver/webview/webkit_linux.go
+      #     #cgo linux pkg-config: gtk4 webkitgtk-6.0 libsoup-3.0 gio-unix-2.0
+      #   golang.design/x/hotkey/hotkey_x11.go   → #include <X11/Xlib.h>
+      #   gen2brain/malgo（内含 miniaudio）        → ALSA
+      #
+      # ★ wails v3 默认走 **GTK4**（webkitgtk-6.0）；GTK3 那条要在构建设置
+      #   `gtk3` 标签时才会启用。所以这里装的是 libgtk-4-dev，
+      #   装成 libgtk-3-dev 是没用的（pkg-config 找不到 gtk4）。
+      #
+      # 这个项目只在 Windows 上验证与发布（见 README「系统要求」），
+      # 但 CI 跑在 ubuntu-latest 上。此前 gofmt 一直红灯，**后面的步骤从没
+      # 真正执行过**，于是这个问题被掩盖了很久 —— 修好 gofmt 之后
+      # go vet 立刻以 "X11/Xlib.h: No such file or directory" 失败。
+      #
+      # 选择「装依赖让后端真正编译」而不是「把后端 CI 改成只跑 GOOS=windows」：
+      # 后者等于把 vet / race 测试整个跳过，而这恰恰是 CI 里最有价值的两项
+      # （库里有并发扫描与缓存落盘路径，历史上有过真实竞态）。
+      - name: 安装后端系统依赖（GTK4/WebKitGTK/X11/ALSA）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev \
+            libwebkitgtk-6.0-dev \
+            libx11-dev \
+            libxkbcommon-dev \
+            libasound2-dev \
+            pkg-config
+
       # gofmt 门禁。注意：仓库里 *.go 已显式 eol=lf，因此 Linux 上不存在
       # 行尾符造成的假红灯（这才是这个检查能长期有效的前提）。
       - name: gofmt
