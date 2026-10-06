@@ -155,6 +155,14 @@ type presetSpec struct {
 	bands []eqBandSpec
 
 	stereo StereoParams
+	// enableEarly 为 true 时启用早期反射场（effects_early.go）——
+	// 环绕档里唯一携带双耳时间差（ITD）的环节。
+	//
+	// ★ 它必须是 preset 固化的布尔，不能靠 stereo.Decorrelation 之类
+	// 推断：与 runReverb 同理，淡出中的那条链的 preset 已经被下一次
+	// 切换改写，处理时现查会用"新档位的开关"决定"旧档位的数据过不过"，
+	// 把延迟线里积攒的能量在一个样本内整块丢掉（见 runReverb 的说明）。
+	enableEarly bool
 	// enableReverb 为 false 时混响整块旁路（省掉全部延迟线运算）
 	enableReverb bool
 	reverb       ReverbParams
@@ -254,16 +262,18 @@ var presetSpecs = map[EffectPreset]presetSpec{
 	//     （纯矩阵运算，不引入任何滤波），设为满值。
 	//     ★ 代价是对真单声道素材（L==R）完全无效 —— 由 Decorrelation 补。
 	//
-	//   · Decorrelation 1.0（满值）→ 去相关，两层结构：
-	//     a) 两个**延迟不同**的全通（1.4/2.0ms）取差分进侧分量 ——
-	//        全通幅度响应恒为 1，只改相位不改音色；
-	//     b) **6/11/17/25ms 稀疏回声**进侧分量（tapEchoStage）——
-	//        落在 precedence 效应的 5~30ms 宽敞感窗口里，
-	//        这是"听得出空间"的主力（全通的 1~2ms 只产生染色）。
-	//     两层都只进侧分量 → 单声道折叠在空间处理级**结构性严格**。
-	//     ★ 1.0 是感知优先的选择（用户确认"一听就分辨"）：
-	//        最坏相位对齐时单耳个别频点可到较深的点，
-	//        折叠与双耳总能量不受影响（±side 相消）。
+	//   · Decorrelation 1.0（满值）→ 全通去相关，**只有一层**：
+	//     一个 61 样本（1.4ms）的全通，`side += ap(mid)·0.5·decor`。
+	//     全通幅度响应恒为 1，只改相位不改音色；因为幅度恒定，
+	//     注入量恒为 0.5·|mid|，单耳最坏陷波被钉在 -6dB。
+	//     ★ 第三轮的第二个手段（6/11/17/25ms 稀疏回声进侧分量）
+	//       已在第四轮移除：它不带 ITD 且能把单耳挖到 -18dB，
+	//       职责由 enableEarly 的早期反射场接手。
+	//
+	//   · enableEarly → 早期反射场（effects_early.go）：
+	//     4 个**同极性、每耳延迟不同**的反射抽头，落在 precedence
+	//     的 1~20ms 窗口里。这是链路里唯一真正携带双耳时间差的环节，
+	//     也是"环绕感"的主力（全通只提供宽化，混响只提供扩散尾巴）。
 	//
 	//   · Crossfeed 0.10 → 只串**低频**的互补互换，用来消除头中效应
 	//     （把声音从"脑中"挪到"面前"）。
@@ -274,24 +284,35 @@ var presetSpecs = map[EffectPreset]presetSpec{
 	//     ★ 它用的是二阶低通做互补互换而不是比例混合，所以
 	//     单声道折叠严格不变（实测全频段 0.00dB，见 processStereo）。
 	//
-	// ★★ 第三轮（用户确认"加入轻混响 + 强度一听就分辨"）：
-	// 前两轮的共同教训是"**指标达标但耳机听不出**"—— v0.1.4 把
-	// 单声道声道差做到 0.236、这轮重写做到 0.168，用户依然说没效果。
-	// 复盘出两个感知层面的缺口，这一轮针对性补上：
+	// ★★ 第三轮（用户确认"加入轻混响"）：v0.1.4 把单声道声道差做到
+	// 0.236、第二轮重写做到 0.168，用户依然说没效果。复盘出两个感知缺口：
+	// 全通只有 1.4/2.0ms、低于 precedence 的 5~30ms 宽敞感窗口（补了
+	// 5~25ms 稀疏回声）；环绕最强的听感线索是空间感（补了混响 ——
+	// 干湿比 0.30、Size 0.60 约 0.7s 的小房间、阻尼偏暗）。
 	//
-	//   1. 空间感窗口：全通去相关只有 1.4/2.0ms，低于 precedence
-	//      效应产生宽敞感的 5~30ms 窗口 → 加了 tapEchoStage
-	//      （6/11/17/25ms 稀疏回声进侧分量，见 effects_stereo.go）；
-	//   2. 包围感线索：环绕感最强的听感线索是**空间感（混响域）**，
-	//      Dolby Headphone 等"3D"音效本质都是空间化处理。混响实现
-	//      一直保留在代码里（v0.1.4 只是移除了独立档位），这一轮
-	//      经用户确认把它作为环绕档的一部分重新启用 —— 干湿比克制
-	//      （0.30，等功率混合下湿声约 -12dB 于直达声）、小房间尺寸
-	//      （Size 0.45 → RT60 约 0.45s 太紧，调到 0.60 → 约 0.7s，
-	//      听感上"有空间"但仍像小房间而不是音乐厅）、
-	//      阻尼偏暗，目标是"声音在一个小空间里"而不是"廉价混响"。
+	// ★★ 第四轮（用户反馈"有变宽、有混响，但没有环绕的感觉"）：
+	// 前三轮全部空间成分都走 `L = mid + side、R = mid - side`，
+	// 这个结构把**双耳时间差（ITD）恒定压成 0** —— 实测互相关峰值
+	// 就落在 lag = 0 样本上。ITD 是"声音在头外面"最主要的判断依据，
+	// 于是宽化和混响都听得到、环绕感就是出不来。详见 effects_early.go
+	// 文件头（那里有实测数据与完整的推导）。
+	//
+	// 这一轮新增 enableEarly（早期反射场）：4 个同极性、每耳延迟不同
+	// 的反射抽头（抽头 1 两耳差 0.7ms，正落在人耳 ITD 的自然范围；
+	// 抽头 2~4 拉开到 2.7~4.3ms 让两耳的反射场互不相关），
+	// 这是链路里唯一真正带时间差的环节。
+	//
+	// 同时改了两处"看着是宽、其实是染色"的结构（实测数字）：
+	//   · side 通道里那组 6/11/17/25ms 回声整体移除 —— Σg·scale≈1.0
+	//     意味着某频率上 side 正好等于 -mid，单耳被挖空（500Hz 处
+	//     左右耳差 18dB，1000Hz 处 38dB）；
+	//   · 全通去相关从"两个延迟不同的全通相减"改成"一个全通"——
+	//     相减的 |H1-H2| 在频域 0~2 起伏，同样能挖空单耳；
+	//     单个全通 |H|≡1，注入量是常数，最坏陷波因此被结构性钉在 -6dB。
+	// 两者合起来把单耳最坏电平差从 38dB 降到 12.6dB。
 	EffectSurround: {
 		stereo:       StereoParams{Width: 1.0, Decorrelation: 1.0, Crossfeed: 0.10},
+		enableEarly:  true,
 		enableReverb: true,
 		reverb:       ReverbParams{Amount: 0.30, Size: 0.60, Damp: 0.60},
 	},
@@ -543,13 +564,21 @@ type Chain struct {
 	prepared bool
 }
 
-// chainState 是一条独立的 DSP 链路（EQ + 空间处理 + 混响）。
+// chainState 是一条独立的 DSP 链路（EQ + 空间处理 + 早期反射 + 混响）。
 type chainState struct {
 	eq     eqSection
 	stereo stereoStage
+	early  earlyFieldStage
 	rev    reverb
 	// preset 是这条链当前装载的档位
 	preset EffectPreset
+	// runEarly 是"这条链当前是否要跑早期反射场"（effects_early.go）。
+	//
+	// ★ 与 runReverb 同一条约束：必须**随 preset 一起固化**，不能在处理时
+	// 现查 presetSpecs[preset] —— 理由见 runReverb 那段（淡出中的链的
+	// preset 已被下一次切换改写，现查会把延迟线里积攒的反射能量
+	// 在一个样本之内整块丢弃 → 输出跳变 → 爆响）。
+	runEarly bool
 	// runReverb 是"这条链当前是否要跑混响"。
 	//
 	// ★ 必须**随 preset 一起固化**，不能在处理时临时查 presetSpecs[preset]。
@@ -560,12 +589,8 @@ type chainState struct {
 	// **一个样本之内**被整块丢弃，输出跳变 4 万多（满幅的 1.3 倍），
 	// 听感就是一声爆响。
 	//
-	// ★ 当前全部档位都不启用混响（"现场感"与"大厅混响"两个混响档位
-	// 已按用户要求移除），所以这个字段恒为 false、混响器整块旁路。
-	// 保留它（而不是连同 reverb 一起删掉）是刻意的：它的取值来自
-	// presetSpec.enableReverb，只要将来有档位重新启用混响，
-	// 上面那条"必须随 preset 固化"的约束立刻生效 —— 删掉字段就等于
-	// 把这条踩过坑的约束一起删了。
+	// ★ 它的取值来自 presetSpec.enableReverb；3D 环绕档目前启用混响
+	//（第三轮经用户确认嵌回环绕档，"现场感/大厅混响"两个独立档位仍处于移除状态）。
 	runReverb bool
 	// needsApply 表示参数还没写进去（prepare 后或刚被清空时）
 	needsApply bool
@@ -576,11 +601,17 @@ func (s *chainState) applyPreset(p EffectPreset) {
 	spec := presetSpecs[p]
 	s.eq.apply(spec)
 	s.stereo.setParams(spec.stereo)
+	if spec.enableEarly {
+		s.early.setAmount(1.0)
+	} else {
+		s.early.setAmount(0)
+	}
 	if spec.enableReverb {
 		s.rev.setParams(spec.reverb)
 	}
 	s.preset = p
-	// 固化"要不要跑混响"（见 runReverb 字段的说明）
+	// 固化"要不要跑早期反射 / 混响"（见 runEarly / runReverb 字段的说明）
+	s.runEarly = spec.enableEarly
 	s.runReverb = spec.enableReverb
 	s.needsApply = false
 }
@@ -595,9 +626,11 @@ const chainFadeFrames = 1323
 func (c *Chain) prepare(sampleRate int) {
 	c.chainA.eq.prepare(sampleRate)
 	c.chainA.stereo.prepare(sampleRate)
+	c.chainA.early.prepare(sampleRate)
 	c.chainA.rev.prepare(sampleRate)
 	c.chainB.eq.prepare(sampleRate)
 	c.chainB.stereo.prepare(sampleRate)
+	c.chainB.early.prepare(sampleRate)
 	c.chainB.rev.prepare(sampleRate)
 
 	c.samples = sampleRate
@@ -661,9 +694,11 @@ func (c *Chain) Reset() {
 	}
 	c.chainA.eq.reset()
 	c.chainA.stereo.reset()
+	c.chainA.early.reset()
 	c.chainA.rev.reset()
 	c.chainB.eq.reset()
 	c.chainB.stereo.reset()
+	c.chainB.early.reset()
 	c.chainB.rev.reset()
 }
 
@@ -827,6 +862,7 @@ func (c *Chain) activeChain() *chainState {
 // processSingle 是"只有一条活动链"的快速路径。
 func (c *Chain) processSingle(buf []byte, frames int) {
 	ch := c.activeChain()
+	runEarly := ch.runEarly
 	runReverb := ch.runReverb
 
 	for i := 0; i < frames; i++ {
@@ -840,6 +876,9 @@ func (c *Chain) processSingle(buf []byte, frames int) {
 		}
 		xl, xr = ch.eq.process(xl, xr)
 		xl, xr = ch.stereo.processStereo(xl, xr)
+		if runEarly {
+			xl, xr = ch.early.processStereo(xl, xr)
+		}
 		if runReverb {
 			xl, xr = ch.rev.processStereo(xl, xr)
 		}
@@ -853,6 +892,8 @@ func (c *Chain) processSingle(buf []byte, frames int) {
 func (c *Chain) processFading(buf []byte, frames int) {
 	from := c.fadingOutChain() // 旧（淡出）
 	to := c.incomingChain()    // 新（淡入）
+	fromEarly := from.runEarly
+	toEarly := to.runEarly
 	fromRev := from.runReverb
 	toRev := to.runReverb
 
@@ -872,6 +913,9 @@ func (c *Chain) processFading(buf []byte, frames int) {
 		}
 		fl, fr := from.eq.process(xl, xr)
 		fl, fr = from.stereo.processStereo(fl, fr)
+		if fromEarly {
+			fl, fr = from.early.processStereo(fl, fr)
+		}
 		if fromRev {
 			fl, fr = from.rev.processStereo(fl, fr)
 		}
@@ -882,6 +926,9 @@ func (c *Chain) processFading(buf []byte, frames int) {
 		}
 		tl, tr := to.eq.process(xl, xr)
 		tl, tr = to.stereo.processStereo(tl, tr)
+		if toEarly {
+			tl, tr = to.early.processStereo(tl, tr)
+		}
 		if toRev {
 			tl, tr = to.rev.processStereo(tl, tr)
 		}
@@ -921,6 +968,7 @@ func (c *Chain) processFading(buf []byte, frames int) {
 // 剩下的帧没必要继续跑两条链。
 func (c *Chain) processSingleRange(buf []byte, start, frames int) {
 	ch := c.activeChain()
+	runEarly := ch.runEarly
 	runReverb := ch.runReverb
 
 	for i := start; i < frames; i++ {
@@ -933,6 +981,9 @@ func (c *Chain) processSingleRange(buf []byte, start, frames int) {
 		}
 		xl, xr = ch.eq.process(xl, xr)
 		xl, xr = ch.stereo.processStereo(xl, xr)
+		if runEarly {
+			xl, xr = ch.early.processStereo(xl, xr)
+		}
 		if runReverb {
 			xl, xr = ch.rev.processStereo(xl, xr)
 		}
@@ -947,6 +998,7 @@ func (c *Chain) cleanupAfterFade() {
 	stale := c.fadingOutChain()
 	stale.eq.reset()
 	stale.stereo.reset()
+	stale.early.reset()
 	stale.rev.reset()
 	// 参数本身没变（它还是自己那个 preset），但 reset 之后显式重写一遍
 	// 更安全 —— 代价是几十次浮点运算，只在切换时发生一次。

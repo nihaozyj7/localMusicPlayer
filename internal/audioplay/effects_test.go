@@ -1819,7 +1819,7 @@ func TestAllpassStageIsFlatMagnitude(t *testing.T) {
 
 	for _, freq := range freqs {
 		var a allpassStage
-		a.prepare(int(decorrelationDelayL), decorrelationFeedback)
+		a.prepare(int(decorrelationDelay), decorrelationFeedback)
 
 		// 预热：让延迟线进入稳态
 		for i := 0; i < 4096; i++ {

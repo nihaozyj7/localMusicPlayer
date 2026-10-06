@@ -6,6 +6,14 @@
    两个用户反馈（"效果依然等于没有" / "会出现爆音"）都能从代码里
    直接推出根因。下面先把根因写清楚，再写这一版为什么对。
 
+   ★ 第四轮（"有变宽、有混响，但没有环绕的感觉"）对本文件又动了两刀，
+   别把下面第一、二节当成现状：
+
+     · 本文件**不再负责 5~25ms 的早期反射** —— 那部分整体搬去了
+       effects_early.go，因为它需要每耳不同的延迟（见那里的文件头）；
+     · 全通去相关从"两个全通相减"改成"一个全通"，注入量因此有界
+       （见第三节第 2 条与 processStereo 的注释）。
+
    --------------------------------------------------------------------------
    一、上一版为什么"听起来没有效果"
 
@@ -109,17 +117,22 @@
           代价是对**真单声道**素材（L==R，S 恒为 0）无效。
 
      2. **全通去相关（allpass decorrelation）** —— 让单声道素材也有宽度。
-        把中置分量经**两个延迟长度不同**的全通（61 / 89 样本）分别
-        扰动，取差值作为附加侧分量，最终按 `mid ± side` 合成：
-          side += (apL(mid) - apR(mid))·0.5·decor
+        把中置分量经**一个**全通（61 样本）扰动后作为附加侧分量，
+        最终按 `mid ± side` 合成：
+          side += ap(mid)·0.5·decor
           L = mid + side      R = mid - side
         全通的定义性质是 |H(e^jw)| ≡ 1 —— **幅度响应完全平坦**，
         这是它与梳状滤波器的本质区别：只改相位，不改音色。
+        ★ 平坦在这里还有一层结构性作用（第四轮）：注入量因此是
+          `0.5·decor·|mid|` 这个**常数**，单耳最坏陷波被钉死在
+          -6dB，不可能与 mid 相消。旧写法用**两个**不同延迟的全通
+          相减，`|H1-H2|` 在频域 0~2 起伏，实测单声道素材在 1000Hz
+          处左右耳差 **38dB** —— 折叠完全平直、单耳却被挖空。
+          这是"折叠平直 ≠ 单耳没被挖坑"的教训，详见 processStereo 的注释。
         ★ 关键是合成方式：输出恒为 `mid ± side`，所以 L+R = 2·mid
           **与全通无关** —— 单声道折叠严格平直（实测 0.00dB）。
-          第一稿把扰动加到已有 L/R 上（L += apL(M)），L+R 就变成
-          2M + apL - apR，两个不同全通相减在频域上是梳状，
-          实测 12.5kHz 掉 6.7dB —— 已改成现在的写法。
+        ★ **5~25ms 的早期反射不在本文件**：它需要每耳不同的延迟才有
+          双耳时间差，塞进 ±side 等于判它 ITD = 0。见 effects_early.go。
 
      3. **串扰（低频互补互换）** —— 消除头中效应，让声音"在前面"
         而不是"在脑中"：本侧低频的 k 倍换成对侧低频的 k 倍。
@@ -194,7 +207,7 @@ const stereoParamSmoothMin = 1e-6
 
 // maxAllpassDelaySamples 是去相关全通延迟线的容量上限。
 //
-// 去相关用的延迟长度（见 decorrelationDelayL/R）最长约 100 样本 @44.1kHz，
+// 去相关用的延迟长度（见 decorrelationDelay）最长约 100 样本 @44.1kHz，
 // 取 256 留足余量（48kHz 下也够）。写成常量是为了 prepare 时一次分配。
 const maxAllpassDelaySamples = 256
 
@@ -202,7 +215,7 @@ const maxAllpassDelaySamples = 256
    去相关用的全通滤波器
    -------------------------------------------------------------------------- */
 
-// decorrelationDelayL / decorrelationDelayR 是两个去相关全通的延迟长度。
+// decorrelationDelay 是去相关全通的延迟长度（@44.1kHz，样本）。
 //
 // ★ 为什么短（几十个样本）而不是像 Haas 那样 20ms：
 //
@@ -213,17 +226,22 @@ const maxAllpassDelaySamples = 256
 // 提供足够的相位差来产生宽度感，低频基本不受影响（低频波长大，
 // 同样的延迟对应的相位差小），所以低音依然是稳的。
 //
-// ★ 为什么左右取不同的长度：
-// 两个声道用**同一个**全通 → 相位扰动相同 → 相减时抵消 → 没有宽度。
-// 左右取互质的不同长度，才能制造出真正的去相关。
-// 这是立体声混响器里的标准手法（见 effects_reverb.go 的 stereoSpread）。
+// ★ 为什么只需要**一个**全通（第四轮改动，此前是延迟 61/89 的两个）：
 //
-// 数值取 61 / 89：都是质数，比值接近黄金分割，避免两个全通的
-// 相位响应在某个频率上又对齐。@44.1kHz 约 1.4ms / 2.0ms。
-const (
-	decorrelationDelayL = 61
-	decorrelationDelayR = 89
-)
+// 去相关进侧分量的写法是 `side += ...`，随后 L = mid + side、
+// R = mid - side。两个全通**相减**（apL - apR）在幅度上是
+// `|H1 - H2|`，它在频域里从 0 到 2 大幅起伏：H1 ≈ -H2 的那些频率上
+// 注入量达到满值 decor，正好与 mid 逐点相消 —— 实测单声道素材在
+// 1000Hz 处左右耳差 **38dB**，也就是有一只耳朵在该频点几乎听不到。
+//
+// 单个全通的幅度响应**恒等于 1**，所以注入量是 `0.5·decor·|mid|`
+// —— 一个不随频率起伏的常数。同样把 side/mid 抬到 0.5，
+// 最坏陷波却被结构性地钉在 20·log10(1-0.5) = -6dB，
+// 而不是 0。"能与 mid 相消"这件事被数学排除掉了。
+//
+// 数值取 61（质数，@44.1kHz 约 1.4ms）：比 Haas 的 20ms 短得多，
+// 不会产生可听回声；比 1~2 个样本长得多，高频相位差足够铺开。
+const decorrelationDelay = 61
 
 // decorrelationFeedback 是去相关全通的反馈系数。
 //
@@ -347,149 +365,25 @@ func (a *allpassStage) reset() {
 /*
 --------------------------------------------------------------------------
 
-	去相关用的稀疏回声（5~25ms 可闻窗口）
+	第三轮的"稀疏回声去相关"（tapEchoStage）已在第四轮整体移除
 	--------------------------------------------------------------------------
-	★ 为什么全通（1.4/2.0ms）还不够，要补这一段：
-	上一版的两个全通延迟只有 61/89 样本 —— 1.4ms 与 2.0ms，
-	**远低于人耳产生"空间感"的反射窗口**。Haas(1951) 与后续的
-	precedence effect 研究给出的经验区间是：反射延迟在 5~30ms 内，
-	宽敞感随延迟上升；1~2ms 的反射被融合成"同一个声音的音色变化"，
-	产生的是染色而不是空间 —— 这正是"指标达标（声道差 0.168）
-	但耳机上听不出环绕"的原因之一。
+	它原本把中置分量的 6/11/17/25ms 稀疏回声按 `side += echo(mid)` 塞进
+	侧分量 —— 单声道折叠确实靠 ±side 相消而严格平直。第四轮实测把它
+	拿掉，两个原因：
 
-	这一段把中置分量的**稀疏回声**（间隔 5~25ms、逐次衰减）
-	按 ± 方式放进侧分量：
+	  1. **不带双耳时间差（ITD）**。±side 决定了两耳收到的是同一段
+	     波形、极性相反、时间完全相同，实测互相关峰值就落在 lag = 0。
+	     这正是"有变宽、有混响，但没有环绕的感觉"的直接根因。
+	     5~25ms 反射这个活儿现在由 effects_early.go 的 earlyFieldStage
+	     用**同极性、每耳延迟不同**的方式重做。
 
-	    side += damp(Σ gᵢ·mid[n-Dᵢ]) · decor
-	    L = mid + side        R = mid - side
+	  2. **注入量能与 mid 逐点相消**。Σg·scale ≈ 1.0 的最坏对齐上界
+	     意味着某个频率上 side 正好等于 -mid，该耳被整只挖空 ——
+	     实测单声道素材在 500Hz 处左右耳差 14dB，听感是"某一耳坏了"。
 
-	· 单声道折叠依然**结构性严格**（±side 相消），与全通同理；
-	· 每只耳朵听到"直达声 + 一串极性相反的回声"—— 直达声双耳同相
-	  （声像居中），回声完全在差分域 → 听感是"声音在头外面展开，
-	  带一条空间尾巴"，这正是 precedence 窗口里的宽敞感；
-	· 4 个延迟取互质样式（6/11/17/25ms）且增益递减：单个回声
-	  融不进直达声就可能被听成"拍打回声"，多个错开的衰减回声
-	  在听感上融合成一段**扩散尾巴**（Schroeder 稀疏混响的原理）。
-
-	★ 阻尼低通（decorTapDampHz）：延迟回声不加阻尼的话，鼓点等
-	瞬态的高频会在尾巴里"哒哒"作响；一阶低通把 3.5kHz 以上压下去，
-	尾巴听起来是"空间"而不是"回声"。
+	保留这段注释而不是连历史一起删：它是"结构决定听感"的一个反例，
+	下一次有人想"往 side 里加点延迟回声"时应该先看到它。
 */
-const (
-	// decorTapScale 是回声总缩放。Σg·scale ≈ 1.0 是**最坏对齐**上界
-	//（全部回声同相叠加），典型值（相位错开）约 sqrt(Σg²)·scale ≈ 0.52。
-	// 与全通的 decor·Δ 上界叠加后由 decor（1.0）统一控制总量；
-	// 最坏对齐的深坑只出现在离散频点（单耳），单声道折叠不受影响
-	//（±side 相消）。per-ear 深坑深度由 TestDiag 式网格探针监控。
-	decorTapScale = 0.55
-
-	// decorTapDampHz 是尾巴阻尼低通的拐点（一阶）。
-	decorTapDampHz = 3500.0
-)
-
-// decorTapBaseDelays 是 @44.1kHz 的回声延迟（样本）：
-// 265/487/751/1103 = 6.0 / 11.0 / 17.0 / 25.0 ms —— 落在 precedence
-// 效应的"宽敞感窗口"（5~30ms）里，且互质、间隔不齐，
-// 避免回声周期性对齐成可闻的"颤动回声"。
-var decorTapBaseDelays = [4]int{265, 487, 751, 1103}
-
-// decorTapBaseGains 是各回声的相对增益（递减，Σ=1.82）。
-var decorTapBaseGains = [4]float64{0.62, 0.50, 0.40, 0.30}
-
-// maxDecorTapLine 是回声环形缓冲的容量上限（样本）。
-//
-// 25ms 在 48kHz 下 = 1200；1400 留足余量。常量让 prepare 一次分配。
-const maxDecorTapLine = 1400
-
-// tapEchoStage 是稀疏回声去相关器（写在中置分量上，输出进侧分量）。
-type tapEchoStage struct {
-	buf    []float64
-	pos    int
-	delays [4]int
-	gains  [4]float64 // 已乘 decorTapScale，prepare 时算好
-
-	// damp 是尾巴的一阶阻尼低通状态
-	damp       float64
-	dampCoeff  float64
-	preparedOk bool
-}
-
-// prepare 按采样率分配缓冲、缩放延迟、算好阻尼系数。零分配热路径的前提。
-func (t *tapEchoStage) prepare(sampleRate int) {
-	fs := float64(sampleRate)
-	if fs <= 0 {
-		fs = 44100
-	}
-
-	maxD := 0
-	for i, d := range decorTapBaseDelays {
-		scaled := int(float64(d) * fs / 44100.0)
-		if scaled < 1 {
-			scaled = 1
-		}
-		if scaled > maxDecorTapLine-1 {
-			scaled = maxDecorTapLine - 1
-		}
-		t.delays[i] = scaled
-		if scaled > maxD {
-			maxD = scaled
-		}
-		t.gains[i] = decorTapBaseGains[i] * decorTapScale
-	}
-
-	size := maxD + 1
-	if cap(t.buf) < size {
-		t.buf = make([]float64, size)
-	} else {
-		t.buf = t.buf[:size]
-		for i := range t.buf {
-			t.buf[i] = 0
-		}
-	}
-	t.pos = 0
-	t.damp = 0
-	// 一阶低通系数：1 - exp(-2π·fc/fs)
-	t.dampCoeff = 1 - math.Exp(-2*math.Pi*decorTapDampHz/fs)
-	t.preparedOk = len(t.buf) > 1
-}
-
-// process 把 mid 写入延迟线，返回阻尼后的回声和（未乘 decor）。
-//
-// decor 为 0 时调用方不进本函数（见 processStereo）——
-// 延迟线在关闭期间不被喂数据，重新打开时从静音渐起，无瞬态。
-func (t *tapEchoStage) process(mid float64) float64 {
-	if !t.preparedOk {
-		return 0
-	}
-	t.buf[t.pos] = mid
-
-	acc := 0.0
-	for i := 0; i < 4; i++ {
-		p := t.pos - t.delays[i]
-		if p < 0 {
-			p += len(t.buf)
-		}
-		acc += t.gains[i] * t.buf[p]
-	}
-
-	t.pos++
-	if t.pos >= len(t.buf) {
-		t.pos = 0
-	}
-
-	// 尾巴阻尼（防瞬态高频"哒哒"，见文件头说明）
-	t.damp += t.dampCoeff * (acc - t.damp)
-	return t.damp
-}
-
-// reset 清空缓冲与阻尼状态（切歌时调用）。
-func (t *tapEchoStage) reset() {
-	for i := range t.buf {
-		t.buf[i] = 0
-	}
-	t.pos = 0
-	t.damp = 0
-}
 
 /* --------------------------------------------------------------------------
    串扰（低频互补互换）
@@ -613,12 +507,8 @@ func designCrossfeed(sampleRate float64) crossfeedFilter {
 // **不保证 processStereo 与 setParams 之间的并发安全**
 // （见 effects_reverb.go 类型注释里对这条取舍的完整说明）。
 type stereoStage struct {
-	// —— 去相关全通（左右各一个，延迟长度不同）——
-	apL allpassStage
-	apR allpassStage
-
-	// —— 稀疏回声去相关（5~25ms 可闻窗口，写中置、进侧分量）——
-	tap tapEchoStage
+	// —— 去相关全通（单个：幅度恒为 1，注入量因此有界，见 decorrelationDelay）——
+	ap allpassStage
 
 	// —— 串扰滤波器（左右各一个实例，状态独立）——
 	xf crossfeedFilter
@@ -686,9 +576,7 @@ func (s *stereoStage) prepare(sampleRate int) {
 	}
 	scale := fs / 44100.0
 
-	s.apL.prepare(int(float64(decorrelationDelayL)*scale), decorrelationFeedback)
-	s.apR.prepare(int(float64(decorrelationDelayR)*scale), decorrelationFeedback)
-	s.tap.prepare(sampleRate)
+	s.ap.prepare(int(float64(decorrelationDelay)*scale), decorrelationFeedback)
 
 	// 串扰滤波器：RBJ LPF（直流增益恒为 1，不需要任何补偿，
 	// 见 designCrossfeed 的说明）。滤波器的**形状**固定、
@@ -748,9 +636,7 @@ func (s *stereoStage) setParams(p StereoParams) {
 // 那里有这条约定的完整说明：reset 是"清历史状态"，
 // 不是"恢复初始值"）。
 func (s *stereoStage) reset() {
-	s.apL.reset()
-	s.apR.reset()
-	s.tap.reset()
+	s.ap.reset()
 	s.xf.reset()
 }
 
@@ -774,53 +660,52 @@ func (s *stereoStage) processStereo(xl, xr float64) (float64, float64) {
 	// —— 1. 去相关（全通相位扰动）——
 	//
 	// ★★ 结构对齐 FFmpeg af_haas.c（Vladimir Sadovnikov 的
-	// Haas Stereo Enhancer），这是这一版与上一版最本质的区别。
-	// af_haas 的核心是**在中侧域里重建侧分量**，而不是"往某一侧加东西"：
+	// Haas Stereo Enhancer）：**在中侧域里重建侧分量**，而不是
+	// "往某一侧加东西"。
 	//
 	//	mid   = (L + R) / 2
-	//	sideL = apL(mid)          ← 全通扰动
-	//	sideR = apR(mid)
-	//	L'    = mid + sideL
-	//	R'    = mid - sideR
+	//	side  = origSide·width + ap(mid)·0.5·decor
+	//	L'    = mid + side
+	//	R'    = mid - side
 	//
 	// ★ 为什么这样写能**保证单声道兼容**：
 	// 输出恒等于 `mid ± 某个东西`，而 mid 是原封不动带过来的。
 	// 无论全通怎么改相位，**中置分量永远不会被削掉**。
-	// 我第一版的错误写法是 `L += apL(M)`（把扰动**加到**已有的 L/R 上），
-	// 于是 L+R 变成 `2M + apL(M) - apR(M)` —— 两个不同全通相减
-	// 在频域上就是梳状，实测 12.5kHz 掉 6.7dB。
-	// 改成 `mid ± side` 之后 L+R = 2·mid 恒成立，与全通无关。
+	// 早期的错误写法是 `L += ap(M)`（把扰动**加到**已有的 L/R 上），
+	// 于是 L+R 变成 `2M + ap(M) - ap(M)` 之外还多出项 —— 频域上是梳状，
+	// 实测 12.5kHz 掉 6.7dB。改成 `mid ± side` 之后 L+R = 2·mid 恒成立。
 	//
 	// ★ 原始立体声内容必须**保留**（af_haas 本身是"增强器"，只服务
 	// 增强；我们的档位要同时服务立体声与单声道素材）。所以这里把
 	// "缩放后的原始侧分量"与"由 mid 生成的去相关分量"**相加进同一个
-	// side**，再按 mid ± side 合成（见下方代码）：
-	//
-	//	side      = origSide·width
-	//	          + (apL(mid) - apR(mid))·0.5·decor   ← 全通纹理
-	//	          + tapEcho(mid)·decor                ← 5~25ms 稀疏回声
-	//	L         = mid + side
-	//	R         = mid - side
+	// side**，再按 mid ± side 合成（见下方代码）。
 	//
 	// ★★ 单声道折叠由此**严格**成立：L + R = 2·mid，与 side 里装了
-	// 什么完全无关（±side 相消）。所以全通怎么折腾相位、回声多响
-	// 都不会破坏单声道兼容 —— 这不是"调小混入量换来的"，是结构保证
+	// 什么完全无关（±side 相消）。这不是"调小混入量换来的"，是结构保证
 	//（TestSpatialProcessingKeepsMonoFoldFlat 钉到 ~1e-15）。
-	// 第一稿把扰动直接加到 L/R 各自头上（L += apL(M)），±不相消，
-	// 才需要担心破坏折叠 —— 那个写法已经废弃。
 	//
-	// ★ decor 的取值（预设给满 1.0）是"感知优先"的选择（用户确认
-	// "一听就分辨"）：`apL - apR` 模最大 2，回声最坏对齐 Σg·scale ≈ 1，
-	// 单耳个别频点会出现较深的点（密扫实测最深 -25.8dB，100 点里
-	// 5 个低于 -10dB —— 孤立频点的单耳差 = 空间差的来源本身，
-	// 折叠与对侧耳不受影响）。成片深坑（染色事故）由
-	// TestSpatialProcessingKeepsMonoFoldFlat 拦，强度由
-	// TestSurroundPresetStrongEnoughForHeadphones 拦。
-	// 改动前先跑这两个测试。
+	// ★★ 但是——**折叠平直并不等于单耳没被挖坑**，这是第四轮才量清楚的
+	// 一件事，必须写下来：`mid ± side` 只保证两耳之和不变，
+	// 它对 side 的**幅度**毫无约束。旧写法用两个不同延迟的全通相减
+	// （apL - apR），`|H1 - H2|` 在频域里 0~2 大幅起伏，某些频率上
+	// 注入量正好等于 -mid，该耳就被整只挖空 —— 实测单声道素材在
+	// 1000Hz 处左右耳差 **38dB**，500Hz 处 14dB。
+	//
+	// 修法不是调小 decor，而是把注入量换成**幅度恒定**的形状：
+	// 单个全通 |H| ≡ 1，所以 `ap(mid)·0.5·decor` 的幅度恒为
+	// `0.5·decor·|mid|` —— 与 mid 的比值是常数，最坏陷波被结构性地
+	// 钉在 20·log10(1-0.5) = -6dB，不可能出现相消为零。
+	// side/mid 同时稳定在 0.5（旧写法是"平均 0.6、个别频点 1.0"）。
+	// 改动前先跑 TestSurroundPerEarResponseStaysBounded。
 	//
 	// ★ 为什么用 0.5 的反馈（decorrelationFeedback）而不是纯延迟：
 	// 全通的幅度响应恒为 1（|H| ≡ 1），纯延迟的幅度响应是梳状。
 	// 这是"只改相位、不改音色"的数学保证，见 allpassStage 的说明。
+	//
+	// ★ 5~25ms 的可闻反射不再在这一段里做：那是**早期反射**，
+	// 需要每耳**不同的延迟**才有双耳时间差，塞进 ±side 就等于
+	// 判了它 ITD = 0。它现在由 effects_early.go 的 earlyFieldStage
+	// 独立完成（夹在本段与混响之间）。
 	//
 	// ★ 当 decor = 0 且 width 为 1 时完全旁路（连全通都不跑）：
 	// 既省开销，又保证"关闭加宽"路径的比特透明。
@@ -831,14 +716,10 @@ func (s *stereoStage) processStereo(xl, xr float64) (float64, float64) {
 		// 先做宽度（缩放原始侧分量）
 		side *= s.width
 
-		// 再叠加去相关分量：
-		//   · 全通差分 —— 短（1.4/2.0ms）的连续相位纹理（高频扩散）；
-		//   · 稀疏回声 —— 5~25ms 的可闻空间尾巴（宽敞感的主力，
-		//     见 tapEchoStage 的文件头说明）。两者都只进侧分量，
-		//     单声道折叠依然严格（±side 相消）。
+		// 再叠加去相关分量（幅度恒定，见上方注释里的有界性推导）。
+		// 只进侧分量 → 单声道折叠依然严格（±side 相消）。
 		if s.decor > 1e-6 {
-			side += (s.apL.process(mid) - s.apR.process(mid)) * 0.5 * s.decor
-			side += s.tap.process(mid) * s.decor
+			side += s.ap.process(mid) * 0.5 * s.decor
 		}
 
 		xl = mid + side
