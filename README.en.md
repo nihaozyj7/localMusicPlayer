@@ -2,7 +2,7 @@
 
 # localMusicPlayer
 
-**LMPlayer** — a desktop music player for your local library, with optional online search
+**A Windows desktop music player built around your local library, with optional online preview**
 
 Go · Wails v3 · Lit 3 · Vite · FFmpeg
 
@@ -11,9 +11,9 @@ Go · Wails v3 · Lit 3 · Vite · FFmpeg
 [![Platform](https://img.shields.io/badge/platform-Windows-0078d4.svg)](#requirements)
 [![Made with Wails](https://img.shields.io/badge/made%20with-Wails%20v3-DF0000.svg)](https://v3.wails.io/)
 
-[Features](#features) · [Screenshots](#screenshots) · [Download](#download) · [Development](#development) · [Tech stack](#tech-stack) · [License & credits](#license--credits)
-
 [简体中文](README.md) · **English**
+
+[Features](#features) · [Screenshots](#screenshots) · [Download](#download) · [Development](#development) · [Tech stack](#tech-stack) · [License & credits](#license--credits)
 
 </div>
 
@@ -32,10 +32,27 @@ It also ships some online capabilities (search, preview, download, automatic cov
 but **every online feature is optional**: offline, it is a completely self-contained player — your
 library, cover art and lyric cache all live on your own disk.
 
-- **No bundled browser engine**: the UI runs on the WebView2 that ships with Windows;
-- **No FFmpeg install required**: a self-compiled 5.6 MB minimal build is embedded in the executable,
-  so `ape` / `wma` / `dsf` files play even though the WebView cannot decode them;
-- **The player view is an extensible skin pack**: six built-in styles, plus drop-in third-party packs.
+### Three things you don't need
+
+- **No bundled browser engine**: the UI runs on the WebView2 that ships with Windows — no copy of
+  Chromium in the installer;
+- **No FFmpeg install**: a self-compiled 5.6 MB minimal build is embedded in the executable, so
+  `ape` / `wma` / `dsf` files play even though WebView cannot decode them. Swap in your own
+  `ffmpeg.exe` over the unpacked one if you ever want to;
+- **No network**: offline, the library, lyrics, covers, themes and player skins all keep working —
+  no online feature sits on a critical path.
+
+### Feature map
+
+| Area | What's in it |
+| --- | --- |
+| [Library](#library) | Multiple watched folders, filter rules, tag & multi-cover parsing, stable IDs |
+| [Playback](#playback) | Byte-exact seeking, embedded-FFmpeg transcoding cache, loudness normalisation, silence skipping, track gap, three sound effects, bad-track fallback |
+| [Cover art](#cover-art) | Several covers per track, cache vs embedded managed separately, five online sources, atomic write-back |
+| [Lyrics](#lyrics) | Four-level fallback, lyrics workbench, floating desktop lyrics, wallpaper lyrics |
+| [Interface](#interface) | Three themes + custom CSS, six player skins, sorting / columns / density / frame-rate presets |
+| [Online & AI](#online--ai) | Search → preview → download, preview-is-cache, optional AI metadata cleanup and post-download tagging |
+| [Updates](#updates) | Manual or on-start update check, multi-mirror downloads, per-version skip |
 
 ---
 
@@ -63,8 +80,10 @@ library, cover art and lyric cache all live on your own disk.
 - **Track gap**: a pause between automatically consecutive tracks (1.5 s by default, 0–10 s). It is timed on
   the audio thread, so a busy UI never makes it drift;
 - **Sound effects**: clear vocals / bass boost / 3D surround (spatial widening tuned for headphones; the
-  image and its reflections **rotate around your head over time** instead of staying static),
+  image and its early reflections **rotate around your head over time** instead of staying static),
   switched from the player options panel with a ~30 ms crossfade ("off" means completely untouched audio);
+- **Bad tracks never wedge playback**: a failing track raises a toast and auto-advances; after enough
+  consecutive failures the player fuse-trips instead of retrying forever, and only a manual click re-arms it;
 - **Player options panel** (the bar's "Options" button): lyrics font size, desktop-lyrics mode, sound
   effect preset and background opacity;
 - Drag-and-drop queue reordering, playlists, likes, a sleep timer and configurable keyboard shortcuts;
@@ -92,14 +111,15 @@ library, cover art and lyric cache all live on your own disk.
 ### Interface
 
 - **Themes**: dark minimal / light minimal / cover-derived accent, plus custom themes as a single CSS file;
-- **Player skins**: classic / immersive / minimal / per-character entry / karaoke / camera-FX — six built-in
-  styles. Third-party packs are loaded from the data directory; the contract lives in
+- **Player skins**: classic / immersive / minimal / hand-drawn anime / magic-circle sketch / arcanum stage —
+  six built-in styles. Third-party packs are loaded from the data directory; the contract lives in
   [`packages/player-skins`](frontend/packages/player-skins);
 - **Sorting**: one toolbar button opens a floating panel where the field (date added / title / artist /
   album / duration / file size / play count) and the direction (ascending / descending) are chosen
   separately. The button always shows the active sort, and clicking a column header still toggles it;
 - List density, visible columns and animation speed are all configurable; turning animations off zeroes out
-  every transition at once.
+  every transition at once. The player background gets its own **frame-rate preset**: smooth (follows your
+  refresh rate) or performance-first (capped frames, freezes while paused — cooler and cheaper).
 
 ### Online & AI
 
@@ -114,32 +134,45 @@ library, cover art and lyric cache all live on your own disk.
   direct download or a move out of the preview cache) it asks the AI for the real title / artist / album
   and writes them back into the file. m4a and flac are supported; other formats only update the library.
 
+### Updates
+
+- "Settings → About" has a **manual update check** plus an optional **check on start** (it only speaks up
+  when a new version exists, and stays quiet if the check fails);
+- Downloads come from **GitHub Releases** over **several mirror channels** that are switched automatically,
+  so a restricted network doesn't mean hunting for the installer by hand;
+- You can **skip a version** and change your mind later in Settings.
+
 ---
 
 ## Screenshots
 
-| Main view | Immersive player |
-| --- | --- |
-| ![Main view](docs/screenshots/01-main-dark.png) | ![Immersive player](docs/screenshots/08-player-immersive.png) |
+| Main view (dark) | Player · classic | Player · immersive |
+| --- | --- | --- |
+| ![Main view (dark)](docs/screenshots/01-main-dark.png) | ![Player · classic](docs/screenshots/06-player-classic.png) | ![Player · immersive](docs/screenshots/07-player-immersive.png) |
 
-| Light theme | Settings |
-| --- | --- |
-| ![Light theme](docs/screenshots/02-main-light.png) | ![Settings](docs/screenshots/05-settings-folders.png) |
+| Main view (light) | Player · minimal | Cover-derived theme |
+| --- | --- | --- |
+| ![Main view (light)](docs/screenshots/02-main-light.png) | ![Player · minimal](docs/screenshots/08-player-minimal.png) | ![Cover-derived theme](docs/screenshots/10-cover-dark.png) |
 
-More screenshots (player skins, playlists, cover panel, …) are in [`docs/screenshots`](docs/screenshots).
+| Queue | Playlists | Settings · folders |
+| --- | --- | --- |
+| ![Queue](docs/screenshots/03-queue.png) | ![Playlists](docs/screenshots/04-playlist.png) | ![Settings · folders](docs/screenshots/05-settings-folders.png) |
+
+More (narrow-window layout, light player, multi-cover panel, …) are in [`docs/screenshots`](docs/screenshots).
 
 ---
 
 ## Download
 
 Grab the latest `lmplayer.exe` from [Releases](https://github.com/nihaozyj7/localMusicPlayer/releases)
-and run it — **no installation needed** (portable build).
+and run it — **no installation needed** (portable build). The in-app
+"Settings → About → Check for updates" points at exactly the same place.
 
 On first launch the embedded FFmpeg is unpacked into your data directory:
 
 ```text
 %APPDATA%\LocalMusicPlayer\          config, library cache, lyrics and cover cache
-%LOCALAPPDATA%\LocalMusicPlayer\bin\  the unpacked ffmpeg.exe (you may replace it)
+%LOCALAPPDATA%\LocalMusicPlayer\bin\ the unpacked ffmpeg.exe (you may replace it)
 ```
 
 Previewed online audio is cached in the system temp directory (`%TEMP%\LocalMusicPlayer\online\`).
@@ -173,7 +206,7 @@ derived data, so if the system clears it, the next preview simply downloads agai
 
 ```powershell
 npm install
-npm run dev        # Vite dev server (HMR), http://127.0.0.1:5173/ by default
+npm run dev        # Vite dev server (HMR), http://127.0.0.1:5173 by default
 ```
 
 The browser preview renders with mock data — edit CSS / JS and refresh. `npm run dev:static` is a static
@@ -236,8 +269,10 @@ internal/
   library/               scanning, metadata cache, incremental rescans, fsnotify watching
   meta/  lyrics/         tag, cover and lyric parsing
   media/                 local audio HTTP server (CORS / Range / transcode cache)
+  audioplay/             DSP: loudness compensation, sound effects, orbiting image motion
   onlinecache/           preview audio cache (temp dir, atomic writes, moved on download)
   loudness/              EBU R128 measurement and gain compensation
+  update/                update check and mirror-channel downloads
   ffmpeg/                locating and unpacking the embedded ffmpeg (bin/ is not committed)
   coverfetch/ lyricsfetch/ bilibili/   three volatile third-party APIs, each isolated
   metacache/ skins/ theme/             multi-cover write-back, skin packs, theme directory

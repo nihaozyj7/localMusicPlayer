@@ -13,7 +13,7 @@ import (
 // 「设置 → 关于」直接展示它。打包元数据里还各有一份同名值
 // （build/config.yml、build/windows/info.json、build/linux/nfpm/fpm.yaml），
 // 发版时一并改；之所以不在构建期注入，是因为这些文件也要能被直接手改核对。
-const appVersion = "0.1.4"
+const appVersion = "0.1.5"
 
 // AppService 提供「设置 → 关于」需要的那点宿主能力：读版本号、
 // 用系统默认浏览器打开外部链接。
@@ -30,7 +30,7 @@ type AppService struct {
 // NewAppService 构造服务。app 之后由 main 装配（测试时可以为 nil）。
 func NewAppService() *AppService { return &AppService{} }
 
-// Version 返回应用版本号，例如 "0.1.4"。
+// Version 返回应用版本号，例如 "0.1.5"。
 func (s *AppService) Version() string { return appVersion }
 
 // OpenURL 用系统默认浏览器打开一个外部链接。
