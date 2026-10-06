@@ -1268,9 +1268,21 @@ func TestSurroundPresetIsAudibleOnMonoSource(t *testing.T) {
 //
 // 另外两条钉住方向：串扰不得调大（TestSurroundCrossfeedStaysSmall）、
 // 单声道折叠不得被挖坑（TestSpatialProcessingKeepsMonoFoldFlat）。
+//
+// ★★ 测量窗口必须覆盖**整整一个环绕摆动周期**（第五轮加摆动之后）：
+// 环绕档会把中置声像在左右之间来回摆（见 effects_orbit.go），
+// 于是"某一瞬间的 |L-R|"本身成了一个随时间变化的量 —— 摆到中点附近
+// 时它必然变小，那是**声像正在经过正前方**，不是强度不足。
+// 只取 0.37s 的窗口正好卡在摆动的某一相位上，测出来的数字纯属运气：
+// 第五轮首次接入时该判据就是这么从 0.156 掉到 0.104 的。
+// 窗口拉到 5 秒（周期是 4 秒）之后，摆完整一圈的平均值才是
+// "这套处理平均能拉开多少双耳差异"，也才和前三轮的数字可比。
 func TestSurroundPresetStrongEnoughForHeadphones(t *testing.T) {
 	const amp = 0.3
-	const frames = 16384
+	// 5 秒：orbitPeriodSeconds 是 4 秒，留 1 秒余量覆盖一个完整周期。
+	const frames = SampleRate * 5
+	// 前 0.5 秒只用来跳过档位切换的交叉淡化（30ms）与参数收敛。
+	const settle = SampleRate / 10
 
 	// 伪随机宽频素材（LCG，确定性；RMS ≈ 0.3·0.6·0.577 ≈ 0.104）
 	noiseSeq := func(seed uint32) func() float64 {
@@ -1308,7 +1320,7 @@ func TestSurroundPresetStrongEnoughForHeadphones(t *testing.T) {
 		c.ProcessStereo(buf)
 
 		var sum, sideSq, midSq float64
-		n := frames / 2
+		n := settle
 		for i := n; i < frames; i++ {
 			off := i * FrameSize
 			l := float64(int16(binary.LittleEndian.Uint16(buf[off:]))) / sampleScale
@@ -1319,7 +1331,7 @@ func TestSurroundPresetStrongEnoughForHeadphones(t *testing.T) {
 			midSq += mid * mid
 			sideSq += side * side
 		}
-		return sum / float64(n), math.Sqrt(sideSq / midSq)
+		return sum / float64(frames-n), math.Sqrt(sideSq / midSq)
 	}
 
 	// —— 主判据 1：宽频 · 单声道素材的侧/中能量比 ——

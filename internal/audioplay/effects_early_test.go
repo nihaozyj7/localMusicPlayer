@@ -42,7 +42,7 @@ func TestEarlyFieldCarriesInterauralTimeDifference(t *testing.T) {
 	outL, outR := make([]float64, n), make([]float64, n)
 	inL[0], inR[0] = 1.0, 1.0
 	for i := 0; i < n; i++ {
-		outL[i], outR[i] = e.processStereo(inL[i], inR[i])
+		outL[i], outR[i] = e.processStereo(inL[i], inR[i], 0)
 	}
 
 	peakL, peakR := 0, 0
@@ -83,6 +83,9 @@ func TestEarlyFieldCarriesInterauralTimeDifference(t *testing.T) {
 //
 // 判据取 ICC < 0.5：实测 -0.02（完全扩散），留出足够余量以免
 // 后续调参把延迟表改回去时被这条测试挡住而不是被听感挡住。
+//
+// ★ 刻意在 **orbit = 0** 下测：环绕摆动会把两耳的延迟反向推移，
+// 越摆两耳差异越大（越不相关），所以摆到中点才是 ICC 的最坏情况。
 func TestEarlyFieldEarsAreDecorrelated(t *testing.T) {
 	const fs = 44100
 	const n = 44100 * 2
@@ -95,7 +98,7 @@ func TestEarlyFieldEarsAreDecorrelated(t *testing.T) {
 
 	var cf, ea, eb float64
 	for i := 0; i < n; i++ {
-		ol, orr := e.processStereo(in[i], in[i])
+		ol, orr := e.processStereo(in[i], in[i], 0)
 		if i < skip {
 			continue
 		}

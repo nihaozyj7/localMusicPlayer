@@ -163,6 +163,13 @@ type presetSpec struct {
 	// 切换改写，处理时现查会用"新档位的开关"决定"旧档位的数据过不过"，
 	// 把延迟线里积攒的能量在一个样本内整块丢掉（见 runReverb 的说明）。
 	enableEarly bool
+	// enableOrbit 为 true 时启用运动调制（effects_orbit.go）——
+	// 让声像与反射延迟随时间摆动，也就是"音乐绕着头转"。
+	//
+	// ★ 与 enableEarly 分开：反射场是**空间**（声场长什么样），
+	// 摆动是**运动**（声场会不会动）。合并成一个布尔的话，
+	// 将来想做"有空间但不转"或"只转不做反射"的档位就没法表达。
+	enableOrbit bool
 	// enableReverb 为 false 时混响整块旁路（省掉全部延迟线运算）
 	enableReverb bool
 	reverb       ReverbParams
@@ -310,9 +317,25 @@ var presetSpecs = map[EffectPreset]presetSpec{
 	//     相减的 |H1-H2| 在频域 0~2 起伏，同样能挖空单耳；
 	//     单个全通 |H|≡1，注入量是常数，最坏陷波因此被结构性钉在 -6dB。
 	// 两者合起来把单耳最坏电平差从 38dB 降到 12.6dB。
+	//
+	// ★★ 第五轮（用户反馈"音频是固定的，没有音乐环绕的感觉；
+	// 左右两只耳机输出的声音是动态的"）：
+	// 到第四轮为止，全部处理都是**静态**的 —— 滤波、延迟、混响参数
+	// 一旦定下就不再变，左右耳输出的比例是一条固定曲线。静态处理能
+	// 决定"声场长什么样"，决定不了"声场会不会动"，所以听感停在
+	// "宽了、有空间了，但它不转"。
+	//
+	// 这一轮新增 enableOrbit（运动调制，effects_orbit.go）：
+	//   · 中置声像按 0.25Hz 在左右之间摆（L+R 恒等，折叠不受影响）；
+	//   · 反射场的每耳延迟反向推移 ±0.6ms，最强的那个反射会真的
+	//     从左耳摆到右耳 —— 这是让"摆动"读起来像**绕**而不是像
+	//     "自动声像在抖"的关键，因为时间差线索跟着一起动了。
+	// 实测（单声道白噪、0.5 秒分块）：左右响度摆幅 11.8dB 且穿过
+	// 中心 —— 引入之前这个数字是 0dB。
 	EffectSurround: {
 		stereo:       StereoParams{Width: 1.0, Decorrelation: 1.0, Crossfeed: 0.10},
 		enableEarly:  true,
+		enableOrbit:  true,
 		enableReverb: true,
 		reverb:       ReverbParams{Amount: 0.30, Size: 0.60, Damp: 0.60},
 	},
@@ -560,6 +583,12 @@ type Chain struct {
 	// 与 pendingPreset 不是一回事。
 	currentPreset EffectPreset
 
+	// orbit 是环绕档的运动调制源（LFO）。
+	//
+	// ★ 挂在 Chain 而不是 chainState 上：两条链在交叉淡化期间共用
+	// 同一个相位，切换时才不会出现"声像被扫一下"。见 orbitLFO 注释。
+	orbit orbitLFO
+
 	samples  int
 	prepared bool
 }
@@ -579,6 +608,13 @@ type chainState struct {
 	// preset 已被下一次切换改写，现查会把延迟线里积攒的反射能量
 	// 在一个样本之内整块丢弃 → 输出跳变 → 爆响）。
 	runEarly bool
+	// runOrbit 表示"这条链当前是否要跑运动调制"（effects_orbit.go）。
+	//
+	// ★ 同一条约束：随 preset 固化，理由见 runReverb。
+	// ★ 摆动量本身**不**挂在这条链上 —— LFO 挂在 Chain 上共用一个相位，
+	//   否则交叉淡化期间两条链的相位不同，切换瞬间会"嗖"地扫一下
+	//   （见 orbitLFO 的类型注释）。
+	runOrbit bool
 	// runReverb 是"这条链当前是否要跑混响"。
 	//
 	// ★ 必须**随 preset 一起固化**，不能在处理时临时查 presetSpecs[preset]。
@@ -610,8 +646,9 @@ func (s *chainState) applyPreset(p EffectPreset) {
 		s.rev.setParams(spec.reverb)
 	}
 	s.preset = p
-	// 固化"要不要跑早期反射 / 混响"（见 runEarly / runReverb 字段的说明）
+	// 固化"要不要跑早期反射 / 摆动 / 混响"（见对应字段的说明）
 	s.runEarly = spec.enableEarly
+	s.runOrbit = spec.enableOrbit
 	s.runReverb = spec.enableReverb
 	s.needsApply = false
 }
@@ -634,6 +671,7 @@ func (c *Chain) prepare(sampleRate int) {
 	c.chainB.rev.prepare(sampleRate)
 
 	c.samples = sampleRate
+	c.orbit.prepare(sampleRate)
 	c.prepared = true
 
 	// 两条链都先装载 off 档位。
@@ -863,12 +901,21 @@ func (c *Chain) activeChain() *chainState {
 func (c *Chain) processSingle(buf []byte, frames int) {
 	ch := c.activeChain()
 	runEarly := ch.runEarly
+	runOrbit := ch.runOrbit
 	runReverb := ch.runReverb
 
 	for i := 0; i < frames; i++ {
 		off := i * FrameSize
 		xl := readSample(buf, off)
 		xr := readSample(buf, off+2)
+
+		// 运动调制的相位每样本推进一次。只有环绕档才推进：
+		// 其它档位下相位停在原地没有影响（新链是靠交叉淡化淡入的，
+		// 起点相位被淡化盖住，见 orbitLFO 的注释）。
+		orbit := 0.0
+		if runOrbit {
+			orbit = c.orbit.next()
+		}
 
 		// EQ 的系数可能还在收敛（切到 off 档位后的最后一段路）
 		if ch.eq.smoothLeft > 0 {
@@ -877,10 +924,15 @@ func (c *Chain) processSingle(buf []byte, frames int) {
 		xl, xr = ch.eq.process(xl, xr)
 		xl, xr = ch.stereo.processStereo(xl, xr)
 		if runEarly {
-			xl, xr = ch.early.processStereo(xl, xr)
+			xl, xr = ch.early.processStereo(xl, xr, orbit)
 		}
 		if runReverb {
 			xl, xr = ch.rev.processStereo(xl, xr)
+		}
+		// 摆动放最后：整条链的输出一起摆（音乐与空间同步转），
+		// 而混响的激励取的是摆动之前的中置分量，房间本身不跟着歪。
+		if runOrbit {
+			xl, xr = applyOrbitPan(xl, xr, orbit)
 		}
 
 		writeSample(buf, off, xl)
@@ -894,6 +946,8 @@ func (c *Chain) processFading(buf []byte, frames int) {
 	to := c.incomingChain()    // 新（淡入）
 	fromEarly := from.runEarly
 	toEarly := to.runEarly
+	fromOrbit := from.runOrbit
+	toOrbit := to.runOrbit
 	fromRev := from.runReverb
 	toRev := to.runReverb
 
@@ -901,6 +955,21 @@ func (c *Chain) processFading(buf []byte, frames int) {
 		off := i * FrameSize
 		xl := readSample(buf, off)
 		xr := readSample(buf, off+2)
+
+		// ★ 相位**每样本只推进一次**，两条链读同一个值。
+		// 各推各的话，淡化期间两条链的摆动量不同，声像会被来回拉，
+		// 而且淡化一结束声像会"跳"到新链的相位上。
+		orbit := 0.0
+		if fromOrbit || toOrbit {
+			orbit = c.orbit.next()
+		}
+		fromS, toS := 0.0, 0.0
+		if fromOrbit {
+			fromS = orbit
+		}
+		if toOrbit {
+			toS = orbit
+		}
 
 		// —— 旧链 ——
 		//
@@ -914,10 +983,13 @@ func (c *Chain) processFading(buf []byte, frames int) {
 		fl, fr := from.eq.process(xl, xr)
 		fl, fr = from.stereo.processStereo(fl, fr)
 		if fromEarly {
-			fl, fr = from.early.processStereo(fl, fr)
+			fl, fr = from.early.processStereo(fl, fr, fromS)
 		}
 		if fromRev {
 			fl, fr = from.rev.processStereo(fl, fr)
+		}
+		if fromOrbit {
+			fl, fr = applyOrbitPan(fl, fr, fromS)
 		}
 
 		// —— 新链 ——
@@ -927,10 +999,13 @@ func (c *Chain) processFading(buf []byte, frames int) {
 		tl, tr := to.eq.process(xl, xr)
 		tl, tr = to.stereo.processStereo(tl, tr)
 		if toEarly {
-			tl, tr = to.early.processStereo(tl, tr)
+			tl, tr = to.early.processStereo(tl, tr, toS)
 		}
 		if toRev {
 			tl, tr = to.rev.processStereo(tl, tr)
+		}
+		if toOrbit {
+			tl, tr = applyOrbitPan(tl, tr, toS)
 		}
 
 		// —— 混合 ——
@@ -969,6 +1044,7 @@ func (c *Chain) processFading(buf []byte, frames int) {
 func (c *Chain) processSingleRange(buf []byte, start, frames int) {
 	ch := c.activeChain()
 	runEarly := ch.runEarly
+	runOrbit := ch.runOrbit
 	runReverb := ch.runReverb
 
 	for i := start; i < frames; i++ {
@@ -976,16 +1052,24 @@ func (c *Chain) processSingleRange(buf []byte, start, frames int) {
 		xl := readSample(buf, off)
 		xr := readSample(buf, off+2)
 
+		orbit := 0.0
+		if runOrbit {
+			orbit = c.orbit.next()
+		}
+
 		if ch.eq.smoothLeft > 0 {
 			ch.eq.stepOnce()
 		}
 		xl, xr = ch.eq.process(xl, xr)
 		xl, xr = ch.stereo.processStereo(xl, xr)
 		if runEarly {
-			xl, xr = ch.early.processStereo(xl, xr)
+			xl, xr = ch.early.processStereo(xl, xr, orbit)
 		}
 		if runReverb {
 			xl, xr = ch.rev.processStereo(xl, xr)
+		}
+		if runOrbit {
+			xl, xr = applyOrbitPan(xl, xr, orbit)
 		}
 
 		writeSample(buf, off, xl)

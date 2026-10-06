@@ -185,6 +185,10 @@ type earlyFieldStage struct {
 	// 它不参与逐帧平滑：整条链交叉淡化已经覆盖了开关瞬间。
 	amount float64
 
+	// orbitScale 把 orbitLFO 的 -1..1 换算成"每耳多少样本"的延迟摆幅。
+	// 见 effects_orbit.go 文件头第一节对这一项的约束说明。
+	orbitScale float64
+
 	prepared bool
 }
 
@@ -225,9 +229,16 @@ func (e *earlyFieldStage) prepare(sampleRate int) {
 		}
 	}
 
-	// size 必须严格大于最大延迟：读位置 pos-d 要落在缓冲内（负数补 size），
-	// 而 pos-d == 0 读到的是"上一圈"的样本 —— 只要 size > maxD 就是正确的历史。
-	size := maxD + 1
+	// size 必须严格大于**最大可能延迟**：读位置 pos-d 要落在缓冲内
+	// （负数补 size），而 pos-d == 0 读到的是"上一圈"的样本 ——
+	// 只要 size > maxD 就是正确的历史。
+	//
+	// ★ 这里比 maxD 多留 orbitShiftMs 的余量：摆动会把 dR 推到
+	// maxD + 摆幅，不够的话下标会绕出缓冲、读到"未来"的样本。
+	e.orbitScale = orbitShiftMs * 0.001 * fs
+	orbitMargin := int(math.Ceil(e.orbitScale)) + 2
+
+	size := maxD + 1 + orbitMargin
 	if cap(e.buf) < size {
 		e.buf = make([]float64, size)
 	} else {
@@ -270,7 +281,7 @@ func (e *earlyFieldStage) reset() {
 	e.lp = 0
 }
 
-// shape 对中置信号做带通（160Hz 高通 + 3.6kHz 低通）。
+// shape 对中置信号做带通（200Hz 高通 + 3.6kHz 低通）。
 //
 // 高通用 `x - 一阶低通` 实现：一阶低通直流增益恒为 1，所以高通的
 // 直流增益结构性等于 0 —— 反射场不会把直流/超低频灌进声道。
@@ -281,12 +292,51 @@ func (e *earlyFieldStage) shape(x float64) float64 {
 	return e.lp
 }
 
+// readAt 从环形缓冲读出"延迟 d 个样本"处的值，d 可以是分数。
+//
+// ★ 分数延迟为什么必须有（zipper noise）：
+// 反射延迟随环绕档的摆动**连续**变化，而缓冲下标是整数。
+// 直接取整的话，下标每跨过一个样本，输出就跳一次"相邻样本之差"——
+// 对带限到 3.6kHz 的信号，这个差可以到幅度的 0.5 倍，乘上抽头增益
+// 仍有几十个 LSB，听感是持续的"滋啦"。线性插值把跳变摊成连续。
+//
+// ★ orbit == 0（本段没有摆动）时 f 恒为 0，退化成逐位精确的整数读取 ——
+// 关掉环绕档的输出与本文件存在之前完全一致，这一点由
+// TestOffAndBassStereoParamsPassThroughBitExact 一类的直通测试守着。
+//
+// ★ 下夹到 1：d < 1 会读到**刚写入的当前样本**，那是"零延迟反射"，
+// 物理上不存在，也会让插值的两个下标重合。上夹到 size-2 保证
+// i1 = i0+1 不越界（即便摆动把延迟推到缓冲末尾）。
+func (e *earlyFieldStage) readAt(d float64) float64 {
+	if d < 1 {
+		d = 1
+	}
+	if d > float64(e.size-2) {
+		d = float64(e.size - 2)
+	}
+	idx := float64(e.pos) - d
+	if idx < 0 {
+		idx += float64(e.size)
+	}
+	i0 := int(idx)
+	f := idx - float64(i0)
+	i1 := i0 + 1
+	if i1 >= e.size {
+		i1 = 0
+	}
+	return e.buf[i0] + (e.buf[i1]-e.buf[i0])*f
+}
+
 // processStereo 就地处理一帧：把带通后的中置分量按每耳各自的延迟
 // 送回两只耳朵（同极性，见文件头第一节）。
 //
+// orbit 是 orbitLFO 当前的 -1..1 输出：它把每耳的反射延迟反向推移
+// （见 effects_orbit.go 第一节），让最强的那个反射真的从左耳摆到右耳。
+// 传 0 表示"本链没有摆动"，此时输出与引入环绕调制之前逐位一致。
+//
 // ★ 早退条件 `amount <= 0`：off/vocal/bass 三档不跑本段，
 // 与 runReverb 的旁路是同一个道理（省掉全部延迟线读写）。
-func (e *earlyFieldStage) processStereo(xl, xr float64) (float64, float64) {
+func (e *earlyFieldStage) processStereo(xl, xr, orbit float64) (float64, float64) {
 	if !e.prepared || e.amount <= 0 {
 		return xl, xr
 	}
@@ -299,19 +349,14 @@ func (e *earlyFieldStage) processStereo(xl, xr float64) (float64, float64) {
 	src := e.shape((xl + xr) * 0.5)
 	e.buf[e.pos] = src
 
+	// 摆动方向必须与直达声一致：orbit > 0 时声像偏左，
+	// 于是左耳反射提前（延迟变小）、右耳推后。
+	shift := orbit * e.orbitScale
+
 	var reflL, reflR float64
 	for i := 0; i < earlyFieldTaps; i++ {
-		p := e.pos - e.dL[i]
-		if p < 0 {
-			p += e.size
-		}
-		reflL += e.g[i] * e.buf[p]
-
-		p = e.pos - e.dR[i]
-		if p < 0 {
-			p += e.size
-		}
-		reflR += e.g[i] * e.buf[p]
+		reflL += e.g[i] * e.readAt(float64(e.dL[i])-shift)
+		reflR += e.g[i] * e.readAt(float64(e.dR[i])+shift)
 	}
 
 	e.pos++
