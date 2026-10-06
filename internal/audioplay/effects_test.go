@@ -862,8 +862,17 @@ func TestChainSwitchNoDiscontinuity(t *testing.T) {
 // TestChainNoClippingWithExtremeInput 验证满幅输入经过音效链后
 // 不会出现硬削波的迹象。
 //
-// ★ 音效链的作用是"修饰"，不是"制造爆音"。EQ 提升 + 混响叠加很容易
-// 把峰值推过满幅，软限幅就是为此存在的 —— 这条测试检查它真的在工作。
+// ★ 音效链的作用是"修饰"，不是"制造爆音"。EQ 提升 + 混响叠加 + 加宽
+// 都可能把峰值推过满幅，软限幅就是为此存在的 —— 这条测试检查它真的
+// 在工作。
+//
+// ★★ 判据必须按**连续游程**而不是触顶个数（第三轮踩过的校准坑）：
+// 硬削波的本质是"波形被削平"——输出连续多个样本钉死在极值上；
+// 而软限幅的 tanh 渐近线会无限逼近满幅，量化后**孤立单点**触到
+// 32767/-32768 完全正常（满幅正弦的输入波峰本来就带这种样本，
+// 见 makeStereoSamples 的 int16(x·32767)）。按个数统计时，
+// 环绕档因为加宽把波峰推高，触顶个数从 ~1% 涨到 2.1% 就被误判
+// （实测 168 个触顶全部是游程=1 的单点，零连续顶格）。
 func TestChainNoClippingWithExtremeInput(t *testing.T) {
 	for _, preset := range []EffectPreset{EffectVocal, EffectBass, EffectSurround} {
 		t.Run(string(preset), func(t *testing.T) {
@@ -879,10 +888,7 @@ func TestChainNoClippingWithExtremeInput(t *testing.T) {
 				c.ProcessStereo(buf)
 			}
 
-			// 喂满幅信号，统计"连续顶格"的样本数。
-			//
-			// 硬削波的特征是**大量连续样本同时顶格**；软限幅只会让
-			// 峰值样本略微压扁，不会出现连续顶格。
+			// 喂满幅信号，统计"连续顶格"的最长游程。
 			values := make([]int16, 0, PeriodFrames*2)
 			for block := 0; block < 4; block++ {
 				buf := makeStereoSamples(PeriodFrames, func(i int) (float64, float64) {
@@ -897,18 +903,29 @@ func TestChainNoClippingWithExtremeInput(t *testing.T) {
 				}
 			}
 
-			// 检查是否触到 int16 的极值（32767 / -32768 是硬钳位的特征）
-			hardClipped := 0
+			// 最长连续顶格游程（跨声道按序统计：L/R 交替时单点也可能
+			// 记成 2，所以门限取 2，硬削波必然 ≥3）
+			maxRun, run, total := 0, 0, 0
 			for _, v := range values {
 				if v == 32767 || v == -32768 {
-					hardClipped++
+					total++
+					run++
+					if run > maxRun {
+						maxRun = run
+					}
+				} else {
+					run = 0
 				}
 			}
-			// 允许极少量（软限幅在 t=1 时输出恰好接近满幅，
-			// 量化后可能碰到极值），但不能成片出现。
-			if hardClipped > len(values)/50 {
-				t.Errorf("%s: %d/%d 个样本触到硬钳位极值（应为软限幅）",
-					preset, hardClipped, len(values))
+			if maxRun > 2 {
+				t.Errorf("%s: 出现长度 %d 的连续顶格（门限 2）—— "+
+					"波形被削平了，软限幅没在工作（触顶共 %d/%d）",
+					preset, maxRun, total, len(values))
+			}
+			// 宽松总量护栏：连单点都不该铺满（防"整段都在极值上"的异常）
+			if total > len(values)/10 {
+				t.Errorf("%s: %d/%d 个样本触顶（>10%%）—— 输出几乎整段钉在极值上",
+					preset, total, len(values))
 			}
 		})
 	}
@@ -958,7 +975,7 @@ func TestEffectPresetsAllHaveSpecs(t *testing.T) {
 			continue
 		}
 		hasEQ := len(spec.bands) > 0 || spec.highPassHz > 0
-		hasStereo := spec.stereo.Width != 0 || spec.stereo.Haas != 0 || spec.stereo.Crossfeed != 0
+		hasStereo := spec.stereo.Width != 0 || spec.stereo.Decorrelation != 0 || spec.stereo.Crossfeed != 0
 		hasReverb := spec.enableReverb
 		if !hasEQ && !hasStereo && !hasReverb {
 			t.Errorf("档位 %q 什么效果都不做（空档位）", p)
@@ -1074,24 +1091,25 @@ func TestBassPresetBoostsLowFreq(t *testing.T) {
 	}
 }
 
-// TestStereoPresetWidensSideSignal 验证 3D 环绕档确实放大了侧信号。
+// TestStereoPresetWidensSideSignal 验证 3D 环绕档的三个机制各自的作用方向。
 //
-// ★ 用"纯侧信号"（L = -R）来测侧分量：宽度处理只作用于侧分量。
+// ★ 用"纯侧信号"（L = -R）与"纯中置信号"（L = R）分开测：
+// 三个机制对这两类信号的预期行为完全不同，混在一起测会互相掩盖。
 //
-// 这里同时验证**两个不同机制**，必须分开测，因为它们的预期行为相反：
+//  1. M/S 宽度 —— 只放大 L-R，**不碰** L+R：对纯侧有效、对纯中置无效；
+//  2. 去相关（全通）—— 专为纯中置素材制造通道差（单声道素材能听出
+//     宽度的唯一来源：M/S 宽度对 S ≡ 0 的素材无能为力）；
+//  3. 串扰 —— **缩小**通道差（方向与加宽相反），且只在低频起效
+//     （见机制 3 对探针频率的说明）。
 //
-//  1. M/S 宽度 —— 只放大 L-R，**不碰** L+R。所以对纯侧信号有效果；
-//  2. Haas 延迟 —— 只延迟右声道，**故意**让 L 与 R 不再相等。
-//
-// 曾经把"中置信号应该完全不动"当成宽度的性质写进断言，结果被 Haas
-// 破坏了。那不是 bug：Haas 的工作原理就是"给一侧加一点延迟制造
-// 双耳差异"，对纯中置素材它同样起作用（这正是"3D 环绕"在单声道
-// 老录音上也能听出效果的原理）。所以"中置完全不动"只对**关闭 Haas**
-// 的档位成立，测试必须按机制拆开。
+// ★ 每个机制都在它真正作用的频段探针：宽度/去相关用 440Hz
+// （加宽是全频段行为），串扰用 100Hz（它只交换低频，拐点 700Hz ——
+// 在拐点附近探针测的是滤波器相位移而不是"串扰方向"，会得出
+// 与机制无关的结论）。
 func TestStereoPresetWidensSideSignal(t *testing.T) {
 	// measureChannelDiff 返回处理后的平均 |L-R|。
 	// midOnly=true 时输入是纯中置，false 时是纯侧。
-	measureChannelDiff := func(params StereoParams, midOnly bool) float64 {
+	measureChannelDiff := func(params StereoParams, midOnly bool, freq float64) float64 {
 		// 直接构造一个只做空间处理的链，绕开预设表 ——
 		// 这样每条断言测的就是"某一个机制"，不会被档位里其他参数干扰。
 		var s stereoStage
@@ -1100,7 +1118,7 @@ func TestStereoPresetWidensSideSignal(t *testing.T) {
 
 		frames := 16384
 		buf := makeStereoSamples(frames, func(i int) (float64, float64) {
-			v := sineAt(i, 440, 0.2)
+			v := sineAt(i, freq, 0.2)
 			if midOnly {
 				return v, v
 			}
@@ -1116,7 +1134,7 @@ func TestStereoPresetWidensSideSignal(t *testing.T) {
 			binary.LittleEndian.PutUint16(buf[off+2:], uint16(int16(or*sampleScale)))
 		}
 
-		// 跳过后半段，等 Haas 延迟线进入稳态
+		// 跳过后半段，等延迟线进入稳态
 		var sum float64
 		for i := frames / 2; i < frames; i++ {
 			off := i * FrameSize
@@ -1128,40 +1146,50 @@ func TestStereoPresetWidensSideSignal(t *testing.T) {
 	}
 
 	const amp = 0.2
+	const wFreq = 440.0 // 加宽/去相关的探针频率
 
 	// —— 机制 1：M/S 宽度 ——
 	// 纯侧信号在 Width 处理下应该明显变宽。
-	// 注意此时 Haas=0、Crossfeed=0，所以通道差完全来自宽度。
-	sidePlain := measureChannelDiff(StereoParams{Width: 0.5}, false) // 0.5 = 原始宽度
-	sideWide := measureChannelDiff(StereoParams{Width: 0.95}, false)
+	// 注意此时 Decorrelation=0、Crossfeed=0，所以通道差完全来自宽度。
+	sidePlain := measureChannelDiff(StereoParams{Width: 0.5}, false, wFreq) // 0.5 = 原始宽度
+	sideWide := measureChannelDiff(StereoParams{Width: 0.95}, false, wFreq)
 	if sideWide <= sidePlain*1.3 {
 		t.Errorf("宽度 0.95 下侧信号 |L-R| = %.5f，宽度 0.5（原始）时 %.5f —— 没有明显加宽",
 			sideWide, sidePlain)
 	}
 
 	// 纯中置信号在**只有宽度**时应该完全不受影响。
-	midPlain := measureChannelDiff(StereoParams{Width: 0.5}, true)
-	midWide := measureChannelDiff(StereoParams{Width: 0.95}, true)
+	midPlain := measureChannelDiff(StereoParams{Width: 0.5}, true, wFreq)
+	midWide := measureChannelDiff(StereoParams{Width: 0.95}, true, wFreq)
 	if midWide > midPlain+1e-4 {
 		t.Errorf("M/S 宽度把中置信号的 |L-R| 从 %.6f 变成了 %.6f —— 加宽不该破坏中置声像",
 			midPlain, midWide)
 	}
 
-	// —— 机制 2：Haas 延迟 ——
-	// 它对纯中置信号**应该**产生通道差异（这就是它制造空间感的原理）。
-	midHaas := measureChannelDiff(StereoParams{Width: 0.5, Haas: 0.35}, true)
-	if midHaas < amp*0.1 {
-		t.Errorf("Haas 对中置信号只产生了 %.5f 的通道差，期望明显可见（约 %.5f）",
-			midHaas, amp*0.35)
+	// —— 机制 2：去相关（全通）——
+	// 它对纯中置信号**应该**产生通道差异 —— 这是"单声道素材也能听出
+	// 宽度"的唯一来源（M/S 宽度对 S ≡ 0 的素材完全无能为力）。
+	midDecor := measureChannelDiff(
+		StereoParams{Width: 0.5, Decorrelation: 0.85}, true, wFreq)
+	if midDecor < amp*0.1 {
+		t.Errorf("去相关对中置信号只产生了 %.5f 的通道差，期望明显可见（约 %.5f）",
+			midDecor, amp*0.85)
 	}
 
 	// —— 机制 3：串扰 ——
-	// 串扰把两侧互相混合，所以它会**减小**纯侧信号的通道差
-	//（极端情况 crossfeed=1 时两声道完全相同 = 单声道）。
-	sideCross := measureChannelDiff(StereoParams{Width: 0.5, Crossfeed: 1.0}, false)
-	if sideCross >= sidePlain {
-		t.Errorf("串扰全开时侧信号 |L-R| = %.5f，未开时 %.5f —— 串扰应该缩小通道差",
-			sideCross, sidePlain)
+	// 串扰把两侧的**低频**互换混合，所以它在低频段会**减小**纯侧信号
+	// 的通道差（crossfeed=1 → 直流处完全互补合并 = 单声道）。
+	//
+	// ★ 探针必须用低频（100Hz ≪ 700Hz 拐点）：串扰只交换低频，
+	// 在拐点附近（比如 440Hz）低通的相位移会让 |1-2·H(f)| 略微大于 1，
+	// 那测到的是滤波器相位，不是串扰机制的方向 —— 曾经用 440Hz 探针
+	// 得出"串扰反而加宽"的假失败。
+	const xFreq = 100.0
+	sidePlainLF := measureChannelDiff(StereoParams{Width: 0.5}, false, xFreq)
+	sideCrossLF := measureChannelDiff(StereoParams{Width: 0.5, Crossfeed: 1.0}, false, xFreq)
+	if sideCrossLF >= sidePlainLF {
+		t.Errorf("串扰全开时低频侧信号 |L-R| = %.5f，未开时 %.5f —— 串扰应该缩小通道差",
+			sideCrossLF, sidePlainLF)
 	}
 }
 
@@ -1218,44 +1246,59 @@ func TestSurroundPresetIsAudibleOnMonoSource(t *testing.T) {
 }
 
 // TestSurroundPresetStrongEnoughForHeadphones 是"戴耳机听不出环绕效果"
-// 那个用户反馈的回归测试。
+// 那个用户反馈的回归测试（第三轮重写后判据重做）。
 //
-// ★ 为什么前面已经有 TestSurroundPresetIsAudibleOnMonoSource 还需要这一条：
-// 那条测试只要求"最大变化 > 0.02"，这是一个**极低**的门槛 ——
-// 修复前的旧参数（Width 0.95 / Haas 0.35 / Crossfeed 0.2）实测能到
-// 0.13，轻松通过，但用户戴着耳机就是听不出来。也就是说那条测试
-// 无法区分"有效果"和"效果足够强"。
+// ★ 为什么前两轮"指标全绿"都没救 —— 这是本文件最重要的一条历史教训：
 //
-// 这里改测**感知量级**，用三个互相独立的判据：
+//	v0.1.4：单声道 |L-R| 做到 0.236，测试通过 → 用户："依然等于没有"
+//	第二轮： 单声道 |L-R| 做到 0.168，测试通过 → 用户："还是没啥效果"
 //
-//  1. **通道差（|L-R|）的绝对量** —— 这是"声音有多宽"最直接的近似。
-//     耳机上包围感的来源就是左右耳的差异信号，它太小就必然听不出。
-//     判据取 0.15（输入幅度 0.3 时约等于半幅），旧参数只有 0.085。
+// 复盘结论：**单频正弦探针不是合格的强度指标** —— 它只看一个频点，
+// 去相关的回声相位在该点恰好与全通相位反相就会大幅低估（第三轮
+// 实测同一套参数 440Hz 探针在 0.134~0.177 之间随参数漂移），
+// 而听音乐是**全频段同时**在听。所以主判据换成宽频（音乐场景）：
 //
-//  2. **单声道素材也必须被拉出通道差** —— 实质单声道的素材（老录音、
-//     播客、部分在线音源）原始 |L-R| 恒为 0。如果宽度的 M/S 处理是
-//     唯一手段，这类素材会**完全没有**空间感。Haas 延迟必须能独立
-//     地把它们拉出可闻的宽度。
+//	主判据：宽频侧/中 RMS 比
+//	  · 单声道素材 ≥ 0.45（实测 0.687）—— 去相关+回声把单声道拉出
+//	    显著双耳差异的量级；
+//	  · 立体声素材 ≥ 1.50（实测 2.05，原始约 1.0）—— 加宽让侧能量
+//	    相对原始素材明显抬升。
+//	副判据：单频 |L-R| ≥ 0.15 保留（与前两轮数字可比，防"换个探针
+//	  就自说自话"）。
 //
-//  3. **串扰不能反向吃掉宽度** —— 串扰缩小通道差，与环绕是相反方向。
-//     这里直接钉住"surround 档的串扰必须很小"，防止以后有人
-//     "顺手"把它调大又把效果抵消掉（这正是修复前的问题）。
+// 另外两条钉住方向：串扰不得调大（TestSurroundCrossfeedStaysSmall）、
+// 单声道折叠不得被挖坑（TestSpatialProcessingKeepsMonoFoldFlat）。
 func TestSurroundPresetStrongEnoughForHeadphones(t *testing.T) {
 	const amp = 0.3
 	const frames = 16384
 
-	// 跑一遍 surround 档，返回稳态（后半段）的平均 |L-R|。
-	steadyChannelDiff := func(mono bool) float64 {
+	// 伪随机宽频素材（LCG，确定性；RMS ≈ 0.3·0.6·0.577 ≈ 0.104）
+	noiseSeq := func(seed uint32) func() float64 {
+		s := seed
+		return func() float64 {
+			s = s*1664525 + 1013904223
+			return (float64(s>>8)/8388608.0 - 1.0) * amp * 0.6
+		}
+	}
+
+	run := func(mono, broadband bool) (chanDiff, sideRatio float64) {
 		var c Chain
 		c.prepare(SampleRate)
 		c.RequestPreset(EffectSurround)
-		// 等切换与 Haas 延迟线进入稳态
 		for block := 0; block < 4; block++ {
-			buf := makeStereoSamples(PeriodFrames, func(i int) (float64, float64) { return 0, 0 })
+			buf := makeStereoSamples(PeriodFrames, func(int) (float64, float64) { return 0, 0 })
 			c.ProcessStereo(buf)
 		}
 
+		n1, n2 := noiseSeq(0x1234567), noiseSeq(0x89abcdef)
 		buf := makeStereoSamples(frames, func(i int) (float64, float64) {
+			if broadband {
+				l := n1()
+				if mono {
+					return l, l
+				}
+				return l, n2()
+			}
 			l := sineAt(i, 440, amp)
 			if mono {
 				return l, l
@@ -1264,34 +1307,45 @@ func TestSurroundPresetStrongEnoughForHeadphones(t *testing.T) {
 		})
 		c.ProcessStereo(buf)
 
-		var sum float64
-		for i := frames / 2; i < frames; i++ {
+		var sum, sideSq, midSq float64
+		n := frames / 2
+		for i := n; i < frames; i++ {
 			off := i * FrameSize
 			l := float64(int16(binary.LittleEndian.Uint16(buf[off:]))) / sampleScale
 			r := float64(int16(binary.LittleEndian.Uint16(buf[off+2:]))) / sampleScale
 			sum += math.Abs(l - r)
+			mid := (l + r) / 2
+			side := (l - r) / 2
+			midSq += mid * mid
+			sideSq += side * side
 		}
-		return sum / float64(frames/2)
+		return sum / float64(n), math.Sqrt(sideSq / midSq)
 	}
 
-	// —— 判据 1：立体声素材上的通道差必须足够大 ——
-	//
-	// 立体声素材原始 |L-R| 约 0.24（两个不同频率的正弦），
-	// 加宽后必须明显超过它。旧参数实测 0.32（只有 1.34x），
-	// 新参数实测 0.37（1.51x）。
-	if got := steadyChannelDiff(false); got < 0.15 {
-		t.Errorf("surround 档在立体声素材上的稳态 |L-R| = %.4f，期望 >= 0.15 —— "+
-			"声道差太小，戴耳机时听不出环绕效果（这正是用户反馈的问题）", got)
+	// —— 主判据 1：宽频 · 单声道素材的侧/中能量比 ——
+	// 单声道素材原始侧能量为 0，全部侧能量都由去相关+回声+混响制造。
+	_, ratio := run(true, true)
+	if ratio < 0.45 {
+		t.Errorf("宽频单声道素材 侧/中 RMS = %.3f，期望 >= 0.45 —— "+
+			"去相关/回声对单声道素材的双耳差异量不足，耳机上听不出空间（实测应约 0.69）",
+			ratio)
 	}
 
-	// —— 判据 2：单声道素材必须被 Haas 延迟拉出可闻的通道差 ——
-	//
-	// 单声道素材原始 |L-R| = 0，所以这里测的是纯由 Haas 产生的宽度。
-	// 旧参数只有 0.085（相对 0.3 的输入约 28%，偏弱）；
-	// 新参数实测 0.236（约 79%），是明显可闻的。
-	if got := steadyChannelDiff(true); got < 0.15 {
+	// —— 主判据 2：宽频 · 立体声素材的侧能量抬升 ——
+	// 原始立体声侧/中约 1.0，加宽必须把它明显推上去。
+	_, ratioStereo := run(false, true)
+	if ratioStereo < 1.5 {
+		t.Errorf("宽频立体声素材 侧/中 RMS = %.3f，期望 >= 1.50（原始约 1.0）—— "+
+			"加宽量不足，听感与关闭档无异", ratioStereo)
+	}
+
+	// —— 副判据 3/4：单频通道差（与前两轮 0.236/0.168 的口径可比）——
+	if got, _ := run(false, false); got < 0.15 {
+		t.Errorf("surround 档在立体声素材上的稳态 |L-R| = %.4f，期望 >= 0.15", got)
+	}
+	if got, _ := run(true, false); got < 0.15 {
 		t.Errorf("surround 档在单声道素材上的稳态 |L-R| = %.4f，期望 >= 0.15 —— "+
-			"M/S 宽度对单声道素材无效，只能靠 Haas 制造空间感，它太弱了", got)
+			"M/S 宽度对单声道素材无效，只能靠去相关/回声制造空间感，它太弱了", got)
 	}
 }
 
@@ -1316,11 +1370,12 @@ func TestSurroundCrossfeedStaysSmall(t *testing.T) {
 			spec.stereo.Crossfeed, maxCrossfeed)
 	}
 
-	// Haas 必须是主要手段之一：它是唯一能在耳机上制造"声音在头外面"
-	// 的机制（见 effects_stereo.go 文件头）。
-	if spec.stereo.Haas < 0.5 {
-		t.Errorf("surround 档的 Haas = %.2f，期望 >= 0.5 —— "+
-			"Haas 太弱的话戴耳机时空间感不足", spec.stereo.Haas)
+	// 去相关必须是主要手段之一：它是唯一能在**真单声道素材**
+	//（L == R，S ≡ 0）上制造宽度的机制 —— M/S 宽度对这类素材完全无效。
+	if spec.stereo.Decorrelation < 0.5 {
+		t.Errorf("surround 档的 Decorrelation = %.2f，期望 >= 0.5 —— "+
+			"去相关太弱的话，单声道老录音 / 播客上会完全听不出环绕",
+			spec.stereo.Decorrelation)
 	}
 
 	// 宽度应该接近满值：加宽是环绕感最直接的来源。
@@ -1737,5 +1792,272 @@ func TestChainAfterPrepareHasNoSilentOutput(t *testing.T) {
 	}
 	if nonZero == 0 {
 		t.Fatal("prepare 之后链把输出变成了全零（biquadCoeffs 的 b0=0 坑）")
+	}
+}
+
+/* --------------------------------------------------------------------------
+   "3D 环绕重写"的回归测试（第一组）
+   --------------------------------------------------------------------------
+   每一条钉住重写过程中**实测抓到过**的一个具体 bug，失败信息直接
+   指向根因。改动 effects_stereo.go / presetSpecs 前先读懂这些注释。
+   ========================================================================== */
+
+// TestAllpassStageIsFlatMagnitude 钉住"去相关全通必须真的是全通"。
+//
+// ★ 背景：第一版实现把缓冲区写成了 `x + g·bufOut`（延迟值）而不是
+// `x + g·out`（输出值），传递函数从 (-g+z^-D)/(1-g·z^-D) 变成
+// (-g+(1+g²)z^-D)/(1-g·z^-D) —— **幅度响应不再是常数**（DC 增益 1.25、
+// 各频点 0.8~1.5 起伏）。后果：单声道素材左右 RMS 差 11.7dB、
+// 复杂素材峰值抬 4.35dB、大量样本进软限幅（"爆音"之一）。
+//
+// 判据用"增益必须在 1.00 附近"：真全通 |H| ≡ 1，坏实现偏差 ±1dB 以上，
+// 一条频率扫描就能分开。见 effects_stereo.go 里 process 的踩坑记录。
+func TestAllpassStageIsFlatMagnitude(t *testing.T) {
+	freqs := []float64{100, 440, 1000, 3000, 8000, 15000}
+	const amp = 0.4
+	const N = 16384
+
+	for _, freq := range freqs {
+		var a allpassStage
+		a.prepare(int(decorrelationDelayL), decorrelationFeedback)
+
+		// 预热：让延迟线进入稳态
+		for i := 0; i < 4096; i++ {
+			a.process(amp * math.Sin(2*math.Pi*freq*float64(i)/float64(SampleRate)))
+		}
+		// 投影测量：out = A·|H|·sin(φ+θ) → hypot(re,im) = A·|H|·N/2
+		var re, im float64
+		for i := 0; i < N; i++ {
+			idx := 4096 + i
+			out := a.process(amp * math.Sin(2*math.Pi*freq*float64(idx)/float64(SampleRate)))
+			ph := 2 * math.Pi * freq * float64(idx) / float64(SampleRate)
+			re += out * math.Cos(ph)
+			im += out * math.Sin(ph)
+		}
+		gain := math.Hypot(re, im) * 2 / (N * amp)
+		if db := 20 * math.Log10(gain); db < -0.15 || db > 0.15 {
+			t.Errorf("全通在 %.0f Hz 的增益 = %+.2f dB（期望 0.00 ± 0.15）—— "+
+				"幅度不平说明它不是全通，去相关会变成染色滤波器（见 process 的踩坑记录）",
+				freq, db)
+		}
+	}
+}
+
+// TestOffAndBassStereoParamsPassThroughBitExact 钉住"off/bass 档的
+// stereo 参数必须是**逐位直通**"。
+//
+// ★ 背景：StereoParams 的零值 Width 会被 setParams 映射成 width = 0
+// （单声道）。而 off 档在**交叉淡化期间**是会真的跑 stereoStage 的
+// （ProcessStereo 只有"两条链都 off 且淡化完成"才整块旁路）。于是
+// "3D 环绕 → 关闭" 的淡化期间 off 链输出 mono，淡化结束、快速路径
+// 恢复完整立体声 —— 单样本上 L 跳 +side、R 跳 -side → 一声"啪"。
+// 修法是把 off/bass 的 spec 显式写成 Width 0.5（0.5×2 = 1 → 恒等）。
+//
+// 判据用**浮点位相等**（==）而不是近似：直通分支（width == 1）
+// 是逐位跳过的，差 1 ULP 都说明有人改坏了映射。
+func TestOffAndBassStereoParamsPassThroughBitExact(t *testing.T) {
+	for _, p := range []EffectPreset{EffectOff, EffectBass} {
+		var s stereoStage
+		s.prepare(SampleRate)
+		s.setParams(presetSpecs[p].stereo)
+
+		for i := 0; i < 4096; i++ {
+			// 有侧信号的立体声素材（单声道素材测不出 mono 塌缩）
+			l := sineAt(i, 333, 0.7) + 0.2*sineAt(i, 2222, 0.3)
+			r := sineAt(i, 444, 0.6) - 0.25*sineAt(i, 5555, 0.4)
+			ol, or := s.processStereo(l, r)
+			if ol != l || or != r {
+				t.Fatalf("档位 %q 的 stereo 参数不是直通（L: %v → %v，R: %v → %v）—— "+
+					"该档位不动声场，留零值 Width 会在交叉淡化期间把立体声压成单声道，"+
+					"淡化结束时产生跳变（爆音）", p, l, ol, r, or)
+			}
+		}
+	}
+}
+
+// TestSpatialProcessingKeepsMonoFoldFlat 钉住**结构性**单声道兼容：
+// 空间处理（宽度 + 去相关回声 + 串扰）本身必须让 L+R 与输入严格相等。
+//
+// ★ 为什么必须在**空间处理级**（stereoStage、不含混响）测：
+// "加宽不挖坑"是矩阵结构保证的（输出恒为 mid ± side，±相消），
+// 判据可以钉到近似精确。混响（第三轮经用户确认嵌入环绕档）不满足
+// 这个性质 —— 它的左右尾巴相位不同，单声道折叠有 -2.4dB（粗网格）/
+// -7.4dB（100 点密扫）的平滑凹陷，那是**任何立体声混响的固有代价**，
+// 由下面的 TestSurroundMonoFoldDownIsUsable 单独按"可用性"约束。
+// 两者混在一起测，就会把结构性保证和混响代价搅成一团糊涂账。
+//
+// ★ 这条测试抓的是历史事故：曾经"给一侧加延迟"在空间处理级就挖出
+// 9~15dB 梳状陷波（stage 级折叠立刻塌），混响拆开后它照样会被抓。
+func TestSpatialProcessingKeepsMonoFoldFlat(t *testing.T) {
+	spec := presetSpecs[EffectSurround].stereo
+	freqs := []float64{80, 200, 800, 3000, 12500}
+
+	for _, freq := range freqs {
+		var s stereoStage
+		s.prepare(SampleRate)
+		s.setParams(spec)
+
+		const frames = 8192
+		var re, im float64
+		for i := 0; i < frames; i++ {
+			v := sineAt(i, freq, 0.3)
+			ol, orr := s.processStereo(v, v)
+			// 折叠 L+R 并减掉输入折叠 2v：直接量"偏差"
+			sum := ol + orr - 2*v
+			ph := 2 * math.Pi * freq * float64(i) / float64(SampleRate)
+			re += sum * math.Cos(ph)
+			im += sum * math.Sin(ph)
+		}
+		n := float64(frames)
+		dev := math.Hypot(re, im) * 2 / (n * 0.6) // 偏差幅度 / 输入折叠幅度
+		if dev > 1e-6 {
+			t.Errorf("%.0f Hz 空间处理级折叠偏差 = %.3e（相对输入，期望 ~1e-15）—— "+
+				"mid ± side 的结构性相消被破坏了，加宽开始挖单声道的坑", freq, dev)
+		}
+	}
+}
+
+// TestSurroundMonoFoldDownIsUsable 约束**全链**（含混响）的单声道折叠
+// 在"可用"范围内 —— 混响固有凹陷的护栏，与上面的结构性测试配套。
+//
+// 实测（第三轮，Amount 0.30 / Size 0.60）：粗网格最深 -2.44dB、
+// 100 点密扫最深 -7.36dB（干湿等功率把干声压到 -1dB + 左右混响
+// 尾巴的相位差在部分频点相消）。判据取 [-10, +2] dB：
+//
+//	· -10 抓"灾难级"回归（成片的梳状深坑会掉到 -15 以下）；
+//	· +2 抓"混响能量失控"（反馈归一化被改坏时折叠会整体抬升）；
+//	· 结构性严格平直由 TestSpatialProcessingKeepsMonoFoldFlat 负责。
+func TestSurroundMonoFoldDownIsUsable(t *testing.T) {
+	freqs := []float64{80, 200, 800, 3000, 12500}
+
+	// foldGain 返回"单声道素材过该档位后，L+R 相对输入 0.6 的增益"。
+	foldGain := func(preset EffectPreset, freq float64) float64 {
+		var c Chain
+		c.prepare(SampleRate)
+		c.RequestPreset(preset)
+		// 等切换与参数平滑收敛
+		for b := 0; b < 4; b++ {
+			buf := makeStereoSamples(PeriodFrames, func(int) (float64, float64) { return 0, 0 })
+			c.ProcessStereo(buf)
+		}
+		const frames = 16384
+		buf := makeStereoSamples(frames, func(i int) (float64, float64) {
+			v := sineAt(i, freq, 0.3)
+			return v, v
+		})
+		c.ProcessStereo(buf)
+
+		var re, im float64
+		for i := frames / 2; i < frames; i++ {
+			off := i * FrameSize
+			l := float64(int16(binary.LittleEndian.Uint16(buf[off:])))
+			r := float64(int16(binary.LittleEndian.Uint16(buf[off+2:])))
+			sum := (l + r) / sampleScale // L+R（直流可达 ±2）
+			ph := 2 * math.Pi * freq * float64(i) / float64(SampleRate)
+			re += sum * math.Cos(ph)
+			im += sum * math.Sin(ph)
+		}
+		// 投影幅度 = |L+R| 幅度 · n/2；输入 L+R 幅度 = 0.6
+		n := float64(frames / 2)
+		return math.Hypot(re, im) * 2 / (n * 0.6)
+	}
+
+	for _, freq := range freqs {
+		off := foldGain(EffectOff, freq)
+		wet := foldGain(EffectSurround, freq)
+		dev := 20 * math.Log10(wet/off)
+		if dev < -10 || dev > 2 {
+			t.Errorf("%.0f Hz 单声道折叠：环绕档（含混响）相对 off 偏差 %+.2f dB"+
+				"（期望 -10 ~ +2 dB）—— 超出混响固有代价，单声道回放会听感发空", freq, dev)
+		}
+	}
+}
+
+// TestSwitchToOffKeepsStereoContinuous 钉住"surround → off 的淡化边界
+// 不能产生额外阶跃"。
+//
+// ★ 背景：这是"切音效爆音"的链级回归（与 TestOffAndBassStereoParams
+// 的档位级断言互补 —— 那条钉参数，这条钉整条链的实际输出）。
+// 淡化期间新链（off）若输出 mono，淡化结束切到旁路的瞬间 L/R 会各
+// 跳一个侧信号的幅度（实测量级上万），听感就是那声"啪"。
+//
+// 判据：淡化全程的最大相邻跳变不得超过 surround **稳态**的 1.5 倍。
+// 宽化本身会让波形变陡（稳态就比输入陡），所以基准必须是稳态而不是
+// 输入素材；而真阶跃（off=mono bug）的量级是侧信号幅度本身（≈1.6 万），
+// 稳态斜率的 1.5 倍（≈2700）足以把它和正常斜率分开。
+func TestSwitchToOffKeepsStereoContinuous(t *testing.T) {
+	// 强侧信号的立体声素材（左右不同频率）
+	gen := func(i int) (float64, float64) {
+		return sineAt(i, 440, 0.5), sineAt(i, 660, 0.5)
+	}
+	maxSampleStep := func(buf []byte) int {
+		worst := 0
+		for i := 1; i < len(buf)/FrameSize; i++ {
+			prev := int(int16(binary.LittleEndian.Uint16(buf[(i-1)*FrameSize:])))
+			cur := int(int16(binary.LittleEndian.Uint16(buf[i*FrameSize:])))
+			if d := cur - prev; d > worst {
+				worst = d
+			} else if -d > worst {
+				worst = -d
+			}
+		}
+		return worst
+	}
+
+	var c Chain
+	c.prepare(SampleRate)
+	c.RequestPreset(EffectOff)
+	idx := 0
+	runBuf := func() int {
+		buf := makeStereoSamples(PeriodFrames, func(i int) (float64, float64) {
+			return gen(idx + i)
+		})
+		idx += PeriodFrames
+		c.ProcessStereo(buf)
+		return maxSampleStep(buf)
+	}
+
+	// off 稳态（素材基准）
+	base := 0
+	for b := 0; b < 3; b++ {
+		if d := runBuf(); d > base {
+			base = d
+		}
+	}
+
+	// 打开环绕：跟踪 off → surround 的整个淡化
+	c.RequestPreset(EffectSurround)
+	fadeIn := 0
+	for b := 0; b < 4; b++ {
+		if d := runBuf(); d > fadeIn {
+			fadeIn = d
+		}
+	}
+	// surround 稳态（这是淡出阶段跳变的合法上限）
+	steady := 0
+	for b := 0; b < 12; b++ {
+		if d := runBuf(); d > steady {
+			steady = d
+		}
+	}
+
+	// 关闭环绕：跟踪 surround → off 的淡化 + 淡化后的快速路径
+	c.RequestPreset(EffectOff)
+	fadeOut := 0
+	for b := 0; b < 8; b++ {
+		if d := runBuf(); d > fadeOut {
+			fadeOut = d
+		}
+	}
+
+	limit := steady + steady/2
+	if fadeOut > limit {
+		t.Errorf("surround→off 淡化边界最大跳变 = %d，超过 surround 稳态 %d 的 1.5 倍（上限 %d；"+
+			"素材基准 %d）—— 淡化期间 off 链在输出单声道，淡化结束恢复立体声产生阶跃（爆音）",
+			fadeOut, steady, limit, base)
+	}
+	if fadeIn > limit {
+		t.Errorf("off→surround 淡化期间最大跳变 = %d，超过 surround 稳态 %d 的 1.5 倍（上限 %d）",
+			fadeIn, steady, limit)
 	}
 }
