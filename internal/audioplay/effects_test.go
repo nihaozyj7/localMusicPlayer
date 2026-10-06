@@ -1275,12 +1275,14 @@ func TestSurroundPresetIsAudibleOnMonoSource(t *testing.T) {
 // 时它必然变小，那是**声像正在经过正前方**，不是强度不足。
 // 只取 0.37s 的窗口正好卡在摆动的某一相位上，测出来的数字纯属运气：
 // 第五轮首次接入时该判据就是这么从 0.156 掉到 0.104 的。
-// 窗口拉到 5 秒（周期是 4 秒）之后，摆完整一圈的平均值才是
+// 窗口拉到 8 秒（周期是 6 秒）之后，摆完整一圈的平均值才是
 // "这套处理平均能拉开多少双耳差异"，也才和前三轮的数字可比。
+// ★ 改 orbitPeriodSeconds 时**必须**同步改 frames，否则窗口会短于
+// 周期，判据重新退化成"只看某一个相位"。
 func TestSurroundPresetStrongEnoughForHeadphones(t *testing.T) {
 	const amp = 0.3
-	// 5 秒：orbitPeriodSeconds 是 4 秒，留 1 秒余量覆盖一个完整周期。
-	const frames = SampleRate * 5
+	// 8 秒：orbitPeriodSeconds 是 6 秒，留 2 秒余量覆盖一个完整周期。
+	const frames = SampleRate * 8
 	// 前 0.5 秒只用来跳过档位切换的交叉淡化（30ms）与参数收敛。
 	const settle = SampleRate / 10
 

@@ -29,14 +29,17 @@ import (
 // 会把结果带偏到某一个频点的极端值上）。
 //
 // ★ 按 0.5 秒分块算左右 RMS 之比：块太长会把摆动平均掉，
-// 太短又会被波形相位污染。0.5 秒相对 4 秒的周期是 1/8，
-// 一圈至少落 8 个采样点，足够还原摆幅。
+// 太短又会被波形相位污染。0.5 秒相对 6 秒的周期是 1/12，
+// 一圈至少落 12 个采样点，足够还原摆幅。
 //
 // ★ 判据取峰峰值 ≥ 6dB：实测约 15dB。6dB 是"明显在动"与
 // "静态处理的自然漂移"的分界 —— 本文件存在之前的实现实测峰峰值 0dB。
+//
+// ★ total 必须大于 orbitPeriodSeconds，否则窗口盖不住一整圈，
+// 摆幅会被系统性低估（改周期时同步改这里）。
 func TestSurroundImageActuallyMovesOverTime(t *testing.T) {
-	const total = SampleRate * 5 // 大于一个摆动周期（4 秒）
-	const block = SampleRate / 2 // 0.5 秒一块
+	const total = SampleRate * 10 // 大于一个摆动周期（6 秒）
+	const block = SampleRate / 2  // 0.5 秒一块
 
 	var c Chain
 	c.prepare(SampleRate)
@@ -112,55 +115,69 @@ func TestOrbitPanKeepsMonoFoldExact(t *testing.T) {
 
 // TestChainNoClippingAtOrbitPeak 钉住"摆到最极端的那一相位不得削顶"。
 //
-// ★ 与 TestChainNoClippingWithExtremeInput 的分工：那条测的是
-// 默认相位（摆动刚开始、量很小），这条**直接把相位拨到 s=1**，
+// ★ 与 TestChainNoClippingWithExtremeInput 的分工：那条测的是默认相位
+// （摆动刚开始、量很小），这条**把 LFO 相位拨到 ±1 两个极值**，
 // 也就是摆幅最大的那一刻。这两条覆盖的不是同一件事 ——
 // 第五轮接入摆动时若只看原来那条，最坏相位根本没被测到。
 //
+// ★★ 为什么必须**逐频点扫**，只测 440Hz 是不够的：
+// 全通去相关的注入相位随频率转，440Hz 恰好接近反相 —— 摆动会去
+// **抵消**那里的静态偏置（L = 0.53·mid + 摆动量），是个对削顶
+// **有利**的探针。真正危险的是注入相位同相、与摆动同向叠加的频点，
+// 那里 mid 会被推到 (1 + K + 0.5) 倍。软限幅在输入超过 1.48 之后
+// 会把输出连续钉死在满幅上，那正是"爆音"的形态。
+//
 // 判据与原测试一致：不出现长度 ≥3 的连续顶格游程（硬削波必然 ≥3）。
 func TestChainNoClippingAtOrbitPeak(t *testing.T) {
-	var c Chain
-	c.prepare(SampleRate)
-	c.RequestPreset(EffectSurround)
-	for block := 0; block < 3; block++ {
-		buf := makeStereoSamples(PeriodFrames, func(i int) (float64, float64) {
-			v := sineAt(i, 440, 1.0)
-			return v, v
-		})
-		c.ProcessStereo(buf)
-	}
-	// 拨到摆动正峰（+1），之后的每个样本都接近最坏情况
-	c.orbit.phase = math.Pi / 2
-
-	values := make([]int16, 0, PeriodFrames*4*2)
-	for block := 0; block < 4; block++ {
-		buf := makeStereoSamples(PeriodFrames, func(i int) (float64, float64) {
-			v := sineAt(block*PeriodFrames+i, 440, 1.0)
-			return v, v
-		})
-		c.ProcessStereo(buf)
-		for i := 0; i < PeriodFrames; i++ {
-			values = append(values,
-				int16(binary.LittleEndian.Uint16(buf[i*FrameSize:])),
-				int16(binary.LittleEndian.Uint16(buf[i*FrameSize+2:])))
-		}
+	// 对数分布的频点 + 两个摆动极值：任一组合越界都算失败。
+	freqs := []float64{
+		80, 110, 150, 200, 275, 330, 440, 660, 880,
+		1320, 1760, 2640, 3520, 5280, 7040, 10000,
 	}
 
-	maxRun, run, totalTop := 0, 0, 0
-	for _, v := range values {
-		if v == 32767 || v == -32768 {
-			totalTop++
-			run++
-			if run > maxRun {
-				maxRun = run
+	for _, freq := range freqs {
+		for _, phase := range []float64{math.Pi / 2, -math.Pi / 2} {
+			var c Chain
+			c.prepare(SampleRate)
+			c.RequestPreset(EffectSurround)
+			for block := 0; block < 3; block++ {
+				buf := makeStereoSamples(PeriodFrames, func(int) (float64, float64) { return 0, 0 })
+				c.ProcessStereo(buf)
 			}
-		} else {
-			run = 0
+			// 拨到摆动极值；之后 4 个缓冲只推进 0.1 弧度，仍在极值附近
+			c.orbit.phase = phase
+
+			maxRun, run, totalTop := 0, 0, 0
+			total := 0
+			for block := 0; block < 4; block++ {
+				buf := makeStereoSamples(PeriodFrames, func(i int) (float64, float64) {
+					v := sineAt(block*PeriodFrames+i, freq, 1.0)
+					return v, v // 满幅单声道
+				})
+				c.ProcessStereo(buf)
+				for i := 0; i < PeriodFrames; i++ {
+					for _, off := range []int{i * FrameSize, i*FrameSize + 2} {
+						v := int16(binary.LittleEndian.Uint16(buf[off:]))
+						total++
+						if v == 32767 || v == -32768 {
+							totalTop++
+							run++
+							if run > maxRun {
+								maxRun = run
+							}
+						} else {
+							run = 0
+						}
+					}
+				}
+			}
+
+			if maxRun > 2 {
+				t.Errorf("%.0fHz、摆动相位 %.2f：出现长度 %d 的连续顶格（门限 2；触顶 %d/%d）—— "+
+					"波形被削平了。orbitPanDepth 是不是调过头了？"+
+					"软限幅在输入超过 1.48 之后会把输出钉死在满幅上",
+					freq, math.Sin(phase), maxRun, totalTop, total)
+			}
 		}
-	}
-	if maxRun > 2 {
-		t.Errorf("摆动正峰相位下出现长度 %d 的连续顶格（门限 2；触顶 %d/%d）—— "+
-			"波形被削平了。orbitPanDepth 是不是调过头了？"+
-			"软限幅在输入超过 1.48 之后会把输出钉死在满幅上", maxRun, totalTop, len(values))
 	}
 }
