@@ -385,6 +385,13 @@ define("mp-queue-panel", MpQueuePanel);
      · 音效           —— 档位按钮（这一组是从设置页搬过来的）
      · 背景不透明度   —— 滑条
 
+   每一项都是一张小卡片：图标头（图标按功能选：A = 字号、显示器 = 桌面歌词、
+   波形 = 音效、半填的圆 = 不透明度）+ 控件。两个滑条的读数放在卡片头右侧
+   （不拖动时滑条自己不显示数值），滑条两端放的是**这项专属**的量程提示：
+     · 字号两端是量程 14 / 72（等宽数字）；
+     · 不透明度两端是空心 → 实心两块小方，直接把「透明 → 不透明」画出来。
+   卡片样式与定时停止面板（sleep-panel__option）同一套语言：surface 底 + hairline 边。
+
    「桌面歌词 / 桌面背景歌词」合成一组三选一，是因为它们在**后端本来就是
    互斥的**（见 desktop-mode.js：两个各占一个真实窗口，同时开会叠成一团）。
    原来表示成两个独立开关，用户完全看不出这层约束，只能靠点了之后
@@ -465,6 +472,7 @@ class MpOptionsPanel extends MpPanel {
         aria-label="播放选项"
       >
         <div class="options-panel__head">
+          <svg class="options-panel__icon" aria-hidden="true"><use href="#i-options"></use></svg>
           <span class="options-panel__title">播放选项</span>
           <span class="u-spacer"></span>
           <button
@@ -479,70 +487,90 @@ class MpOptionsPanel extends MpPanel {
           </button>
         </div>
         <div class="options-panel__body" id="options-panel-body">
-          <div class="option-row">
-            <span class="option-row__label">歌词字号</span>
-            <div class="rangeslider">
+          <div class="opt" data-opt="lyric-size">
+            <div class="opt__head">
+              <span class="opt__icon">${icon("text-size")}</span>
+              <span class="opt__label">歌词字号</span>
+              <span class="opt__value" id="opt-lyric-size-val">${size}px</span>
+            </div>
+            <div class="opt__control">
+              <span class="opt__range">${LYRIC_SIZE_MIN}</span>
               <div class="slider" id="opt-lyric-size" role="slider" tabindex="0" aria-label="歌词字号">
                 <div class="slider__rail"><div class="slider__fill"></div></div>
                 <div class="slider__thumb"></div>
                 <div class="slider__bubble"></div>
               </div>
-              <span class="rangeslider__value" id="opt-lyric-size-val">${size}px</span>
+              <span class="opt__range">${LYRIC_SIZE_MAX}</span>
             </div>
           </div>
-          <div class="option-row">
-            <span class="option-row__label">桌面歌词</span>
-            <div class="segmented" role="radiogroup" aria-label="桌面歌词">
-              ${DESKTOP_MODE_OPTIONS.map(
-                (opt) =>
-                  html`<button
-                    class="segmented__btn"
-                    type="button"
-                    role="radio"
-                    id=${opt.id}
-                    data-mode=${opt.value}
-                    aria-checked=${String(opt.value === mode)}
-                    ?disabled=${
-                      opt.value === DESKTOP_MODE.wallpaper && state.desktopWallpaperSupport?.supported === false
-                    }
-                    data-tip=${
-                      opt.value === DESKTOP_MODE.wallpaper && state.desktopWallpaperSupport?.supported === false
-                        ? state.desktopWallpaperSupport.reason
-                        : opt.tip
-                    }
-                    @click=${() => this.pickDesktopMode(opt)}
-                  >
-                    ${opt.label}
-                  </button>`
-              )}
+          <div class="opt" data-opt="desktop">
+            <div class="opt__head">
+              <span class="opt__icon">${icon("desktop-lyrics")}</span>
+              <span class="opt__label">桌面歌词</span>
+            </div>
+            <div class="opt__control">
+              <div class="segmented" role="radiogroup" aria-label="桌面歌词">
+                ${DESKTOP_MODE_OPTIONS.map(
+                  (opt) =>
+                    html`<button
+                      class="segmented__btn"
+                      type="button"
+                      role="radio"
+                      id=${opt.id}
+                      data-mode=${opt.value}
+                      aria-checked=${String(opt.value === mode)}
+                      ?disabled=${
+                        opt.value === DESKTOP_MODE.wallpaper && state.desktopWallpaperSupport?.supported === false
+                      }
+                      data-tip=${
+                        opt.value === DESKTOP_MODE.wallpaper && state.desktopWallpaperSupport?.supported === false
+                          ? state.desktopWallpaperSupport.reason
+                          : opt.tip
+                      }
+                      @click=${() => this.pickDesktopMode(opt)}
+                    >
+                      ${opt.label}
+                    </button>`
+                )}
+              </div>
             </div>
           </div>
-          <div class="option-row option-row--stack">
-            <span class="option-row__label">音效</span>
-            <div class="segmented segmented--wrap" data-segment="effectPreset">
-              ${EFFECT_PRESETS.map(
-                (p) =>
-                  html`<button
-                    class="segmented__btn"
-                    type="button"
-                    data-value=${p.value}
-                    aria-pressed=${String(p.value === (state.config.effectPreset || "off"))}
-                    @click=${() => this.pickEffect(p.value)}
-                  >
-                    ${p.label}
-                  </button>`
-              )}
+          <div class="opt" data-opt="effect">
+            <div class="opt__head">
+              <span class="opt__icon">${icon("eq")}</span>
+              <span class="opt__label">音效</span>
+            </div>
+            <div class="opt__control">
+              <div class="segmented segmented--wrap" data-segment="effectPreset">
+                ${EFFECT_PRESETS.map(
+                  (p) =>
+                    html`<button
+                      class="segmented__btn"
+                      type="button"
+                      data-value=${p.value}
+                      aria-pressed=${String(p.value === (state.config.effectPreset || "off"))}
+                      @click=${() => this.pickEffect(p.value)}
+                    >
+                      ${p.label}
+                    </button>`
+                )}
+              </div>
             </div>
           </div>
-          <div class="option-row">
-            <span class="option-row__label">背景不透明度</span>
-            <div class="rangeslider">
+          <div class="opt" data-opt="alpha">
+            <div class="opt__head">
+              <span class="opt__icon">${icon("opacity")}</span>
+              <span class="opt__label">背景不透明度</span>
+              <span class="opt__value" id="opt-alpha-val">${alpha}%</span>
+            </div>
+            <div class="opt__control">
+              <span class="opt__swatch" aria-hidden="true"></span>
               <div class="slider" id="opt-alpha" role="slider" tabindex="0" aria-label="背景不透明度">
                 <div class="slider__rail"><div class="slider__fill"></div></div>
                 <div class="slider__thumb"></div>
                 <div class="slider__bubble"></div>
               </div>
-              <span class="rangeslider__value" id="opt-alpha-val">${alpha}%</span>
+              <span class="opt__swatch opt__swatch--solid" aria-hidden="true"></span>
             </div>
           </div>
         </div>

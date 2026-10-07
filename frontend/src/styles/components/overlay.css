@@ -246,7 +246,11 @@
   z-index: var(--z-dropdown);
   display: flex;
   flex-direction: column;
-  width: min(300px, calc(100vw - var(--sp-6)));
+  /* 320px：四项都是「图标头 + 控件」的卡片，音效那组四个档位按钮
+     （清澈人声…）在 300px 下会挤到换行，宽 20px 就够一行放下。 */
+  width: min(320px, calc(100vw - var(--sp-6)));
+  /* 矮窗口下别顶穿标题栏：放不下时 body 自己滚（head 始终留在顶部）。 */
+  max-height: min(72vh, 520px);
   border-radius: var(--panel-radius);
   background: var(--glass-bg-strong);
   border: 1px solid var(--surface-app-border);
@@ -277,6 +281,15 @@
   border-bottom: var(--hairline);
 }
 
+/* 标题左边的小图标（= 打开面板的那颗底栏按钮的图标），与定时停止面板同款。
+   必须显式给尺寸：SVG 没有尺寸规则时会退到 300×150，把标题行撑成一行半。 */
+.options-panel__icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--text-3);
+}
+
 .options-panel__title {
   font-size: var(--fs-md);
   font-weight: var(--fw-semibold);
@@ -303,44 +316,115 @@
 }
 
 .options-panel__body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--sp-3);
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
-}
-
-.option-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-}
-
-/* 竖排的选项行：控件要在标签下方占满整行。
-   音效有 6 档、换行后要占两行，横向排会把标签挤成竖着的一列字。 */
-.option-row--stack {
-  flex-direction: column;
-  align-items: stretch;
   gap: var(--sp-2);
 }
 
-.option-row__label {
+/* —— 一项一张卡片：图标头 + 控件 ——
+   卡片本身不是点击目标（点卡片没有意义），但里面的滑条能拿到焦点，
+   所以用 :focus-within 把「正在调这一项」的状态画在整张卡上。 */
+.opt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  border: var(--hairline);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.opt:focus-within {
+  background: var(--surface-2);
+  border-color: var(--border-2);
+}
+
+.opt__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+/* 图标块：底用 accent-weak、图标用 accent —— 卡片本身只有 5% 的 surface，
+   再放一块 7% 的 surface-2 就几乎看不见了。四项靠图标本身区分
+   （A = 字号 / 显示器 = 桌面歌词 / 波形 = 音效 / 半填圆 = 不透明度），
+   颜色保持同一种，免得黑白主题里冒出四种杂色。 */
+.opt__icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
   flex: none;
-  width: 88px;
+  border-radius: var(--r-xs);
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+.opt__icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.opt__label {
+  min-width: 0;
+  font-size: var(--fs-md);
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 滑条的读数：滑条只有拖动时才冒气泡，平时的值放在卡片头右侧 */
+.opt__value {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--font-num);
   font-size: var(--fs-sm);
   color: var(--text-2);
+  font-variant-numeric: tabular-nums;
 }
 
-/* 竖排行里的标签不再需要固定宽度（它自己占满一行） */
-.option-row--stack .option-row__label {
-  width: auto;
+.opt__control {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
 }
 
-.options-panel .rangeslider {
-  flex: 1;
-  width: auto;
+/* 字号滑条两端：量程读数（等宽数字，拖到头时和中间的值对得上） */
+.opt__range {
+  flex: none;
+  min-width: 1.8em;
+  text-align: center;
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
 
-/* 三选一与音效档位在面板里要占满剩余宽度（面板本身很窄，inline-flex 会因为
+/* 不透明度滑条两端：空心 → 实心两块小方，把「透明 → 不透明」画出来。
+   两块用同一个 --text-3：空心那块只描边（5% 的 surface 底上 border-2 太淡，
+   会让人以为左边少了个东西）。 */
+.opt__swatch {
+  flex: none;
+  width: 15px;
+  height: 11px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--text-3);
+}
+
+.opt__swatch--solid {
+  background: var(--text-3);
+}
+
+/* 三选一与音效档位在面板里要占满卡片宽度（面板本身很窄，inline-flex 会因为
    内容宽度不足而留出空白）。 */
 .options-panel .segmented {
   flex: 1;
@@ -349,14 +433,18 @@
 
 .options-panel .segmented__btn {
   flex: 1 1 0;
-  padding: 0 var(--sp-2);
   min-width: 0;
+  height: 28px;
+  padding: 0 var(--sp-2);
 }
 
-/* 档位按钮的文字不能换行：换行会让两行按钮高度不齐（"清澈人声" vs "关闭"）。 */
+/* 档位按钮的文字不能换行：换行会让按钮高度不齐（"清澈人声" vs "关闭"）。
+   4.5em 的下限让四个档位在 320px 面板里排成一行，窗口特别窄时才折行。 */
 .options-panel .segmented--wrap .segmented__btn {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 4.5em;
+  padding: 0 var(--sp-1);
+  white-space: nowrap;
 }
 
 /* --------------------------------------------------------------------------

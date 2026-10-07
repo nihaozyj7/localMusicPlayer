@@ -106,11 +106,11 @@
         }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-wY8IctA-.js"></script>
+    <script type="module" crossorigin src="/assets/index-CjnRA9Wo.js"></script>
     <link rel="modulepreload" crossorigin href="/assets/bridge-DMqO4nCN.js">
     <link rel="modulepreload" crossorigin href="/assets/base-CUtC0jef.js">
     <link rel="modulepreload" crossorigin href="/assets/index-BZq5DfT7.js">
-    <link rel="stylesheet" crossorigin href="/assets/style-Btsrdvjj.css">
+    <link rel="stylesheet" crossorigin href="/assets/style-B2GZ3CYS.css">
   </head>
 <body>
     <!-- ==================================================================
@@ -234,8 +234,10 @@
           <rect x="16.8" y="5.4" width="2.2" height="13.2" rx="1.1" />
         </symbol>
 
+        <!-- 随机播放：两条 45° 交叉箭头，右上 / 右下各一个转角箭头，
+             中间那条在交点处断开，让另一条“穿过去”，形成编织感的 X -->
         <symbol id="i-shuffle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M16 4h4v4M20 4l-6.2 6.2M8 20H4v-4M4 20l6.2-6.2M16 20h4v-4M20 20l-5-5M4 4l5 5" />
+          <path d="M16 4h4v4M4 20L20 4M16 20h4v-4M4 4l5.5 5.5M14.5 14.5L20 20" />
         </symbol>
 
         <symbol id="i-repeat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -424,11 +426,30 @@
           <path d="M12 7.5V12l3 1.8" />
         </symbol>
 
-        <!-- 选项（播放器控件栏里的选项按钮） -->
+        <!-- 选项（播放器控件栏里的选项按钮）：竖向滑杆，与横线为主的播放列表图标拉开形状差异 -->
         <symbol id="i-options" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M4 7h10M18 7h2M4 17h4M12 17h8M4 12h16" />
-          <circle cx="16" cy="7" r="2" />
-          <circle cx="10" cy="17" r="2" />
+          <path d="M6 4v8.2M12 10.8V20M18 4v5.6M18 16V20" />
+          <circle cx="6" cy="15.4" r="2.4" />
+          <circle cx="12" cy="7.6" r="2.4" />
+          <circle cx="18" cy="12.8" r="2.4" />
+        </symbol>
+
+        <!-- 播放选项面板里三项各自的图标（第四项「桌面歌词」用上面的 i-desktop-lyrics） -->
+        <!-- 字号：一个够粗的 A。14~16px 的图标里放不下「A + 双向箭头」那种
+             标准字号图标（箭头会糊成一根竖线），所以只留 A，量程交给滑条两端的 14 / 72 读数 -->
+        <symbol id="i-text-size" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3.5 19.5 12 4.5l8.5 15M6.9 14h10.2" />
+        </symbol>
+
+        <!-- 音效：居中对称的波形（声音的形状），与音量、均衡滑杆那类图标区分开 -->
+        <symbol id="i-eq" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 10.5v3M8 8v8M12 6v12M16 8.5v7M20 10.5v3" />
+        </symbol>
+
+        <!-- 背景不透明度：圆里填掉一半，就是「透明 → 不透明」 -->
+        <symbol id="i-opacity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 3a9 9 0 0 0 0 18Z" fill="currentColor" stroke="none" />
         </symbol>
 
         <symbol id="i-queue" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
