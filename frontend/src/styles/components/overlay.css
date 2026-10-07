@@ -112,29 +112,8 @@
 }
 
 /* 「定位到当前播放」的落点提示：面板里条目本来就少，但长队列拖起来一样找不到。
-   与曲目表格用同一套反馈（见 tracktable.css 的 .track.is-located）。 */
-.queue-item.is-located {
-  animation: queue-locate 1.5s var(--ease-out) 1;
-}
-
-@keyframes queue-locate {
-  0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
-  }
-  35% {
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
-  }
-  100% {
-    box-shadow: 0 0 0 3px transparent;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .queue-item.is-located {
-    animation: none;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
-  }
-}
+   样式与曲目表格共用（主题色内描边的一次呼吸），统一放在 locate.css；
+   放动画的时机由 tracks.js#scrollAndHighlight 把关（等滚动 / 面板升起停稳再放）。 */
 
 .queue-item__index {
   flex: none;

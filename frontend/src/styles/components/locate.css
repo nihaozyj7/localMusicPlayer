@@ -1,0 +1,66 @@
+/* ==========================================================================
+   locate.css — 「定位到当前播放」的落点提示（曲目表格 / 播放列表面板共用）
+   --------------------------------------------------------------------------
+   点「定位」之后要解决两件事：
+
+   ① 时机 —— 列表是平滑滚动的（.content-body 有 scroll-behavior: smooth），
+      滚到目标行要几百毫秒。提示若在点击瞬间开演，等行滚进视野时动画早放完
+      了。所以**放动画的时机由 JS 把关**：tracks.js#scrollAndHighlight 等滚动
+      真正停稳（scrollend / 位移静默 / 兜底超时）才给行加 .is-located；播放列表
+      面板那条路还要额外等面板升起（ui/playerbar.js#locateAndToggleQueue）。
+      这里只负责「放出来长什么样」。
+
+   ② 形状 —— **描边呼吸**：行的内描边（主题色）柔和地亮起、停留、再淡出，
+      一轮结束，不画任何附加图形。行越密越花，定位反馈越该克制：它只需要
+      把「这一行」从长列表里点出来，不该抢正在播放的高亮。
+
+   实现要点：
+   · 用 inset box-shadow 而不是向外扩的描边 —— 列表行紧挨着，向外扩会压到
+     邻行与分隔线；inset 只画在自己行内，圆角自带裁剪，文字不受影响
+     （内阴影画在背景之上、内容之下）。
+   · spread 从 0 长到 2px 再收回，看起来是描边「浮出来再吸回去」的呼吸感，
+     而不是硬切一个框。
+   · 纯 box-shadow 动画：不改布局、不改背景，和 .track:hover / [aria-current]
+     的行底色互不干扰。
+   ========================================================================== */
+
+:root {
+  /* 动画时长。必须 < tracks.js 的 LOCATE_HIGHLIGHT_MS（1500ms）——
+     超了就会被摘 .is-located 的定时器从半路截断。
+     定时器是固定值，所以这里也固定，不跟「过渡速度」档位联动
+     （落点提示是一次性反馈，快慢档改的是面板 / 菜单的过渡节奏）。 */
+  --locate-dur: 1.4s;
+  /* 描边本体：亮起时的成色；关了动效（prefers-reduced-motion）时静态兜底也用它 */
+  --locate-ring: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* 一轮呼吸：淡入（0→25%）→ 停留并微微收敛（25%→65%）→ 淡出（65%→100%） */
+.track.is-located,
+.queue-item.is-located {
+  animation: locate-ring var(--locate-dur) var(--ease) 1;
+}
+
+@keyframes locate-ring {
+  0% {
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+  25% {
+    box-shadow: var(--locate-ring);
+  }
+  65% {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+}
+
+/* 系统级「减少动态效果」：动画停掉（base.css 那条 0.001ms !important 会把
+   动画压到瞬间放完，等于什么都不显示），补一条静态描边兜底。 */
+@media (prefers-reduced-motion: reduce) {
+  .track.is-located,
+  .queue-item.is-located {
+    animation: none;
+    box-shadow: var(--locate-ring);
+  }
+}

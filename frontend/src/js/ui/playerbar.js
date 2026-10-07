@@ -35,13 +35,7 @@ import {
   togglePlay,
 } from "../store.js";
 import { coverVersion } from "../store.js";
-import {
-  MODE_META,
-  checkSleepTimer,
-  toggleOptionsPanel,
-  toggleQueuePanel,
-  toggleSleepPanel,
-} from "../playerbar.js";
+import { MODE_META, checkSleepTimer, toggleOptionsPanel, toggleQueuePanel, toggleSleepPanel } from "../playerbar.js";
 import { coverOf, fmtTime } from "../utils.js";
 
 class MpPlayerbar extends MpElement {
@@ -109,7 +103,7 @@ class MpPlayerbar extends MpElement {
       subscribe(() => {
         if (!this.isConnected) return;
         this.paintProgress();
-      }),
+      })
     );
   }
 
@@ -485,9 +479,58 @@ function locateAndToggleQueue() {
   const wasOpen = state.queueOpen;
   toggleQueuePanel();
   if (!wasOpen && state.currentId) {
-    // 面板刚展开，等它渲染完再滚动定位
-    requestAnimationFrame(() => locateCurrentQueueItem({ notify: false }));
+    // 面板刚展开：等它渲染出来、开合过渡（opacity/transform）走完再滚动定位。
+    // 过渡期间面板还从 0 淡入，落点提示若这时就开演，前半段会被淡入吃掉 ——
+    // 与列表平滑滚动同款问题（见 tracks.js#scrollAndHighlight）：
+    // 效果必须等「看得到」再放。
+    whenQueuePanelOpened(() => locateCurrentQueueItem({ notify: false }));
   }
+}
+
+/** 等 #queue-panel 的开合过渡真正结束：渲染 → transitionend，外加按时长的兜底。 */
+function whenQueuePanelOpened(run) {
+  let panel = null;
+  let done = false;
+  let timer = 0;
+
+  const finish = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    panel?.removeEventListener("transitionend", onEnd);
+    // 等待期间用户又把面板关了 → 定位没有意义（定位函数自己也会静默失败）
+    if (state.queueOpen) run();
+  };
+
+  // transitionend 会冒泡：队列条目自己的 background 过渡也会顶上来，必须验明正身
+  const onEnd = (e) => {
+    if (e.target === panel) finish();
+  };
+
+  requestAnimationFrame(() => {
+    panel = document.getElementById("queue-panel");
+    // Lit 的 updated() 可能还没轮到（面板仍 hidden）→ 退回旧行为，别卡住
+    if (!panel || panel.hidden) {
+      finish();
+      return;
+    }
+    panel.addEventListener("transitionend", onEnd);
+    // 兜底：动效被关掉时过渡时长趋近 0（transitionend 照样会来，但不赌它），
+    // 或者过渡被别的原因打断 —— 按时长自己收，最多多等 80ms
+    timer = window.setTimeout(finish, transitionDurationMs(panel) + 80);
+  });
+}
+
+/** 读一个元素最长的 transition-duration（毫秒，支持 "0.2s, 0.2s" 这种多值写法） */
+function transitionDurationMs(el) {
+  let max = 0;
+  for (const part of getComputedStyle(el).transitionDuration.split(",")) {
+    const value = part.trim();
+    const n = parseFloat(value);
+    if (!Number.isFinite(n)) continue;
+    max = Math.max(max, value.endsWith("ms") ? n : n * 1000);
+  }
+  return max;
 }
 
 define("mp-playerbar", MpPlayerbar);

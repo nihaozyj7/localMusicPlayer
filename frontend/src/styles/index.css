@@ -34,6 +34,8 @@
 @import "./components/settings.css";
 @import "./components/lyricspanel.css";
 @import "./components/overlay.css";
+/* 定位落点提示（描边呼吸）：曲目表格与播放列表面板共用的那份样式 */
+@import "./components/locate.css";
 @import "./components/downloadpanel.css";
 @import "./components/layers.css";
 
