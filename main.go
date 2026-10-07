@@ -49,8 +49,6 @@ type appState struct {
 	window *application.WebviewWindow
 	app    *application.App
 
-	windowBackdrop string
-
 	librarySvc  *LibraryService
 	windowSvc   *WindowService
 	appSvc      *AppService
@@ -479,7 +477,6 @@ func main() {
 		}()
 	}
 
-	backdropMode := bootstrap.NormalizeBackdropMode(store.Get().NativeBackdrop)
 	winOpts := application.WebviewWindowOptions{
 		Name:      "main",
 		Title:     "LMPlayer",
@@ -504,15 +501,7 @@ func main() {
 		// 挪到用户看不见的地方（见 services.go#showPrepared）。
 		Hidden: true,
 	}
-	if backdrop, ok := backdropTypeFor(backdropMode); ok {
-		winOpts.BackgroundType = application.BackgroundTypeTranslucent
-		winOpts.Windows.BackdropType = backdrop
-	} else {
-		backdropMode = "off"
-	}
-	state.windowBackdrop = backdropMode
 	state.window = app.Window.NewWithOptions(winOpts)
-	state.windowSvc.activeBackdrop = backdropMode
 
 	// 把应用图标装到窗口上（任务栏 + 音量合成器都用它）。
 	//

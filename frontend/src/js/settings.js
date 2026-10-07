@@ -25,7 +25,6 @@ import { fmtCount, uid } from "./utils.js";
 import { aiVendorHint, aiVendorLabel } from "./ai-vendors.js";
 import { updateMirror } from "./about-info.js";
 import { applyResolvedTheme, discoverThemes, listThemes, removeTheme } from "./theme.js";
-import { BACKDROP_MODES, backdropLabel } from "./backdrop.js";
 import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
 import { applyEffectPreset, applyPlaybackOptions } from "./audio.js";
 import { animationDurationValue, setRuntimeToken, replaceStyleRules } from "./runtime-tokens.js";
@@ -36,16 +35,6 @@ import { availableSkins, reloadSkins, removeSkin, setPlayerViewMode, skinLoadFai
 /* --------------------------------------------------------------------------
    各分区
    -------------------------------------------------------------------------- */
-/**
- * 原生材质的状态说明。
- *
- * 材质是「创建窗口时」定下的（Wails v3 没有运行期接口），所以这里必须把
- * 「窗口当前生效什么」「改了要不要重启」「系统支不支持」讲清楚，
- * 否则用户会觉得设置项点了没反应。
- *
- * 样式完全复用现有的 setting--stack / setting__hint / card__actions，
- * 不新增任何颜色规则。
- */
 /** 单击歌曲行的可选行为（与 Go 侧 bootstrap.RowClickActions 一致） */
 export const ROW_CLICK_ACTIONS = [
   { value: "play", label: "播放" },
@@ -420,7 +409,7 @@ function themeAiPrompt(ref = null) {
 1. 只声明设计令牌（CSS 自定义属性），不要写任何组件选择器、结构样式、@media 或关键帧。
 2. 只写 :root[data-theme="<主题id>"] 这一条规则，不要用 !important，不要写 html / body / * 规则。
 3. 不要改布局令牌：--h-titlebar / --w-sidebar / --h-playerbar / --h-header / --row-h / --row-h-compact，改了会破坏固定布局。
-4. 不要覆盖 --bg-window（它由 tokens.css 从 --bg-app 派生）；想给「窗口原生材质（Mica / Acrylic）」叠一层底色时，改 --bg-window-material（默认全透明）。
+4. 不要覆盖 --bg-window（它由 tokens.css 从 --bg-app 派生）。
 5. 颜色要有明确层级和足够对比度：--text-1 对 --bg-app 与 --surface-1 的正文对比度应不低于 4.5:1，--text-2 / --text-3 仍要可读。
 6. 深浅模式要自洽：写 dark 就整套按深色给值，写 light 就整套按浅色给值，不要一半深一半浅。
 7. 文件必须自包含、可离线：不引用任何外部资源，不含 JS。
@@ -1224,33 +1213,6 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       ctx.render?.();
       const hint = aiVendorHint(vendor);
       toast(`模型类型已设为「${aiVendorLabel(vendor)}」${hint ? "：" + hint : ""}`, { duration: 3600 });
-      break;
-    }
-
-    /* 窗口原生材质（Mica / Acrylic） */
-    case "backdrop-mode": {
-      const mode = BACKDROP_MODES.includes(actEl.value) ? actEl.value : "off";
-      if (mode === (state.config.nativeBackdrop || "off")) break;
-      state.config.nativeBackdrop = mode;
-      ctx.commit?.();
-      ctx.render?.();
-      toast(
-        mode === "off" ? "已关闭窗口原生材质，重启应用后生效" : `已选择「${backdropLabel(mode)}」，重启应用后生效`,
-        { tone: "success", duration: 3200 }
-      );
-      break;
-    }
-    case "backdrop-restart": {
-      if (!isWails()) {
-        toast("浏览器预览无法重启应用", { tone: "warning" });
-        break;
-      }
-      toast("正在重启应用…", { duration: 2000 });
-      try {
-        await backend.restartApp();
-      } catch (err) {
-        toast(`重启失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
-      }
       break;
     }
 

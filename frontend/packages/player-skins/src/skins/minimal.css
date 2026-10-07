@@ -30,7 +30,25 @@
 .minimal__title {
   font-size: var(--fs-lg);
   font-weight: var(--fw-medium);
+  line-height: 1.35;
   color: var(--text-2);
+  /* 宽度不超过 .minimal__inner（与歌词区同宽的 680px 栏）：
+     长标题不再一路铺满整栏把歌词挤扁，而是在栏内折行、最多 3 行，再多纵向滚动。 */
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  max-height: calc(1.35em * 3);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 标题自己的滚动条再细一点：全局 10px 的滚动条压在三行标题上太抢眼 */
+.minimal__title::-webkit-scrollbar {
+  width: 6px;
+}
+
+.minimal__title::-webkit-scrollbar-thumb {
+  border-width: 2px;
 }
 
 .minimal__artist {

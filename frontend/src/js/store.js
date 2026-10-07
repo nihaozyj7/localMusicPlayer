@@ -28,7 +28,6 @@ const DEFAULT_CONFIG = {
   glassBlurCustom: false, // 用户是否手动调整过毛玻璃强度（true 才覆盖主题令牌）
   glassAlpha: 62,
   glassAlphaCustom: false, // 用户是否手动调整过面板透明度（true 才按配置实时合成）
-  nativeBackdrop: "off", // 窗口原生材质：off | auto | mica | acrylic | tabbed（改了要重启）
   windowCorners: "system", // 主窗口圆角：system | round | small | square（立刻生效，见 WindowService.SetWindowCorners）
   minimizeToTray: false, // 点关闭按钮时收进系统托盘而不是退出应用
   animations: true,
@@ -288,9 +287,6 @@ function initialState() {
     /* 在线封面：后端注册的来源与熔断状态（设置界面展示用） */
     coverProviders: [],
     coverBreaker: {},
-
-    /* 窗口原生材质：后端给出的「当前生效值 / 是否支持 / 是否待重启」 */
-    backdropState: null,
 
     /* 桌面背景歌词的可用性探测结果（不支持时按钮置灰并说明原因） */
     desktopWallpaperSupport: null,
@@ -2193,7 +2189,6 @@ const SYNCED_KEYS = [
   "themeMode",
   "glassBlur",
   "glassAlpha",
-  "nativeBackdrop",
   "windowCorners",
   "minimizeToTray",
   "animations",

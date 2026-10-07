@@ -17,8 +17,7 @@
      Themes    List / Load / Reload / Dir / RevealDir
      Config    Get / Set / Path / Reset
      Media     URL / State
-     Window    Minimize / ToggleMaximize / Close / SetFullscreen / ToggleFullscreen /
-               Backdrop / Restart
+     Window    Minimize / ToggleMaximize / Close / SetFullscreen / ToggleFullscreen
      Update    State / Version / Check / Download / Install / CancelDownload /
                Mirrors / SetChannel / SetCheckOnStart / SkipVersion / OpenDownloadDir
    ========================================================================== */
@@ -317,9 +316,6 @@ const backendImpl = {
   windowSetFullscreen: (on) => call(bindings?.Window?.SetFullscreen, on),
   windowToggleFullscreen: () => call(bindings?.Window?.ToggleFullscreen),
   windowIsFullscreen: () => call(bindings?.Window?.IsFullscreen),
-  // 原生材质（Mica / Acrylic）：读取窗口实际生效值 + 重启应用以让改动生效
-  backdrop: () => call(bindings?.Window?.Backdrop),
-  restartApp: () => call(bindings?.Window?.Restart),
   // 桌面歌词：独立的透明置顶窗口（见 desktop_lyrics.go）。
   // 主窗口用它开/关窗口并推送当前歌词行；歌词窗口用它拉初始状态。
   desktopLyrics: (on) => call(bindings?.Window?.SetDesktopLyrics, Boolean(on)),

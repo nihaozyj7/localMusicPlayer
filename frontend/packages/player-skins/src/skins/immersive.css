@@ -70,7 +70,26 @@
   font-size: var(--fs-xl);
   font-weight: var(--fw-semibold);
   letter-spacing: -0.01em;
+  line-height: 1.3;
   color: var(--text-1);
+  /* 宽度不超过卡片（.immersive__card，与歌词区同宽，上限 --lyric-measure 760px）。
+     卡片是 align-items:center，标题按 fit-content 排，长标题会一路铺满整张卡片、
+     把下面的歌词挤扁；这里显式按住宽度，超长部分改成「折行 + 最多 3 行 + 纵向滚动」。 */
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  max-height: calc(1.3em * 3);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 标题自己的滚动条再细一点：全局 10px 的滚动条压在三行标题上太抢眼 */
+.immersive__title::-webkit-scrollbar {
+  width: 6px;
+}
+
+.immersive__title::-webkit-scrollbar-thumb {
+  border-width: 2px;
 }
 
 .immersive__artist {

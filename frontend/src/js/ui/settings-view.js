@@ -60,7 +60,6 @@ import {
   lyricsSourceLabels,
   ensureCoverProviders,
 } from "../settings.js";
-import { BACKDROP_MODES, backdropLabel } from "../backdrop.js";
 import { listThemes, resolvedGlassAlpha, resolvedGlassBlur } from "../theme.js";
 import { AI_VENDORS, aiVendorHint } from "../ai-vendors.js";
 import { availableSkins, skinLoadFailures, skinRegistryVersion } from "../playerhost.js";
@@ -87,7 +86,7 @@ import { LYRIC_SIZE_MAX, LYRIC_SIZE_MIN } from "./lyric-size.js";
                   歌词、响度均衡；
      · 数据    —— 管「联网与本地数据」：下载位置、封面来源、缓存与写标签；
      · AI      —— 所有 AI 能力；
-     · 其他    —— 窗口与系统集成：窗口材质、圆角、关闭行为；
+     · 其他    —— 窗口与系统集成：圆角、关闭行为；
      · 关于    —— 版本、技术栈、开源依赖与协议、参考与致谢。
    -------------------------------------------------------------------------- */
 export const SECTIONS = [
@@ -234,7 +233,6 @@ class MpSettingsLayer extends MpElement {
     s.coverCache,
     s.loudnessState,
     s.ffmpegState,
-    s.backdropState,
     // 版本更新：检查结果 / 下载进度 / 待安装的包都在这里（见 store.js）。
     //
     // ★ 这里**不能**只放 `s.update`：那个子对象是被**原地修改**的
@@ -872,9 +870,8 @@ class MpSettingsLayer extends MpElement {
   /* ------------------------------------------------------------------------
      其他 —— 窗口与系统集成
      ------------------------------------------------------------------------
-     这里放的是「不属于主题外观、也不属于播放行为」的窗口级设置：原生材质、
-     圆角、关闭行为。材质需要重启，圆角与托盘立刻生效，所以三种状态的说明
-     必须各自讲清楚（见 backdropNote）。
+     这里放的是「不属于主题外观、也不属于播放行为」的窗口级设置：圆角与
+     关闭行为，两者都由系统立刻生效，不需要重启。
      ------------------------------------------------------------------------ */
   systemCard() {
     return html` <section class="card" id="sec-system" data-section="other">
@@ -882,26 +879,10 @@ class MpSettingsLayer extends MpElement {
         <div class="card__icon">${icon("options")}</div>
         <div class="card__titles">
           <div class="card__title">窗口与系统</div>
-          <div class="card__desc">窗口材质、圆角与关闭行为；这些设置与系统能力相关，部分改动需要重启应用</div>
+          <div class="card__desc">圆角与关闭行为；这些设置与系统能力相关</div>
         </div>
       </div>
       <div class="card__body">
-        ${settingRow({
-          label: "窗口原生材质",
-          hint: "用系统原生的半透明材质当窗口底色（桌面壁纸会透出来）。Windows 11 较新版本效果最完整，旧版本会自动降级。改动后需要重启应用",
-          control: html` <div class="select">
-            <select class="select__field" data-act="backdrop-mode" aria-label="窗口原生材质">
-              ${BACKDROP_MODES.map(
-                (m) =>
-                  html`<option value=${m} ?selected=${(state.config.nativeBackdrop || "off") === m}>
-                    ${backdropLabel(m)}
-                  </option>`
-              )}
-            </select>
-            <svg class="select__icon"><use href="#i-chevron-down"></use></svg>
-          </div>`,
-        })}
-        ${this.backdropNote()}
         ${settingRow({
           label: "窗口圆角",
           hint: "主窗口四角的圆角幅度。圆角由系统绘制，只有这几档（仅 Windows 11 有效）",
@@ -914,46 +895,6 @@ class MpSettingsLayer extends MpElement {
         })}
       </div>
     </section>`;
-  }
-
-  /**
-   原生材质的状态说明。
-   --------------------------------------------------------------------------
-   材质是「创建窗口时」定下的（Wails v3 没有运行期接口），所以这里必须把
-   「窗口当前生效什么」「改了要不要重启」「系统支不支持」讲清楚，
-   否则用户会觉得设置项点了没反应。
-   */
-  backdropNote() {
-    const info = state.backdropState || {};
-    const active = info.active || "off";
-    const configured = state.config.nativeBackdrop || "off";
-    const pending = configured !== active;
-    const notes = [];
-
-    if (info.preview) {
-      notes.push("浏览器预览里没有原生窗口，材质只在打包后的应用里能看到。");
-    } else {
-      notes.push(html`窗口当前生效：<b>${backdropLabel(active)}</b>`);
-      if (!info.supported && configured !== "off") {
-        notes.push("当前系统不支持原生材质，会退化为普通的背景模糊。");
-      }
-      if (pending) {
-        notes.push(html`已保存为 <b>${backdropLabel(configured)}</b>，重启应用后生效。`);
-      }
-    }
-
-    return html` <div class="setting setting--stack">
-      <div class="setting__hint">${notes.map((n, i) => html`${i ? html`<br />` : nothing}${n}`)}</div>
-      ${
-        pending && !info.preview
-          ? html`<div class="card__actions">
-              <button class="btn btn--sm" type="button" data-act="backdrop-restart">
-                ${icon("refresh")}<span>立即重启应用</span>
-              </button>
-            </div>`
-          : nothing
-      }
-    </div>`;
   }
 
   /* ------------------------------------------------------------------------

@@ -1448,10 +1448,6 @@ type WindowService struct {
 	// desktopWallpaperFirstFrameColour），那个算法需要读主题文件里的 --bg-app。
 	themeMgr *theme.Manager
 
-	// activeBackdrop 创建窗口时实际生效的原生材质（由 main 注入）。
-	// 配置里的值只能等下次创建窗口时才起作用，两者不一致就是「待重启」。
-	activeBackdrop string
-
 	// —— 桌面歌词（独立透明窗口，见 desktop_lyrics.go）——
 	desktopMu       sync.Mutex
 	desktopOn       bool
@@ -1559,7 +1555,7 @@ type WindowService struct {
 // themeMgr 用来算窗口的创建底色（见 desktopWallpaperFirstFrameColour）；
 // 传 nil 也安全 —— 那时一律退回近黑，与改动前一致。
 func NewWindowService(store *bootstrap.Store, themeMgr *theme.Manager) *WindowService {
-	return &WindowService{store: store, themeMgr: themeMgr, activeBackdrop: "off"}
+	return &WindowService{store: store, themeMgr: themeMgr}
 }
 
 // current 返回主窗口。
@@ -1908,8 +1904,7 @@ func (s *WindowService) HideMain() {
 
 // SetWindowCorners 设置主窗口圆角（system | round | small | square）并立刻生效。
 //
-// 与「窗口原生材质」不同：材质只能在创建窗口时指定，而圆角是运行期可写的
-// DWM 属性，所以这里点完立刻就能看到效果，不需要重启。
+// 圆角是运行期可写的 DWM 属性，所以这里点完立刻就能看到效果，不需要重启。
 //
 // 返回规范化之后的值，前端据此回写自己的配置（非法值会落回 system）。
 func (s *WindowService) SetWindowCorners(mode string) string {
@@ -1999,59 +1994,6 @@ func (s *WindowService) removeTray() {
 	}
 }
 
-// Backdrop 返回窗口原生材质（Mica / Acrylic…）的状态。
-//
-// 材质只能在创建窗口时指定，所以这里同时给出「配置里的值」和「窗口当前
-// 真正生效的值」，前端据此提示用户是否需要重启。
-func (s *WindowService) Backdrop() map[string]any {
-	configured := "off"
-	if s.store != nil {
-		configured = bootstrap.NormalizeBackdropMode(s.store.Get().NativeBackdrop)
-	}
-	active := s.activeBackdrop
-	if active == "" {
-		active = "off"
-	}
-	supported, osLabel := backdropOSInfo()
-	return map[string]any{
-		"configured":      configured,
-		"active":          active,
-		"supported":       supported,
-		"os":              osLabel,
-		"restartRequired": configured != active,
-		"modes":           bootstrap.BackdropModes,
-	}
-}
-
-// Restart 重启应用：先拉起一个新的自己，再退出当前进程。
-//
-// 原生材质这类「只能在创建窗口时指定」的选项靠它生效。启动失败时不会退出，
-// 把错误交回前端提示，免得用户点了重启反而把应用关掉。
-func (s *WindowService) Restart() error {
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("定位可执行文件失败: %w", err)
-	}
-
-	// 先把元数据缓存落盘，避免旧进程退出时的回写和新实例的启动扫描打架
-	if state != nil && state.lib != nil {
-		if err := state.lib.SaveCache(); err != nil {
-			log.Printf("重启前保存元数据缓存失败: %v", err)
-		}
-	}
-
-	cmd := executil.Command(exe, os.Args[1:]...)
-	cmd.Dir = filepath.Dir(exe)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("启动新实例失败: %w", err)
-	}
-
-	if s.app != nil {
-		s.app.Quit()
-	}
-	return nil
-}
-
 // ---------------------------------------------------------------------------
 // 工具函数
 // ---------------------------------------------------------------------------
@@ -2126,8 +2068,6 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			c.GlassBlur = asInt(raw, c.GlassBlur)
 		case "glassAlpha":
 			c.GlassAlpha = asInt(raw, c.GlassAlpha)
-		case "nativeBackdrop":
-			c.NativeBackdrop = bootstrap.NormalizeBackdropMode(asString(raw, c.NativeBackdrop))
 		case "windowCorners":
 			c.WindowCorners = bootstrap.NormalizeWindowCorners(asString(raw, c.WindowCorners))
 		case "animations":

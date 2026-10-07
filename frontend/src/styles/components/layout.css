@@ -127,7 +127,7 @@
   z-index: var(--z-playerview);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  /* 与 body 同一个窗口底色令牌：启用系统材质时一起让位（见 tokens.css） */
+  /* 与 body 同一个窗口底色令牌（见 tokens.css） */
   background: var(--bg-window);
   opacity: 0;
   transform: translateY(38px);

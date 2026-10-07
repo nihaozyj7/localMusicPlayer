@@ -55,7 +55,6 @@ import {
 import { closePlayer, openPlayer, preloadSkins, setPlayerViewMode, togglePlayer } from "./playerhost.js";
 import { applyResolvedTheme, discoverThemes, getTheme } from "./theme.js";
 import { primeCoverAccent } from "./cover-accent.js";
-import { refreshBackdropState } from "./backdrop.js";
 import { probeDesktopWallpaperSupport } from "./desktop-wallpaper.js";
 import { initSearchPanel } from "./searchpanel.js";
 import { initDownloads } from "./downloads.js";
@@ -563,8 +562,6 @@ async function main() {
   void preloadSkins().then(() => {
     if (settingsLayerOpen()) refreshSettingsLayer();
   });
-  // 窗口原生材质（Mica / Acrylic）现在是否生效，决定了页面要不要让出底色
-  await refreshBackdropState();
 
   initTooltips();
   // 搜索必须早于首次渲染：它注册 Ctrl+F 快捷键并构建结果弹层

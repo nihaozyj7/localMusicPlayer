@@ -87,7 +87,7 @@ library, cover art and lyric cache all live on your own disk.
 - **Player options panel** (the bar's "Options" button): lyrics font size, desktop-lyrics mode, sound
   effect preset and background opacity;
 - Drag-and-drop queue reordering, playlists, likes, a sleep timer and configurable keyboard shortcuts;
-- Frameless window with native materials (Mica / Acrylic), rounded corners and minimise-to-tray.
+- Frameless window with system-drawn rounded corners and minimise-to-tray.
 
 ### Cover art
 

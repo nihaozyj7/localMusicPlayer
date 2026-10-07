@@ -73,7 +73,7 @@ Go · Wails v3 · Lit 3 · Vite · FFmpeg
   只有你亲手点播才会再试；
 - **播放选项面板**（底栏「选项」）：歌词字号、桌面歌词模式、音效档位、播放界面背景不透明度；
 - 播放队列拖拽排序、歌单、我喜欢、定时停止、可自定义的快捷键；
-- 无边框窗口 + 系统原生材质（Mica / Acrylic）+ 圆角 + 最小化到托盘。
+- 无边框窗口 + 系统绘制的圆角 + 最小化到托盘。
 
 ### 封面
 
@@ -158,7 +158,7 @@ Go · Wails v3 · Lit 3 · Vite · FFmpeg
 - [WebView2 运行时](https://developer.microsoft.com/microsoft-edge/webview2/) —— Windows 11 与较新的
   Windows 10 已预装；没有的话装一次 Evergreen Runtime 即可
 
-> 目前只在 Windows 上验证过。代码里保留了 macOS / Linux 的分支（数据目录、原生材质、托盘等），
+> 目前只在 Windows 上验证过。代码里保留了 macOS / Linux 的分支（数据目录、托盘等），
 > 但没有实际验证与 CI 覆盖，欢迎补充。
 
 ---

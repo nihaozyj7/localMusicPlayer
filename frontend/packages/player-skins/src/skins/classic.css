@@ -107,15 +107,38 @@
   font-size: var(--fs-2xl);
   font-weight: var(--fw-semibold);
   letter-spacing: -0.02em;
+  line-height: 1.25;
   color: var(--text-1);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 宽度最多与歌词区同宽：.classic__info 和 .lyrics 同处一列、同为 624px 那一列。
+     这里原来是 nowrap + 省略号，但 nowrap 会把 min-content 抬成整段文字的宽度，
+     .classic__info 又是 align-items:center（子项按 fit-content 排），于是
+     min(max(min-content, 列宽), max-content) 永远取到 max-content —— 盒子被撑到
+     几千像素、贯穿整个窗口，overflow:hidden 根本无从截起。
+     改成折行后 min-content 退回到单个词/字，盒子自然收回到列宽之内。 */
+  max-width: 100%;
+  /* 超长标题不截断：在歌词区宽度内折行，最多 3 行，其余纵向滚动着看 */
+  overflow-wrap: anywhere;
+  max-height: calc(1.25em * 3);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 标题自己的滚动条再细一点：全局 10px 的滚动条压在三行标题上太抢眼 */
+.classic__title::-webkit-scrollbar {
+  width: 6px;
+}
+
+.classic__title::-webkit-scrollbar-thumb {
+  border-width: 2px;
 }
 
 .classic__artist {
   font-size: var(--fs-lg);
   color: var(--text-2);
+  /* 艺术家行同样是 nowrap：min-content 被抬高后这一行也会被撑出窗口。
+     它保持单行 + 省略号，只是把盒子按回列宽。 */
+  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

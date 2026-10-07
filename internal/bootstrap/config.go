@@ -101,9 +101,6 @@ type Config struct {
 	ThemeMode  string `json:"themeMode"` // dark | light | system
 	GlassBlur  int    `json:"glassBlur"`
 	GlassAlpha int    `json:"glassAlpha"`
-	// NativeBackdrop 窗口原生材质：off | auto | mica | acrylic | tabbed。
-	// 只有 Windows 会用得上，且必须在创建窗口时指定，改了要重启应用。
-	NativeBackdrop string `json:"nativeBackdrop"`
 	// WindowCorners 主窗口圆角：system | round | small | square（见 NormalizeWindowCorners）。
 	// 同样是 Windows 11 的能力，但它改的是运行期可写的 DWM 属性，改完立刻生效、不用重启。
 	WindowCorners string `json:"windowCorners"`
@@ -379,34 +376,6 @@ type UnplayableFile struct {
 }
 
 /* --------------------------------------------------------------------------
-   窗口原生材质
-   -------------------------------------------------------------------------- */
-
-// BackdropModes 窗口原生材质可选值（与 Wails 的 BackdropType 对应）。
-// 仅 Windows 支持：Mica / Tabbed 需要 Windows 11 Build 22621+，
-// 更低的系统会被 Wails 退化成一层的背景模糊。
-var BackdropModes = []string{"off", "auto", "mica", "acrylic", "tabbed"}
-
-// ValidBackdropMode 判断材质值是否受支持
-func ValidBackdropMode(mode string) bool {
-	for _, m := range BackdropModes {
-		if m == mode {
-			return true
-		}
-	}
-	return false
-}
-
-// NormalizeBackdropMode 规范化材质值：大小写/空格无关，非法值一律落回 off
-func NormalizeBackdropMode(mode string) string {
-	mode = strings.ToLower(strings.TrimSpace(mode))
-	if ValidBackdropMode(mode) {
-		return mode
-	}
-	return "off"
-}
-
-/* --------------------------------------------------------------------------
    主窗口圆角
    -------------------------------------------------------------------------- */
 
@@ -441,7 +410,6 @@ func DefaultConfig() *Config {
 		ThemeMode:       "dark",
 		GlassBlur:       22,
 		GlassAlpha:      62,
-		NativeBackdrop:  "off",
 		WindowCorners:   "system",
 		Animations:      true,
 		AnimationsSpeed: "fast",
@@ -1065,9 +1033,7 @@ func normalize(cfg *Config) {
 	if cfg.GlassAlpha <= 0 {
 		cfg.GlassAlpha = def.GlassAlpha
 	}
-	// 手改配置写成 "Mica" / "MICA" 也算数；无法识别的值落回默认（off）
-	cfg.NativeBackdrop = NormalizeBackdropMode(cfg.NativeBackdrop)
-	// 圆角同理：认不出来就跟随系统
+	// 圆角：认不出来就跟随系统
 	cfg.WindowCorners = NormalizeWindowCorners(cfg.WindowCorners)
 	if cfg.ScanConcurrency <= 0 {
 		cfg.ScanConcurrency = def.ScanConcurrency
