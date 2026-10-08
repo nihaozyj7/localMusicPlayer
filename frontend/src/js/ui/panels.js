@@ -43,7 +43,6 @@ import {
   openDownloadLocation,
 } from "../downloads.js";
 import { locateCurrentQueueItem } from "../tracks.js";
-import { mirrorPlayerSurface } from "../playerhost.js";
 
 /* --------------------------------------------------------------------------
    桌面歌词三选一 [关闭 | 悬浮 | 背景]
@@ -116,11 +115,9 @@ export class MpPanel extends MpElement {
         this._closeTimer = null;
       }
       if (el.hidden) {
-        // ★ 必须在**解除 hidden 之前**把详情页的色彩域投影过来，否则会先以
-        // 主题色渲染一帧、再跳到皮肤色（面板就是这么"闪"一下的）。
-        // 放在这里而不是各自的 close()/open() 里：四个面板走的都是这条路径，
-        // 基类一处就够（见 playerhost.js#mirrorPlayerSurface 的说明）。
-        mirrorPlayerSurface();
+        // 注：壳层配色（--chrome-*）在**详情页开合时**就由 playerhost 同步好了
+        // （见 skinhost.applyChrome），面板打开这一刻不需要再做什么 —— v2 时代
+        // 这里要投影一次详情页色彩域，v3 起浮层直接继承 html 上的 --chrome-*。
         el.hidden = false;
         // 先解除 hidden 再翻 data-state，保证过渡真的发生
         el.dataset.state = "";
@@ -254,7 +251,6 @@ class MpQueuePanel extends MpPanel {
         id="queue-panel"
         hidden
         data-state="closed"
-        data-surface-owner="playerview"
         aria-label="播放列表"
       >
         <div class="queue-panel__head">
@@ -474,7 +470,6 @@ class MpOptionsPanel extends MpPanel {
         id="options-panel"
         hidden
         data-state="closed"
-        data-surface-owner="playerview"
         aria-label="播放选项"
       >
         <div class="options-panel__head">
@@ -732,7 +727,6 @@ class MpSleepPanel extends MpPanel {
         id="sleep-panel"
         hidden
         data-state="closed"
-        data-surface-owner="playerview"
         aria-label="定时停止"
       >
         <div class="sleep-panel__head">

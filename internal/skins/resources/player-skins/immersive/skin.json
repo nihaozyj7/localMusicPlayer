@@ -1,0 +1,17 @@
+{
+  "id": "immersive",
+  "name": "沉浸",
+  "version": "1.0.0",
+  "apiVersion": "3.0",
+  "author": "内置",
+  "description": "封面虚化铺满整窗，歌词浮在中间",
+  "entry": "skin.js",
+  "styles": ["skin.css"],
+  "icon": { "file": "assets/icon.svg" },
+  "order": 20,
+  "capabilities": {
+    "background": true,
+    "interactive": true
+  },
+  "colors": { "theme": true }
+}

@@ -5,6 +5,10 @@
 import * as $models from "./models.js";
 
 /**
- * SkinInfo 一个皮肤包（与前端 SkinInfo 对应）。
+ * SkinInfo 一个样式包（与前端约定一致）。
+ * 
+ * 除了 Go 侧自己用得上的几个字段（Module/Styles/Dir），这里把**清单原文**
+ * 一并下发给前端：契约的字段解析放在前端一处（frontend/packages/player-skins），
+ * 后端不再逐字段镜像一遍 —— 镜像就会出现"两边字段名不一致"的静默漂移。
  * @typedef {$models.SkinInfo} SkinInfo
  */

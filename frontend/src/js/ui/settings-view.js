@@ -997,8 +997,8 @@ class MpSettingsLayer extends MpElement {
   /* ------------------------------------------------------------------------
      播放界面样式（皮肤）
      ------------------------------------------------------------------------
-     内置样式已经从主程序抽到独立包 @localmusicplayer/player-skins，
-     用户还可以往数据目录丢第三方样式。皮肤包本身**不参与迁移**，
+     内置样式与用户样式走同一条加载路径（后端扫只读资源 + 数据目录两个根），
+     卡片上的「内置」只是标记。样式包本身**不参与迁移**，
      这里只负责把「有哪些样式」画出来。
      ------------------------------------------------------------------------ */
   playerCard() {
@@ -1025,6 +1025,23 @@ class MpSettingsLayer extends MpElement {
       <div class="themes">
         ${skins.map((s) => {
           const active = state.config.playerViewMode === s.id;
+          // 配色体检（契约 v3）：清单里给了 colors 就显示出「底色 / 前景」两个色块，
+          // 并给出对比度自检结论；缺失或写错就打个警告图标 ——
+          // 那时宿主已经把**自己的**控件栏降级成主题配色（见 docs/42 §5.4）。
+          const missing = Array.isArray(s.colorsMissing) ? s.colorsMissing : [];
+          const chrome = s.chrome || null;
+          const followTheme = !chrome || chrome.theme === true;
+          const preview = followTheme ? null : chrome.preview;
+          const colorsTip = missing.length
+            ? `未声明配色（缺 ${missing.join(" / ")}）：宿主已用主题配色兜底`
+            : followTheme
+              ? "跟随宿主主题配色"
+              : chrome.contrast
+                ? `底色 / 前景 · 对比度 ${chrome.contrast}:1${chrome.corrected ? "（宿主已自动纠正到可读）" : ""}`
+                : "已声明配色";
+          const warnTip = missing.length
+            ? `清单里的配色不完整（${missing.join(" / ")}）：宿主控件栏已降级使用主题配色。建议在 skin.json 的 colors 里补上 bg / fg`
+            : "";
           return html` <div class="skincard" data-active=${String(active)}>
             <button
               class="skincard__pick"
@@ -1037,6 +1054,21 @@ class MpSettingsLayer extends MpElement {
               <span class="skincard__icon">${icon(s.icon || "disc")}</span>
               <span class="skincard__name">${s.name}</span>
               <span class="skincard__id">${s.id}</span>
+              <span class="skincard__colors" data-tip=${colorsTip} aria-label=${colorsTip}>
+                <i
+                  class="skincard__swatch"
+                  style=${preview?.bg ? `background:${preview.bg}` : "background:var(--surface-2)"}
+                ></i>
+                <i
+                  class="skincard__swatch skincard__swatch--fg"
+                  style=${preview?.fg ? `background:${preview.fg}` : "background:var(--text-1)"}
+                ></i>
+              </span>
+              ${missing.length
+                ? html`<span class="skincard__warn" data-tip=${warnTip} aria-label=${warnTip}
+                    >${icon("warning")}</span
+                  >`
+                : nothing}
             </button>
             ${
               s.builtin

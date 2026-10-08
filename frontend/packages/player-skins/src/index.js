@@ -1,54 +1,55 @@
 // @ts-check
 /* ==========================================================================
-   index.js — @localmusicplayer/player-skins 包入口
+   index.js — @localmusicplayer/player-skins 包入口（契约 v3）
    --------------------------------------------------------------------------
-   包职责（需求原文：「把内置的这三种播放器界面抽离出去作为一个单独的包，
-   这个包里面提供播放详情界面的背景渲染和交互（歌词的渲染也包含在内）」）：
-     · 定义**皮肤接口**（contract.js）；
-     · 提供歌词渲染器与整窗背景层的可复用实现；
-     · 内置两种样式：经典 / 沉浸；
-     · 提供一个注册表：宿主用它列样式、按 id 取样式，第三方皮肤也能注册进来。
+   包职责：
+     · 定义**插件接口**（contract.js）；
+     · 提供插件可复用的渲染零件（sdk.js → ctx.sdk）；
+     · 提供配色契约的实现（colors.js → 宿主壳层 --chrome-*）；
+     · 提供**加载器**：把「清单 + 入口 + CSS」变成一个注册表里的插件，
+       并把插件 CSS 包成 `@layer skin { @scope (<舞台根>) { … } }` 注入；
+     · 提供一个注册表：宿主用它列样式、按 id 取样式。
 
-   扩展方式（两条路，接口完全一样）：
-     1. 源码内新增：在本包 src/skins/ 下加一个模块并在这里 import；
-     2. 运行时新增：把皮肤目录丢进数据目录 `<数据目录>/player-skins/<id>/`
-        （见 README.md），宿主启动时通过清单发现它并 import 进来。
-
-   --------------------------------------------------------------------------
-   曾经内置六种，其中四款已移除（2026-10）：
-     简约（minimal） / 二次元手绘（anime） / 魔法阵 · 手绘次元（magia） /
-     星阵咏唱（arcanum）。
-
-   它们**不是被删掉了**：源文件完整备份在桌面 `播放器样式备份/`
-   （含这几款依赖的共用模块与移除前的包入口快照），以后可以按第三方样式的
-   形式再加回来。
-
-   与本文件直接相关的一条耦合：这几款样式原先都从这里**静态 import**。
-   静态 import 意味着「有哪些内置样式」是代码里写死的 —— 改样式清单必须改
-   源码并重新构建前端产物，而不是往样式目录里丢一个文件夹。
-   见 docs/41-样式插件耦合报告.md。
-
-   注意 arcanum-*.js（星阵的舞台 / 场景 / 逐字时间轴纯逻辑）仍然留在包内并
-   从这里导出：按「先不做解耦」的决定，这次只摘样式，不动辅助模块的归属。
+   ★ v3 起本包**不再内置任何具体样式**：
+     内置样式与第三方样式都走同一条运行期加载路径（唯一的区别是来源根目录，
+     见 Go 侧 internal/skins 的双根扫描）。于是"加/删一款内置样式"不再需要
+     改这个包的源码、也不需要重新打包前端 —— 这正是插件系统该有的样子。
+     `BUILTIN_SKINS` 由宿主加载器在发现内置样式时填充。
    ========================================================================== */
 
-import { SKIN_API_VERSION, defineSkin, inspectSkinModule } from "./contract.js";
-import classic from "./skins/classic.js";
-import immersive from "./skins/immersive.js";
+import {
+  SKIN_API_VERSION,
+  HOST_API_VERSION,
+  PATCH_TYPES,
+  composeSkin,
+  defineSkin,
+  inspectSkinModule,
+  parseApiVersion,
+  apiStatus,
+} from "./contract.js";
+import { deriveChrome, applyChromeVars, clearChromeVars, CHROME_VAR_NAMES } from "./colors.js";
+import { createSdk } from "./sdk.js";
+// SDK 的「骨架样式表」：它们给 ctx.sdk 里的渲染零件提供基础布局
+//（.lyric / .fxl / .skin-bg 这些类名）。由宿主一起加载、**不在 skin 层**里 ——
+// 也就是说插件 CSS 改不动它们：想定制就传零件选项或设它读的 CSS 变量
+//（例如 --lyric-size），想完全自己来就别用这些零件。
 import "./lyrics.css";
-import "./background-layer.css";
-// 特效歌词渲染器的骨架样式（fx-lyrics.css 给 .fxl / .fxl__scroll 提供布局）。
-// 原来由 anime 使用；anime 已移除备份，渲染器模块仍从本包导出。
 import "./fx-lyrics.css";
+import "./background-layer.css";
 
-/** 内置样式（顺序即按钮组顺序的默认依据） */
-export const BUILTIN_SKINS = [classic, immersive];
+/* --------------------------------------------------------------------------
+   公开的零件（宿主内部用 / 测试用；插件通过 ctx.sdk 拿，不要从包里 import）
+   -------------------------------------------------------------------------- */
 
-/** 兜底样式：配置里写的 id 不认识时用它 */
-export const DEFAULT_SKIN_ID = "classic";
-
-export { defineSkin, inspectSkinModule, SKIN_API_VERSION };
-export { PATCH_TYPES } from "./contract.js";
+export { SKIN_API_VERSION, HOST_API_VERSION, PATCH_TYPES, defineSkin, inspectSkinModule, composeSkin };
+export { parseApiVersion, apiStatus };
+export { deriveChrome, applyChromeVars, clearChromeVars, CHROME_VAR_NAMES };
+export { createSdk };
+export { createLyricsView } from "./lyrics-view.js";
+export { createFxLyrics } from "./fx-lyrics.js";
+export { createCamera } from "./fx-camera.js";
+export { createBackgroundLayer } from "./background-layer.js";
+export { applyFit, fitScale, fitScaleOf, FIT_REFERENCE, FIT_MIN, FIT_MAX } from "./fit.js";
 export {
   parseLrc,
   parseLyricDraft,
@@ -59,60 +60,10 @@ export {
   formatLrcTime,
   findLyricIndex,
 } from "./lrc.js";
-export { createLyricsView } from "./lyrics-view.js";
-export { createBackgroundLayer } from "./background-layer.js";
 export { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf, lyricsEmptyText } from "./html.js";
-export { applyFit, fitScale, fitScaleOf, FIT_REFERENCE, FIT_MIN, FIT_MAX } from "./fit.js";
-// 「星阵咏唱」用到的三块纯逻辑（零 DOM，可单测）
-export {
-  BAND_BOTTOM,
-  BAND_TOP,
-  CORNER_HUD,
-  CORNER_SECTION,
-  ENTRANCE_MODES,
-  FONT_MUL,
-  LATIN_ADVANCE_FALLBACK,
-  LINE_HEIGHT,
-  LYRIC_BANDS,
-  MAX_SING_MS,
-  MIN_SING_MS,
-  MIN_UNIT_MS,
-  PER_UNIT_MS,
-  SECTION_PROGRAMS,
-  TRACKING_EM,
-  ENTRANCE_PEAK,
-  ENTRANCE_PEAK_FALLBACK,
-  WAVE_GAIN,
-  WAVE_POINTS,
-  WAVE_SEGMENTS,
-  boxesOverlap,
-  buildGraphemeTimeline,
-  charSlotEm,
-  charWidthEm,
-  detectSections,
-  estimateSlotWidthEm,
-  estimateWidthEm,
-  fallbackWave,
-  latinAdvanceEm,
-  layoutLineBoxes,
-  lineBox,
-  lineTextKey,
-  overlapDepth,
-  planLine,
-  planLines,
-  resolveFocus,
-  ringWaveIntensity,
-  ringWaveTarget,
-  solveOverlaps,
-  stepWaveValue,
-  tokenizeUnits,
-  unitPadEm,
-  unitWeight,
-  waveBandIndex,
-} from "./arcanum-timing.js";
-export { ELEMENT_NAME, bandSplit, createElementAnalyzer } from "./arcanum-audio.js";
-export { createStageCamera } from "./arcanum-stage.js";
-export { buildRunes } from "./arcanum-scene.js";
+
+/** 兜底样式：配置里写的 id 不认识时用它 */
+export const DEFAULT_SKIN_ID = "classic";
 
 /* --------------------------------------------------------------------------
    注册表
@@ -121,10 +72,31 @@ export { buildRunes } from "./arcanum-scene.js";
 /** @type {Map<string, import("./contract.js").PlayerSkin>} */
 const registry = new Map();
 
-for (const skin of BUILTIN_SKINS) registry.set(skin.id, skin);
+/**
+ * 内置样式清单（**由宿主加载器填充**）。
+ *
+ * 它不再是"源码里写死的六款"，而是"这次扫描里标了 builtin 的那几款"：
+ * 内置样式随包分发在只读资源目录，与数据目录里的第三方样式一起被扫描。
+ *
+ * @type {import("./contract.js").PlayerSkin[]}
+ */
+export const BUILTIN_SKINS = [];
+
+/** 加载器发现一款内置样式时调用（保持 BUILTIN_SKINS 与实际注册表一致） */
+export function noteBuiltin(skin) {
+  if (!skin) return;
+  const i = BUILTIN_SKINS.findIndex((s) => s.id === skin.id);
+  if (i >= 0) BUILTIN_SKINS[i] = skin;
+  else BUILTIN_SKINS.push(skin);
+}
+
+/** 内置清单整体对齐（重扫时用：先清空再逐个 noteBuiltin） */
+export function resetBuiltins() {
+  BUILTIN_SKINS.length = 0;
+}
 
 /**
- * 注册（或覆盖）一个皮肤。
+ * 注册（或覆盖）一个插件。
  * @param {import("./contract.js").PlayerSkin} skin
  */
 export function registerSkin(skin) {
@@ -150,14 +122,10 @@ export function getSkin(id) {
 }
 
 /**
- * 注销一个**运行时加载**的第三方样式（内置样式不能注销）。
+ * 注销一个样式（重扫时把"这次没扫到的"清掉，注册表才是磁盘的真话）。
  *
- * 为什么需要它：注册表是「只加不减」的话，用户把样式包目录删掉、宿主重扫之后，
- * 按钮组里那个样式仍然在（点它还会去 import 一个已经不存在的模块）。
- * 宿主在重扫时用本函数把「这次没扫到的」清掉，注册表才是磁盘的真话。
- *
- * 连它注入过的 <link> 一起摘掉：留着的话下次用同名 id 重新导入时，
- * 旧样式表会继续生效，出现「同一个 id 两套 CSS 同时命中」的怪现象。
+ * 内置样式**不能**注销：它们来自只读资源目录，磁盘上没有可删的目录；
+ * 把它们的 <style> 一起摘掉会让"重扫"变成"把内置样式弄丢"。
  *
  * @param {string} id
  * @returns {boolean} 是否真的移除了一个已注册的样式
@@ -165,21 +133,9 @@ export function getSkin(id) {
 export function unregisterSkin(id) {
   const key = String(id ?? "").trim();
   if (!key) return false;
-  // 内置样式来自包本身，磁盘上没有对应目录，永远不注销
   if (BUILTIN_SKINS.some((s) => s.id === key)) return false;
-
-  // 无 DOM 环境（单测）里没有 <link> 可摘，只清注册表
-  const links = typeof document === "undefined" ? [] : document.querySelectorAll(`link[data-skin="${cssAttr(key)}"]`);
-  for (const link of links) link.remove();
-  for (const used of [...injectedStyles]) {
-    if (used.startsWith(`${key}:`)) injectedStyles.delete(used);
-  }
+  removeSkinStyles(key);
   return registry.delete(key);
-}
-
-/** 把 id 安全地塞进属性选择器（id 来自磁盘目录名，可能带引号之类的怪字符） */
-function cssAttr(value) {
-  return String(value).replace(/["\\]/g, "\\$&");
 }
 
 /**
@@ -190,78 +146,147 @@ function cssAttr(value) {
 export function resolveSkin(id) {
   const found = getSkin(id);
   if (found) return { skin: found, fellBack: false };
-  return { skin: getSkin(DEFAULT_SKIN_ID) || BUILTIN_SKINS[0], fellBack: true };
+  const fallback = getSkin(DEFAULT_SKIN_ID) || listSkins()[0];
+  return { skin: /** @type {any} */ (fallback), fellBack: true };
 }
 
 /* --------------------------------------------------------------------------
-   运行时加载第三方皮肤
+   CSS 注入：宿主强制包裹 @layer + @scope
+   --------------------------------------------------------------------------
+   ★ 这一层是 v3 隔离机制的一半（另一半是"颜色只能通过声明影响宿主"）：
+     · `@layer skin`  —— 插件 CSS 落在最低优先级的层里，压不过宿主壳的规则；
+     · `@scope (...)` —— 插件选择器只在**自己的舞台**里生效，
+       写 `.playerbar { … }`、`* { … }` 都匹配不到宿主的控件栏与浮层。
+   于是插件既不用自己写作用域前缀（写错也不会污染别的界面），
+   也不可能改到宿主 UI —— 从"约定"升级成"机制"。
    -------------------------------------------------------------------------- */
 
-/** 已经注入过的 <link>，避免重复插入（同一皮肤反复切换时不该反复请求 CSS） */
-const injectedStyles = new Set();
+/** @type {Map<string, HTMLStyleElement>} */
+const styleEls = new Map();
 
-/**
- * 给外部皮肤注入它声明的样式表。
- *
- * 为什么用 <link> 而不是在皮肤模块里 `import "./skin.css"`：
- * 浏览器原生 ESM 不能 import CSS（那需要打包器），而外部皮肤是运行时
- * 直接 import 的模块。所以约定「清单里声明 css 文件，宿主负责插 <link>」。
- *
- * @param {string} skinId
- * @param {string[]} hrefs 绝对/相对 URL
- */
-export function injectSkinStyles(skinId, hrefs = []) {
-  for (const href of hrefs) {
-    const key = `${skinId}:${href}`;
-    if (injectedStyles.has(key)) continue;
-    injectedStyles.add(key);
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = href;
-    link.dataset.skin = skinId;
-    document.head.appendChild(link);
-  }
+/** 把 id 安全地塞进属性选择器（id 来自目录名，可能带引号之类的怪字符） */
+function cssAttr(value) {
+  return String(value).replace(/["\\]/g, "\\$&");
+}
+
+/** 当前内核是否支持 @scope（Chromium 118+ 暴露 CSSScopeRule） */
+function supportsScope() {
+  return typeof CSSScopeRule !== "undefined";
 }
 
 /**
- * 从 URL 动态加载一个外部皮肤并注册。
+ * 把一段插件 CSS 包成「skin 层 + 舞台作用域」。
  *
- * 失败一律抛出可读错误：调用方（宿主）会把它显示在样式按钮组里/控制台，
- * 而不是留下一个「点了没反应」的按钮。
+ * 不支持 @scope 的老内核上退化成只包 `@layer skin`（并让调用方 warn 一次）：
+ * 这时作用域要靠插件自带的选择器前缀，安全性下降但不至于不能用。
  *
- * @param {{id:string, name?:string, module:string, styles?:string[]}} info
- *        module / styles 必须是可直接 fetch 的 URL
+ * @param {string} css
+ * @param {string} skinId
+ * @param {boolean} background 是否声明了整窗背景层（背景层在 .playerview 之外）
+ */
+export function wrapPluginCss(css, skinId, background) {
+  const roots = [`.playerview[data-skin="${cssAttr(skinId)}"]`];
+  if (background) roots.push(`.skin-bg[data-skin="${cssAttr(skinId)}"]`);
+  const scope = `@scope (${roots.join(", ")})`;
+  if (!supportsScope()) {
+    console.warn("[skins] 当前内核不支持 @scope，插件 CSS 只做了 @layer 包装（建议更新 WebView2）");
+    return `@layer skin {\n${css}\n}`;
+  }
+  return `@layer skin {\n${scope} {\n${css}\n}\n}`;
+}
+
+/** 摘掉某个样式的 <style>（切换 / 卸载 / 重扫时用） */
+export function removeSkinStyles(skinId) {
+  const el = styleEls.get(skinId);
+  if (el) {
+    el.remove();
+    styleEls.delete(skinId);
+  }
+}
+
+/** 摘掉全部插件样式（重扫前清场） */
+export function clearAllSkinStyles() {
+  for (const id of [...styleEls.keys()]) removeSkinStyles(id);
+}
+
+/**
+ * 注入插件的 CSS：**先把文本抓回来**再包层注入。
+ *
+ * 为什么不用 <link>：`@layer` / `@scope` 都是"包裹"语义，无法作用到外链样式表的内容；
+ * 而外链样式表又必须能被包进层里，才能保证插件压不过宿主壳。
+ * CSS 体积都不大（单款样式 2~70KB），一次 fetch + 一次 replace 完全可接受。
+ *
+ * @param {string} skinId
+ * @param {string[]} hrefs 可直接 fetch 的 URL
+ * @param {{background?:boolean}} [opts]
+ */
+export async function injectSkinStyles(skinId, hrefs, opts = {}) {
+  removeSkinStyles(skinId);
+  const list = (hrefs || []).filter(Boolean);
+  if (!list.length) return;
+  const texts = await Promise.all(
+    list.map(async (href) => {
+      const res = await fetch(href, { cache: "no-store" });
+      if (!res.ok) throw new Error(`读取样式表失败（${res.status}）：${href}`);
+      return res.text();
+    })
+  );
+  const style = document.createElement("style");
+  style.dataset.skin = skinId;
+  style.textContent = wrapPluginCss(texts.join("\n"), skinId, opts.background === true);
+  document.head.appendChild(style);
+  styleEls.set(skinId, style);
+}
+
+/* --------------------------------------------------------------------------
+   加载器
+   -------------------------------------------------------------------------- */
+
+/**
+ * 加载一款插件（内置与第三方走同一条路）。
+ *
+ * @param {{
+ *   manifest: import("./contract.js").SkinManifest,
+ *   moduleUrl: string,
+ *   cssUrls?: string[],
+ *   iconUrl?: string,
+ *   builtin?: boolean,
+ *   source?: string,
+ * }} info
  * @returns {Promise<import("./contract.js").PlayerSkin>}
  */
-export async function loadExternalSkin(info) {
-  if (!info?.id || !info?.module) throw new Error("皮肤清单缺少 id / module");
-  const mod = await import(/* @vite-ignore */ info.module);
-  const verdict = inspectSkinModule(mod);
-  if (!verdict.ok) throw new Error(`皮肤 ${info.id} 不合法：${verdict.reason}`);
+export async function loadSkin(info) {
+  const manifest = info?.manifest;
+  if (!manifest || !manifest.id) throw new Error("清单缺少 id");
+  if (!manifest.name) throw new Error(`样式 ${manifest.id} 的清单缺少 name`);
+
+  const st = apiStatus(manifest.apiVersion);
+  if (!st.ok) throw new Error(st.reason);
+
+  const mod = await import(/* @vite-ignore */ String(info.moduleUrl));
+  // 配色先算：缺失/非法要在设置页能看见（警告图标），而"算出来的壳色"宿主马上要用
+  const chrome = deriveChrome(manifest.colors);
+  const verdict = inspectSkinModule(mod, manifest, {
+    builtin: info.builtin === true,
+    source: info.source || "",
+    iconUrl: info.iconUrl || "",
+    colorsMissing: chrome.missing,
+  });
+  if (!verdict.ok || !verdict.skin) throw new Error(verdict.reason || "插件不合法");
 
   const skin = verdict.skin;
-
-  // ★ 内置样式优先：第三方样式**不允许**占用内置样式的 id。
-  //
-  // 这条规则来自一次真实事故：`magia` 原本是第三方样式，后来并入了内置，
-  // 但用户数据目录里那份旧副本（<数据目录>/player-skins/magia/skin.js）还留着。
-  // 注册表是按 id 覆盖的，于是「内置 magia 永远被磁盘上那份旧代码顶掉」——
-  // 界面上看到的一直是旧版，修在内置里的问题一个都不会生效
-  // （实测：给内置 magia 修的每帧同步布局，在真机上一个字都没跑到，
-  //   CDP profile 里热点仍然停在 /skins/magia/skin.js）。
-  // 与其静默顶替，不如明确报错：设置界面会把这条原因列在「样式加载失败」里。
-  if (BUILTIN_SKINS.some((s) => s.id === skin.id)) {
-    throw new Error(
-      `样式 id「${skin.id}」与内置样式同名，已忽略这个目录。` +
-        `请把目录改名并同步改掉模块里声明的 id（内置样式不会再被磁盘上的副本顶替）。`
-    );
-  }
-
-  // 清单里的 name / styles 优先于模块内声明（清单是运维侧信息，模块是代码侧信息）
-  if (info.name) skin.name = info.name;
-  skin.builtin = false;
-  skin.source = info.module;
-  injectSkinStyles(skin.id, info.styles || skin.styles || []);
+  skin.chrome = chrome;
+  await injectSkinStyles(skin.id, info.cssUrls || skin.styles, { background: skin.background });
   registerSkin(skin);
+  if (skin.builtin) noteBuiltin(skin);
   return skin;
+}
+
+/**
+ * 从磁盘清单加载一款第三方样式（桌面背景歌词窗口只需要 resolve 时用不到）。
+ *
+ * @deprecated v3 起用 {@link loadSkin}：它同时服务内置与第三方。
+ */
+export function loadExternalSkin() {
+  throw new Error("loadExternalSkin 已在契约 v3 移除，请改用 loadSkin({ manifest, moduleUrl, cssUrls })");
 }

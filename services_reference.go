@@ -22,8 +22,10 @@ import (
    前端把结果嵌进提示词的「参考资料」一节，AI 只要能读文件就能直接打开这些
    文件当范例；读不到（纯聊天环境）也知道该让用户贴哪一份。
 
-   注意：内置样式（classic / immersive / minimal）的源码打包在程序里，磁盘上
-   没有对应目录，这里如实返回空，由提示词说明「以示例包为准」，不编造路径。
+   注意：内置样式（classic / immersive）现在也是「插件目录」，只是它的目录
+   内嵌在程序里（见 internal/skins/resources/player-skins），磁盘上没有对应
+   路径 —— 所以这里只列**用户目录里的**包：给 AI 一堆拼不出来的路径等于误导，
+   「以示例包 _template 为准」才是本机真实存在的参考。
    -------------------------------------------------------------------------- */
 
 // SkinPackRef 用户皮肤目录里的一个样式包。
@@ -58,6 +60,11 @@ func (s *SkinService) Reference(currentID string) SkinReference {
 	}
 
 	for _, info := range s.mgr.List() {
+		if info.Builtin {
+			// 内置样式的文件内嵌在程序里（Dir 为空）：这里拼出来的 module/styles
+			// 会是相对路径，交给 AI 只会扑空。它的可读参考就是 Example（_template）。
+			continue
+		}
 		pack := SkinPackRef{
 			ID:     info.ID,
 			Name:   info.Name,

@@ -21,7 +21,7 @@
 
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { mkdtempSync, mkdirSync, copyFileSync, existsSync, openSync, closeSync } from "node:fs";
+import { mkdtempSync, mkdirSync, copyFileSync, existsSync, openSync, closeSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -38,6 +38,54 @@ for (const f of ["config.json", "metadata-cache.json", "loudness-cache.json"]) {
   const src = path.join(REAL, f);
   if (existsSync(src)) copyFileSync(src, path.join(DATA, f));
 }
+// 「老配置里的已移除样式 id 要被归一化」这条检查必须**自己造前提**：
+// 真实配置里的 playerViewMode 会随着用户切换样式而变化（现在已经是合法的内置
+// id 了），直接拷过来就等于"没有被测对象"。这里显式改回已移除的 anime。
+const cfgPath = path.join(DATA, "config.json");
+if (existsSync(cfgPath)) {
+  const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+  cfg.playerViewMode = "anime";
+  writeFileSync(cfgPath, JSON.stringify(cfg));
+}
+// 造两个第三方插件包，用来验证契约 v3 的**配色声明**链路（需求的核心）：
+//   accept-chrome —— 声明 colors.bg/fg → 宿主应把 --chrome-* 写到 <html> 上；
+//   accept-plain  —— 不声明 colors   → 设置页应出现警告图标，且不写 --chrome-*。
+// 两个包都放在数据目录里，走的就是「第三方样式」的那条加载路径。
+const packDir = path.join(DATA, "player-skins");
+const writePack = (id, manifest, js) => {
+  const dir = path.join(packDir, id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "skin.json"), JSON.stringify(manifest, null, 2));
+  writeFileSync(path.join(dir, "skin.js"), js);
+  writeFileSync(path.join(dir, "skin.css"), `.demo{min-height:100%;box-sizing:border-box;padding:24px}\n.demo__t{font-size:24px}\n`);
+};
+writePack(
+  "accept-chrome",
+  {
+    id: "accept-chrome",
+    name: "验收配色包",
+    version: "1.0.0",
+    apiVersion: "3.0",
+    entry: "skin.js",
+    styles: ["skin.css"],
+    order: 300,
+    colors: { bg: "#0b0f1a", fg: "#eaf2ff", accent: "#7aa2ff" },
+  },
+  `export default {\n  mount(ctx) {\n    ctx.root.innerHTML = '<div class="demo"><div class="demo__t">accept-chrome</div></div>';\n  },\n};\n`
+);
+writePack(
+  "accept-plain",
+  {
+    id: "accept-plain",
+    name: "验收无配色包",
+    version: "1.0.0",
+    apiVersion: "3.0",
+    entry: "skin.js",
+    styles: ["skin.css"],
+    order: 301,
+  },
+  `export default {\n  mount(ctx) {\n    ctx.root.innerHTML = '<div class="demo"><div class="demo__t">accept-plain</div></div>';\n  },\n};\n`
+);
 console.log("数据目录:", DATA);
 
 const results = [];
@@ -147,7 +195,13 @@ try {
       return box ? [...box.querySelectorAll("[data-pv-skin]")].map((b) => b.dataset.pvSkin) : null;
     })()
   `);
-  check("详情页样式按钮组只剩经典 / 沉浸", JSON.stringify(skinIds) === '["classic","immersive"]', JSON.stringify(skinIds));
+  check(
+    "详情页样式按钮组：含内置两款，且不含已移除的四款",
+    Array.isArray(skinIds) &&
+      ["classic", "immersive"].every((id) => skinIds.includes(id)) &&
+      ["minimal", "anime", "magia", "arcanum"].every((id) => !skinIds.includes(id)),
+    JSON.stringify(skinIds)
+  );
 
   /* ---- 1. 播放选项面板：显示歌词 ---- */
   await evalJs("(() => { const b = document.getElementById('btn-options'); if (b) b.click(); return true; })()");
@@ -205,6 +259,12 @@ try {
         loudH2: Boolean(loudHead?.querySelector("h2.card__title")),
         loudIconInTitle: Boolean(loudHead?.querySelector(".card__title svg")),
         skinCards,
+        // 契约 v3 的配色体检：每张卡应有「底色 / 前景」两个色块；
+        // 内置两款都声明了 colors.theme → 不该出现警告图标（缺失才警告）
+        skinChips: player
+          ? [...player.querySelectorAll(".skincard")].map((c) => c.querySelectorAll(".skincard__swatch").length)
+          : null,
+        skinWarn: player ? player.querySelectorAll(".skincard__warn").length : null,
       };
     })()
   `);
@@ -231,12 +291,129 @@ try {
     JSON.stringify({ icon: settings?.loudIcon, title: settings?.loudTitleInTitles, h2: settings?.loudH2 })
   );
   check(
-    "设置-播放界面样式卡片只有经典 / 沉浸",
-    JSON.stringify(settings?.skinCards) === '["classic","immersive"]',
+    "设置-播放界面样式卡片 = 内置两款 + 脚本造的两个第三方包",
+    JSON.stringify(settings?.skinCards) ===
+      '["classic","immersive","accept-chrome","accept-plain"]',
     JSON.stringify(settings?.skinCards)
+  );
+  check(
+    "样式卡片有配色体检色块；未声明 colors 的包出现警告图标（只警告它）",
+    Array.isArray(settings?.skinChips) &&
+      settings.skinChips.length === 4 &&
+      settings.skinChips.every((n) => n === 2) &&
+      settings?.skinWarn === 1,
+    JSON.stringify({ chips: settings?.skinChips, warn: settings?.skinWarn })
   );
   await evalJs("(() => { const b = document.querySelector('#settings-layer [data-act=\\'close-settings\\']') || document.getElementById('settings-close'); if (b) b.click(); return true; })()");
   await sleep(400);
+
+  /* ---- 4a. 配色声明 → 宿主壳配色（需求核心的端到端） ----
+     选中脚本造的 accept-chrome（清单里声明了 colors.bg/fg）：宿主应当把派生出来的
+     --chrome-* 写到 <html> 上，并让宿主壳的令牌（--text-1 等）跟随它 —— 这样插件
+     画面与标题栏/底栏/浮层才是一套配色，而且对比度由宿主兜底（见 player-skins/colors.js）。 */
+  await evalJs(`(() => { window.__app.setPlayerViewMode("accept-chrome"); window.__app.openPlayer(); return true; })()`);
+  await sleep(1400);
+  const chromeOn = await evalJs(`
+    (() => {
+      const root = document.documentElement;
+      const cs = getComputedStyle(root);
+      const fg = cs.getPropertyValue("--chrome-fg").trim();
+      const title = document.querySelector(".titlebar");
+      return {
+        mounted: document.getElementById("playerview")?.dataset.skin || "",
+        attr: root.dataset.chrome || "",
+        bg: cs.getPropertyValue("--chrome-bg").trim(),
+        fg,
+        text1: cs.getPropertyValue("--text-1").trim(),
+        titleColor: title ? getComputedStyle(title).color : "",
+      };
+    })()
+  `);
+  console.log("配色快照(开):", JSON.stringify(chromeOn));
+  check(
+    "声明 colors 的插件 → <html> 写上 --chrome-*，宿主壳令牌跟随它",
+    chromeOn?.mounted === "accept-chrome" &&
+      chromeOn?.attr === "on" &&
+      chromeOn?.bg !== "" &&
+      chromeOn?.fg !== "" &&
+      chromeOn?.text1 === chromeOn?.fg,
+    JSON.stringify(chromeOn)
+  );
+  await evalJs("(() => { window.__app.state.playerOpen = false; window.__app.commit(); return true; })()");
+  await sleep(700);
+  const chromeOff = await evalJs(`(() => ({ attr: document.documentElement.dataset.chrome || "" }))()`);
+  console.log("配色快照(关):", JSON.stringify(chromeOff));
+  check(
+    "关掉详情页后 --chrome-* 被清掉（宿主壳回到主题配色）",
+    chromeOff?.attr === "",
+    JSON.stringify(chromeOff)
+  );
+
+  /* ---- 4b. 真机渲染：@scope 包裹后的插件 CSS 是否真的生效（契约 v3 最高风险项） ----
+     前面那些检查读的都是"元数据"；这一条真的把详情页打开，看插件 CSS 有没有匹配上。
+     宿主把插件 CSS 包成 `@layer skin { @scope (.playerview[data-skin=…], …) { … } }`，
+     一旦作用域写法不被内核接受、或作用域根匹配不到，舞台会是"裸"的 —— 网格布局消失、
+     唱片高度为 0（无样式的 div 高度就是 0）。只有真机算一遍样式才验得出来。 */
+  await evalJs(`(() => { window.__app.setPlayerViewMode("classic"); window.__app.openPlayer(); return true; })()`);
+  await sleep(1400);
+  const render = await evalJs(`
+    (() => {
+      const stage = document.querySelector(".playerview__stage");
+      const disc = document.querySelector(".disc");
+      const view = document.getElementById("playerview");
+      const styleEl = document.querySelector('style[data-skin="classic"]');
+      let scopeRule = false;
+      let ruleCount = 0;
+      let topText = "";
+      try {
+        const rules = styleEl && styleEl.sheet ? [...styleEl.sheet.cssRules] : [];
+        ruleCount = rules.length;
+        // 顶层是 @layer skin { … }（CSSLayerBlockRule），@scope 是**它里面**的子规则 ——
+        // 只看顶层会漏（第一版检测就是这么误报成 false 的）。
+        const top = rules[0];
+        topText = String(top?.cssText || "").slice(0, 120);
+        const nested = top && typeof top.cssRules !== "undefined" ? [...top.cssRules] : rules;
+        scopeRule =
+          topText.startsWith("@layer") &&
+          topText.includes("@scope") &&
+          nested.some(
+            (r) =>
+              (r.constructor && r.constructor.name === "CSSScopeRule") ||
+              String(r.cssText || "").startsWith("@scope")
+          );
+      } catch (err) {
+        scopeRule = false;
+      }
+      const box = (el) => (el ? { w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) } : null);
+      return {
+        mounted: view?.dataset.skin || "",
+        chromeOn: document.documentElement.dataset.chrome || "",
+        stageDisplay: stage ? getComputedStyle(stage).display : null,
+        disc: box(disc),
+        styleInjected: Boolean(styleEl),
+        ruleCount,
+        topText,
+        scopeRule,
+      };
+    })()
+  `);
+  console.log("渲染快照:", JSON.stringify(render));
+  check(
+    "打开详情页后插件真的渲染（@scope 包裹的 CSS 生效：舞台网格 + 唱片有高度）",
+    render?.mounted === "classic" &&
+      render?.styleInjected === true &&
+      render?.scopeRule === true &&
+      render?.stageDisplay === "grid" &&
+      (render?.disc?.h ?? 0) > 100,
+    JSON.stringify(render)
+  );
+  check(
+    "内置样式声明 colors.theme → 宿主壳不写 --chrome-*（回落主题配色）",
+    render?.chromeOn === "",
+    JSON.stringify({ chrome: render?.chromeOn })
+  );
+  await evalJs("(() => { window.__app.state.playerOpen = false; window.__app.commit(); return true; })()");
+  await sleep(700);
 
   /* ---- 5. 播完自动下一首 ---- */
   let songs = [];

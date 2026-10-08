@@ -46,9 +46,12 @@
   background: var(--bg-chrome-bottom);
 }
 
-/* 沉浸模式：整窗都是封面虚化图，chrome 渐变反而会糊一层，去掉 */
-.app[data-mode="immersive"][data-view="player"]::before,
-.app[data-mode="immersive"][data-view="player"]::after {
+/* 整窗背景型样式（插件声明了 capabilities.background）：
+   整窗由 #skin-background 的封面虚化图负责，chrome 渐变反而会糊一层，去掉。
+   这是**能力驱动**的通用规则（v2 里写死成 data-mode="immersive"，新样式
+   想让 chrome 让位只能回来改宿主样式表 —— 那正是插件与宿主耦合的样本）。 */
+.app[data-skin-background="yes"][data-view="player"]::before,
+.app[data-skin-background="yes"][data-view="player"]::after {
   opacity: 0;
 }
 
@@ -147,12 +150,45 @@
   display: none;
 }
 
-/* 整窗背景类样式（沉浸）：整窗由 #skin-background 的封面虚化图负责，
-   详情页自身不能有底色。至于「哪种样式需要背景层」由皮肤自己声明
-   （skin.background），这里的钩子是「背景层正在显示时」——宿主给 .app 打
-   data-mode="<皮肤id>"，沉浸皮肤在包里的 CSS 里接管。 */
-.playerview[data-skin="immersive"] {
+/* 整窗背景类样式：整窗由 #skin-background 的封面虚化图负责，
+   详情页自身不能有底色。至于「哪种样式需要背景层」由插件清单声明
+   （capabilities.background），宿主据此打 data-skin-background ——
+   v2 里这里写死了 data-skin="immersive"，等于宿主认识了某一款具体样式。 */
+.playerview[data-skin-background="yes"] {
   background: none;
+}
+
+/* ==========================================================================
+   整窗背景型样式：宿主壳让位（透明化）
+   --------------------------------------------------------------------------
+   插件铺满整窗时，标题栏 / 底栏 / 侧边栏的底色与毛玻璃会糊在画面上。
+   这三块属于**宿主壳**，所以"让位"这件事必须由宿主统一做 ——
+   v2 是沉浸样式自己写 `.app[data-mode="immersive"] .titlebar/.playerbar`
+   去改宿主 UI，既越界、又让新样式无法复用。
+
+   文字与图标颜色不在这里硬写：它们来自 --chrome-*（插件声明的 colors，
+   宿主已做对比度兜底），没声明时回落主题令牌（见 tokens.css 的宿主壳配色一节）。
+   ========================================================================== */
+.app[data-skin-background="yes"][data-view="player"] .titlebar,
+.app[data-skin-background="yes"][data-view="player"] .playerbar {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.app[data-skin-background="yes"][data-view="player"] .titlebar::after,
+.app[data-skin-background="yes"][data-view="player"] .playerbar::before {
+  background: var(--glass-highlight);
+  opacity: 0.25;
+}
+
+.app[data-skin-background="yes"][data-view="player"] .sidebar {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-right-color: transparent;
 }
 
 /* —— 窄窗口：只压缩底栏高度 ——

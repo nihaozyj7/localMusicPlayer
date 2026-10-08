@@ -1,0 +1,17 @@
+{
+  "id": "classic",
+  "name": "经典",
+  "version": "1.0.0",
+  "apiVersion": "3.0",
+  "author": "内置",
+  "description": "左唱片右歌词，信息最完整",
+  "entry": "skin.js",
+  "styles": ["skin.css"],
+  "icon": { "file": "assets/icon.svg" },
+  "order": 10,
+  "capabilities": {
+    "background": false,
+    "interactive": true
+  },
+  "colors": { "theme": true }
+}

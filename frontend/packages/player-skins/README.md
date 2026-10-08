@@ -1,226 +1,194 @@
 # @localmusicplayer/player-skins
 
-播放详情页的**样式包**（皮肤）：负责背景渲染、歌词渲染与交互；
-音频、进度、曲目、封面、歌词文本、设置项全部由宿主提供并主动推送。
+播放界面**插件（样式）**的契约与运行时零件。宿主（主窗口详情页、桌面背景歌词窗口）
+与插件都只依赖这里的东西，因此**接口的唯一定义就在这个包里**。
 
-两种内置样式（按样式按钮组顺序）：
+> 契约版本：`SKIN_API_VERSION = "3.0"`（语义化：major 必须与宿主相同，
+> minor 可以比宿主旧）。宿主自己的版本是 `HOST_API_VERSION`。
 
-| id          | 名称 | 需要整窗背景层 | 声明频谱 | 一句话                         |
-| ----------- | ---- | -------------- | -------- | ------------------------------ |
-| `classic`   | 经典 | 否             | 否       | 左唱片右歌词，信息最完整       |
-| `immersive` | 沉浸 | 是             | 否       | 封面虚化铺满整窗，歌词浮在中间 |
+## 这个包负责什么 / 不负责什么
 
-> 2026-10 移除了四款内置样式：`minimal`（简约）、`anime`（二次元手绘）、
-> `magia`（魔法阵 · 手绘次元）、`arcanum`（星阵咏唱）。
-> 源文件（含它们依赖的共用模块）完整备份在桌面 `播放器样式备份/`，
-> 以后可以按第三方样式的形式再加回来；成因与耦合清单见
-> `docs/41-样式插件耦合报告.md`。
->
-> 本文件后面几节仍保留它们的零件说明 —— `arcanum-*.js` / `fx-lyrics.js` /
-> `fx-camera.js` 这些模块**还留在包里**（这次只摘样式，不动辅助模块的归属），
-> 所以那份说明对写第三方样式的人依然有用。
+| 负责 | 不负责 |
+| --- | --- |
+| `contract.js`：契约字段、版本协商、`composeSkin` 元数据合并、`apiStatus` | 数据获取与播放逻辑（宿主的 store / Go 后端） |
+| `colors.js`：清单 `colors` → 宿主壳的 `--chrome-*`（含对比度兜底） | 插件自己画面的绘制 |
+| 注册表：`registerSkin / listSkins / getSkin / unregisterSkin / resolveSkin` | 插件目录的扫描与 HTTP 托管（`internal/skins`，Go 侧） |
+| `wrapPluginCss / injectSkinStyles`：把插件 CSS 包进 `@layer skin` + `@scope` | 判断某个 id 是不是"内置"（由加载器标 `builtin`） |
+| `sdk.js` + 骨架样式：`createLyricsView / createBackgroundLayer / parseLrc / …` | 视觉风格（那是插件自己的事） |
 
-**构图必须各不相同**：这些样式的视觉语言都是"整窗背景"，很容易退化成同一套
-布局只换一层皮（实测被吐槽过"同质化"）。以已移除并备份的那几款为例——
-`anime` 两栏（分镜格左 / 歌词右）、`magia` 镜像两栏（魔法阵左 / 歌词右）、
-`arcanum` **纵深分层**（没有"栏"：远景模糊封面 + 星空 / 中景法阵 / 近景咒语 /
-前景光尘，舞台本身铺满整窗，歌词与 HUD 只落在安全区里）。
+**内置样式不再在包里。** 它们是 `internal/skins/resources/player-skins/<id>/`
+下的**数据**（与第三方样式同构），由 Go 侧扫两个根目录、前端按清单加载 ——
+于是"加/删一款内置样式"不需要改前端源码，第三方样式的写法也不再有第二条路径。
 
-`anime`（已移除备份）这个特效样式用到两个零件：
+## 插件目录长什么样
 
-- `createFxLyrics(host, opts)`（`src/fx-lyrics.js` + `src/fx-lyrics.css`）：
-  把每行拆成**字素单元**，支持逐字入场、逐字点亮（卡拉OK）、运动残影。
-- `createCamera(target, opts)`（`src/fx-camera.js`）：运镜。它由三部分组成：
-  1. **分层视差** `camera.addLayer(el, { depth })` —— 远景 depth 小、近景 depth 大，
-     **层与层的相对位移才是「镜头在动」的知觉来源**；
-  2. **机位切换** —— 一组可读的机位（推近 / 拉远 / 横移 / 升降 / 环绕）轮换，
-     过渡时长 = 该镜头的驻留时长，所以相机**全程都在缓慢移动**，不会"飞过去再定住"；
-  3. **手持微动** —— 两层时间尺度的不可通约正弦，填掉换镜瞬间的停顿。
-     切歌时用 `pulse()` 叠一个 `sin²(π·te)` 包络的换镜脉冲。
+```
+<样式id>/
+  skin.json     清单（元数据 + 能力 + 配色，必需）
+  skin.js       入口（清单 entry，默认 skin.js），export default 插件对象
+  skin.css      外观（清单 styles；不写就取目录顶层全部 *.css）
+  assets/       自带图标与贴图（清单 icon.file 引用）
+  lib/          自带私有模块（只允许包内相对 import）
+```
 
-- `applyFit(el, "--xxx-fit")`（`src/fit.js`）：**窗口适配比例**。整窗背景型样式
-  如果按固定 px 排版，投到桌面背景（整块桌面）上会显得又小又空、缩到最小窗口又偏大。
-  它把「舞台短边 / 基准短边」算成一个无量纲倍数写进自定义属性，皮肤 CSS 里所有
-  `calc(<设计值> * var(--xxx-fit))` 随之整体等比缩放（尺寸读不到时退回窗口尺寸，
-  不会塌成 0）；皮肤在 mount 与 `resize` 补丁里各调一次即可。
+清单示例：
 
-两者都遵循同一条性能约定：**只写 transform、只在可见时跑、不给每个字素加 will-change**。
+```json
+{
+  "id": "aurora",
+  "name": "极光",
+  "version": "1.0.0",
+  "apiVersion": "3.0",
+  "entry": "skin.js",
+  "styles": ["skin.css"],
+  "icon": { "file": "assets/icon.svg" },
+  "order": 200,
+  "capabilities": { "spectrum": 32, "background": false, "interactive": true },
+  "colors": { "bg": "#0b1020", "fg": "#f2f4ff", "accent": "#7aa2ff" },
+  "performance": { "budgetFps": 45 }
+}
+```
 
-`arcanum`（星阵咏唱，已移除备份）原本是唯一一个真正消费频谱的样式，它的零件是
-**四个纯逻辑模块**（零 DOM，可单测）加一块绘制层（模块仍留在包里）：
+字段含义见 `contract.js` 的 `SkinManifest` 注释，或 `internal/skins/template/皮肤说明.md`
+（示例包自带的说明，随首次启动写进用户目录）。
 
-| 模块                    | 负责                                                                        |
-| ----------------------- | --------------------------------------------------------------------------- |
-| `src/arcanum-timing.js` | 单元时间轴（**中文逐字 / 英文逐词**、按字数算合理时长）、段落判定、行带计划 |
-| `src/arcanum-audio.js`  | 「奥术七元素」：32 段频谱 → 低/贝斯/中/高 + 重拍 + 长音 + 停顿 + 宽带频谱   |
-| `src/arcanum-stage.js`  | 被歌词牵引的镜头：前瞻、阻尼、边界、速度上限、重拍轻震                      |
-| `src/arcanum-scene.js`  | 两块画布：星空+魔法雾+法阵+**外圈波纹环**；前景的七种粒子                   |
+## 入口模块（skin.js）
 
-分工是刻意的：**能算的都算在纯函数里**（于是可以在 node:test 里验证"逗号不会被压成
-零时长""30 秒间奏不会把一句唱 30 秒""同屏 6 句落在 6 条不同横带上""镜头不会跑出舞台"
-"重拍一定被识别"），皮肤文件只负责把数字变成 DOM 与像素。
+```js
+export default {
+  id: "aurora",          // 可选；写了就必须与清单 id 一致
+  mount(ctx) {},         // 必需
+  update(ctx, patch) {}, // 可选
+  destroy(ctx) {},       // 可选
+};
+```
 
-四条与"看得清"有关的硬约定（都是实测反馈改出来的）：
+三条硬约束：
 
-1. **歌词不重叠靠结构，不靠调参**：第 index 行固定落在第 (index % 6) 条横带上，
-   同屏最多显示 6 行（当前 1 行 + 前面 1 行 + 后面 4 行），所以任意两句都不可能落在
-   同一条带里。待唱的几句**提前铺在各自的带上**（越靠后越小越暗），到点了才被点亮；
-   唱完的句子飞向法阵外环、缩成一枚符文淡出。
-2. **英文一个词一个单元**：连续的可连字符号攒成一个单元（`"moon"` 而不是 6 个字母），
-   于是逐字点亮在英文歌里就是"一个词一个词地亮"；中文/日文/韩文仍然逐字。
-3. **一句唱多久由字数决定，不由到下一句的间隔决定**：
-   `span = min(到下一句的间隔, 字数 × 240ms)`（夹在 0.9~9 秒之间）。中间有 30 秒
-   间奏时不会"一句歌词唱 30 秒" —— 唱完就停在那里等下一句，长音交给法阵与粒子表达。
-4. **超长的句子会整体缩小**（按 1em ≈ 字号估宽），既不会顶出舞台，也不会压到别的行带。
+1. **零 import**（除包内相对路径的私有模块）：插件拿不到打包器，也不许 import
+   宿主的 store / utils / 本包 —— 公共零件从 `ctx.sdk` 拿。
+2. **CSS 作用域由宿主强制包裹**（见下节），选择器相对舞台根写。
+3. **配色靠清单声明**（见「配色契约」一节），不要试图改宿主 UI 的颜色。
 
-一次挂载里它的四层纵深与各自的视差深度：
+### ctx 提供什么
 
-    .ar-void（整窗背景层：模糊封面 + CSS 深空）  depth 0.18
-    canvas.ar-scene（法阵 / 星座 / 涟漪 / 波纹环） depth 0.55
-    .ar-runes（咒语符文 = 歌词，按行带铺开）  depth 1.0
-    canvas.ar-dust（七种粒子）               depth 1.4
+```
+ctx.root / ctx.backgroundRoot
+ctx.track()      { id, title, artist, album, duration, kind }
+ctx.media()      { song, cover, covers, coverIndex, lyrics }   ← 聚合快照
+ctx.lyrics()     { lines, index, status, statusText, source, text }
+ctx.covers()     { list, index, current }
+ctx.playback()   { position, duration, playing, volume, muted }
+ctx.options()    { showLyrics, lyricsFontSize, animations, coverCarousel, …, interactive }
+ctx.env()        { themeId, mode, width, height, dpr, reducedMotion, foreground }
+ctx.sdk          复用零件（见 sdk.js）
+ctx.actions      seek / seekBy / seekRatio / togglePlay / next / prev /
+                 toggleLike / like / unlike / openFolder / openCoverPanel /
+                 openLyricsPanel / reportBackdrop({bg, fg})
+ctx.on(type, fn) 订阅一次推送（返回退订函数）
+ctx.defaultCover / ctx.themeId / ctx.mode
+```
 
-**舞台铺满整窗，内容只落安全区**：法阵与粒子一直画到标题栏 / 详情页头部 / 底栏
-后面（用负 inset 把两块 chrome 的高度补回来，而不是 `position: fixed` —— 详情页
-进出场时 `.playerview` 上有 transform，fixed 后代会以它为包含块）。歌词、HUD
-这些内容则限制在安全区里：上下两块 chrome 有自己的交互，不能被歌词压住。
-安全区由 `.playerview` 的盒子与头部高度量出来，所以主窗口与桌面背景歌词窗口
-（那里没有标题栏 / 底栏）会自动得到不同的值。
+`update(ctx, patch)` 与 `ctx.on(type, fn)` 收到同一份 patch：
 
-封面是背景层里的一张模糊底图，**不是控件**："更换封面"由详情页头部那颗按钮负责。
+| type | 载荷 | 说明 |
+| --- | --- | --- |
+| `mount` | 全量快照 | 挂载后立即一次 |
+| `song` / `media` / `lyrics` | 对应快照 | 换歌 / 封面轮播 / 歌词装载 |
+| `progress` | `{ position, duration, playing, lyricIndex }` | 已按帧节流 |
+| `state` | `{ playing, volume, muted }` | 播放状态与音量 |
+| `spectrum` | `{ bands: number[] \| null }` | 按清单 `capabilities.spectrum` 采样，约 30Hz；未声明则恒为 null |
+| `options` / `theme` / `resize` / `visibility` / `chrome` | 对应对象 | 设置、主题、尺寸、前后台、壳层配色 |
+| `close` / `destroy` | — | 收起 / 即将卸载 |
 
-## 为什么单独成包
+不确定时用 `ctx.track() / ctx.lyrics() / ctx.playback()` 现取快照：**任何一次推送
+之后，快照与载荷一定一致**（`ctx.media()` 是它们的聚合）。
 
-需求原文把「播放详情界面的背景渲染和交互（含歌词渲染）」整体划给样式，
-并要求「相关信息更新时主动推给背景扩展」。所以这里的原则是：
+## 配色契约（`colors.js`）
 
-- **宿主负责数据**：`<audio>` 元素、播放进度、当前曲目、封面集合、歌词文本
-  （含联网匹配与缓存）、设置项、主题、窗口尺寸；
-- **样式负责呈现与交互**：DOM 结构、背景怎么画、歌词怎么排、点歌词要不要 seek；
-- **单向推送**：宿主在换歌 / 封面轮播 / 歌词装载 / 进度 / 设置 / 主题 / 尺寸变化时
-  调 `update(ctx, patch)` 并触发 `ctx.on(type, fn)`。样式**不轮询**，
-  也不 import 应用内部模块（`store` / `bridge` / `utils`）——
-  这样内部重构不会波及第三方样式，接口也能按 `apiVersion` 演进。
+宿主 UI（标题栏 / 底栏 / 侧边栏 / 播放队列等浮层）会叠在插件画面上，
+所以配色走"**插件声明、宿主决定**"：
+
+```js
+import { deriveChrome, applyChromeVars, clearChromeVars } from "@localmusicplayer/player-skins";
+
+const chrome = deriveChrome(manifest.colors);
+// chrome = { theme, vars, missing, corrected, contrast, preview, readable }
+```
+
+* `colors: { bg, fg }` → 派生出 `--chrome-bg / -bg-soft / -fg / -fg-dim / -hover / -active / -border / -accent`，
+  由宿主写到 `<html>` 上（浮层是 `#app` 外的 fixed 元素，只能挂在文档根）；
+* **对比度兜底**：`bg` 与 `fg` 的 WCAG 对比度低于 4.5:1 时，把 `fg` 推向黑/白
+  （`corrected: true`，`contrast` 是纠正后的值）；
+* `colors: { theme: true }` → 合法写法：不写任何变量，宿主壳直接用主题令牌；
+* **缺失或写错**（`missing: ["bg","fg"]`）→ 不写变量、降级主题，设置页在该样式
+  卡片上显示警告图标（悬浮看原因）。
+
+宿主壳只读 `--chrome-*`，不读插件任何变量；插件自己画面的配色是插件 CSS 的事。
+
+## CSS 隔离（`wrapPluginCss`）
+
+宿主注入样式表时强制包裹：
+
+```css
+@layer skin {
+  @scope (.playerview[data-skin="<id>"], .skin-bg[data-skin="<id>"]) {
+    /* 插件的 CSS 原文 */
+  }
+}
+```
+
+* `@layer skin`：插件**压不过**宿主壳的规则（宿主壳在未分层的样式表里）；
+* `@scope`：插件**写不到**作用域外（宿主 UI 完全不可达，也就没有污染风险）；
+* 引擎不支持 `@scope` 时退化为只包 `@layer` 并 `console.warn` 一次（宿主内核是
+  现代 Chromium，实际不会走到这条分支）。
+
+因此插件的选择器**相对舞台根**写：
+
+```css
+.demo { … }              /* 舞台里面的元素，直接写 */
+::scope { … }            /* 舞台（挂载点）自身 */
+```
+
+**不要**再写 `.playerview[data-skin="<id>"]` 前缀（在 `@scope` 里，作用域根通常只能
+用 `::scope` 匹配，写全前缀反而可能匹配不到）。也不许写 `:root / html / body / *`、
+裸标签与 `!important`。
 
 ## 用法（应用侧）
 
 ```js
-import { listSkins, getSkin, resolveSkin, reloadSkins } from "@localmusicplayer/player-skins";
+import { loadSkin, resolveSkin, listSkins, unregisterSkin, noteBuiltin, resetBuiltins } from "@localmusicplayer/player-skins";
 
-for (const skin of listSkins()) {
-  // { id, name, icon, order, background, builtin, source }
-}
-```
-
-宿主怎么把数据推下去，见 `frontend/src/js/playerhost.js`（`makeCtx()` / `push()`）。
-
-## 用法（写一个样式）
-
-```js
-import { defineSkin } from "@localmusicplayer/player-skins/contract";
-
-export default defineSkin({
-  apiVersion: 2,
-  id: "aurora",
-  name: "极光",
-  icon: "disc", // index.html 里图标 sprite 的 id
-  order: 200, // 样式按钮组里的排序，小的在前
-  background: false, // 需要整窗背景层就写 true，然后用 ctx.backgroundRoot
-  mount(ctx) {}, // 建 DOM（往 ctx.root 里写）
-  update(ctx, patch) {}, // 宿主推来的更新
-  destroy(ctx) {}, // 清理定时器 / 监听 / 引用
+// 一条加载路径：内置与第三方都由 Go 扫出来并下发归一化清单
+await loadSkin({
+  manifest,          // 后端下发的清单（skin.json 原文 + 默认值补齐）
+  moduleUrl, cssUrls, iconUrl,   // /skins/<id>/<file>?t=<token>（同源 + token）
+  builtin: info.builtin === true,
+  source: info.source,           // builtin | data
 });
+if (info.builtin) noteBuiltin(getSkin(info.id));
+
+const { skin, fellBack } = resolveSkin(configuredId); // 不认识就回退到默认样式
 ```
 
-`update` 的 `patch.type` 取值见 `PATCH_TYPES`：
-`mount | song | media | lyrics | progress | state | spectrum | options | theme | resize | close | destroy`。
+`loadSkin` 做的事：校验 `apiStatus` → `import(moduleUrl)` → `composeSkin`（元数据以
+清单为准）→ 注入包好作用域的 CSS → `deriveChrome`（配色体检）→ 注册。
 
-需要实时频谱的样式在 `defineSkin` 里声明 `spectrum: <段数>`（例如按频段起伏的电平柱），
-宿主会以约 30Hz 推 `{ type: "spectrum", bands: number[] | null }` 过来：
-**采样统一由宿主做**（它才有 `AnalyserNode`），皮肤只负责把 `bands` 画上去 ——
-不碰 `AudioContext`、不自己跑 `requestAnimationFrame`、也不用管窗口可见性。
-`bands: null` 表示停止（没有旋律），回到自己的待机效果。
+## 内置与第三方的区别只有标记
 
-### ctx 提供什么
-
-| 成员               | 说明                                                           |
-| ------------------ | -------------------------------------------------------------- |
-| `root`             | 挂载点（宿主已清空）                                           |
-| `backgroundRoot`   | 整窗背景层容器（声明 `background: true` 时宿主会就位）         |
-| `playback()`       | `{ position, duration, playing, volume, muted }`               |
-| `media()`          | `{ song, cover, covers, coverIndex, lyrics }` 快照             |
-| `options()`        | `{ showLyrics, lyricsFontSize, animations, coverCarousel, … }` |
-| `actions`          | `{ seek, togglePlay, next, prev, openFolder, openCoverPanel }` |
-| `on(type, fn)`     | 订阅某类更新，返回取消订阅函数                                 |
-| `defaultCover`     | 封面加载失败时的兜底图（内联 SVG data URL）                    |
-| `themeId` / `mode` | 当前主题 id 与深浅色（getter，随主题变化自动更新）             |
-
-### 自带两个可复用的零件
-
-```js
-import { createLyricsView, createBackgroundLayer, parseLrc, findLyricIndex } from "@localmusicplayer/player-skins";
-```
-
-- `createLyricsView(host, { escape, onSeek, onOpenFolder })`：
-  歌词滚动区（自动居中高亮 + 用户滚动时让位 1.2 秒 + 点行/回车跳转 + 空态）。
-  返回值 `{ element, scrollElement, setLines, setActive, setPosition, destroy, lines, activeIndex }`。
-  经典 / 沉浸 / 简约三种样式共用它，差别只在 CSS 令牌上。
-- `createBackgroundLayer(host)`：
-  整窗背景层 `{ setEnabled, setImage, setStyle, destroy }`，视觉参数是
-  CSS 变量 `--skin-bg-blur / -scale / -brightness / -veil`。
-  **容器的类名与位置由宿主决定**（`.skin-bg` 写在 `index.html` 里）：
-  `.playerview` 有 transform 动效，挂在它里面的 `position: fixed` 会被裁在详情页范围内。
-
-### CSS 约定
-
-- 内置样式的选择器都挂在 `.playerview[data-skin="<id>"]` 下；
-  容器外（标题栏/底栏透明化）用 `.app[data-mode="<id>"]`。
-- **想让详情页透出自己的整窗背景层时，必须写 `.playerview[data-skin="<id>"][data-theme]`**，
-  不能只写 `.playerview[data-skin="<id>"]`。宿主 `tokens.css` 有一条
-  `.playerview[data-theme] { background-color: var(--bg-app) }` 给详情页铺底，
-  它与 `[data-skin="<id>"]` 的权重完全相同（都是 0,2,0）；权重打平时比出现顺序，
-  而皮肤包与宿主 CSS 谁先谁后**不由样式自己决定**（打包器把皮肤包排在前面时，
-  宿主那条后出现并获胜）。结果是深色主题下整窗被 `--bg-app` 的近黑色盖死，
-  只在标题栏 / 底栏两条缝里露出手绘背景 —— 「二次元手绘背景纯黑」就是这么来的。
-  补上 `[data-theme]` 变成 0,3,0 后，无论打包顺序如何都稳定压过宿主那条。
-  （铺**自己实色底**的样式不受影响：magia / arcanum 写的 `background: <实色>`
-  同样需要这条更高权重才能生效 —— 这两款现在备份在桌面 `播放器样式备份/`。）
-- 第三方样式**必须自己限定作用域**，因为所有样式共用一张样式表。
-- 主题令牌（`--accent` / `--text-1` / `--surface-1` / `--glass-bg` / `--lyric-size`…）
-  可以直接用，深浅色会自动跟随。
-- 想要尺寸随窗口等比缩放（主窗口与桌面背景共用同一套设计值）：在 mount 与
-  `resize` 里调 `applyFit(el, "--xxx-fit")`，CSS 里把设计值写成
-  `calc(<值> * var(--xxx-fit, 1))`（见 `src/fit.js`，备份里的
-  `skins/anime.css` / `skins/magia.css` / `skins/arcanum.css` 是现成例子）。
-
-## 第三方样式（运行时加载）
-
-放进数据目录即可，不需要重新打包：
-
-```
-<数据目录>/player-skins/
-  aurora/
-    skin.json     可选：{"name":"极光","version":"1.0.0","module":"skin.js","styles":["skin.css"]}
-    skin.js       入口（必需；没有它这个目录不算样式）
-    skin.css      可选（不写清单时会自动带上目录下所有 .css）
-```
-
-- 应用把该目录挂在 `/skins/` 下同源提供（只读、`no-store`、挡目录穿越与隐藏文件、
-  显式指定 JS/CSS 的 MIME）。为什么必须同源：页面 CSP 是 `script-src 'self'`，
-  `file://` 的模块会被同源策略拒绝。
-- 外部样式的 CSS 由宿主按清单插 `<link>`（浏览器原生 ESM 不能 `import` CSS）。
-- 目录里的 `_template/` 是随应用分发的示例（下划线开头 = 不参与扫描），
-  复制改名并把里面的 `__SKIN_ID__` 换成新 id 即可。已存在的模板文件不会被覆盖。
-
-Go 侧实现见 `internal/skins/`（扫描 + 托管）与 `services_skins.go`（列表 / 重扫 / 打开目录）。
+| | 内置 | 第三方 |
+| --- | --- | --- |
+| 位置 | `internal/skins/resources/player-skins/`（`//go:embed`，只读） | `<dataDir>/player-skins/`（用户可改可删） |
+| 加载 | `loadSkin({ builtin: true, source: "builtin" })` | `loadSkin({ builtin: false, source: "data" })` |
+| id 冲突 | **内置胜出**（数据目录里的同名副本不生效） | 后到者被忽略并记日志 |
+| 删除 | `unregisterSkin` 拒绝、Go 侧 `Delete` 拒绝 | 可删（设置页有删除按钮） |
 
 ## 单测
 
-```powershell
-npm test        # frontend/tests/player-skins.test.js
+```bash
+node --import ./frontend/tests/register.mjs --test frontend/tests/player-skins.test.js
 ```
 
-覆盖 LRC 解析与定位、皮肤契约校验（缺字段 / 接口版本不符）、注册表顺序与兜底、
-HTML 转义。DOM 行为（挂载、歌词滚动、整窗背景层）由无头浏览器自检覆盖：
-`node tools/check-player-host.mjs`。单测能 `import` 皮肤包是因为
-`frontend/tests/css-stub-loader.mjs` 把 `.css` 换成了空模块（Node 原生不认识 CSS）。
+覆盖：契约版本协商、`composeSkin` 元数据合并与冲突报错、`deriveChrome`（对比度
+纠正 / 缺失检测 / theme 写法）、`wrapPluginCss`（`@layer` + `@scope` 及退化分支）、
+注册表（内置不可注销、按 order 排序、回退）、LRC 与歌词工具、`fitScale`。

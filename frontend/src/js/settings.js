@@ -161,11 +161,11 @@ export function ensureSwatchStyles() {
    填好 OpenAI 兼容接口后，自动匹配时会先把元数据交给 AI 清洗一遍。
    -------------------------------------------------------------------------- */
 /**
- * 播放界面样式（皮肤）卡片。
+ * 播放界面样式（插件）卡片。
  *
- * 内置样式已经从主程序抽到独立包 @localmusicplayer/player-skins，
- * 用户还可以往数据目录 `<数据目录>/player-skins/<id>/` 丢一个第三方样式
- * （skin.js + 可选 skin.css / skin.json），点「重新扫描样式」即可出现。
+ * 内置样式与用户样式的目录结构完全一致（内置在只读资源里、用户在数据目录里），
+ * 两者都由后端扫出来、前端按清单加载。用户往 `<数据目录>/player-skins/<id>/`
+ * 丢一个包（skin.json + skin.js + skin.css），点「重新扫描样式」即可出现。
  * 卡片里同时放着轮播的两个设置 —— 它们本来就属于「播放界面怎么显示」。
  */
 /* --------------------------------------------------------------------------
@@ -199,10 +199,10 @@ export function ensureSwatchStyles() {
 function skinReferenceSection(ref) {
   if (!ref?.dir) {
     return `（浏览器预览模式读不到本机目录，以下是源码仓库里的参考文件）
-1. 接口唯一定义（含 JSDoc 类型）：frontend/packages/player-skins/src/contract.js
-2. 内置实现（结构可参考）：frontend/packages/player-skins/src/skins/ 下的 classic.js、immersive.js、minimal.js、anime.js、magia.js、arcanum.js
-3. 可直接复制改名的最小示例包：数据目录下的 player-skins/_template/（skin.js / skin.css / skin.json）
-4. 说明文档：frontend/packages/player-skins/README.md`;
+1. 接口唯一定义（含 JSDoc 类型与完整字段说明）：frontend/packages/player-skins/src/contract.js
+2. 内置样式包（结构与写法可直接参考，内置与第三方现在同构）：internal/skins/resources/player-skins/classic/、immersive/
+3. 可直接复制改名的最小示例包：internal/skins/template/（skin.json / skin.js / skin.css / assets/）
+4. 说明文档：frontend/packages/player-skins/README.md 与 internal/skins/template/皮肤说明.md`;
   }
   const lines = [
     "本机真实路径如下。如果你能读文件，请先打开它们当范例；如果读不到（例如纯聊天环境），请让使用者把下面第 2 条的文件内容贴给你，再开始写。",
@@ -219,7 +219,7 @@ function skinReferenceSection(ref) {
     lines.push(`3. 当前正在使用的样式包（最贴近现状的参考）：${ref.current}`);
   } else {
     lines.push(
-      `3. 当前正在使用的是内置样式（${ref.currentId || "classic / immersive / minimal"}）：它的源码打包在程序里，磁盘上没有对应目录，请以第 2 条的示例包为准。`
+      `3. 当前正在使用的是内置样式（${ref.currentId || "classic / immersive"}）：它的文件内嵌在程序里，磁盘上没有对应目录，请以第 2 条的示例包为准。`
     );
   }
   const packs = Array.isArray(ref.packs) ? ref.packs : [];
@@ -232,7 +232,7 @@ function skinReferenceSection(ref) {
   } else {
     lines.push("4. 该目录里目前还没有第三方样式包 —— 你写的这个会是第一个。");
   }
-  lines.push("5. 宿主只加载 apiVersion 为 2 的样式，本程序用的就是这个版本。");
+  lines.push('5. 清单里 apiVersion 必须是 "3.0"（major 不同会被直接拒绝；minor 可以比宿主旧）。');
   return lines.join("\n");
 }
 
@@ -270,90 +270,116 @@ function themeReferenceSection(ref) {
 }
 
 function skinAiPrompt(ref = null) {
-  return `请为「本地音乐播放器」（Go + WebView2 的 Windows 桌面应用）产出一个第三方「播放界面样式（皮肤）」包。这个包会被应用直接扫描并加载，因此必须严格满足下面的规格。
+  return `请为「本地音乐播放器」（Go + WebView2 的 Windows 桌面应用）产出一个第三方「播放界面样式（插件）」包。这个包会被应用直接扫描并加载，因此必须严格满足下面的规格。
 
 本说明只约定「产物必须满足哪些规则、格式、环境与参考」，不规定也不暗示视觉风格；风格由使用者自行构思。
 
 【一、交付物与目录结构】
-输出一个目录，目录名就是样式 id（建议小写字母、数字、短横线，例如 aurora；不能以 _ 或 . 开头，不要用空格与中文）：
+输出一个自包含目录，目录名就是样式 id（建议小写字母、数字、短横线，例如 aurora；不能以 _ 或 . 开头，不要用空格与中文）：
   <样式id>/
-    skin.js     必需，入口 ES module
-    skin.css    可选，样式表
-    skin.json   可选，清单：{"name":"显示名","version":"1.0.0","module":"skin.js","styles":["skin.css"]}
+    skin.json    必需，清单（元数据 + 能力声明 + 配色声明）
+    skin.js      必需，入口 ES module（清单里的 entry 默认就是 skin.js）
+    skin.css     必需，样式表（清单里的 styles 写它）
+    assets/      可选，自带图标与贴图（icon.file 之类都相对包目录引用）
+    lib/         可选，自带的私有模块（只允许包内相对 import）
+清单示例（字段按需增减，apiVersion 必须写 "3.0"）：
+{
+  "id": "aurora",
+  "name": "显示名",
+  "version": "1.0.0",
+  "apiVersion": "3.0",
+  "author": "…",
+  "description": "一句话说明",
+  "entry": "skin.js",
+  "styles": ["skin.css"],
+  "icon": { "file": "assets/icon.svg" },
+  "order": 200,
+  "capabilities": { "spectrum": 32, "background": false, "interactive": true },
+  "colors": { "bg": "#0b1020", "fg": "#f2f4ff", "accent": "#7aa2ff" },
+  "performance": { "budgetFps": 45 }
+}
 规则：
-1. 没有 skin.json 也能工作（id、name 取目录名，入口默认 skin.js，样式取目录下全部 .css），但建议写上。
-2. module 与 styles 必须是本目录内的相对路径，不能含 .. 或写成绝对路径。
-3. 目录里可以放子目录与静态资源（.js .mjs .css .json .png .jpg .jpeg .webp .gif .svg .woff .woff2）；以 _ 或 . 开头的文件与目录不会被提供，请避开。
-4. 不要依赖打包器、npm 包、CDN、外链字体或图片；产物必须能直接放进目录就运行。
+1. colors 必填，二选一：{"bg":…,"fg":…} 或 {"theme":true}（跟随宿主主题）。宿主用它决定**自己的控件栏与浮层**配色并做对比度兜底；缺了不报错，但设置页会在你的样式卡片上显示一个警告图标，且宿主把控件栏降级成主题配色。
+2. colors 里能用纯 hex / rgb() / hsl() / oklch() / color-mix()；不要放 var(--…) 这种宿主令牌（宿主无法据此算对比度）。
+3. capabilities.spectrum 要几段实时频谱（1~128，true = 32）；不声明就一次都收不到（值是 null）。capabilities.background = true 表示你要整窗背景层（ctx.backgroundRoot），宿主会据此把标题栏/底栏/侧边栏退成半透明。capabilities.interactive 默认 true；false 表示你可能被挂到"只能看"的舞台（桌面背景歌词窗口）。
+4. entry 与 styles 必须是本目录内的相对路径，不能含 .. 或写绝对路径。
+5. 目录里可放子目录与静态资源（.js .mjs .css .json .png .jpg .jpeg .webp .gif .svg .woff .woff2）；以 _ 或 . 开头的文件与目录不会被提供，请避开。
+6. 不要依赖打包器、npm 包、CDN、外链字体或图片；产物必须能直接放进目录就运行。
 
 【二、运行环境】
-1. 原生 ES module，浏览器直接 import，没有打包与转译：skin.js 必须 export default 一个皮肤对象（宿主也接受名为 skin 的具名导出）。不要用需要 import 的 defineSkin(...) 之类的包装。
+1. 原生 ES module，浏览器直接 import，没有打包与转译：skin.js 必须 export default 一个插件对象（宿主也接受名为 skin 的具名导出）。**不要** import 任何应用模块（不许 import defineSkin 之类，也不许 import store / utils / @localmusicplayer/player-skins）；公共零件从 ctx.sdk 拿（见【三】）。
 2. 页面 CSP：script-src 'self'；style-src 'self' 'unsafe-inline'；img-src 'self' data: blob: file:；media-src 'self' blob: file:。因此：
    · 不能加载任何外部资源（远程 JS / CSS / 字体 / 图片 / 接口请求都会被拦截）；
-   · 不能 import CSS（浏览器原生不支持），skin.css 由宿主按清单自动插入；
-   · 可以用相对路径 import 同目录下的其它 .js，图片与字体也用相对路径引用。
-3. 内核是现代 Chromium（WebView2）：color-mix()、oklch()、:has()、CSS 嵌套等都可用。
-4. 皮肤只在「播放详情页」里生效，宿主已经准备好容器：.playerview[data-skin="<样式id>"] 里的 #playerview-stage 就是 ctx.root；整窗背景层容器是 .skin-bg（在 .playerview 之外，因此 position: fixed 能铺满窗口）。
-5. 深浅色主题、强调色、毛玻璃强度等都由应用的主题令牌决定，皮肤应跟随，不要写死。
+   · 不能 import CSS（浏览器原生不支持），skin.css 由宿主按清单插入；
+   · 可以相对路径 import **本包内**的 .js（lib/ 下的私有模块），图片与字体也用相对路径引用。
+3. 内核是现代 Chromium（WebView2）：@layer / @scope / color-mix() / oklch() / :has() / CSS 嵌套都可用。
+4. 插件只在「播放详情页」的舞台里生效：宿主把清单里的 CSS 包成
+     @layer skin { @scope (.playerview[data-skin="<样式id>"], .skin-bg[data-skin="<样式id>"]) { …你的 CSS… } }
+   所以**你的选择器是相对舞台根写的**（见【四】）；ctx.root 就是那个舞台，整窗背景层容器是 ctx.backgroundRoot。
+5. 深浅色主题、强调色、毛玻璃强度等由应用的主题令牌决定，插件应跟随，不要写死。
 
 【三、接口契约（必须严格遵守）】
 export default {
-  apiVersion: 2,                // 必需，且必须正好等于 2；其它值会被直接跳过
-  id: "<样式id>",               // 必需，与目录名一致
-  name: "<显示名>",             // 必需，显示在样式按钮的提示里
-  icon: "disc",                 // 可选，图标 sprite id，见下
-  order: 200,                   // 可选，样式按钮排序，越小越靠前（内置样式 10~30，第三方建议 >= 200）
-  description: "<一句话说明>",  // 可选
-  background: false,            // 可选，true 才需要整窗背景层（此时才用 ctx.backgroundRoot）
+  id: "<样式id>",               // 可选；写了就必须与清单 id 一致
   mount(ctx) {},                // 必需，函数
   update(ctx, patch) {},        // 可选
   destroy(ctx) {}               // 可选
 };
-1. 缺 id / name / mount（或 mount 不是函数）都会导致加载失败，控制台会给出原因。
-2. icon 取 index.html 里图标 sprite 的 id，可用值包括：disc / immersive / minimal / lyrics / lyric-match / slideshow / palette / image / music / album / headphones / play / pause / prev / next / shuffle / repeat / repeat-one / volume-high / volume-low / volume-mute / heart / download / bolt / check / sun / moon / expand / options / queue / settings / filter / trash；不确定就写 "disc"。
+1. 元数据（name / version / order / icon / colors / capabilities）全部写在 skin.json 里，不要在 skin.js 里重复写；写在模块里且与清单冲突会直接加载失败（id、apiVersion 两处不一致就报错）。
+2. 缺 mount（或 mount 不是函数）会导致加载失败，控制台会给出原因。
 
-ctx 是皮肤唯一的入口（只读，直接改它不会生效）：
-- ctx.root            你的挂载点（宿主已清空，往这里写 DOM）
-- ctx.backgroundRoot  整窗背景层容器（background: true 时才用于渲染）
-- ctx.media()         返回 { song, cover, covers, coverIndex, lyrics }
-                      · song：当前曲目对象，可能为 null，字段有 id / title / artist / album / duration / path / online 等
-                      · cover：当前生效封面（data URL 或同源 URL）；covers：全部封面（轮播用，至少一张）；coverIndex：轮播下标
-                      · lyrics：{ lines: [{ time, text }], text, source, index }，time 单位毫秒，index 是当前高亮行（-1 表示还没到第一句）
+ctx 是插件唯一的入口（只读，直接改它不会生效）：
+- ctx.root            挂载点（宿主已清空，往这里写 DOM）
+- ctx.backgroundRoot  整窗背景层容器（清单声明 capabilities.background 才有内容）
+- ctx.track()         返回 { id, title, artist, album, duration, kind }
+- ctx.media()         返回 { song, cover, covers, coverIndex, lyrics }（聚合快照）
+                      · song：当前曲目（可能为 null），即 track() 那一份
+                      · cover：当前封面（data URL 或同源 URL）；covers：全部封面（至少一张）；coverIndex：轮播下标
+                      · lyrics：{ lines: [{ time, text }], text, source, index, status, statusText }
+- ctx.lyrics()        同上歌词那一份；ctx.covers() 同上封面那一份
 - ctx.playback()      返回 { position, duration, playing, volume, muted }，时间单位毫秒
-- ctx.options()       返回 { showLyrics, lyricsFontSize, animations, coverCarousel, coverCarouselInterval }
-- ctx.actions         只读动作：seek(ms) / togglePlay() / next() / prev() / openFolder() / openCoverPanel()
+- ctx.options()       返回 { showLyrics, lyricsFontSize, animations, coverCarousel, coverCarouselInterval, interactive, performanceMode }
+- ctx.env()           返回 { themeId, mode, width, height, dpr, reducedMotion, foreground }
+- ctx.sdk             复用零件：createLyricsView / createFxLyrics / createCamera / createBackgroundLayer / applyFit / fitScale / parseLrc / findLyricIndex / formatLrcTime / html / util
+- ctx.actions         受控动作：seek(ms) / seekBy(ms) / seekRatio(0~1) / togglePlay / next / prev / toggleLike / like / unlike / openFolder / openCoverPanel / openLyricsPanel / reportBackdrop({bg,fg})
 - ctx.on(type, fn)    订阅宿主推送，返回取消订阅的函数
 - ctx.defaultCover    封面兜底图（内联 SVG data URL），封面加载失败时用它
-- ctx.themeId         当前主题 id（getter）
-- ctx.mode            当前深浅色 "dark" | "light"（getter）
+- ctx.themeId / ctx.mode（getter）
 
 宿主推送：update(ctx, patch) 与 ctx.on() 收到同一份 patch，patch.type 取值：
-mount（挂载后立即推一次，带全量快照）/ song（换歌）/ media（封面变化或轮播切图）/ lyrics（歌词装载完成或更新）/ progress（播放进度，宿主已按帧节流）/ state（播放、暂停、音量变化）/ options（设置项变化）/ theme（主题或深浅色变化）/ resize（容器尺寸变化）/ close（详情页关闭）/ destroy（即将卸载，destroy 之前最后一次）。
-patch 只带与该类型相关的字段；不确定时用 ctx.media() / ctx.playback() / ctx.options() 现取快照。
+mount（挂载后立即一次，带全量快照）/ song（换歌）/ media（封面变化或轮播切图）/ lyrics（歌词装载完成或匹配状态变化）/ progress（播放进度，已按帧节流）/ state（播放、暂停、音量）/ spectrum（实时频谱 { bands: number[]|null }，按清单声明采样）/ options / theme / resize / visibility（详情页开关，据此停帧）/ close / destroy。
+patch 只带与该类型相关的字段；不确定时用 ctx.track() / ctx.lyrics() / ctx.playback() 现取快照（推送之后快照与载荷一定一致）。
 
 【四、CSS 约定】
-1. skin.css 里每一条选择器都必须以 .playerview[data-skin="<样式id>"] 开头；需要影响详情页之外的外壳（标题栏、底栏）时可另加 .app[data-mode="<样式id>"]。不限定作用域会污染其它界面。
+1. 选择器**相对舞台根**写，不要自己再加 .playerview[data-skin="<样式id>"] 前缀（宿主已经包了 @scope，加了反而可能匹配不到）：
+   · 舞台里面的元素 → 直接写：.demo { … }、.playerview__stage { … }
+   · 舞台**自身**   → 用 ::scope { … }
 2. 不要写 :root / html / body / * 级别或裸标签选择器，不要用 !important 去覆盖别人的规则。
-3. 可以直接使用主题令牌，深浅色会自动跟随：
-   --accent / --accent-weak / --accent-weak-hover / --accent-text / --accent-contrast / --text-1 / --text-2 / --text-3 / --text-inverse / --surface-1 / --surface-2 / --surface-3 / --surface-hover / --surface-active / --glass-bg / --glass-bg-strong / --glass-blur / --glass-saturate / --glass-border / --border-1 / --border-2 / --divider / --r-sm / --r-md / --r-lg / --r-xl / --dur / --ease / --lyric-size
-4. 不要改布局令牌（--h-titlebar / --w-sidebar / --h-playerbar / --h-header / --row-h / --row-h-compact），改了会破坏固定布局。
-5. 需要私有变量时定义在自己的作用域里（例如 .playerview[data-skin="<样式id>"] 内），不要写到 :root。
+3. 你的 CSS 在 @layer skin 里，**压不过**宿主壳的规则；也**碰不到**宿主 UI（标题栏、底栏、侧边栏、播放队列等都不在作用域内）。想影响宿主控件的观感只有一条路：在清单 colors 里声明配色（宿主会保证对比度）。
+4. 可以直接使用主题令牌，深浅色会自动跟随：
+   --accent / --accent-weak / --accent-text / --accent-contrast / --text-1 / --text-2 / --text-3 / --text-inverse / --surface-1 / --surface-2 / --surface-3 / --surface-hover / --surface-active / --glass-bg / --glass-bg-strong / --glass-blur / --glass-saturate / --glass-border / --border-1 / --border-2 / --divider / --r-sm / --r-md / --r-lg / --r-xl / --dur / --ease / --lyric-size
+5. 不要改布局令牌（--h-titlebar / --w-sidebar / --h-playerbar / --h-header / --row-h / --row-h-compact），改了会破坏固定布局。
+6. 需要私有变量时定义在自己的作用域里（::scope { --my-…: … }），不要写到 :root。
 
 【五、行为约束】
 1. 不要 import 应用内部模块（store / bridge / utils / playerhost / @localmusicplayer/player-skins 等）；数据只从 ctx 拿，动作只走 ctx.actions；不要直接操作音频元素或应用状态。
 2. 不要轮询：禁止用 setInterval 或定时 setTimeout 反复拉数据（动画、防抖、一次性延时除外）。
-3. 歌词高亮用 ctx.media().lyrics.index 与 lines，不要自己解析 LRC 文本。
-4. 动效要尊重 ctx.options().animations（为 false 时不要做位移动效）；时长与缓动优先用 --dur / --ease。
-5. destroy(ctx) 里清掉定时器、事件监听、ResizeObserver 与大对象引用；切换样式会先 destroy 再 mount，两个方法都可能被多次调用。
+3. 歌词高亮优先用 ctx.sdk.createLyricsView（或 ctx.lyrics().index 与 lines），不要自己解析 LRC 文本。
+4. 动效要尊重 ctx.options().animations（false 时不要做位移动效）与时长与缓动令牌；窗口收起（patch.type === "visibility" 或 close）时停掉帧循环。
+5. destroy(ctx) 里清掉定时器、事件监听、ResizeObserver 与大对象引用；切换插件会先 destroy 再 mount，两个方法都可能被多次调用。
 6. 不要往 window / document 上挂全局变量或样式，不要改 document.documentElement 上的 data-* 属性。
 7. 不要发网络请求（CSP 也会拦），不要用 eval / new Function。
+8. 用到实时频谱就必须在清单 capabilities.spectrum 里写明段数；没写就别用（bands 恒为 null）。
+9. 自绘封面取色类效果算出的配色，用 ctx.actions.reportBackdrop({bg, fg}) 回报给宿主（宿主据此重算控件栏配色），不要自己去改宿主 DOM。
 
 【六、交付前自检清单】
-1. 目录名 = id = skin.js 里的 id = CSS 选择器里的 data-skin 值；
-2. skin.js 有 export default，且包含 apiVersion: 2、id、name、mount；
-3. 每条 CSS 选择器都在 .playerview[data-skin="<样式id>"] 作用域内；
-4. 没有裸包名 import、没有 fetch、没有 setInterval 轮询、没有全局选择器、没有 !important；
-5. 换歌、歌词装载、进度更新、深浅色切换、窗口缩放、切走再切回都不会报错，也不留残余节点或监听。
+1. 目录名 = skin.json 的 id = skin.js 里的 id（若写了）；
+2. skin.json 有 apiVersion "3.0"，有 entry/styles，且 colors 是 bg/fg 或 theme:true 二选一；
+3. skin.js 是 export default 插件对象，零裸包名 import，有 mount；
+4. CSS 选择器是相对舞台根写的（舞台自身用 ::scope），没有加 .playerview[data-skin=…] 前缀；
+5. 没有 fetch、没有 setInterval 轮询、没有全局选择器、没有 !important、没有碰宿主 UI 的选择器；
+6. 换歌、歌词装载、进度更新、深浅色切换、窗口缩放、切走再切回都不会报错，也不留残余节点或监听；
+7. 声明了 spectrum 才用频谱；用了背景层才声明 background。
 
 【七、参考资料】
 ${skinReferenceSection(ref)}

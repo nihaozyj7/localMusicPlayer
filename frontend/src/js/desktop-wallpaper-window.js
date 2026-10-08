@@ -34,7 +34,8 @@
 
 import { backend, connect, on } from "./bridge.js";
 import { DEFAULT_COVER } from "./utils.js";
-import { loadExternalSkin, resolveSkin } from "@localmusicplayer/player-skins";
+import { loadSkin, resolveSkin } from "@localmusicplayer/player-skins";
+import { createSkinHost } from "./skinhost.js";
 
 const appEl = document.getElementById("wp-app");
 const view = document.getElementById("wp-playerview");
@@ -77,12 +78,13 @@ const state = {
   },
 };
 
-/** 当前挂载的样式 id（与主窗口推来的 skinId 对齐） */
-let mountedId = "";
-/** 当前挂载的皮肤对象 */
-let skin = null;
-/** 当前上下文（皮肤的唯一入口） */
-let ctx = null;
+/**
+ * 主窗口**想要**的样式 id（经 skinId 补丁推来）。
+ *
+ * 注意它不等于"已经挂上的那个"：挂载本身归共享运行时
+ * （skinHost.skin），这里只记"目标是谁"，避免两处各存一份挂载状态。
+ */
+let wantedSkinId = "";
 /** 尺寸观察器（换样式时重建） */
 let resizeObserver = null;
 
@@ -90,114 +92,88 @@ let resizeObserver = null;
    上下文
    -------------------------------------------------------------------------- */
 
-function makeCtx() {
-  /** @type {Map<string, Set<(patch: any) => void>>} */
-  const listeners = new Map();
+/**
+ * 插件宿主运行时：ctx / 推送 / 挂载卸载都走共享实现（skinhost.js）——
+ * 这个窗口只提供「数据从哪来、动作做什么」。
+ *
+ * 数据全部来自主窗口经 IPC 推来的快照（state.*）；动作一律空实现：
+ * 这个窗口垫在桌面图标之下，鼠标与键盘都到不了这里，而"桌面背景自己把歌切了"
+ * 比"点了没反应"更难排查。
+ */
+let skinHost = null;
 
-  const context = {
+function ensureSkinHost() {
+  if (skinHost) return skinHost;
+  skinHost = createSkinHost({
     root: stage,
     backgroundRoot,
-    // 这个窗口不持有播放器：皮肤若想读缓冲进度会拿到 null，
-    // 内置样式都不用（它们只依赖宿主推的 playback 快照）。
-    audio: null,
-    defaultCover: DEFAULT_COVER,
-    get themeId() {
-      return document.documentElement.dataset.theme || "";
+    view,
+    app: appEl,
+    source: {
+      playback: () => state.playback,
+      media: () => state.media,
+      options: () => state.options,
+      env: envSnapshot,
+      defaultCover: DEFAULT_COVER,
+      actions: NOOP_ACTIONS,
     },
-    get mode() {
-      return document.documentElement.dataset.mode === "light" ? "light" : "dark";
-    },
-    playback: () => state.playback,
-    media: () => state.media,
-    options: () => state.options,
-    // 动作一律是空实现：窗口在桌面图标之下，鼠标与键盘都到不了这里。
-    // 万一将来有人把这个窗口挪出来，也不该让它去操作播放器 ——
-    // 「桌面背景自己把歌切了」比「点了没反应」更难排查。
-    actions: {
-      seek() {},
-      togglePlay() {},
-      next() {},
-      prev() {},
-      openFolder() {},
-      openCoverPanel() {},
-    },
-    on(type, fn) {
-      if (typeof fn !== "function") return () => {};
-      if (!listeners.has(type)) listeners.set(type, new Set());
-      listeners.get(type).add(fn);
-      return () => listeners.get(type)?.delete(fn);
-    },
-    /** 宿主内部使用：一次更新同时交给 skin.update 与 ctx.on 订阅者 */
-    push(patch) {
-      try {
-        skin?.update?.(context, patch);
-      } catch (err) {
-        console.warn(`[desktop-wallpaper] ${mountedId} 处理 ${patch.type} 更新失败`, err);
-      }
-      for (const [type, set] of listeners) {
-        if (type !== patch.type && type !== "*") continue;
-        for (const fn of set) {
-          try {
-            fn(patch);
-          } catch (err) {
-            console.warn(`[desktop-wallpaper] ${type} 订阅回调失败`, err);
-          }
-        }
-      }
-    },
-  };
-  return context;
+  });
+  return skinHost;
 }
+
+/** 运行环境快照（这个窗口没有 store，尺寸直接量舞台） */
+function envSnapshot() {
+  const r = stage?.getBoundingClientRect?.() || { width: 0, height: 0 };
+  return {
+    themeId: document.documentElement.dataset.theme || "",
+    mode: document.documentElement.dataset.mode === "light" ? "light" : "dark",
+    width: Math.round(r.width || 0),
+    height: Math.round(r.height || 0),
+    dpr: Number(window.devicePixelRatio) || 1,
+    reducedMotion: Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches),
+    foreground: false,
+  };
+}
+
+/** 动作全部空实现（见上面的说明） */
+const NOOP_ACTIONS = {
+  seek() {},
+  seekBy() {},
+  seekRatio() {},
+  togglePlay() {},
+  next() {},
+  prev() {},
+  like() {},
+  unlike() {},
+  toggleLike() {},
+  openFolder() {},
+  openCoverPanel() {},
+  openLyricsPanel() {},
+  reportBackdrop() {},
+};
 
 /* --------------------------------------------------------------------------
    挂载 / 卸载
    -------------------------------------------------------------------------- */
 
 function unmountSkin() {
-  // 先发 close 再 destroy，与 playerhost.js 的卸载路径对齐。
-  //
-  // 为什么两步都要：皮肤契约把 close 与 destroy 分成两件事 —— close 表示
-  // 「这个界面收起来了」（皮肤据此停掉帧循环、隐藏整窗背景），destroy 表示
-  // 「实例要没了」（释放 canvas / observer / 监听器）。
-  // 原来这里只调 destroy，于是每个皮肤的 close 分支在桌面壁纸窗口里是**死代码**
-  // （magia 停帧循环的 stopLoop 就写在 close 里）。
-  // destroy 本身也会停循环，所以这条不是「不停帧」的修复，而是让两侧宿主
-  // 对皮肤的生命周期语义保持一致 —— 第三方皮肤若把重要清理写在 close 里，
-  // 只调 destroy 就会漏掉。
-  if (skin?.update && ctx) {
-    try {
-      skin.update(ctx, { type: "close" });
-    } catch (err) {
-      console.warn(`[desktop-wallpaper] ${mountedId} 收起时出错（继续销毁）`, err);
-    }
-  }
-  if (skin?.destroy) {
-    try {
-      skin.destroy(ctx);
-    } catch (err) {
-      console.warn(`[desktop-wallpaper] ${mountedId} 卸载失败`, err);
-    }
-  }
-  skin = null;
-  ctx = null;
-  mountedId = "";
+  // close → destroy 两次推送、插件 destroy、清 DOM 与订阅都在运行时里
+  // （与 playerhost 的卸载路径完全一致）。
+  skinHost?.unmount();
+  wantedSkinId = "";
   stopWatchingResize();
-  stage.innerHTML = "";
   backgroundRoot.hidden = true;
   backgroundRoot.removeAttribute("data-state");
   appEl.dataset.mode = "";
 }
-
 /**
- * 挂载一个样式。
+ * 挂载一个插件（与 playerhost.js#mountSkin 共用 skinhost.js 的运行时）。
  *
- * 步骤与 playerhost.js#mountSkin **逐条对齐**（这是刻意的：两边都是皮肤宿主，
- * 差别只该在「数据从哪来」）。任何一处少做，第三方样式就可能只在一侧正常：
- *   · data-skin  打在 .playerview 上 —— 详情页内的选择器全靠它；
- *   · data-mode  打在 .app 上      —— 整窗背景层（沉浸 / magia 这类
- *     background:true 的样式）全靠它，勾子写在 .app[data-mode="<id>"] 下；
- *   · mount 之后立刻推一次 mount 全量快照，皮肤不需要自己再拉；
- *   · 开尺寸观察，把 resize 增量推给皮肤（画布类样式靠它对齐尺寸）。
+ * 这里只做**窗口自身**的三件事，其余都在共享运行时里：
+ *   · data-mode  打在 .app 上（调试与历史钩子；整窗背景让位的钩子是
+ *     data-skin-background，由运行时按 capabilities.background 打，见 layout.css）；
+ *   · 舞台状态翻开 + 歌词可见性同步（桌面窗口没有进出场动效）；
+ *   · 开尺寸观察，把 resize 增量推给插件（画布类插件靠它对齐尺寸）。
  *
  * 抽不出共用函数：那边带着 store、音频元素、歌词装载、封面轮播一堆只属于
  * 主窗口的东西，硬抽会把两边都变得难读。这里就二十行，重复得起。
@@ -205,25 +181,17 @@ function unmountSkin() {
 function mountSkin(id) {
   const { skin: found, fellBack } = resolveSkin(id);
   if (!found) return;
+  wantedSkinId = found.id;
   if (fellBack && id) {
     // 主窗口与这个窗口各有一份注册表，第三方样式在这里没装上时，
     // 与其静默画成「经典」，不如说清楚是哪一步没跟上。
     console.warn(`[desktop-wallpaper] 样式「${id}」不可用，已回退到「${found.name}」`);
   }
 
-  unmountSkin();
-  skin = found;
-  mountedId = found.id;
-  view.dataset.skin = found.id;
+  // 挂载（含 data-skin / data-skin-background 与 mount 全量快照）交给共享运行时，
+  // 与主窗口逐条一致 —— 这正是"两个宿主不该各写一份"的地方。
   appEl.dataset.mode = found.id;
-  ctx = makeCtx();
-
-  try {
-    found.mount(ctx);
-  } catch (err) {
-    console.warn(`[desktop-wallpaper] 样式「${found.id}」挂载失败`, err);
-    stage.innerHTML = `<div class="skin-error">这个播放界面样式在桌面上渲染失败了</div>`;
-  }
+  ensureSkinHost().mount(found);
 
   view.hidden = false;
   // 背景层由皮肤在 mount 里按需启用（background:true 的样式才会用到）。
@@ -231,16 +199,6 @@ function mountSkin(id) {
   backgroundRoot.dataset.state = "opened";
   view.dataset.state = "opened";
   syncLyricsVisibility();
-
-  // 挂载完成后立刻推一次全量快照 —— 与 playerhost 同一个理由：
-  // 皮肤 mount 时读到的可能是空状态（这个窗口刚打开时正是如此），
-  // 让它自己去拉一遍数据既违背契约也容易漏。
-  ctx.push({
-    type: "mount",
-    ...state.media,
-    ...state.playback,
-    options: state.options,
-  });
   watchResize();
 }
 
@@ -256,9 +214,9 @@ function mountSkin(id) {
 function watchResize() {
   if (resizeObserver || typeof ResizeObserver !== "function") return;
   resizeObserver = new ResizeObserver(() => {
-    if (!skin || !ctx) return;
+    if (!skinHost?.skin) return;
     const r = stage.getBoundingClientRect();
-    ctx.push({ type: "resize", width: Math.round(r.width), height: Math.round(r.height) });
+    skinHost.push({ type: "resize", width: Math.round(r.width), height: Math.round(r.height) });
   });
   // box: "border-box" 的理由见 playerhost.js#watchResize：皮肤会在 resize
   // 回调里改自己的 padding / 字号，观察内容盒会把这种改动当成尺寸变化。
@@ -283,41 +241,36 @@ function syncLyricsVisibility() {
  * 扫一遍 —— 否则用户把样式包丢进目录后，桌面上会莫名其妙回退成「经典」。
  * 只在启动时扫一次：这个窗口是跟着开关开关的，目录变化时重开一次就够了。
  */
-async function loadExternalSkins() {
-  if (typeof backend.listSkins !== "function") return;
-  let list = null;
+async function loadAllSkins() {
   try {
-    list = await backend.listSkins();
-  } catch (err) {
-    console.info("[desktop-wallpaper] 第三方样式清单读取失败", err?.message ?? err);
-    return;
-  }
-  // 与主窗口一致：/skins/ 需要 token（见 internal/skins 的 Handler）
-  let token = "";
-  try {
-    token = String((await backend.skinsToken()) || "");
-  } catch (err) {
-    console.info("[desktop-wallpaper] 皮肤访问令牌读取失败", err?.message ?? err);
-  }
-  const tokenQuery = token ? `?t=${encodeURIComponent(token)}` : "";
-  for (const info of Array.isArray(list) ? list : []) {
-    if (!info?.id || !info?.module) continue;
-    const base = `${SKINS_PREFIX}${encodeURIComponent(info.id)}/`;
-    try {
-      await loadExternalSkin({
-        id: info.id,
-        name: info.name,
-        module: base + String(info.module).replace(/^\/+/, "") + tokenQuery,
-        styles: (Array.isArray(info.styles) ? info.styles : []).map(
-          (s) => base + String(s).replace(/^\/+/, "") + tokenQuery
-        ),
-      });
-    } catch (err) {
-      console.warn(`[desktop-wallpaper] 样式「${info.id}」加载失败：`, err);
+    const list = await backend.listSkins();
+    const items = Array.isArray(list) ? list : [];
+    // /skins/ 需要 token（见 internal/skins 的 Handler）
+    const token = String((await backend.skinsToken()) || "");
+    const query = token ? `?t=${encodeURIComponent(token)}` : "";
+    // 契约 v3：内置与第三方同一条加载路径（后端扫两个根目录）。
+    for (const info of items) {
+      if (!info?.id || !info?.module || !info?.manifest) continue;
+      const base = `${SKINS_PREFIX}${encodeURIComponent(info.id)}/`;
+      const withToken = (rel) => base + String(rel).replace(/^\/+/, "") + query;
+      const iconFile = info.manifest?.icon?.file;
+      try {
+        await loadSkin({
+          manifest: info.manifest,
+          moduleUrl: withToken(info.module),
+          cssUrls: (Array.isArray(info.styles) ? info.styles : []).map(withToken),
+          iconUrl: iconFile ? withToken(iconFile) : "",
+          builtin: info.builtin === true,
+          source: info.source || "",
+        });
+      } catch (err) {
+        console.warn(`[desktop-wallpaper] 样式「${info.id}」加载失败：`, err);
+      }
     }
+  } catch (err) {
+    console.warn("[desktop-wallpaper] 样式目录扫描失败", err);
   }
 }
-
 /* --------------------------------------------------------------------------
    主题令牌镜像
    --------------------------------------------------------------------------
@@ -427,15 +380,15 @@ function applyPatch(payload) {
   // —— ③ 样式：变了就重挂 ——
   // data-skin / data-mode 变了，皮肤包里所有选择器随之换一套。
   // mountSkin 内部会推一次 mount 全量快照，所以不需要在这里补画。
-  const wanted = typeof payload.skinId === "string" ? payload.skinId : mountedId;
-  if (wanted !== mountedId) mountSkin(wanted);
+  const wanted = typeof payload.skinId === "string" ? payload.skinId : wantedSkinId;
+  if (wanted !== wantedSkinId || !skinHost?.skin) mountSkin(wanted);
 
   // —— ④ 原样转给皮肤 ——
   // 不改造 type：契约里每个类型都有自己的处理分支，宿主擅自改写（例如把
   // theme 说成 song）会让皮肤少跑它该跑的那一段 —— magia 就是在 theme 里
   // 重新取调色板并把画布尺寸对齐的，被改写成 song 之后粒子颜色会一直停在
   // 挂载时那一套。
-  if (skin && type) ctx.push({ type, ...payload });
+  if (skinHost?.skin && type) skinHost.push({ type, ...payload });
 
   // —— ⑤ 皮肤挂上、数据也落地了 → 告诉后端可以摘遮罩了 ——
   // 必须放在最后：露出时机的判据就是「这一次更新已经画进合成器」，
@@ -478,7 +431,7 @@ function announcePainted() {
   // 两个条件缺一不可：只有样式没有数据 = 空皮肤；只有数据没挂样式 = 空壳。
   // 注意 mediaSeen 判的是「收到过 song 补丁」而不是「有歌在播」——
   // 曲库为空、没有当前曲目时 song 是 null，那也是一份合法且已经渲染完的画面。
-  if (!mountedId || !mediaSeen) return;
+  if (!skinHost?.skin || !mediaSeen) return;
   paintedAnnounced = true;
   afterPaint(() => {
     backend.desktopWallpaperPainted?.().catch(() => {});
@@ -526,6 +479,10 @@ function afterPaint(fn) {
    -------------------------------------------------------------------------- */
 
 async function boot() {
+  // 窗口销毁时把插件卸载干净（close/destroy 两次推送 + 插件自己的清理）。
+  // 挂载路径里不再需要它：共享运行时的 mount() 会先卸载上一个。
+  window.addEventListener("beforeunload", () => unmountSkin());
+
   const ready = await connect();
   if (!ready) {
     // 浏览器预览：这个页面本身不会被打开（没有第二个窗口），留一行说明即可
@@ -533,7 +490,7 @@ async function boot() {
     return;
   }
 
-  await loadExternalSkins();
+  await loadAllSkins();
 
   // 先挂皮肤再订阅？不行 —— 初始状态里才有 skinId，而要订阅又必须先于首次推送。
   // 顺序：订阅 → 拉全量（全量里带 skinId，会触发挂载）→ 之后都是增量。

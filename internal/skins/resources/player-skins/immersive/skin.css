@@ -1,0 +1,117 @@
+/* --------------------------------------------------------------------------
+   选择器是**相对舞台根**写的（作用域由宿主强制包裹，见 contract 的 wrapPluginCss）：
+
+     @layer skin { @scope (.playerview[data-skin="<id>"], .skin-bg[data-skin="<id>"]) { … } }
+
+   · 给舞台**里面**的元素写规则 → 直接写（.disc / .playerview__stage / …）
+   · 给舞台**自身**写规则       → 用 ::scope
+   · 宿主 UI（标题栏 / 底栏 / 侧边栏）不在作用域内，写不到也不该写 ——
+     它们的配色由清单里的 colors 决定（见 docs/42 §5）。
+   -------------------------------------------------------------------------- */
+/* ==========================================================================
+   immersive.css — 内置样式「沉浸」：封面虚化铺满整窗 + 居中歌词
+   --------------------------------------------------------------------------
+   背景层（background-layer.js 往宿主的 .skin-bg 容器里填图）由宿主放在
+   .playerview 之外，因此它能盖住侧边栏与曲库列表；这里负责歌词区的排版与
+   chrome（标题栏/侧边栏/底栏）透明化 —— 任何一块实色面板压在封面虚化图上
+   都会立刻破掉沉浸感。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   详情页色彩域 —— 本样式「跟随主题」，但边界仍然落在详情页上
+   --------------------------------------------------------------------------
+   沉浸在明暗上没有自己的主张：封面虚化图的亮度由 background-layer.css 里
+   的 --skin-bg-brightness 统一压低，文字压在上面靠主题的 --text-* 保证对比度。
+   所以这里**不重绑任何色彩令牌** —— 浅色主题下就是浅色的沉浸、深色主题下
+   就是深色的沉浸，这正是用户选这个主题时期待的。
+
+   声明这个块的意义只有一条：告诉宿主"详情页这一块画布是自洽的"，
+   于是声明了 data-surface-owner="playerview" 的浮层（播放队列等）会跟过来 ——
+   它们贴着底栏浮在封面虚化图上，属于播放界面而不是窗口。
+   （本样式故意不声明 background: true 之外的任何美术绑定；没有皮肤接管时
+   宿主什么都不会改，第一行规则只是把 domain 标记出来。）
+   -------------------------------------------------------------------------- */
+::scope {
+  /* 当前生效的是主题自己的色彩域（不覆盖任何令牌） */
+  color-scheme: light dark;
+}
+
+.playerview__stage {
+  display: grid;
+  place-items: center;
+  padding: var(--sp-5) var(--sp-6) var(--sp-6);
+}
+
+/* 歌词容器：没有任何卡片背景 / 边框 / 阴影，纯文字浮在封面虚化图上 */
+.immersive__card {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+  width: min(760px, 100%);
+  /* 必须给出确定的高度，否则内部歌词滚动区没有可比较的 100%，
+     会一路撑高而不产生滚动（表现为歌词不会自动滚动、也滚不动）。 */
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  overflow: visible;
+}
+
+.immersive__info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+  z-index: 1;
+  text-shadow: 0 1px 18px rgba(0, 0, 0, 0.5);
+}
+
+.immersive__title {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: var(--text-1);
+  /* 宽度不超过卡片（.immersive__card，与歌词区同宽，上限 --lyric-measure 760px）。
+     卡片是 align-items:center，标题按 fit-content 排，长标题会一路铺满整张卡片、
+     把下面的歌词挤扁；这里显式按住宽度，超长部分改成「折行 + 最多 3 行 + 纵向滚动」。 */
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  max-height: calc(1.3em * 3);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 标题自己的滚动条再细一点：全局 10px 的滚动条压在三行标题上太抢眼 */
+.immersive__title::-webkit-scrollbar {
+  width: 6px;
+}
+
+.immersive__title::-webkit-scrollbar-thumb {
+  border-width: 2px;
+}
+
+.immersive__artist {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.lyrics {
+  --lyric-size: 16px;
+  --lyric-size-active: 22px;
+  --lyric-dim: 0.4;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+}

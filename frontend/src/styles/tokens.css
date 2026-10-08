@@ -57,9 +57,10 @@
   /* —— 浮动面板（播放队列 / 播放选项 / 定时停止 / 歌词工作台…）——
      这些面板是 #app 之外的 fixed 浮层，但语义上属于**当前界面**而不是窗口：
      播放详情页打开时它们是"播放界面的浮层"，用户预期它们长成播放界面的样子。
-     于是详情页打开时，宿主把这一组宿主面令牌重绑到皮肤的色彩域上
-     （见下面的「详情页色彩域」与 playerhost.js#mirrorPlayerSurface）。
-     没有皮肤接管时它们就等于全局值，视觉与改动前完全一致。 */
+     v3 起这件事由「宿主壳配色」一节的 --chrome-* 完成：插件声明 colors 后，
+     --text-1 / --glass-* 等被重绑到宿主算出来的那套值上，这一组令牌经
+     var() 跟着它们走；插件没声明配色（或声明 colors.theme）时它们就等于
+     全局值，视觉与"没有插件"时完全一致。 */
   --surface-app: var(--bg-app);
   --surface-app-text: var(--text-1);
   --surface-app-glass: var(--glass-bg-strong);
@@ -208,75 +209,58 @@
   --hairline-strong: 1px solid var(--border-2);
 }
 
-/* ==========================================================================
-   详情页色彩域（data-theme）
-   --------------------------------------------------------------------------
-   背景：主题与播放界面样式（皮肤）各自成立，但两者会拼在同一个窗口里 ——
-   详情页铺满整窗、侧边栏与曲库列表还在它后面。于是"深色皮肤 + 浅色主题"
-   这种组合必然出现两块色调打架的区域，典型是**播放队列**：它是 #app 之外的
-   fixed 浮层，跟的是主题令牌，一打开就是一块白玻璃压在深色舞台上。
-
-   规则只有一条，但要说清楚：
-     · 详情页是**一个自洽的色彩域**，由皮肤声明；皮肤没声明就什么都不生效；
-     · 域内所有基于色彩令牌的东西（含详情页自己的头部按钮）都跟着域走；
-     · **浮层由宿主 JS opt-in 跟随**，见下面的「投影用变量表」与
-       playerhost.js#applyPlayerSurface。
-
-   为什么浮层必须靠 JS 投影，而不是用 CSS 选择器自动继承：
-     这些浮层是 #app 之外的兄弟节点（模板见 ui/app.js），和 .playerview 之间
-     没有 DOM 祖先关系。想用 CSS 表达"跟随详情页"只有两条路，都不成立：
-       · 兄弟选择器方向是反的 —— 模板里浮层排在 <mp-app> 的**前面**，
-         .playerview[data-theme] 之后的兄弟里根本没有浮层；
-       · :has() 方向对得上，但它的条件依赖详情页当前是否打开，于是
-         **打开 / 关闭详情页会让浮层的规则集动态重建**（样式失效重算），
-         对一个"跟当前界面走"的东西来说这是白白的开销与抖动。
-     JS 投影没有这两个问题：谁拥有详情页色彩域，宿主在挂载样式时就已经知道，
-     直接写过去即可 —— 而且这条信息本来就只有宿主有（第三方皮肤是运行时加载的，
-     CSS 说不出它"是谁"）。
-
-   皮肤怎么声明（写在它自己的 CSS 里，宿主一行都不用改）：
-     .playerview[data-skin="xxx"][data-theme] {
-       --bg-app: #05060f;
-       --text-1: #eef1ff;
-       --accent: #dbe6ff;
-     }
-   ========================================================================== */
+/* 挂载了样式时，舞台自己那一块的底色与文字色。
+   · 底色 = 主题的应用底色（窗口本身的颜色），第三方面样式不画背景时不会漏出
+     底下的曲库内容；
+   · 文字色 = 主题文字令牌，除非样式自己在 @layer skin 里覆盖。
+   这条属于宿主（它不点名任何具体样式）；具体样式的背景归插件自己的 CSS。 */
 .playerview[data-theme] {
-  /* 详情页自己的底：皮肤声明了 --bg-app 就用皮肤的，没声明就等于窗口底色 */
   background-color: var(--bg-app);
   color: var(--text-1);
 }
 
-/* 把详情页的颜色域抄一份出来（--pv-* 只在打了 data-theme 时才存在） */
-/* 投影用变量表：把"一个色彩域"拆成固定的一组变量名。
-   宿主按这张表把详情页的色彩域抄到浮层的行内样式上（playerhost.js
-   #applyPlayerSurface），因此这边和那边**必须同时改** —— 表在代码里有一份
-   对应的常量（SURFACE_VARS），并有一条注释指回这里。
+/* ==========================================================================
+   宿主壳配色（契约 v3 · --chrome-*）
+   --------------------------------------------------------------------------
+   背景：详情页铺满整窗，而**宿主壳**（标题栏 / 底栏 / 侧边栏）与几个浮层
+   （播放队列 / 播放选项 / 定时停止 / 歌词工作台）叠在同一张画面上。
+   v2 的做法是"插件在 CSS 里声明 --pv-*，宿主把它们整套抄到浮层上"——
+   于是宿主 UI 的颜色完全由插件决定：插件给一套低对比度配色，宿主就只能
+   跟着看不清（需求原文点明的就是这个问题）。
 
-   浮层的行内样式里出现的只有 --pv-*（域的值），下面这条规则负责把它们接到
-   浮层真正消费的令牌上。用同一个属性名做中转（--pv-* → 令牌）而不是让宿主
-   直接写 --text-1，是为了让"投影了什么"与"怎么用"分成两步。 */
-[data-surface-owner="playerview"][data-theme] {
-  --surface-app: var(--pv-bg);
-  --surface-app-text: var(--pv-text);
-  --surface-app-glass: var(--pv-glass-strong);
-  --surface-app-glass-weak: var(--pv-glass-weak);
-  --surface-app-border: var(--pv-glass-border);
+   v3 的原则：**插件只声明，宿主来决定**。
+     · 插件在 skin.json 里声明 colors.bg / colors.fg（或 colors.theme）；
+     · 宿主（player-skins/colors.js）算出 --chrome-*：
+         - 对比度不足时把 fg 推向黑/白（WCAG 4.5:1），保证一定读得清；
+         - 缺失 / 非法 / 声明了 theme → 不写这些变量，下面每一条都回落主题令牌；
+     · 变量写在 <html> 上（skinhost.applyChrome），所以 #app 之外的浮层也继承得到；
+     · **宿主壳只读 --chrome-*，不读插件任何变量** —— 插件 CSS 又落在 @layer skin
+       里，因此它既改不到宿主壳的规则，也无法让宿主壳变成不可读。
 
-  --text-1: var(--pv-text);
-  --text-2: var(--pv-text-2);
-  --text-3: var(--pv-text-3);
-  --accent: var(--pv-accent);
-  /* 五个表面层级都要接：选中行用的是 --surface-2 / --surface-3 */
-  --surface-1: var(--pv-surface-1);
-  --surface-2: var(--pv-surface-2);
-  --surface-3: var(--pv-surface-3);
-  --surface-hover: var(--pv-surface-hover);
-  --surface-active: var(--pv-surface-active);
-  --glass-bg-strong: var(--pv-glass-strong);
-  --glass-bg: var(--pv-glass-weak);
-  --glass-border: var(--pv-glass-border);
-  --divider: var(--pv-divider);
-  --border-2: var(--pv-border-2);
-  color: var(--text-1);
+   一句话：插件画面的配色是插件的事；宿主控件的配色由宿主保证可读性。
+
+   ★ 选择器写成 `:root:root[...]`（三个计数点）是**故意**的：主题 CSS 是运行时
+     注入的（在 tokens.css 之后进入文档），它用的是 `:root[data-theme="…"]`（两个
+     计数点）—— 同等特异性下后注入者赢，于是这份映射会被主题悄悄压回去
+     （真机验收撞出来过：--text-1 还是主题色）。抬高一级特异性才能稳定生效。
+   ========================================================================== */
+:root:root[data-chrome="on"] {
+  /* 文字层级 */
+  --text-1: var(--chrome-fg);
+  --text-2: var(--chrome-fg-dim);
+  --text-3: var(--chrome-fg-dim);
+
+  /* 表面层级：由"插件底色 + 插件前景"混出来，自然后于插件画面 */
+  --surface-1: color-mix(in oklab, var(--chrome-fg) 6%, var(--chrome-bg));
+  --surface-2: color-mix(in oklab, var(--chrome-fg) 11%, var(--chrome-bg));
+  --surface-3: color-mix(in oklab, var(--chrome-fg) 16%, var(--chrome-bg));
+  --surface-hover: var(--chrome-hover);
+  --surface-active: var(--chrome-active);
+
+  /* 玻璃底与描边 */
+  --glass-bg-strong: var(--chrome-bg);
+  --glass-bg: var(--chrome-bg-soft);
+  --glass-border: var(--chrome-border);
+  --border-2: var(--chrome-border);
+  --divider: var(--chrome-border);
 }

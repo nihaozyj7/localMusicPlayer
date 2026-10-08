@@ -1,6 +1,22 @@
 {
-  "name": "示例样式（说明见皮肤说明.md）",
+  "id": "__SKIN_ID__",
+  "name": "示例样式",
   "version": "1.0.0",
-  "module": "skin.js",
-  "styles": ["skin.css"]
+  "apiVersion": "3.0",
+  "author": "你的名字",
+  "description": "一句话说明这个样式长什么样",
+  "entry": "skin.js",
+  "styles": ["skin.css"],
+  "icon": { "file": "assets/icon.svg" },
+  "order": 200,
+  "capabilities": {
+    "spectrum": false,
+    "background": false,
+    "interactive": true
+  },
+  "colors": {
+    "bg": "#101218",
+    "fg": "#f2f4ff",
+    "accent": "#7aa2ff"
+  }
 }

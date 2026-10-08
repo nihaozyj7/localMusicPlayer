@@ -21,6 +21,7 @@ export const EMPTY_TRACK = Object.freeze({
   artist: "",
   album: "",
   duration: 0,
+  kind: "local",
 });
 
 /**

@@ -25,18 +25,24 @@ import { requestAppUpdate } from "./ui/base.js";
 import { MOCK_LYRICS, MOCK_LYRICS_ALT } from "./mock.js";
 import { backend, isWails } from "./bridge.js";
 import { refreshSpectrum, seekTo, spectrum } from "./audio.js";
-import { commit, playNext, playPrev, songById, state, togglePlay } from "./store.js";
-import { DEFAULT_COVER, clamp, coverOf, esc } from "./utils.js";
+import { commit, isLiked, playNext, playPrev, songById, state, toggleLike, togglePlay } from "./store.js";
+import { DEFAULT_COVER, clamp, coverOf } from "./utils.js";
 import { animationMs } from "./runtime-tokens.js";
+import { toggleLyricsPanel } from "./lyrics-panel.js";
 
 import {
+  deriveChrome,
   findLyricIndex,
+  getSkin,
   listSkins,
-  loadExternalSkin,
+  loadSkin,
+  noteBuiltin,
   parseLrc,
+  resetBuiltins,
   resolveSkin,
   unregisterSkin,
 } from "@localmusicplayer/player-skins";
+import { createSkinHost } from "./skinhost.js";
 
 /**
  * 播放详情页滑入 / 滑出，等的是 playerview.css 里的 --pv-slide-dur
@@ -292,7 +298,7 @@ export function setLyricsOffset(songId, ms) {
   if (!value) lyricsOffsets.delete(songId);
   else lyricsOffsets.set(songId, value);
   lastPushed.lyricsText = null;
-  if (host.ctx && currentSong()?.id === songId) push({ type: "lyrics", ...mediaSnapshot() });
+  if (host.skinHost && currentSong()?.id === songId) push({ type: "lyrics", ...mediaSnapshot() });
   return value;
 }
 
@@ -445,7 +451,7 @@ export async function applyOnlineLyrics(songId, text, source = "online", options
   }
 
   // 正在看这首 → 立刻重新推给皮肤
-  if (host.ctx && currentSong()?.id === songId) push({ type: "lyrics", ...mediaSnapshot() });
+  if (host.skinHost && currentSong()?.id === songId) push({ type: "lyrics", ...mediaSnapshot() });
   return saveResult || { ok: true };
 }
 
@@ -488,41 +494,86 @@ export async function preloadSkins() {
   } catch (err) {
     console.warn("[skins] 启动扫描样式失败", err);
   }
+  // ★ 异步加载完成后必须主动 bump 一次注册表版本。
+  //
+  // 契约 v3 起样式是**启动后动态 import** 的（后端下发清单 / 预览走 dev 中间件），
+  // 首帧渲染时注册表还是空的；样式按钮组的 Lit 依赖里有 skinRegistryVersion()，
+  // 不 bump 它就一直停在"一个按钮都没有" —— 除非恰好有个别的 state 变化顺带
+  // 触发重渲染（真机上是配置里的旧样式 id 归一化那次，预览模式下 pv= 查询参数
+  // 已经把 pvMode 设成最终值，于是永远等不到那次重渲染，按钮组就一直是空的）。
+  bumpSkinVersion();
   return listSkins();
 }
 
-async function discoverSkins() {
-  if (!isWails()) return listSkins();
-  try {
+/**
+ * 拿「样式清单 + 文件 URL 前缀 + token 后缀」。
+ *
+ * · 真机（Wails）：Go 扫两个根目录（只读资源 + 用户数据目录）并归一化清单，
+ *   资源挂在 /skins/<id>/，**要带 token**（见 internal/skins 的 Handler）；
+ * · 浏览器预览（npm run dev，没有 Go）：内置样式契约 v3 起不在前端包里，
+ *   所以由 Vite 的 dev 中间件镜像同一份扫描（vite.config.js#previewSkins），
+ *   资源在 /preview-skins/<id>/，没有 token。
+ *
+ * 两条路返回的 items **形状相同**，所以下面的加载循环只有一条。
+ */
+async function fetchSkinList() {
+  if (isWails()) {
     const list = await backend.listSkins();
-    const items = Array.isArray(list) ? list : [];
-    // /skins/ 需要 token（见 internal/skins 的 Handler）。
-    // 拿不到时保持旧行为只会得到一堆 403，所以显式记一条日志便于排查。
     let token = "";
     try {
       token = String((await backend.skinsToken()) || "");
     } catch (err) {
       console.warn("[skins] 读取皮肤访问令牌失败", err);
     }
-    const tokenQuery = token ? `?t=${encodeURIComponent(token)}` : "";
+    return {
+      items: Array.isArray(list) ? list : [],
+      base: (id) => `${SKINS_PREFIX}${encodeURIComponent(id)}/`,
+      suffix: token ? `?t=${encodeURIComponent(token)}` : "",
+    };
+  }
+  try {
+    const res = await fetch("/preview-skins/__list.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const items = await res.json();
+    return {
+      items: Array.isArray(items) ? items : [],
+      base: (id) => `/preview-skins/${encodeURIComponent(id)}/`,
+      suffix: "",
+    };
+  } catch (err) {
+    console.warn("[skins] 预览模式读取样式清单失败", err);
+    return { items: [], base: (id) => `${SKINS_PREFIX}${encodeURIComponent(id)}/`, suffix: "" };
+  }
+}
+
+async function discoverSkins() {
+  try {
+    const { items, base, suffix } = await fetchSkinList();
     // 失败清单要跟着这次扫描重建：留着上一次的记录会让「已经修好的样式」
     // 一直挂在「加载失败」里（用户改了文件、重扫，提示却不变）。
     skinFailures.length = 0;
 
     const found = new Set();
+    // 契约 v3：内置样式与第三方样式**走同一条加载路径** —— 后端扫两个根目录
+    // （只读资源目录 + 用户数据目录）并把清单下发，前端只按清单加载。
+    // 于是"内置"在这里只是 info.builtin 这个标记，没有第二条代码路径。
+    resetBuiltins();
     for (const info of items) {
-      if (!info?.id || !info?.module) continue;
-      const base = `${SKINS_PREFIX}${encodeURIComponent(info.id)}/`;
+      if (!info?.id || !info?.module || !info?.manifest) continue;
+      const prefix = base(info.id);
+      const url = (rel) => prefix + String(rel).replace(/^\/+/, "") + suffix;
+      const iconFile = info.manifest?.icon?.file;
       try {
-        await loadExternalSkin({
-          id: info.id,
-          name: info.name,
-          module: base + String(info.module).replace(/^\/+/, "") + tokenQuery,
-          styles: (Array.isArray(info.styles) ? info.styles : []).map(
-            (s) => base + String(s).replace(/^\/+/, "") + tokenQuery
-          ),
+        await loadSkin({
+          manifest: info.manifest,
+          moduleUrl: url(info.module),
+          cssUrls: (Array.isArray(info.styles) ? info.styles : []).map(url),
+          iconUrl: iconFile ? url(iconFile) : "",
+          builtin: info.builtin === true,
+          source: info.source || "",
         });
-        externalSkinIds.add(info.id);
+        if (info.builtin === true) noteBuiltin(getSkin(info.id));
+        else externalSkinIds.add(info.id);
         found.add(info.id);
       } catch (err) {
         skinFailures.push({ id: info.id, reason: err?.message ?? String(err) });
@@ -596,9 +647,22 @@ const host = {
   view: null,
   stage: null,
   backgroundRoot: null,
-  skin: null,
-  ctx: null,
-  mountedId: null,
+  /**
+   * 插件宿主运行时（skinhost.js）：ctx / 推送 / 挂载卸载 / 配色契约都在那边。
+   *
+   * skin / ctx / mountedId 保留成**只读转发**，原来是三个字段，改起来面太大；
+   * 现在它们只有一个真源（skinHost），不会再出现"宿主字段与运行时不同步"。
+   */
+  skinHost: null,
+  get skin() {
+    return host.skinHost?.skin || null;
+  },
+  get ctx() {
+    return host.skinHost?.ctx || null;
+  },
+  get mountedId() {
+    return host.skinHost?.mountedId || null;
+  },
   closeTimer: null,
   resizeObserver: null,
   themeObserver: null,
@@ -773,78 +837,108 @@ export function currentOptionsSnapshot(overrides = {}) {
   return { ...optionsSnapshot(), ...overrides };
 }
 
-function makeCtx() {
-  /** @type {Map<string, Set<(patch: any) => void>>} */
-  const listeners = new Map();
+/* --------------------------------------------------------------------------
+   插件宿主运行时
+   --------------------------------------------------------------------------
+   ctx / 推送 / 挂载卸载 / 配色契约全部收在 skinhost.js（两个舞台共用一份实现）。
+   这里只提供「数据从哪来、动作做什么」。
+   -------------------------------------------------------------------------- */
 
-  const ctx = {
+function ensureSkinHost() {
+  if (host.skinHost) return host.skinHost;
+  host.skinHost = createSkinHost({
     root: host.stage,
     backgroundRoot: host.backgroundRoot,
-    // 注意：契约 v2 起不再有 ctx.audio。
-    // 音频的解码与输出已经搬到 Go 后端，前端没有 <audio> 元素可给了
-    // （见 contract.js 的 SKIN_API_VERSION 说明）。皮肤要位置就用
-    // ctx.playback() / "progress" 补丁，要频谱就用 "spectrum" 补丁。
-    // 实时频谱：给「随旋律律动」的样式用（见 audio.js#spectrum）。
-    // 拿不到时返回 null，皮肤据此保持静态。
-    spectrum,
-    defaultCover: DEFAULT_COVER,
-    get themeId() {
-      return document.documentElement.dataset.theme || "";
-    },
-    get mode() {
-      return document.documentElement.dataset.mode === "light" ? "light" : "dark";
-    },
-    playback: playbackSnapshot,
-    media: mediaSnapshot,
-    options: optionsSnapshot,
-    actions: {
-      seek(ms) {
-        seekTo(ms);
-        syncPlaybackState({ force: true });
+    view: host.view,
+    // 宿主壳（标题栏 / 底栏 / 浮层）消费 --chrome-*：插件只能通过清单里的
+    // colors 影响它，而且宿主会做对比度兜底（见 player-skins/colors.js）。
+    app: document.getElementById("app"),
+    source: {
+      playback: playbackSnapshot,
+      media: mediaSnapshot,
+      options: optionsSnapshot,
+      env: skinEnvSnapshot,
+      defaultCover: DEFAULT_COVER,
+      actions: {
+        seek(ms) {
+          seekTo(ms);
+          syncPlaybackState({ force: true });
+        },
+        seekBy(deltaMs) {
+          seekTo(Math.max(0, Number(state.position || 0) + Number(deltaMs || 0)));
+          syncPlaybackState({ force: true });
+        },
+        seekRatio(ratio) {
+          const r = Math.max(0, Math.min(1, Number(ratio) || 0));
+          if (!state.duration) return;
+          seekTo(r * state.duration);
+          syncPlaybackState({ force: true });
+        },
+        togglePlay,
+        next: () => playNext(false),
+        prev: () => playPrev(),
+        toggleLike() {
+          const song = currentSong();
+          if (song) toggleLike(song.id);
+        },
+        like() {
+          const song = currentSong();
+          if (song && !isLiked(song.id)) toggleLike(song.id);
+        },
+        unlike() {
+          const song = currentSong();
+          if (song && isLiked(song.id)) toggleLike(song.id);
+        },
+        openFolder() {
+          const song = currentSong();
+          if (song?.path) backend.revealInExplorer(song.path);
+        },
+        openCoverPanel() {
+          const song = currentSong();
+          if (!song || song.online) return;
+          import("./coverpanel.js").then((m) => m.openCoverPanel(song.id));
+        },
+        openLyricsPanel() {
+          // 宿主歌词面板的入口是 toggleLyricsPanel（见 lyrics-panel.js）：
+          // 它已经开着时就收起 —— 插件把它当"打开歌词面板"用即可。
+          toggleLyricsPanel();
+        },
+        /**
+         * 随封面取色的插件上报「我现在实际是什么配色」。
+         *
+         * 只重算宿主壳层变量（低频，用户改封面时才会有），插件画面本身
+         * 仍然是它自己的 CSS 说了算 —— 宿主不去猜、也不去改插件的内容。
+         */
+        reportBackdrop(colors) {
+          const current = host.skin;
+          if (!current || !colors || typeof colors !== "object") return;
+          current.colors = { ...current.colors, ...colors };
+          current.chrome = deriveChrome(current.colors);
+          host.skinHost?.applyChrome(state.playerOpen && !host.view?.hidden);
+        },
       },
-      togglePlay,
-      next: () => playNext(false),
-      prev: () => playPrev(),
-      openFolder() {
-        const song = currentSong();
-        if (song?.path) backend.revealInExplorer(song.path);
-      },
-      openCoverPanel() {
-        const song = currentSong();
-        if (!song || song.online) return;
-        import("./coverpanel.js").then((m) => m.openCoverPanel(song.id));
-      },
     },
-    on(type, fn) {
-      if (typeof fn !== "function") return () => {};
-      if (!listeners.has(type)) listeners.set(type, new Set());
-      listeners.get(type).add(fn);
-      return () => listeners.get(type)?.delete(fn);
-    },
-    /** 宿主内部使用：一次更新同时交给 skin.update 与 ctx.on 订阅者 */
-    push(patch) {
-      try {
-        host.skin?.update?.(ctx, patch);
-      } catch (err) {
-        console.warn(`[skins] ${host.mountedId} 处理 ${patch.type} 更新失败`, err);
-      }
-      for (const [type, set] of listeners) {
-        if (type !== patch.type && type !== "*") continue;
-        for (const fn of set) {
-          try {
-            fn(patch);
-          } catch (err) {
-            console.warn(`[skins] ${type} 订阅回调失败`, err);
-          }
-        }
-      }
-    },
-  };
-  return ctx;
+  });
+  return host.skinHost;
 }
 
+/** 运行环境快照（尺寸 / 主题 / 清晰度 / 前后台） */
+function skinEnvSnapshot() {
+  const rect = host.stage?.getBoundingClientRect?.() || { width: 0, height: 0 };
+  return {
+    themeId: document.documentElement.dataset.theme || "",
+    mode: document.documentElement.dataset.mode === "light" ? "light" : "dark",
+    width: Math.round(rect.width || 0),
+    height: Math.round(rect.height || 0),
+    dpr: Number(window.devicePixelRatio) || 1,
+    reducedMotion: Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches),
+    foreground: Boolean(state.playerOpen) && !host.view?.hidden,
+  };
+}
+
+/** 把补丁推给当前插件（宿主各处只调这一个出口） */
 function push(patch) {
-  host.ctx?.push(patch);
+  host.skinHost?.push(patch);
 }
 
 /* --------------------------------------------------------------------------
@@ -856,48 +950,21 @@ function mountSkin(id) {
   if (!skin) return;
   if (fellBack) console.warn(`[skins] 样式「${id}」不存在，已回退到「${skin.name}」`);
 
-  unmountSkin();
-
-  host.skin = skin;
-  host.mountedId = skin.id;
-  host.stage.innerHTML = "";
-  // data-skin 是给皮肤 CSS 用的作用域钩子（皮肤包里的选择器都写成 [data-skin="xxx"]）
-  host.view.dataset.skin = skin.id;
-  // data-theme 是「详情页色彩域」的开关（见 tokens.css 的同名一节）：
-  // 打了它，详情页里的色彩令牌就归皮肤说了算，声明了 data-surface-owner 的
-  // 浮层（播放队列等）也会跟着皮肤走；不打就什么都不会发生。
-  // 之所以由宿主写而不是皮肤自己写：它是宿主与皮肤之间的**约定**，不是皮肤的实现细节。
-  host.view.dataset.theme = skin.id;
-  // 这张样式自己会不会铺整窗背景。目前只有主题 CSS 读它：
-  // 「封面取色」主题要在**没有背景层**的样式（经典 / 简约）上补一层封面虚化图。
-  host.view.dataset.skinBackground = skin.background ? "yes" : "no";
-  document.getElementById("app")?.setAttribute("data-mode", skin.id);
-
-  // 皮肤 id 可能与请求的不一致（请求的样式被删了 → resolveSkin 回退）。
+  // 插件 id 可能与请求的不一致（请求的样式被删了 → resolveSkin 回退）。
   // 写回 state，这样 Lit 渲染出来的 data-skin / 按钮按下态与真正挂载的样式一致。
   state.pvMode = skin.id;
+  // .app 上的 data-mode = 当前样式 id：宿主 CSS 用它做「按能力让位」的钩子
+  // （详见 layout.css：整窗背景型样式下让标题栏/底栏半透明）。
+  // 注意它**只表达"谁在挂"**，不再表达任何具体样式的外观 —— 具体样式的外观
+  // 归插件自己的 CSS（而且插件的 CSS 在 @layer skin 里，改不到宿主壳）。
+  document.getElementById("app")?.setAttribute("data-mode", skin.id);
 
-  const ctx = makeCtx();
-  host.ctx = ctx;
-
-  try {
-    skin.mount(ctx);
-  } catch (err) {
-    console.error(`[skins] ${skin.id} 挂载失败`, err);
-    host.stage.innerHTML = `<div class="skin-error">样式「${esc(skin.name)}」加载失败：${esc(
-      err?.message ?? err
-    )}</div>`;
-    return;
-  }
-
-  // 色彩域跟着皮肤一起换：详情页内的通用组件与"属于播放界面"的浮层
-  // 都要立刻拿到新样式（浮层可能正开着，不能等它下次打开）
-  mirrorPlayerSurface();
-
-  // 挂载完成后立刻推一次全量快照：皮肤不需要自己再拉一遍数据
-  ctx.push({ type: "mount", ...mediaSnapshot(), ...playbackSnapshot(), options: optionsSnapshot() });
+  // 挂载 / 卸载 / 推送 / 配色全部交给共享运行时（见 skinhost.js）
+  ensureSkinHost().mount(skin);
+  // 壳层配色跟着插件一起换（详情页正开着时立刻生效）
+  host.skinHost.applyChrome(state.playerOpen && !host.view?.hidden);
   watchResize();
-  // 新皮肤（尤其带整窗背景层的）落下时统一从「关闭态」起步，
+  // 新样式（尤其带整窗背景层的）落下时统一从「关闭态」起步，
   // 由 renderPlayerView 翻到「打开态」触发一次滑入淡入 —— 换样式也一样流畅。
   setSkinBackground("closed");
 }
@@ -923,17 +990,9 @@ function setSkinBackground(state) {
 
 function unmountSkin() {
   if (!host.skin) return;
-  push({ type: "close" });
-  push({ type: "destroy" });
-  try {
-    host.skin.destroy?.(host.ctx);
-  } catch (err) {
-    console.warn(`[skins] ${host.mountedId} 卸载失败`, err);
-  }
-  host.stage.innerHTML = "";
-  host.skin = null;
-  host.ctx = null;
-  host.mountedId = null;
+  // 卸载（含 close/destroy 两次推送、插件 destroy、清 DOM 与订阅）
+  // 与"壳层配色回到主题"都在运行时里，这里只收尾宿主自己的东西。
+  host.skinHost?.unmount();
   if (host.resizeObserver) {
     host.resizeObserver.disconnect();
     host.resizeObserver = null;
@@ -1028,7 +1087,7 @@ export function nextCover() {
 /** 封面集合变化后立刻通知皮肤（封面面板保存完就调它，不必等下一帧） */
 export function notifyCoverChanged() {
   lastPushed.cover = null;
-  if (!host.ctx) return;
+  if (!host.skinHost) return;
   push({ type: "media", ...mediaSnapshot() });
 }
 
@@ -1070,94 +1129,24 @@ function pushOptions() {
 }
 
 /* ==========================================================================
-   详情页色彩域 → 浮动面板（把详情页的颜色投影给"属于播放界面"的浮层）
+   宿主壳配色（契约 v3）
    --------------------------------------------------------------------------
-   问题：播放队列 / 播放选项 / 定时停止 / 歌词工作台都是 #app 之外的 fixed 浮层
-   （见 ui/app.js 的模板），它们跟的是**主题**令牌。于是"深色皮肤 + 浅色主题"
-   时，一打开队列就是一块白玻璃压在深空舞台上 —— 这就是这次改造要解决的场景。
+   v2 的做法是：插件在 CSS 里声明 --pv-*，宿主把它们**整套投影**到
+   播放队列 / 选项 / 定时停止 / 歌词工作台这些浮层上（15 个令牌逐个抄），
+   于是宿主壳的颜色完全由插件决定 —— 插件给一套低对比度配色，宿主就只能跟着看不清。
 
-   做法：宿主把详情页那一块**已经解析好的**色彩令牌抄成 --pv-* 写进浮层的
-   行内样式，tokens.css 里的 [data-surface-owner="playerview"][data-theme]
-   再把它们接到 --text-1 / --glass-bg-strong 这些真正被消费的令牌上。
-
-   为什么由 JS 做而不是纯 CSS：浮层是 .playerview 的**兄弟**（排在 <mp-app>
-   之前），既没有祖先关系、兄弟选择器方向也是反的；而 :has() 的条件依赖
-   "详情页此刻是否打开"，会让打开/关闭详情页变成一次规则集重建。
-   改由宿主投影，两个问题都没有，而且"谁拥有色彩域"本来就只有宿主知道
-   （第三方皮肤是运行时加载的，CSS 说不出它"是谁"）。
-
-   时机很关键：**必须在浮层真的显示之前**写好，否则会先闪一下主题色再跳到
-   皮肤色；而浮层是 Lit 按需渲染出来的（面板关着时根本不重建 DOM），
-   所以"打开面板时"这个时点只有面板自己知道 —— 由 panels.js / lyrics.js
-   在打开前调 mirrorPlayerSurface()，而不是宿主去轮询 DOM。
+   v3 改成"插件声明、宿主决定"：
+     · 插件在 skin.json 里给出 colors.bg / colors.fg（或声明 colors.theme）；
+     · 宿主用 player-skins/colors.js 算出一小组 --chrome-*（对比度不足会纠正，
+       缺失就回落主题令牌），写在 #app 上；
+     · 宿主壳（标题栏 / 底栏 / 浮层）只消费 --chrome-*，不读插件任何变量。
+   细节见 skinhost.applyChrome 与 doc/42 第 5 节。
    ========================================================================== */
 
-/**
- * 投影用的令牌表。**这里与 tokens.css「投影用变量表」一节必须同时改**：
- * 左边是要抄的令牌、右边是浮层上的变量名，两边对不上时浮层会静默地不生效。
- */
-const SURFACE_VARS = [
-  ["--bg-app", "--pv-bg"],
-  ["--text-1", "--pv-text"],
-  ["--text-2", "--pv-text-2"],
-  ["--text-3", "--pv-text-3"],
-  ["--accent", "--pv-accent"],
-  // 五个表面层级一个都不能少：列表的**选中行**用的是 --surface-2 / --surface-3
-  // （见 overlay.css#.queue-item[aria-current] 与 tracktable.css），
-  // 只投影 1 / hover 的话，深色面板上的选中行会是一块主题的白底 ——
-  // 正是这次实测出来的"列表选择项颜色不对"。
-  ["--surface-1", "--pv-surface-1"],
-  ["--surface-2", "--pv-surface-2"],
-  ["--surface-3", "--pv-surface-3"],
-  ["--surface-hover", "--pv-surface-hover"],
-  ["--surface-active", "--pv-surface-active"],
-  ["--glass-bg-strong", "--pv-glass-strong"],
-  ["--glass-bg", "--pv-glass-weak"],
-  ["--glass-border", "--pv-glass-border"],
-  ["--divider", "--pv-divider"],
-  ["--border-2", "--pv-border-2"],
-];
-
-/**
- * 把详情页当前的色彩域投影到所有"属于播放界面"的浮层上。
- *
- * 幂等、可反复调用（面板每次打开前都会调一次）：值一样时只做一次比较，
- * 不产生样式写入，因此不会带来额外的样式重算。
- *
- * 详情页没打开 / 还没挂载样式时**清除**投影：让浮层干净地回到主题的色域，
- * 而不是留着上一次那个皮肤的颜色。
- *
- * @returns {boolean} 是否处于"跟随详情页"的状态（排障用）
- */
-export function mirrorPlayerSurface() {
-  const view = /** @type {HTMLElement|null} */ (host.view || $("#playerview"));
-  const themed = Boolean(view?.dataset.theme) && Boolean(state.playerOpen);
-  // querySelectorAll 的静态类型是 NodeListOf<Element>，而 Element 上没有
-  // .style / .dataset（它们在 HTMLElement 上）。这里选择器保证命中的都是元素，
-  // 但 tsc --checkJs 只认类型 —— 不收窄的话会报 TS2339（曾经让 npm run check 红掉）。
-  const panels = /** @type {NodeListOf<HTMLElement>} */ (
-    document.querySelectorAll('[data-surface-owner="playerview"]')
-  );
-  if (!themed) {
-    for (const panel of panels) {
-      for (const [, out] of SURFACE_VARS) panel.style.removeProperty(out);
-      panel.removeAttribute("data-theme");
-    }
-    return false;
-  }
-
-  // 从详情页上读一次就够：所有面板共用同一份值
-  const styles = getComputedStyle(view);
-  const values = SURFACE_VARS.map(([token, out]) => [out, styles.getPropertyValue(token).trim()]);
-
-  for (const panel of panels) {
-    for (const [out, value] of values) {
-      if (panel.style.getPropertyValue(out) !== value) panel.style.setProperty(out, value);
-    }
-    // data-theme 是 CSS 侧的开关（没有它，上面那些 --pv-* 不会被消费）
-    if (panel.dataset.theme !== view.dataset.theme) panel.dataset.theme = view.dataset.theme;
-  }
-  return true;
+/** 让宿主壳用/不用当前插件的配色（详情页开合时由 renderPlayerView 调用） */
+export function syncChromeColors() {
+  const on = Boolean(state.playerOpen) && Boolean(host.view?.dataset.theme);
+  return host.skinHost?.applyChrome(on) ?? false;
 }
 
 /* ==========================================================================
@@ -1183,8 +1172,8 @@ export async function renderPlayerView() {
   if (!open) {
     if (view.dataset.state !== "closed") {
       view.dataset.state = "closed";
-      // 详情页关掉 → 浮层回到主题的色域（mirrorPlayerSurface 在 !playerOpen 时清除投影）
-      mirrorPlayerSurface();
+      // 详情页关掉 → 宿主壳回到主题配色（不再跟随插件声明）
+      syncChromeColors();
       // 背景层跟着一起向下滑出淡出（它不在 .playerview 里，必须显式同步）
       setSkinBackground("closed");
       if (host.closeTimer) clearTimeout(host.closeTimer);
@@ -1227,7 +1216,7 @@ export async function renderPlayerView() {
     view.dataset.state = "opened";
     setSkinBackground("opened");
     // 详情页真正显示出来了 → 浮层此刻起跟随它的色彩域
-    mirrorPlayerSurface();
+    syncChromeColors();
   }
 
   if (!host.skin) return;
@@ -1428,14 +1417,27 @@ export function togglePlayer() {
  *
  * 只暴露「展示需要」的字段：皮肤对象里可能挂着内部状态/函数，
  * 直接交出去会让设置界面或者其它调用方有机会改到它。
+ *
+ * v3 新增三组字段，都是给样式卡片做"体检"用的：
+ *   · `iconUrl`       —— 插件自带图标（清单 icon.file）
+ *   · `colorsMissing` —— 清单里缺失/写错的配色键 → 卡片上打警告图标
+ *   · `chrome`        —— 宿主算好的壳层配色（色块预览 + 对比度自检结论）
  */
 export function availableSkins() {
   return listSkins().map((s) => ({
     id: s.id,
     name: s.name,
     icon: s.icon || "disc",
-    // 内置的来自包（builtin 未声明），运行时加载的会显式标 false
-    builtin: s.builtin !== false,
+    iconUrl: s.iconUrl || "",
+    // 内置的来自只读资源目录（随包分发），运行时加载的来自数据目录
+    builtin: s.builtin === true,
     source: s.source || "",
+    version: s.version || "",
+    author: s.author || "",
+    description: s.description || "",
+    colorsMissing: Array.isArray(s.colorsMissing) ? s.colorsMissing.slice() : [],
+    chrome: s.chrome || null,
+    background: s.background === true,
+    spectrum: s.spectrum || false,
   }));
 }
