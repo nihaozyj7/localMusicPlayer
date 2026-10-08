@@ -40,6 +40,17 @@ tasks:
     cmds:
       - task: "{{.GOOS}}:run"
 
+  dev:
+    summary: 开发模式（Vite HMR + 自动重编译 Go）
+    desc: |
+      必须走这个任务，不要直接 `wails3 dev`：
+      wails3 dev 的 Vite 端口默认是 9245，而 frontend/vite.config.js 里写死 5173，
+      两边对不上就会卡在 "Waiting for frontend dev server to start..."
+      然后 FATAL：unable to connect to frontend server。
+      这里显式把 VITE_PORT 传进去，保证两者一致。
+    cmds:
+      - wails3 dev -port {{.VITE_PORT}}
+
   dev:frontend:
     summary: 界面预览（浏览器）
     cmds:

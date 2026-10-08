@@ -7,34 +7,33 @@
    没有「谁负责更新哪个属性」的隐性分工。
    ========================================================================== */
 
-import { MpElement, define, html, nothing, icon } from "./base.js";
-import { backend, isWails } from "../bridge.js";
-import { commit, state } from "../store.js";
-import { getTheme, toggleTheme } from "../theme.js";
-import { toggleSettings } from "../shell.js";
-import { toggleSearchBox } from "../searchpanel.js";
-import { downloadsSnapshot, toggleDownloadPanel } from "../downloads.js";
-import { fmtCount } from "../utils.js";
+import { MpElement, define, html, nothing, icon } from "./base.js"
+import { backend, isWails } from "../bridge.js"
+import { commit, state } from "../store.js"
+import { getTheme, toggleTheme } from "../theme.js"
+import { toggleSettings } from "../shell.js"
+import { toggleSearchBox } from "../searchpanel.js"
+import { downloadsSnapshot, toggleDownloadPanel } from "../downloads.js"
+import { fmtCount } from "../utils.js"
 
 class MpTitlebar extends MpElement {
   static deps = () => {
-    const t = getTheme(state.config.theme);
-    const dark = t?.mode !== "light";
-    const d = downloadsSnapshot();
-    return [dark, state.config.themeMode, state.searchOpen, d.visible, d.badge];
+    const t = getTheme(state.config.theme)
+    const dark = t?.mode !== "light"
+    const d = downloadsSnapshot()
+    return [dark, state.config.themeMode, state.searchOpen, d.visible, d.badge]
   };
 
   render() {
-    const t = getTheme(state.config.theme);
-    const dark = t?.mode !== "light";
-    const d = downloadsSnapshot();
+    const t = getTheme(state.config.theme)
+    const dark = t?.mode !== "light"
+    const d = downloadsSnapshot()
     return html`
       <header class="titlebar" id="titlebar">
         <div class="titlebar__brand">
           <svg class="titlebar__logo"><use href="#i-music"></use></svg>
           <span>LMPlayer</span>
         </div>
-        <span class="titlebar__sep"></span>
         <div class="titlebar__drag"></div>
         <div class="titlebar__actions">
           <button
@@ -110,21 +109,21 @@ class MpTitlebar extends MpElement {
           </button>
         </div>
       </header>
-    `;
+    `
   }
 }
 
 function windowControl(what) {
   if (!isWails()) {
-    if (what === "close") window.close();
-    return;
+    if (what === "close") window.close()
+    return
   }
-  if (what === "min") backend.windowMinimize();
-  else if (what === "max") backend.windowToggleMaximize();
-  else backend.windowClose();
+  if (what === "min") backend.windowMinimize()
+  else if (what === "max") backend.windowToggleMaximize()
+  else backend.windowClose()
 }
 
-define("mp-titlebar", MpTitlebar);
+define("mp-titlebar", MpTitlebar)
 
 /** 便于自检脚本读取（保持与迁移前一致的标题栏信息） */
-export const _internals = { fmtCount, nothing, commit };
+export const _internals = { fmtCount, nothing, commit }

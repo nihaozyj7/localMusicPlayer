@@ -89,7 +89,16 @@ tasks:
       # 注意：.specs 文件里**不能写注释**（GCC 把每一行都当 spec 解析，
       # 写了会报 "specs file malformed"），所以说明放在这里。
       CGO_SPECS: '{{.ROOT_DIR}}/build/windows/cgo-nomanifest.specs'
-      BUILD_FLAGS: '{{if eq .DEV "true"}}{{if or .EXTRA_TAGS (eq .OBFUSCATED "true")}}-tags {{if eq .OBFUSCATED "true"}}wails_obfuscated{{if .EXTRA_TAGS}},{{end}}{{end}}{{.EXTRA_TAGS}} {{end}}-buildvcs=false -gcflags=all="-l"{{else}}-tags production{{if eq .OBFUSCATED "true"}},wails_obfuscated{{end}}{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}} -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui -extldflags=-specs={{.CGO_SPECS}}"{{end}}'
+      # DEV 分支同样必须带 -extldflags=-specs={{.CGO_SPECS}}：
+      #   .syso（wails3 generate syso 产出）与 MinGW 自动追加的 default-manifest.o
+      #   会撞在一起，报 ld.exe: .rsrc merge failure: multiple non-default manifests。
+      #   这个 specs 文件去掉 *endfile 里的 default-manifest 那段，是唯一的解法。
+      #   以前只有 production 分支带了它，于是 `wails3 dev`（DEV=true）根本链不出来 ——
+      #   链接失败后 stale 的 bin/lmplayer.exe 会被照旧启动，表现为
+      #   「连不上前端 dev server」这种完全不相干的报错，极难定位。
+      # 作为链接器参数，dev 下带上它没有任何副作用（不加 -s -w -H windowsgui，
+      #   保留调试信息与控制台，方便看日志）。
+      BUILD_FLAGS: '{{if eq .DEV "true"}}{{if or .EXTRA_TAGS (eq .OBFUSCATED "true")}}-tags {{if eq .OBFUSCATED "true"}}wails_obfuscated{{if .EXTRA_TAGS}},{{end}}{{end}}{{.EXTRA_TAGS}} {{end}}-buildvcs=false -gcflags=all="-l" -ldflags="-extldflags=-specs={{.CGO_SPECS}}"{{else}}-tags production{{if eq .OBFUSCATED "true"}},wails_obfuscated{{end}}{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}} -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui -extldflags=-specs={{.CGO_SPECS}}"{{end}}'
     env:
       GOOS: windows
       # 必须是 1：后端原生音频依赖 malgo（内含 miniaudio 的 C 源码），
