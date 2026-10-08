@@ -893,6 +893,18 @@ class MpSettingsLayer extends MpElement {
           hint: "打开后点关闭按钮只把窗口收进系统托盘（任务栏右下角），音乐照常播放；要真正退出请用托盘图标的右键菜单",
           control: switchControl("minimizeToTray", state.config.minimizeToTray, "关闭时最小化到托盘"),
         })}
+        ${settingRow({
+          label: "记忆窗口位置与大小",
+          hint: "退出时记住主窗口的位置、尺寸和最大化状态，下次打开回到原处。换显示器或改分辨率后如果窗口跑到屏幕外，会自动回到居中默认大小；也可以在这里手动重置",
+          control: html`<button
+            class="btn btn--ghost btn--sm"
+            type="button"
+            data-act="reset-main-window-geometry"
+            data-tip="把主窗口移回屏幕中央并恢复默认大小"
+          >
+            重置窗口位置
+          </button>`,
+        })}
       </div>
     </section>`;
   }

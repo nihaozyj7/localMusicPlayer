@@ -220,6 +220,27 @@ type Config struct {
 	// 而 0 是常见位置），不能拿 0 当哨兵值。
 	DesktopLyricsX int `json:"desktopLyricsX"`
 	DesktopLyricsY int `json:"desktopLyricsY"`
+
+	// MainWindowX / MainWindowY / MainWindowW / MainWindowH 主窗口**上次摆在哪儿、
+	// 多大**（DIP 逻辑像素，与窗口 Position()/Size() 同一坐标系）。
+	//
+	// 为什么必须记：主窗口是无边框自绘的（Frameless），标题栏上的「最大化 / 还原」
+	// 走的是我们自己的按钮而不是系统菜单，窗口自己不会记住任何几何信息 ——
+	// 不落盘的话每次启动都是「1280×820 居中」，用户每回都要重新摆一次。
+	//
+	// 位置与尺寸分开判断「存过没有」：W/H 用 0 当哨兵是安全的（0 宽窗口没有意义），
+	// 而 X/Y 必须用 -1（0 是合法坐标，副屏在主屏左侧时 X 甚至为负，
+	// 理由与 DesktopLyricsNoPos 完全相同）。
+	MainWindowX int `json:"mainWindowX"`
+	MainWindowY int `json:"mainWindowY"`
+	MainWindowW int `json:"mainWindowW"`
+	MainWindowH int `json:"mainWindowH"`
+	// MainWindowMaximized 上次退出时主窗口是不是最大化状态。
+	//
+	// 单独存一个布尔而不是把最大化后的尺寸写进 W/H：最大化时窗口尺寸由系统按
+	// 当前显示器算，把它写进 W/H 会让「最大化退出 → 还原」回到一个占满屏幕的
+	// 「普通」窗口，用户再点还原就回不到真正想要的大小了。
+	MainWindowMaximized bool `json:"mainWindowMaximized"`
 	// ShowDesktopWallpaper 是否显示桌面背景歌词（铺满桌面、压在桌面图标之下的
 	// 壁纸层窗口，见 desktop_wallpaper.go）。
 	//
@@ -456,9 +477,17 @@ func DefaultConfig() *Config {
 		RememberVolume: true,
 		ListDensity:    "cozy",
 
-		ShowDesktopLyrics:    false,
-		DesktopLyricsX:       DesktopLyricsNoPos,
-		DesktopLyricsY:       DesktopLyricsNoPos,
+		ShowDesktopLyrics: false,
+		DesktopLyricsX:    DesktopLyricsNoPos,
+		DesktopLyricsY:    DesktopLyricsNoPos,
+		// 主窗口几何：全部为「没存过」，首次启动走 main.go 里写死的默认尺寸 + 居中。
+		// 不做「首次启动就按主屏算一个尺寸」这种「聪明」处理 —— 那和 Wails 的
+		// WindowCentered 行为不一致，反而会让首次启动的观感和以前不同。
+		MainWindowX:          MainWindowNoPos,
+		MainWindowY:          MainWindowNoPos,
+		MainWindowW:          0,
+		MainWindowH:          0,
+		MainWindowMaximized:  false,
 		ShowDesktopWallpaper: false,
 		// 默认开启：与加入这个开关之前的行为一致（上次开着的话，启动时自动恢复）。
 		// 关掉它之后，本次仍可手动打开背景歌词，只是重启后不再自动出现。
@@ -1189,6 +1218,65 @@ func (s *Store) SetDesktopLyricsPos(x, y int) error {
 	return s.Update(func(c *Config) {
 		c.DesktopLyricsX = x
 		c.DesktopLyricsY = y
+	})
+}
+
+// MainWindowNoPos 表示「主窗口还没有位置存档」（理由同 DesktopLyricsNoPos）。
+const MainWindowNoPos = -1
+
+// MainWindowGeometry 返回主窗口的几何存档。
+//
+// okPos=false 表示位置没存过（首次启动 → 交给 Wails 居中）；
+// okSize=false 表示尺寸没存过（首次启动 → 用 main.go 里的默认值）。
+//
+// 位置和尺寸分开返回，是因为两者可能只存下来一半：比如某个平台没发出 resize
+// 事件、或者用户只用过最大化。合成一个 ok 会让「有位置没尺寸」这种情况整个
+// 退回默认，白白丢掉已经记下来的位置。
+func (s *Store) MainWindowGeometry() (x, y, w, h int, okPos, okSize, maximized bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	x, y = s.cfg.MainWindowX, s.cfg.MainWindowY
+	w, h = s.cfg.MainWindowW, s.cfg.MainWindowH
+	okPos = !(x == MainWindowNoPos && y == MainWindowNoPos)
+	okSize = w > 0 && h > 0
+	maximized = s.cfg.MainWindowMaximized
+	return x, y, w, h, okPos, okSize, maximized
+}
+
+// SetMainWindowGeometry 记住主窗口的位置与尺寸。
+//
+// x/y 传 MainWindowNoPos 表示「这次不要更新位置」（例如只想知道尺寸变了），
+// w/h 传 0 表示「不要更新尺寸」—— 这样两条事件路径可以只写自己关心的那部分，
+// 不必互相覆盖。
+func (s *Store) SetMainWindowGeometry(x, y, w, h int) error {
+	return s.Update(func(c *Config) {
+		if !(x == MainWindowNoPos && y == MainWindowNoPos) {
+			c.MainWindowX = x
+			c.MainWindowY = y
+		}
+		if w > 0 && h > 0 {
+			c.MainWindowW = w
+			c.MainWindowH = h
+		}
+	})
+}
+
+// SetMainWindowMaximized 记住主窗口当前是不是最大化。
+func (s *Store) SetMainWindowMaximized(on bool) error {
+	return s.Update(func(c *Config) { c.MainWindowMaximized = on })
+}
+
+// ResetMainWindowGeometry 清掉主窗口几何存档（回默认尺寸 + 居中）。
+//
+// 与桌面歌词的「重置位置」同一用途：换显示器 / 改分辨率之后存档可能落在
+// 屏幕外，给用户一个不用删配置文件的出口。
+func (s *Store) ResetMainWindowGeometry() error {
+	return s.Update(func(c *Config) {
+		c.MainWindowX = MainWindowNoPos
+		c.MainWindowY = MainWindowNoPos
+		c.MainWindowW = 0
+		c.MainWindowH = 0
+		c.MainWindowMaximized = false
 	})
 }
 

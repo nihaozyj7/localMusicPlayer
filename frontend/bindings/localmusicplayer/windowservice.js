@@ -212,6 +212,18 @@ export function ResetDesktopLyricsPosition() {
 }
 
 /**
+ * ResetMainWindowGeometry 清掉主窗口几何存档，并立刻把窗口摆回默认。
+ * 
+ * 给设置界面一个出口：换显示器 / 改分辨率之后如果存档落在别扭的地方，
+ * 用户可以一键回到默认（而不是去删配置文件）。与桌面歌词的
+ * ResetDesktopLyricsPosition 是同一个设计。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function ResetMainWindowGeometry() {
+    return $Call.ByID(986324021);
+}
+
+/**
  * SetDesktopLyrics 打开/关闭桌面歌词窗口。
  * 
  * 由底栏「桌面歌词」按钮与设置里的同名开关调用。

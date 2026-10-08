@@ -1458,6 +1458,35 @@ type WindowService struct {
 	// （见 desktop_lyrics.go#scheduleDesktopLyricsPosSave）。
 	posSaveTimer *time.Timer
 	posSaveSeq   uint64
+
+	// —— 主窗口位置 / 尺寸记忆（见 main_window_geometry.go）——
+	//
+	// 与上面桌面歌词那组是**两套独立的**去抖状态：主窗口的几何变化远比
+	// 桌面歌词频繁（拖动 + 缩放 + 最大化），共用一个定时器会让两边的存档
+	// 互相打断。
+	mainGeomMu      sync.Mutex
+	mainGeomTimer   *time.Timer
+	mainGeomSeq     uint64
+	mainGeomMoved   bool
+	mainGeomResized bool
+	// mainGeomUserTouched 记录「这次运行中用户是否自己动过窗口」。
+	//
+	// 用在最大化恢复上（见 restoreMainWindowMaximizedWhenReady）：恢复要等
+	// 窗口显示出来，而这几百毫秒里用户可能已经拖了一下窗口 —— 那时再把它
+	// 最大化就是在跟用户抢控制权，看着像 bug。动过就放弃恢复。
+	mainGeomUserTouched atomic.Bool
+	// mainGeomSelfMove 标记「当前这次移动/缩放是程序自己发起的」。
+	//
+	// ensureMainWindowOnScreen / ResetMainWindowGeometry 会主动调
+	// SetPosition/SetSize，那同样触发 WindowDidMove，不加标记就会被
+	// noteGeometryTouched 误记成「用户动过窗口」。
+	mainGeomSelfMove atomic.Bool
+	// mainGeomTrackingReady 标记「启动序列已经结束，之后的移动才算用户操作」。
+	//
+	// 启动阶段 Wails 与我们自己都会摆放窗口（首次定位、遮罩显示、补外框），
+	// 那些 WindowDidMove 不是用户操作，不该让「用户动过窗口就别抢控制权」
+	// 的判断成立 —— 否则最大化状态永远恢复不了（见 noteGeometryTouched）。
+	mainGeomTrackingReady atomic.Bool
 	// desktopTouched 记录「用户/前端是否已经自己操作过桌面歌词开关」。
 	//
 	// 启动恢复（early_theme.go#restoreDesktopLyricsOnStartup）在超时兜底那条

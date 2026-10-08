@@ -330,6 +330,11 @@ const backendImpl = {
   //   绑定层 windowservice.js 都实现了它，只有这里没接线，于是设置里那个
   //   「重置位置」按钮 100% 报「重置失败：... is not a function」。
   desktopLyricsResetPos: () => call(bindings?.Window?.ResetDesktopLyricsPosition),
+  // 主窗口位置 / 尺寸记忆的出口（见 main_window_geometry.go）。
+  // 与上面那个是同一个用途、不同的窗口：换显示器后存档可能落在屏幕外，
+  // 给用户一个「回到默认」的按钮。注意别漏掉这层接线 ——
+  // ResetDesktopLyricsPosition 当年就漏过一次（见上面那条注释）。
+  mainWindowResetGeometry: () => call(bindings?.Window?.ResetMainWindowGeometry),
   // 桌面背景歌词：铺满桌面、垫在桌面图标之下的窗口（见 desktop_wallpaper.go）。
   // 与桌面歌词是单选 —— 互斥在后端由 SetDesktopLyrics / SetDesktopWallpaper
   // 共用同一个入口保证，前端 desktop-mode.js 也做一遍。

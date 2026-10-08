@@ -477,11 +477,19 @@ func main() {
 		}()
 	}
 
+	// 主窗口几何：优先用上次退出时的位置 / 尺寸 / 最大化状态，
+	// 没有存档（首次启动）或存档不可用（跑到屏幕外了）时用默认值 + Wails 居中。
+	//
+	// 校验放在 mainWindowSavedGeometry 里：位置要至少三分之一面积落在某块屏幕内
+	// （复用桌面歌词那套 rectVisibleEnough），尺寸要落在 MinWidth..上限之间。
+	// 直接信任存档会让「换显示器后窗口启动了但看不见」，比不记忆更糟。
+	savedX, savedY, savedW, savedH, okPos, okSize, savedMax := state.windowSvc.mainWindowSavedGeometry()
+
 	winOpts := application.WebviewWindowOptions{
 		Name:      "main",
 		Title:     "LMPlayer",
-		Width:     1280,
-		Height:    820,
+		Width:     mainWindowDefaultWidth,
+		Height:    mainWindowDefaultHeight,
 		MinWidth:  1000,
 		MinHeight: 680,
 		Frameless: true,
@@ -501,7 +509,25 @@ func main() {
 		// 挪到用户看不见的地方（见 services.go#showPrepared）。
 		Hidden: true,
 	}
+	if okSize {
+		winOpts.Width, winOpts.Height = savedW, savedH
+	}
+	if okPos {
+		// 默认是 WindowCentered，会忽略 X/Y；自己摆位置必须显式写 WindowXY
+		// （与桌面歌词窗口同一个坑，见 desktop_lyrics.go#desktopLyricsOptions）。
+		winOpts.InitialPosition = application.WindowXY
+		winOpts.X, winOpts.Y = savedX, savedY
+	}
 	state.window = app.Window.NewWithOptions(winOpts)
+
+	// 记下「上次退出时是不是最大化」：窗口实现要等 Wails 自己的 goroutine
+	// 把它建出来（NewWithOptions 返回时原生窗口还不存在，此刻 Maximise() 是
+	// 空操作，理由同下面 applyWindowIconWithRetry 的注释），所以推迟到
+	// 窗口真的显示出来之后再最大化 —— 太早调用会丢。
+	go state.windowSvc.restoreMainWindowMaximizedWhenReady(savedMax)
+
+	// 移动 / 缩放 / 最大化时把几何写进配置（见 main_window_geometry.go）
+	state.windowSvc.attachMainWindowGeometryTracking(state.window)
 
 	// 把应用图标装到窗口上（任务栏 + 音量合成器都用它）。
 	//

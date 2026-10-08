@@ -901,6 +901,27 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       return;
     }
 
+    /* 主窗口位置/尺寸记忆的出口：与桌面歌词那个同一个用途。
+       正常情况下不需要它 —— 换显示器之后存档若跑到屏幕外，后端会自己回默认；
+       但「用户就是想把窗口挪回屏幕中央」这种情况只有手动按钮能解决。 */
+    case "reset-main-window-geometry": {
+      if (!isWails()) {
+        toast("浏览器预览模式下没有独立窗口", { duration: 2200 });
+        return;
+      }
+      try {
+        const res = await backend.mainWindowResetGeometry();
+        if (res && res.ok === false) {
+          toast(`重置失败：${res.reason || "未知原因"}`, { tone: "error", duration: 5000 });
+        } else {
+          toast("窗口已移回屏幕中央并恢复默认大小", { tone: "success", duration: 2400 });
+        }
+      } catch (err) {
+        toast(`重置失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
+      }
+      return;
+    }
+
     /* AI 配置文本框（change 事件触发，即失焦时写入） */
     case "ai-field": {
       const key = actEl.dataset.key;
