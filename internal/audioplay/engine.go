@@ -484,6 +484,51 @@ func (e *Engine) CancelTrackGap() {
 	}
 }
 
+// PrepareSwitch 立刻让引擎安静下来，为「马上就来的另一首歌」让路。
+//
+// ★ 为什么必须有它（真实报障：切歌时上一首还会继续播放一会儿）
+//
+// 上层切歌的时序是这样的：
+//
+//	playerLoad(B) → resolve(B)       ← 这里可能要跑一次 ffmpeg 转码，**一秒以上**
+//	              → engine.Load(B)   ← 到这一步音频才真的换掉
+//
+// 在整个 resolve 期间，引擎里装的还是 A：环形缓冲里积压的 PCM（最多 3 秒）
+// 加上已经交给声卡的那几个缓冲，会一直被放出来。用户听到的就是
+// 「点了下一首，A 还接着唱了一秒多」。
+//
+// 光靠 engine.Load 里的 ring.reset() 是救不了的 —— 那是 Load **之后**才发生，
+// 而问题恰恰出在 Load **之前**那段等待。所以需要这个「先静音、后装载」的中间态：
+//
+//	playerCancelGap() → PrepareSwitch()  ← 立刻安静（几微秒）
+//	playerLoad(B)     → resolve(B)       ← 这一秒里用户听到的是**静音**，不是 A
+//	                  → engine.Load(B)   ← 新歌从第一个样本开始出声
+//
+// 为什么不是「暂停」：暂停会把用户意图也一起改掉（后端 playing=false），
+// 而用户并没有要暂停，他只是要换一首。这里只丢弃「将要出声的旧数据」，
+// 播放意图保持原样，所以新歌装载完成后不需要再被谁「唤醒」。
+//
+// 代价是 A→B 之间有一段几十毫秒到一秒多的**静音**，长度取决于 resolve 要多快。
+// 这是刻意的取舍：切歌时听到一小段安静，远好过听到上一首还在唱。
+func (e *Engine) PrepareSwitch() {
+	e.mu.Lock()
+	// 丢掉缓冲里还没放出来的旧歌数据，并让 feeder 停下 ——
+	// 不停的话它会在我们等待 resolve 的这段时间里继续把旧文件灌进缓冲。
+	e.stopFeedLocked()
+	// reset 之后缓冲为空且没有生产者。音频回调走的顺序是：
+	//   gap 判定（已在 CancelTrackGap / Load 里取消）→ playingNow() → ring.read()
+	// 缓冲空 → frames == 0，再读 ring.state()：
+	//   closed=true  → markEOF()（把 playing 置 false，上层可能据此自动跳歌）
+	//   closed=false → 直接 return（输出静音，什么都不做）
+	//
+	// 这里**必须**让它走 closed=false 那一支：我们只是想安静一下，不想
+	// 让引擎报「这首歌播完了」。Ring.reset() 把 closed 清成 false（见它的实现），
+	// 这里再显式置一次，免得以后 reset 的语义变了而没人发现。
+	e.ring.reset()
+	e.ring.setClosed(false)
+	e.mu.Unlock()
+}
+
 // Open 打开声卡。返回错误表示设备不可用 —— 上层应当据此回退到前端播放。
 func (e *Engine) Open() error {
 	e.mu.Lock()

@@ -301,6 +301,29 @@ func (s *PlayerService) Load(songID string) (map[string]any, error) {
 		return nil, fmt.Errorf("歌曲 id 为空")
 	}
 
+	// ★★★ 先让引擎安静，再去解析 —— 顺序不能反。
+	//
+	// resolve 可能要跑一次 ffmpeg 转码（实测未命中缓存时 0.8~1.2 秒，
+	// 见下面的实测数字）。在那整段时间里，引擎里装的还是**上一首**：
+	// 环形缓冲里积压的 PCM（最多 3 秒）加上已经交给声卡的缓冲，会一直被
+	// 放出来 —— 用户听到的就是「点了下一首，上一首还接着唱一秒多」。
+	//
+	// 而 engine.Load 里的 ring.reset() 是救不了这个的：它发生在 resolve
+	// **之后**，问题恰恰出在 resolve 这段等待里。所以这里先调 PrepareSwitch
+	// 把它静音掉（丢缓冲 + 停 feeder，几微秒），用户在这一秒里听到的是
+	// **静音**，而不是上一首的尾巴。
+	//
+	// 实测（tools/probe-switch-cost.mjs，未命中转码缓存时 Load 的耗时）：
+	//
+	//	踏浪                                    842ms
+	//	宅女disco                              1148ms
+	//	宝石Gem本尊发布！《野狼Disco》MV来了！…  1165ms
+	//
+	// 立刻静音是刻意的取舍：切歌时听到一小段安静，远好过听到上一首还在唱。
+	if s.engine != nil {
+		s.engine.PrepareSwitch()
+	}
+
 	// 解析放在锁外：转码可能耗时数秒，不能卡住其他调用（比如 Stop）
 	//
 	// ★ resolve 内部会顺手把「转码时算好的首尾静音」喂进 audioplay 的缓存

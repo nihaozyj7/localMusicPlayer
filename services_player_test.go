@@ -1727,3 +1727,159 @@ func TestPlayerServiceCancelTrackGapRPC(t *testing.T) {
 		t.Fatal("CancelTrackGap 之后间隔仍然挂着")
 	}
 }
+
+/* --------------------------------------------------------------------------
+   13. 切歌必须**立刻**让上一首安静下来（真实报障）
+   --------------------------------------------------------------------------
+   用户的原话：「a 切 b，a 还会播放一会儿」「如果是单纯切换一次实际上还行，
+   但是用户可能短时间切换多次，这种切换了还要延迟播放一段时间的做法很不对」。
+
+   实测根因（tools/probe-switch-cost.mjs 量出来的真实数字）：
+
+     PlayerService.Load 的第一步是 resolve，而 resolve 可能要跑一次 ffmpeg
+     转码。未命中转码缓存时实测：
+
+         踏浪                                    842ms
+         宅女disco                              1148ms
+         宝石Gem本尊发布！《野狼Disco》MV来了！  1165ms
+
+     在这 0.8~1.2 秒里，引擎里装的还是**上一首**：环形缓冲里积压的 PCM
+     （最多 3 秒）+ 已经交给声卡的缓冲，会一直被放出来。用户听到的就是
+     「点了下一首，上一首还接着唱一秒多」。
+
+     而 Engine.Load 里的 ring.reset() 发生在 resolve **之后** ——
+     恰恰救不了 resolve 这段等待。
+
+   修法：Load 一进门（**早于** resolve）就调 Engine.PrepareSwitch()，
+   丢掉缓冲并停掉 feeder，让这一秒里用户听到的是**静音**而不是上一首。
+
+   这组用例锁住的核心不变量：
+     · PrepareSwitch 之后，缓冲必须立刻为空（那正是「即将出声的旧数据」）；
+     · 它**不能**改变播放意图（不能顺手把 playing 置 false —— 用户没要暂停）；
+     · 它**不能**让引擎误报「播完了」（否则会触发一次自动切歌）。
+   -------------------------------------------------------------------------- */
+
+// TestEnginePrepareSwitchDropsBuffer 立刻丢掉缓冲里还没放出来的旧数据。
+func TestEnginePrepareSwitchDropsBuffer(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "prepare.wav")
+	writeServiceTestWAV(t, wav, 3.0)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 3000)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, false, false, 0)
+
+	if _, err := svc.Load("song-prepare"); err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	svc.Play()
+
+	// 等缓冲灌满（feeder 很快，几毫秒就够）
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if svc.engine.Buffered() > 100 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := svc.engine.Buffered(); got <= 100 {
+		t.Fatalf("缓冲没有灌起来（%dms），用例前提不成立", got)
+	}
+	beforePlaying := svc.engine.Playing()
+
+	svc.engine.PrepareSwitch()
+
+	if got := svc.engine.Buffered(); got != 0 {
+		t.Errorf("PrepareSwitch 之后缓冲应当立刻为空，实际还有 %dms —— "+
+			"这些就是要被继续放出来的上一首", got)
+	}
+	// ★ 不能顺手暂停：用户点的是「下一首」，不是「暂停」。
+	// 若这里变成 false，新歌装载完成后就没人再唤醒它了（表现为切完歌是静止的）。
+	if svc.engine.Playing() != beforePlaying {
+		t.Errorf("PrepareSwitch 不该改变播放意图：playing %v → %v",
+			beforePlaying, svc.engine.Playing())
+	}
+	// ★ 不能误报播完：那会让上层收到一次自动切歌，用户就少听一首。
+	if svc.engine.EOF() {
+		t.Error("PrepareSwitch 不该把引擎标成「已播完」——那会触发一次多余的自动切歌")
+	}
+}
+
+// TestPlayerServiceSwitchSilencesImmediately Load 必须在 resolve **之前**
+// 就让上一首安静，而不是等 resolve 跑完。
+//
+// 抓法：用一个故意很慢的 resolve 模拟「未命中转码缓存」的那一秒，
+// 在 Load 返回**之前**检查缓冲是否已经空了。修复前这里是满的。
+func TestPlayerServiceSwitchSilencesImmediately(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "slow-resolve.wav")
+	writeServiceTestWAV(t, wav, 3.0)
+
+	svc := NewPlayerService(func(songID string) (string, int64, error) {
+		// ★ 模拟转码：一次缓慢的 resolve
+		time.Sleep(600 * time.Millisecond)
+		return wav, 3000, nil
+	})
+	em := &fakeEmitter{}
+	svc.setApp(em)
+	if !svc.Start() {
+		t.Skip("本机没有可用的音频设备，跳过 PlayerService 端到端测试")
+	}
+	defer func() {
+		svc.Stop()
+		time.Sleep(80 * time.Millisecond)
+		cleanupDir(dir)
+	}()
+
+	if _, err := svc.Load("song-slow-1"); err != nil {
+		t.Fatalf("首次 Load 失败: %v", err)
+	}
+	svc.Play()
+
+	// 等缓冲灌满
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if svc.engine.Buffered() > 100 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := svc.engine.Buffered(); got <= 100 {
+		t.Fatalf("缓冲没有灌起来（%dms），用例前提不成立", got)
+	}
+
+	// 切歌：Load 会在 resolve 里卡 600ms。在这期间采样缓冲。
+	done := make(chan struct{})
+	go func() {
+		_, _ = svc.Load("song-slow-2")
+		close(done)
+	}()
+
+	// 在 resolve 还在跑的时候看一眼：缓冲必须已经空了
+	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-done:
+		t.Log("Load 比预期快，采样时机不理想（不影响结论）")
+	default:
+	}
+	if got := svc.engine.Buffered(); got > 100 {
+		t.Errorf("Load 期间缓冲还有 %dms —— 这就是「上一首还在唱」的来源。"+
+			"PrepareSwitch 必须在 resolve **之前**调用", got)
+	}
+
+	<-done
+	// 等新歌的 feeder 把缓冲重新灌起来（装载完成后 feeder 是重启过的）
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if svc.engine.Buffered() > 100 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := svc.engine.Buffered(); got <= 100 {
+		t.Errorf("切歌完成后新歌的缓冲应当重新灌起来，实际只有 %dms（playing=%v）",
+			got, svc.engine.Playing())
+	}
+}
