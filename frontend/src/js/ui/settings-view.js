@@ -77,27 +77,81 @@ import { LYRIC_SIZE_MAX, LYRIC_SIZE_MIN } from "./lyric-size.js";
 /* --------------------------------------------------------------------------
    设置分区
    --------------------------------------------------------------------------
-   大类只用于左侧导航；每个大类下面是一张或多张卡片，卡片就是「小组」。
+   大类只用于导航条；每个大类下面是一张或多张卡片，卡片就是「小组」。
+
+   分类原则是**按「用户想干的事」切**，而不是按「数据存在哪儿」切。
+   原来的 7 个分类里，「关于」一个就挂了 6 张卡片（版本更新、技术栈、
+   开源依赖、开源协议、参考与致谢），而「数据」「AI」「其他」各自只有
+   1 张 —— 导航条上占着位置却解决不了任何问题，点「关于」还得自己往下翻。
+
+   拆细后一个分类最多挂 4 张卡片。要再往里加卡片时，先想想是不是该
+   再拆一个分类出来（frontend/tests/settings-sections.test.js 会把
+   单分类超过 4 张卡片判为失败，提醒你别让导航重新变得难找）。
+
    归类原则：
-     · 曲库    —— 管「有哪些歌」：音乐文件夹 + 过滤规则；
-     · 外观    —— 管「长什么样」：主题、列表密度与专辑列、界面动画、
-                  播放界面样式（皮肤）；
-     · 播放器  —— 管「怎么播 / 听起来怎么样 / 歌词怎么显示」：播放行为、
-                  歌词、响度均衡；
-     · 数据    —— 管「联网与本地数据」：下载位置、封面来源、缓存与写标签；
-     · AI      —— 所有 AI 能力；
-     · 其他    —— 窗口与系统集成：圆角、关闭行为；
-     · 关于    —— 版本、技术栈、开源依赖与协议、参考与致谢。
+     · 曲库      —— 管「有哪些歌」：音乐文件夹 + 过滤规则；
+     · 播放      —— 管「怎么播」：播放模式、单击行为、静音跳过、切歌间隔；
+     · 歌词      —— 管「歌词怎么显示」：来源优先级、桌面歌词、字号与行数；
+     · 音质      —— 管「听起来怎么样」：响度均衡；
+     · 外观      —— 管「长什么样」：主题、毛玻璃、动画、播放界面样式（皮肤）；
+     · 歌曲列表  —— 管「列表长什么样」：专辑列与列表密度。
+                    刻意与「外观」分开：它们只影响列表，跟主题/皮肤无关，
+                    混在外观里用户翻不到；
+     · 下载与缓存 —— 联网取歌与本地数据：下载位置、封面来源、缓存与写标签；
+     · AI        —— 所有 AI 能力；
+     · 系统      —— 窗口与系统集成：圆角、关闭行为、窗口位置记忆；
+     · 关于      —— 常看的应用信息：版本与更新；
+     · 许可与致谢 —— 资料性内容：技术栈、开源依赖、开源协议、参考与致谢。
+                    与「关于」分开：这些是查得到就好的资料，不该跟
+                    「有没有新版本」抢同一个入口。
+
+   顺序即导航条顺序，也是设置页里卡片从上到下的顺序（卡片顺序由
+   render() 里的调用顺序决定 —— 那才是真正的排版顺序）。
    -------------------------------------------------------------------------- */
 export const SECTIONS = [
   { id: "library", label: "曲库" },
+  { id: "playback", label: "播放" },
+  { id: "lyrics", label: "歌词" },
+  { id: "audio", label: "音质" },
   { id: "appearance", label: "外观" },
-  { id: "player", label: "播放器" },
-  { id: "data", label: "数据" },
+  { id: "list", label: "歌曲列表" },
+  { id: "data", label: "下载与缓存" },
   { id: "ai", label: "AI" },
-  { id: "other", label: "其他" },
+  { id: "system", label: "系统" },
   { id: "about", label: "关于" },
+  { id: "legal", label: "许可与致谢" },
 ];
+
+/**
+ * 卡片 → 分区 的映射。
+ *
+ * 单独抽出来有两个作用：
+ *   1. 让「卡片属于哪个分类」一眼可见，不必到每张卡片的模板里找；
+ *   2. 测试可以据此断言「每个分类都至少有一张卡片」「卡片的分区都存在」
+ *      「同一分类的卡片在页面里是连续的一段」，避免以后加卡片时漏改
+ *      data-section —— 那会让卡片在导航里"消失"，或让滚动高亮乱跳。
+ *
+ * 键是卡片自身的 id（模板上的 id="sec-xxx"），值是分区 id。
+ */
+export const CARD_SECTIONS = {
+  "sec-folders": "library",
+  "sec-filters": "library",
+  "sec-playback": "playback",
+  "sec-lyrics": "lyrics",
+  "sec-loudness": "audio",
+  "sec-appearance": "appearance",
+  "sec-player": "appearance",
+  "sec-list": "list",
+  "sec-online": "data",
+  "sec-ai": "ai",
+  "sec-system": "system",
+  "sec-update": "about",
+  "sec-about": "about",
+  "sec-tech": "legal",
+  "sec-libs": "legal",
+  "sec-license": "legal",
+  "sec-credits": "legal",
+};
 
 /** 响度均衡的目标响度档位 */
 const LOUDNESS_TARGETS = [
@@ -434,11 +488,20 @@ class MpSettingsLayer extends MpElement {
                     </button>`
                 )}
               </div>
-              ${this.foldersCard()} ${this.rulesCard()} ${this.themeCard()} ${this.playerCard()}
-              ${this.playbackCard()} ${this.lyricsCard()} ${this.loudnessCard()}
-              ${this.onlineCard()} ${this.aiCard()}
-              ${this.systemCard()} ${this.aboutCard()} ${this.updateCard()} ${this.techCard()}
-              ${this.libsCard()} ${this.licenseCard()} ${this.creditsCard()}
+              <!--
+                卡片顺序 = 导航条顺序（SECTIONS 的顺序），同一分类的卡片必须连成一段。
+                navFollow() 是按文档顺序取 [data-section] 算高亮的，所以顺序不能随意调：
+                某个分类的卡片被别的分类夹断，滚到后一段时高亮就会跳回去。
+
+                分类内部按「常用的靠前」排：
+                  · 外观 —— 主题（常换）在前，播放界面样式（装完基本不动）在后；
+                  · 关于 —— 版本更新在前，应用信息（看过一次就够）在后。
+              -->
+              ${this.foldersCard()} ${this.rulesCard()} ${this.playbackCard()} ${this.lyricsCard()}
+              ${this.loudnessCard()} ${this.themeCard()} ${this.playerCard()} ${this.listCard()}
+              ${this.onlineCard()} ${this.aiCard()} ${this.systemCard()} ${this.updateCard()}
+              ${this.aboutCard()} ${this.techCard()} ${this.libsCard()} ${this.licenseCard()}
+              ${this.creditsCard()}
             </div>
           </div>
         </div>
@@ -853,6 +916,27 @@ class MpSettingsLayer extends MpElement {
           hint: "从当前封面提取主色调，作为界面主题色",
           control: switchControl("accentFromCover", state.config.accentFromCover, "主题色跟随封面"),
         })}
+      </div>
+    </section>`;
+  }
+
+  /* ------------------------------------------------------------------------
+     歌曲列表
+     ------------------------------------------------------------------------
+     「显示专辑列」「列表密度」原来挂在外观卡片里。它们管的是「列表长什么样」，
+     跟主题、皮肤、毛玻璃没有关系 —— 想调列表的人不会去「外观」里找，
+     所以拆成独立卡片与独立分类。
+     ------------------------------------------------------------------------ */
+  listCard() {
+    return html` <section class="card" id="sec-list" data-section="list">
+      <div class="card__head">
+        <div class="card__icon">${icon("density")}</div>
+        <div class="card__titles">
+          <div class="card__title">歌曲列表</div>
+          <div class="card__desc">列表显示哪些列、每行多高</div>
+        </div>
+      </div>
+      <div class="card__body">
         ${settingRow({
           label: "显示专辑列",
           hint: "窄窗口下会自动隐藏该列",
@@ -874,7 +958,7 @@ class MpSettingsLayer extends MpElement {
      关闭行为，两者都由系统立刻生效，不需要重启。
      ------------------------------------------------------------------------ */
   systemCard() {
-    return html` <section class="card" id="sec-system" data-section="other">
+    return html` <section class="card" id="sec-system" data-section="system">
       <div class="card__head">
         <div class="card__icon">${icon("options")}</div>
         <div class="card__titles">
@@ -1011,7 +1095,7 @@ class MpSettingsLayer extends MpElement {
      播放
      ======================================================================== */
   playbackCard() {
-    return html` <section class="card" id="sec-playback" data-section="player">
+    return html` <section class="card" id="sec-playback" data-section="playback">
       <div class="card__head">
         <div class="card__icon">${icon("headphones")}</div>
         <div class="card__titles">
@@ -1089,7 +1173,7 @@ class MpSettingsLayer extends MpElement {
      歌词
      ======================================================================== */
   lyricsCard() {
-    return html` <section class="card" id="sec-lyrics" data-section="player">
+    return html` <section class="card" id="sec-lyrics" data-section="lyrics">
       <div class="card__head">
         <div class="card__icon">${icon("lyrics")}</div>
         <div class="card__titles">
@@ -1154,7 +1238,7 @@ class MpSettingsLayer extends MpElement {
   }
 
   /* ========================================================================
-     音频
+     音质
      ======================================================================== */
   loudnessCard() {
     const cfg = state.config;
@@ -1166,7 +1250,7 @@ class MpSettingsLayer extends MpElement {
     const tools = state.ffmpegState || {};
     const sourceText = tools.describe || ls.describe || "检测中…";
 
-    return html` <section class="card" id="sec-loudness" data-section="player">
+    return html` <section class="card" id="sec-loudness" data-section="audio">
       <div class="card__head">
         <h2 class="card__title">${icon("scale")}<span>响度均衡</span></h2>
         <p class="card__desc">
@@ -1437,14 +1521,14 @@ class MpSettingsLayer extends MpElement {
   }
 
   /* ========================================================================
-     关于
+     关于 / 许可与致谢
      ========================================================================
-     这是一整组卡片（都挂在 about 分区下，导航条「关于」一跳跳到这里）：
-       · 应用信息 —— 版本、协议、仓库入口 + 曲库统计；
-       · 技术栈   —— 应用站在哪些技术之上；
-       · 开源依赖 —— 逐项列出库与许可证（含随 Wails 引入的间接依赖）；
-       · 开源协议 —— 本项目 / 内嵌 FFmpeg / 第三方库的许可结论；
-       · 参考与致谢 —— 在线数据来源与鸣谢。
+     这两块原来是同一组（都挂在 about 分区），现在按「常不常看」拆开：
+       · about —— 应用信息（版本、协议、仓库入口 + 曲库统计）与版本更新。
+                  导航条「关于」一跳跳到这里，卡片顺序是「版本更新在前」——
+                  点「关于」的人多半是想知道有没有新版本；
+       · legal —— 技术栈、开源依赖、开源协议、参考与致谢。这些是查得到就好的
+                  资料，跟「有没有新版本」抢同一个入口只会让后者更难找。
      资料本身在 about-info.js 里，这里只负责排版。
      ======================================================================== */
   aboutCard() {
@@ -1809,7 +1893,7 @@ class MpSettingsLayer extends MpElement {
 
   /* —— 技术栈 —— */
   techCard() {
-    return html` <section class="card" data-section="about">
+    return html` <section class="card" id="sec-tech" data-section="legal">
       <div class="card__head">
         <div class="card__icon">${icon("bolt")}</div>
         <div class="card__titles">
@@ -1844,7 +1928,7 @@ class MpSettingsLayer extends MpElement {
     const summary = licenseSummary(libs)
       .map((x) => `${x.license} × ${x.count}`)
       .join(" · ");
-    return html` <section class="card" data-section="about">
+    return html` <section class="card" id="sec-libs" data-section="legal">
       <div class="card__head">
         <div class="card__icon">${icon("options")}</div>
         <div class="card__titles">
@@ -1892,7 +1976,7 @@ class MpSettingsLayer extends MpElement {
 
   /* —— 开源协议 —— */
   licenseCard() {
-    return html` <section class="card" data-section="about">
+    return html` <section class="card" id="sec-license" data-section="legal">
       <div class="card__head">
         <div class="card__icon">${icon("scale")}</div>
         <div class="card__titles">
@@ -1922,7 +2006,7 @@ class MpSettingsLayer extends MpElement {
 
   /* —— 参考与致谢 —— */
   creditsCard() {
-    return html` <section class="card" data-section="about">
+    return html` <section class="card" id="sec-credits" data-section="legal">
       <div class="card__head">
         <div class="card__icon">${icon("heart")}</div>
         <div class="card__titles">

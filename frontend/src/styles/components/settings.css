@@ -13,7 +13,7 @@
 
 .settings__nav {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: center;
   gap: var(--sp-1);
   padding: var(--sp-1);
@@ -22,7 +22,14 @@
   border: var(--hairline);
   /* 需求：导航按钮栏居中（原来�?flex-start 靠左�?*/
   align-self: center;
+  /* 分类拆细之后（11 个）窄窗口下会换行成两三行，把卡片整体挤下去。
+     改成横向滚动：高度恒定一行。滚动条本身隐藏，内容仍可用滚轮 /
+     触控板横滑，Tab 键也会把当前项带进视野。 */
   max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
   position: sticky;
   /* 需求：吸附锚点改为 0（原来留�?--sp-2 的缝，滚动时会看到一条空档） */
   top: 0;
@@ -32,13 +39,31 @@
   /* 导航条底部与卡片之间的间距交�?flex gap�?-sp-4）；这里不再�?margin�?     否则「导航栏离顶部太远」会因为上下都留白而更明显�?*/
 }
 
+.settings__nav::-webkit-scrollbar {
+  display: none;
+}
+
 .settings__nav-item {
   height: 30px;
   padding: 0 var(--sp-3);
   border-radius: var(--btn-radius);
   color: var(--text-2);
   font-size: var(--fs-md);
+  flex: none;
+  white-space: nowrap;
   transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+/* 横向滚动容器里 justify-content: center 有个经典陷阱：内容溢出时居中会把
+   两端推到可视区之外，且**滚不到**（scrollLeft 到不了负值）。用 margin:auto
+   代替居中效果 —— 内容不满一行时照旧居中，溢出时自然从左边开始，两种情况下
+   每个分类都能滚到。 */
+.settings__nav-item:first-child {
+  margin-left: auto;
+}
+
+.settings__nav-item:last-child {
+  margin-right: auto;
 }
 
 .settings__nav-item:hover {

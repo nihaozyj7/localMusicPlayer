@@ -1813,7 +1813,7 @@ ${np(t)}
       >
         ${f("plus")}<span>应用${e.selected.size?`（${e.selected.size}）`:""}</span>
       </button>
-    `}onClick(e){if(e.target.closest("[data-cover-close]")||e.target===this.panelEl){un();return}const n=e.target.closest("[data-set-act]");if(n){const a=Number(n.closest("[data-set-index]")?.dataset.setIndex);n.dataset.setAct==="use"&&this.useExisting(a),n.dataset.setAct==="remove"&&this.removeExisting(a)}}onKey(e){if(e.key!=="Escape")return;const n=this.querySelector("#cover-keyword");if(n&&document.activeElement===n&&n.value.trim()){q.keyword="",n.value="";return}un()}toggleCandidate(e){const n=q.candidates[e];n&&(q.selected.has(n)?q.selected.delete(n):q.selected.add(n),Ne())}selectAll(){const e=q;e.selected.size===e.candidates.length?e.selected.clear():e.candidates.forEach(n=>e.selected.add(n)),Ne()}async runSearch(){const e=q;if(e.busy)return;if(!$()){te("浏览器预览下没有联网封面后端，请在应用里试");return}e.busy=!0;const n=e.candidates.filter(s=>s.local);e.candidates=[...n],e.selected=new Set(n),Ne();const a=(this.querySelector("#cover-keyword")?.value||"").trim();te(a?`正在按「${a}」同时查询多个来源（${kr()}）…`:`正在同时查询多个来源（${kr()}）…`);try{const s=a?{keyword:a}:{},r=await m.coverLookupSongAll(e.songId,s),o=Array.isArray(r)?r.filter(l=>l?.ok&&l.preview):[];if(o.length){e.candidates=[...n,...o.map(c=>({...c,local:!1}))];const l=[...new Set(o.map(c=>c.provider).filter(Boolean))];te(`找到 ${o.length} 张（来源：${l.join(" / ")||"未知"}），勾选后点「应用」`)}else{e.candidates=[...n];const l=Array.isArray(r)?r.find(c=>c?.message)?.message:"";te(l||"没有找到匹配的封面（也可能是匹配到的都是空白图，已自动丢弃）")}}catch(s){te(`搜索失败：${s?.message??s}`)}finally{e.busy=!1,Ne()}}async pickLocal(){const e=q;if(!$()){te("浏览器预览下没有系统文件选择器，请在应用里试");return}te("正在读取图片…");try{const n=await m.coverPickLocal();if(!n||n.cancelled){te("");return}if(!n.ok||!n.preview){te(n?.message||"这张图片没法用作封面");return}const a={preview:n.preview,provider:n.provider||"本地图片",source:n.source||"",width:n.width,height:n.height,local:!0};e.candidates.unshift(a),e.selected.add(a),Ne(),te(`已加入本地图片${n.source?`（${n.source}）`:""}，确认后点「应用」`)}catch(n){te(`选择图片失败：${n?.message??n}`)}}async applySelected(){const e=q.candidates.filter(n=>q.selected.has(n)).map(n=>n.preview).filter(Boolean);if(!e.length){te("先勾选至少一张封面");return}await this.writeCovers(()=>m.coverAddMany(q.songId,e,i.config.embedMeta===!0))}async useExisting(e){Number.isFinite(e)&&await this.writeCovers(()=>m.coverSetActive(q.songId,e))}async useEmbedded(e){e?.preview&&await this.writeCovers(()=>m.coverAdd(q.songId,"",e.preview,i.config.embedMeta===!0))}async removeExisting(e){Number.isFinite(e)&&await this.writeCovers(()=>m.coverRemove(q.songId,e))}async writeCovers(e){const n=q;if(!$()){te("浏览器预览下没有封面后端，请在应用里试");return}te("正在保存…");try{const a=await e();a&&Array.isArray(a.items)&&(n.currentSet=a,Ts(n.songId,a)),te(a?.message||"已更新封面"),sr(),u(a?.message||"封面已更新",{tone:"success",duration:1800})}catch(a){te(`保存失败：${a?.message??a}`)}}toggleCarousel(){i.config.coverCarousel=!i.config.coverCarousel,k(),u(i.config.coverCarousel?`已开启封面轮播（每 ${Number(i.config.coverCarouselInterval)||10} 秒换一张）`:"已关闭封面轮播",{duration:1600})}toggleEmbed(){i.config.embedMeta=!i.config.embedMeta,k(),u(i.config.embedMeta?"之后的封面会写进歌曲文件本身":"封面只保存在缓存目录（不改动音乐文件）",{duration:2200})}async refreshSet(){const e=q;if(!(!$()||!e.songId))try{const n=await m.coverList(e.songId);n&&Array.isArray(n.items)&&(e.currentSet=n,Ts(e.songId,n),sr())}catch(n){te(`读取现有封面失败：${n?.message??n}`)}}}se("mp-cover-layer",wf);const q={open:!1,songId:"",candidates:[],selected:new Set,currentSet:null,busy:!1,status:"",keyword:"",rev:0};function Ne(){q.rev+=1,be()}function te(t){q.status=t||"",Ne()}const $f=()=>document.querySelector("mp-cover-layer");function kr(){return jo(i.coverProviders,"iTunes / 网易云 / QQ 音乐 / Deezer / MusicBrainz")}function kf(t){if(!i.songs.find(a=>a.id===t)){u("这首歌不在本地曲库里，无法更换封面",{tone:"warning"});return}Object.assign(q,{open:!0,songId:t,candidates:[],selected:new Set,currentSet:i.coverSets.get(t)||null,status:"",keyword:""}),Ne(),$f()?.refreshSet(),Sf()}function un(){q.open=!1,Ne()}async function Sf(){if(!(i.coverProviders?.length||!$()))try{const t=await m.coverProviders();Array.isArray(t?.providers)&&t.providers.length&&(i.coverProviders=t.providers,Ne())}catch{}}const $t=[{id:"library",label:"曲库"},{id:"appearance",label:"外观"},{id:"player",label:"播放器"},{id:"data",label:"数据"},{id:"ai",label:"AI"},{id:"other",label:"其他"},{id:"about",label:"关于"}],xf=[{value:-14,label:"较响（流媒体常见）"},{value:-16,label:"推荐（默认）"},{value:-18,label:"温和"},{value:-23,label:"广播级"}],Cf=[{value:"off",label:"关闭"},{value:"track",label:"逐曲均衡"},{value:"album",label:"同专辑统一"}];function P({label:t,hint:e,control:n}){return d` <div class="setting">
+    `}onClick(e){if(e.target.closest("[data-cover-close]")||e.target===this.panelEl){un();return}const n=e.target.closest("[data-set-act]");if(n){const a=Number(n.closest("[data-set-index]")?.dataset.setIndex);n.dataset.setAct==="use"&&this.useExisting(a),n.dataset.setAct==="remove"&&this.removeExisting(a)}}onKey(e){if(e.key!=="Escape")return;const n=this.querySelector("#cover-keyword");if(n&&document.activeElement===n&&n.value.trim()){q.keyword="",n.value="";return}un()}toggleCandidate(e){const n=q.candidates[e];n&&(q.selected.has(n)?q.selected.delete(n):q.selected.add(n),Ne())}selectAll(){const e=q;e.selected.size===e.candidates.length?e.selected.clear():e.candidates.forEach(n=>e.selected.add(n)),Ne()}async runSearch(){const e=q;if(e.busy)return;if(!$()){te("浏览器预览下没有联网封面后端，请在应用里试");return}e.busy=!0;const n=e.candidates.filter(s=>s.local);e.candidates=[...n],e.selected=new Set(n),Ne();const a=(this.querySelector("#cover-keyword")?.value||"").trim();te(a?`正在按「${a}」同时查询多个来源（${kr()}）…`:`正在同时查询多个来源（${kr()}）…`);try{const s=a?{keyword:a}:{},r=await m.coverLookupSongAll(e.songId,s),o=Array.isArray(r)?r.filter(l=>l?.ok&&l.preview):[];if(o.length){e.candidates=[...n,...o.map(c=>({...c,local:!1}))];const l=[...new Set(o.map(c=>c.provider).filter(Boolean))];te(`找到 ${o.length} 张（来源：${l.join(" / ")||"未知"}），勾选后点「应用」`)}else{e.candidates=[...n];const l=Array.isArray(r)?r.find(c=>c?.message)?.message:"";te(l||"没有找到匹配的封面（也可能是匹配到的都是空白图，已自动丢弃）")}}catch(s){te(`搜索失败：${s?.message??s}`)}finally{e.busy=!1,Ne()}}async pickLocal(){const e=q;if(!$()){te("浏览器预览下没有系统文件选择器，请在应用里试");return}te("正在读取图片…");try{const n=await m.coverPickLocal();if(!n||n.cancelled){te("");return}if(!n.ok||!n.preview){te(n?.message||"这张图片没法用作封面");return}const a={preview:n.preview,provider:n.provider||"本地图片",source:n.source||"",width:n.width,height:n.height,local:!0};e.candidates.unshift(a),e.selected.add(a),Ne(),te(`已加入本地图片${n.source?`（${n.source}）`:""}，确认后点「应用」`)}catch(n){te(`选择图片失败：${n?.message??n}`)}}async applySelected(){const e=q.candidates.filter(n=>q.selected.has(n)).map(n=>n.preview).filter(Boolean);if(!e.length){te("先勾选至少一张封面");return}await this.writeCovers(()=>m.coverAddMany(q.songId,e,i.config.embedMeta===!0))}async useExisting(e){Number.isFinite(e)&&await this.writeCovers(()=>m.coverSetActive(q.songId,e))}async useEmbedded(e){e?.preview&&await this.writeCovers(()=>m.coverAdd(q.songId,"",e.preview,i.config.embedMeta===!0))}async removeExisting(e){Number.isFinite(e)&&await this.writeCovers(()=>m.coverRemove(q.songId,e))}async writeCovers(e){const n=q;if(!$()){te("浏览器预览下没有封面后端，请在应用里试");return}te("正在保存…");try{const a=await e();a&&Array.isArray(a.items)&&(n.currentSet=a,Ts(n.songId,a)),te(a?.message||"已更新封面"),sr(),u(a?.message||"封面已更新",{tone:"success",duration:1800})}catch(a){te(`保存失败：${a?.message??a}`)}}toggleCarousel(){i.config.coverCarousel=!i.config.coverCarousel,k(),u(i.config.coverCarousel?`已开启封面轮播（每 ${Number(i.config.coverCarouselInterval)||10} 秒换一张）`:"已关闭封面轮播",{duration:1600})}toggleEmbed(){i.config.embedMeta=!i.config.embedMeta,k(),u(i.config.embedMeta?"之后的封面会写进歌曲文件本身":"封面只保存在缓存目录（不改动音乐文件）",{duration:2200})}async refreshSet(){const e=q;if(!(!$()||!e.songId))try{const n=await m.coverList(e.songId);n&&Array.isArray(n.items)&&(e.currentSet=n,Ts(e.songId,n),sr())}catch(n){te(`读取现有封面失败：${n?.message??n}`)}}}se("mp-cover-layer",wf);const q={open:!1,songId:"",candidates:[],selected:new Set,currentSet:null,busy:!1,status:"",keyword:"",rev:0};function Ne(){q.rev+=1,be()}function te(t){q.status=t||"",Ne()}const $f=()=>document.querySelector("mp-cover-layer");function kr(){return jo(i.coverProviders,"iTunes / 网易云 / QQ 音乐 / Deezer / MusicBrainz")}function kf(t){if(!i.songs.find(a=>a.id===t)){u("这首歌不在本地曲库里，无法更换封面",{tone:"warning"});return}Object.assign(q,{open:!0,songId:t,candidates:[],selected:new Set,currentSet:i.coverSets.get(t)||null,status:"",keyword:""}),Ne(),$f()?.refreshSet(),Sf()}function un(){q.open=!1,Ne()}async function Sf(){if(!(i.coverProviders?.length||!$()))try{const t=await m.coverProviders();Array.isArray(t?.providers)&&t.providers.length&&(i.coverProviders=t.providers,Ne())}catch{}}const $t=[{id:"library",label:"曲库"},{id:"playback",label:"播放"},{id:"lyrics",label:"歌词"},{id:"audio",label:"音质"},{id:"appearance",label:"外观"},{id:"list",label:"歌曲列表"},{id:"data",label:"下载与缓存"},{id:"ai",label:"AI"},{id:"system",label:"系统"},{id:"about",label:"关于"},{id:"legal",label:"许可与致谢"}],xf=[{value:-14,label:"较响（流媒体常见）"},{value:-16,label:"推荐（默认）"},{value:-18,label:"温和"},{value:-23,label:"广播级"}],Cf=[{value:"off",label:"关闭"},{value:"track",label:"逐曲均衡"},{value:"album",label:"同专辑统一"}];function P({label:t,hint:e,control:n}){return d` <div class="setting">
     <div class="setting__main">
       <div class="setting__label">${t}</div>
       ${e?d`<div class="setting__hint">${e}</div>`:A}
@@ -1882,11 +1882,20 @@ ${np(t)}
                       ${e.label}
                     </button>`)}
               </div>
-              ${this.foldersCard()} ${this.rulesCard()} ${this.themeCard()} ${this.playerCard()}
-              ${this.playbackCard()} ${this.lyricsCard()} ${this.loudnessCard()}
-              ${this.onlineCard()} ${this.aiCard()}
-              ${this.systemCard()} ${this.aboutCard()} ${this.updateCard()} ${this.techCard()}
-              ${this.libsCard()} ${this.licenseCard()} ${this.creditsCard()}
+              <!--
+                卡片顺序 = 导航条顺序（SECTIONS 的顺序），同一分类的卡片必须连成一段。
+                navFollow() 是按文档顺序取 [data-section] 算高亮的，所以顺序不能随意调：
+                某个分类的卡片被别的分类夹断，滚到后一段时高亮就会跳回去。
+
+                分类内部按「常用的靠前」排：
+                  · 外观 —— 主题（常换）在前，播放界面样式（装完基本不动）在后；
+                  · 关于 —— 版本更新在前，应用信息（看过一次就够）在后。
+              -->
+              ${this.foldersCard()} ${this.rulesCard()} ${this.playbackCard()} ${this.lyricsCard()}
+              ${this.loudnessCard()} ${this.themeCard()} ${this.playerCard()} ${this.listCard()}
+              ${this.onlineCard()} ${this.aiCard()} ${this.systemCard()} ${this.updateCard()}
+              ${this.aboutCard()} ${this.techCard()} ${this.libsCard()} ${this.licenseCard()}
+              ${this.creditsCard()}
             </div>
           </div>
         </div>
@@ -2149,10 +2158,20 @@ ${np(t)}
         ${P({label:"过渡速度",hint:"弹出层、菜单、面板的进出动画时长；默认快速 0.25 秒",control:Se("animationsSpeed",Yu,i.config.animationsSpeed||"fast")})}
         ${P({label:"背景动效（播放界面）",hint:"只影响播放详情页里样式绘制的背景动画。「流畅优先」跟随屏幕刷新率（高刷屏更顺滑）；「性能优先」限制帧率并让暂停后的画面停住，更省电。其他界面（设置、曲库列表）始终满帧，不受此项影响。",control:Se("skinPerformanceMode",Xu,i.config.skinPerformanceMode||"smooth")})}
         ${P({label:"主题色跟随封面",hint:"从当前封面提取主色调，作为界面主题色",control:V("accentFromCover",i.config.accentFromCover,"主题色跟随封面")})}
+      </div>
+    </section>`}listCard(){return d` <section class="card" id="sec-list" data-section="list">
+      <div class="card__head">
+        <div class="card__icon">${f("density")}</div>
+        <div class="card__titles">
+          <div class="card__title">歌曲列表</div>
+          <div class="card__desc">列表显示哪些列、每行多高</div>
+        </div>
+      </div>
+      <div class="card__body">
         ${P({label:"显示专辑列",hint:"窄窗口下会自动隐藏该列",control:V("showAlbumColumn",i.config.showAlbumColumn,"显示专辑列")})}
         ${P({label:"列表密度",hint:"对「本地歌曲」「播放列表」「歌单」三个列表同时生效",control:Se("listDensity",Ku,i.config.listDensity||"cozy")})}
       </div>
-    </section>`}systemCard(){return d` <section class="card" id="sec-system" data-section="other">
+    </section>`}systemCard(){return d` <section class="card" id="sec-system" data-section="system">
       <div class="card__head">
         <div class="card__icon">${f("options")}</div>
         <div class="card__titles">
@@ -2235,7 +2254,7 @@ ${np(t)}
         ${P({label:"封面轮播",hint:"一首歌有多张封面时，播放详情页按下面的间隔轮换显示（不影响列表缩略图）",control:V("coverCarousel",i.config.coverCarousel===!0,"封面轮播")})}
         ${P({label:"轮播间隔",hint:"每隔多少秒切换一张",control:rn("set-carousel","coverCarouselInterval","轮播间隔")})}
       </div>
-    </section>`}playbackCard(){return d` <section class="card" id="sec-playback" data-section="player">
+    </section>`}playbackCard(){return d` <section class="card" id="sec-playback" data-section="playback">
       <div class="card__head">
         <div class="card__icon">${f("headphones")}</div>
         <div class="card__titles">
@@ -2259,7 +2278,7 @@ ${np(t)}
             播放当前列表：用当前整个列表替换播放队列，从这首歌开始播；<br />
             下一首播放：插到当前歌曲后面，下一次「下一曲」时播放。`,control:Se("rowClickAction",Vu,i.config.rowClickAction||"next")})}
       </div>
-    </section>`}lyricsCard(){return d` <section class="card" id="sec-lyrics" data-section="player">
+    </section>`}lyricsCard(){return d` <section class="card" id="sec-lyrics" data-section="lyrics">
       <div class="card__head">
         <div class="card__icon">${f("lyrics")}</div>
         <div class="card__titles">
@@ -2284,7 +2303,7 @@ ${np(t)}
         ${P({label:"歌词字号",hint:"歌词文字大小，当前播放的那一行会略微放大",control:rn("set-lyric-size","lyricsFontSize","歌词字号")})}
         ${P({label:"居中高亮行数",hint:"当前行上下各显示的行数",control:Se("lyricsLines",[3,5,7,9].map(e=>({value:String(e),label:String(e)})),String(i.config.lyricsLines))})}
       </div>
-    </section>`}loudnessCard(){const e=i.config,n=i.loudnessState||{},a=n.measured??0,s=n.missing??Math.max(0,i.songs.length-a),r=n.total??i.songs.length,o=n.available!==!1,c=(i.ffmpegState||{}).describe||n.describe||"检测中…";return d` <section class="card" id="sec-loudness" data-section="player">
+    </section>`}loudnessCard(){const e=i.config,n=i.loudnessState||{},a=n.measured??0,s=n.missing??Math.max(0,i.songs.length-a),r=n.total??i.songs.length,o=n.available!==!1,c=(i.ffmpegState||{}).describe||n.describe||"检测中…";return d` <section class="card" id="sec-loudness" data-section="audio">
       <div class="card__head">
         <h2 class="card__title">${f("scale")}<span>响度均衡</span></h2>
         <p class="card__desc">
@@ -2697,7 +2716,7 @@ ${np(t)}
     </div>`}updateNotesBlock(e){const a=String(e.notes||"").trim(),s=a.length>1200?`${a.slice(0,1200)}…`:a;return s?d` <details class="about-note">
       <summary class="about-note__title" style="cursor:pointer">更新说明</summary>
       <div class="about-note__body" style="white-space:pre-wrap">${s}</div>
-    </details>`:A}techCard(){return d` <section class="card" data-section="about">
+    </details>`:A}techCard(){return d` <section class="card" id="sec-tech" data-section="legal">
       <div class="card__head">
         <div class="card__icon">${f("bolt")}</div>
         <div class="card__titles">
@@ -2721,7 +2740,7 @@ ${np(t)}
       <div class="card__foot">
         <span>界面代码是无需构建即可阅读的原生 ESM；需要类型的地方用 JSDoc + tsc 检查</span>
       </div>
-    </section>`}libsCard(){const e=Jl(),n=Zl(e).map(a=>`${a.license} × ${a.count}`).join(" · ");return d` <section class="card" data-section="about">
+    </section>`}libsCard(){const e=Jl(),n=Zl(e).map(a=>`${a.license} × ${a.count}`).join(" · ");return d` <section class="card" id="sec-libs" data-section="legal">
       <div class="card__head">
         <div class="card__icon">${f("options")}</div>
         <div class="card__titles">
@@ -2760,7 +2779,7 @@ ${np(t)}
       <div class="card__foot">
         <span>${n}</span>
       </div>
-    </section>`}licenseCard(){return d` <section class="card" data-section="about">
+    </section>`}licenseCard(){return d` <section class="card" id="sec-license" data-section="legal">
       <div class="card__head">
         <div class="card__icon">${f("scale")}</div>
         <div class="card__titles">
@@ -2783,7 +2802,7 @@ ${np(t)}
           ${f("external")}<span>阅读 Apache-2.0</span>
         </button>
       </div>
-    </section>`}creditsCard(){return d` <section class="card" data-section="about">
+    </section>`}creditsCard(){return d` <section class="card" id="sec-credits" data-section="legal">
       <div class="card__head">
         <div class="card__icon">${f("heart")}</div>
         <div class="card__titles">

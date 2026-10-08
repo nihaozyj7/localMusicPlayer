@@ -282,9 +282,13 @@ check(
 );
 
 /* ---- 2. 点导航项 → 点开关，选中态不能跳回第一个 ---- */
+// ★ 这里点的是「曲库」（library）：下面紧接着要点 watchFolders 开关与
+//   listDensity 分段控件，两者都不属于「播放」分类。原先写的是
+//   data-goto="playback"，而播放分类的 id 其实是 "player" —— 选择器匹配
+//   不到任何元素，.click() 抛错让整段静默失败。
 const navPersist = await evalJs(`(() => {
   const sel = () => [...document.querySelectorAll(".settings__nav-item")].filter(b => b.getAttribute("aria-selected") === "true").map(b => b.textContent.trim());
-  document.querySelector('.settings__nav-item[data-goto="playback"]').click();
+  document.querySelector('.settings__nav-item[data-goto="library"]').click();
   const afterNav = sel();
   document.querySelector('[data-toggle="watchFolders"]').click();
   const afterToggle = sel();
@@ -292,10 +296,10 @@ const navPersist = await evalJs(`(() => {
   const afterSegment = sel();
   return { afterNav, afterToggle, afterSegment };
 })()`);
-check("点开关后导航选中态保持在「播放」", navPersist.afterToggle.includes("播放"), JSON.stringify(navPersist));
+check("点开关后导航选中态保持在「曲库」", navPersist.afterToggle.includes("曲库"), JSON.stringify(navPersist));
 check(
-  "点分段控件后导航选中态仍然保持在「播放」",
-  navPersist.afterSegment.includes("播放"),
+  "点分段控件后导航选中态仍然保持在「曲库」",
+  navPersist.afterSegment.includes("曲库"),
   JSON.stringify(navPersist)
 );
 
