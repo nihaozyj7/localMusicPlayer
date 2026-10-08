@@ -5,19 +5,24 @@
    这类问题**读代码只能猜**（嫌疑一大把：每帧写 scrollTop、每帧改一堆 CSS 变量、
    Canvas 粒子、backdrop-filter…）。必须先有数字，才能说清是谁的锅。
 
-   实测结论（2026-09，100Hz 档屏幕，58 首曲库）：
+   实测结论（2026-09，100Hz 档屏幕，58 首曲库；当时内置六款样式）：
      classic / immersive / minimal   平均帧间隔 9.6~9.7ms（跟满刷新率）
      anime 12.4ms · arcade 10.9ms    偶发 20ms 毛刺（换行时的滚动跳变）
      magia 23.0ms（≈43fps）          明显掉帧 —— 用 --profile 可以定位到
                                      magia 的歌词跟随函数占了 45% 的 CPU 采样
    也就是说「卡」是**样式自己的每帧工作量**造成的，不是 WebView2 的问题。
 
+   ★ 2026-10 起内置样式只剩 classic / immersive（minimal / anime / magia /
+     星阵咏唱 已移除并备份到桌面「播放器样式备份/」）。上面的数字保留下来
+     是作为对照基线：以后把某款样式按第三方样式加回来时可以直接比。
+     工具本身按注册表取样式清单，不需要改。
+
    用法（先让应用带调试端口起来）：
      $env:LMPLAYER_DEBUG_PORT = "9333"
      .\bin\lmplayer.exe
      node tools/perf-skins.mjs                 # 逐个样式量帧间隔
      node tools/perf-skins.mjs --profile        # 再对每个样式采一份 CPU profile
-     node tools/perf-skins.mjs --port 9334 --skins classic,magia
+     node tools/perf-skins.mjs --port 9334 --skins classic,immersive
    ========================================================================== */
 
 const args = process.argv.slice(2);

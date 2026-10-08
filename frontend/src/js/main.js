@@ -560,6 +560,13 @@ async function main() {
   await initTheme();
   // 第三方播放界面样式在启动时就扫一遍（不 await：样式要动态 import，扫慢了不该拖住首屏）
   void preloadSkins().then(() => {
+    // 配置里的样式 id 可能已经不存在了：用户删过第三方样式目录，或者它原本是
+    // **被移除的内置样式**（简约 / 二次元手绘 / 魔法阵 / 星阵，见
+    // docs/41-样式插件耦合报告.md）。
+    // 统一走一次 setPlayerViewMode：它解析不到就回退到默认样式，并把**真正生效
+    // 的 id 写回配置** —— 不这么做的话，配置永远指向一个不存在的 id，详情页每次
+    // 打开都悄悄回退，而设置页里没有任何一张样式卡是选中态（看起来像"没保存"）。
+    setPlayerViewMode(state.config.playerViewMode || "");
     if (settingsLayerOpen()) refreshSettingsLayer();
   });
 

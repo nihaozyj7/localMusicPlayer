@@ -1019,6 +1019,72 @@ func TestPlayerServiceEOFHandler(t *testing.T) {
 }
 
 /* --------------------------------------------------------------------------
+   9b. 播完之后必须把「已经停了」推给前端
+   -------------------------------------------------------------------------- */
+
+// TestPlayerServiceTickReportsStopped 播完之后 Tick 必须推一条 playing=false 的锚点。
+//
+// ★ 回归背景（真实报障：歌播完不自动切下一首、进度条卡在末尾）
+//
+// 引擎判定 EOF 后会把 Playing() 置成 false，而 Tick 里原本写着
+// 「没在播就直接 return」—— 前端于是**永远收不到**「后端已经停了」：
+//
+//	· 界面一直显示在播、进度条停在末尾（用户看到的那一幕）；
+//	· 前端按锚点外推时每次位置取整变化都会重跑 syncAudio → syncPlayState，
+//	  把 Player.Play() 打回后端；而 Play() 会取消「播完等间隔再切歌」的那段
+//	  计时并清掉 EOF 标记，引擎于是重新判定 EOF、重新起间隔 —— 如此循环，
+//	  间隔永远走不完，player:ended 永远不发出。
+//
+// 所以「停止也必须推一条锚点」是「播完自动下一首」能成立的前提之一。
+func TestPlayerServiceTickReportsStopped(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "short.wav")
+	writeServiceTestWAV(t, wav, 0.4)
+
+	svc, em, closeSvc := newPlayerSvcHarness(t, wav, 400)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+
+	// 间隔设 0：EOF 立刻回调，测试不必等间隔走完
+	svc.setConfigProvider(func() bootstrap.Config {
+		cfg := *bootstrap.DefaultConfig()
+		cfg.TrackGapSeconds = 0
+		return cfg
+	})
+	svc.setEOFHandler(func() {})
+
+	if _, err := svc.Load("song-tick"); err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	svc.Play()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && svc.engine.Playing() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if svc.engine.Playing() {
+		t.Fatal("这首歌没有在 5 秒内播完（引擎仍在播），无法继续验证停止态的推送")
+	}
+
+	em.reset()
+	svc.Tick()
+
+	payload := em.last(playerStateEvent)
+	if payload == nil {
+		t.Fatal("播完之后 Tick 没有推 player:state —— 前端会一直以为还在播（自动下一首会被前端自己打断）")
+	}
+	if payload["playing"] != false {
+		t.Errorf("播完后的锚点 playing = %v，期望 false", payload["playing"])
+	}
+	// 停住之后不该再反复推同一条没有新信息的锚点
+	em.reset()
+	svc.Tick()
+	if n := em.count(playerStateEvent); n != 0 {
+		t.Errorf("停止状态下重复 Tick 推了 %d 条锚点，期望 0（只在状态变化时推一次）", n)
+	}
+}
+
+/* --------------------------------------------------------------------------
    10. 跳过首尾静音
    -------------------------------------------------------------------------- */
 

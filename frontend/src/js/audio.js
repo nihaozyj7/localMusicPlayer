@@ -76,6 +76,27 @@ let loadedFor = null;
 let backendSongId = null;
 /** 换源请求序号：切歌竞态时用来丢弃过期的结果 */
 let requestSeq = 0;
+
+/**
+ * 后端**当前**的播放状态（我们最后一次推下去的值，或最后一次从锚点收到的值）。
+ *
+ * ★ 为什么必须记住它（真实报障：播完不自动切下一首、进度条卡在末尾）
+ *
+ * 后端的 Play() / Pause() 都**不是空操作**：
+ *   · Pause() 会取消「播完自动下一首」那段切歌间隔；
+ *   · Play() 会取消间隔，并把引擎的 EOF 标记清掉。
+ *
+ * 而前端有两个"自动重发"的源头：runtime 的依赖键每 250ms 一档、歌播完时
+ * 进度条会在「掐点位置」与「整首时长」之间来回取整（跳过尾部静音时两者不同），
+ * 于是 run() 被反复触发 → syncAudio() → syncPlayState()，每秒把 Play()
+ * 打好几次回去。后端的间隔只有 0.5~1.5 秒，每次都被这一发打断 → 间隔永远
+ * 走不完 → player:ended 永远不来 → 歌播完了却不切下一首。
+ *
+ * 记住「后端现在的状态」，同状态就不再重复推：只剩用户真正的操作会改变
+ * 这个值（播放/暂停按钮、切歌、装载），那一发才是需要送出去的意图。
+ */
+let backendPlaying = null;
+
 /** 待执行的跳转位置（毫秒），装载完成后消费 */
 let pendingSeek = null;
 
@@ -289,6 +310,10 @@ function applyAnchor(payload) {
   };
 
   // 播放状态以后端为准：后端是唯一真源（前端不再自己维护 playing）
+  //
+  // 顺手把它记进 backendPlaying：锚点是「后端现在的状态」的权威来源，
+  // 下一次 syncPlayState 就不必把同一个状态再推回去（见 backendPlaying 的说明）。
+  backendPlaying = anchor.playing;
   let changed = false;
   if (durationMs > 0 && state.duration !== durationMs) {
     state.duration = durationMs;
@@ -532,6 +557,7 @@ function handlePlaybackFailure(songId, reason, source = "unknown") {
   if (backendSongId === id) backendSongId = null;
   if (loadedFor === id) loadedFor = null;
   anchor = null;
+  backendPlaying = null;
 
   consecutiveFailures += 1;
   const giveUp = consecutiveFailures >= FAILURE_STREAK_LIMIT;
@@ -690,6 +716,7 @@ async function unloadCurrent() {
   switchPending = false;
   loadedFor = null;
   backendSongId = null;
+  backendPlaying = null;
   anchor = null;
   lastPushedPosition = -1;
   try {
@@ -810,6 +837,11 @@ async function loadSong(song) {
     if (state.playing) {
       await backend.playerPlay();
     }
+    // 装载后的「后端播放状态」先按意图记下来：紧接着的 syncPlayState 就不会
+    // 再把同一发 Play() 补一遍（后端在间隔里/EOF 上时，多补的那一发会
+    // 把它正在等的「播完自动下一首」取消掉）。下面那次 applyAnchor 还会用
+    // 锚点里的真实状态覆盖一次。
+    backendPlaying = Boolean(state.playing);
     // 立刻拉一次状态：不等下一个锚点，避免刚切歌时进度条停在旧位置。
     //
     // ★ 顺序要紧：必须**先**解除 switchPending 再 applyAnchor，否则这条
@@ -845,14 +877,25 @@ export function switchingTrack() {
   return switchPending;
 }
 
-/** 把「该播还是该停」同步给后端 */
+/**
+ * 把「该播还是该停」同步给后端。
+ *
+ * ★ 同状态不重复推（见 backendPlaying 的长注释）。
+ *
+ * 这一条不是优化，而是「播完自动下一首」能不能成立的前提：后端的
+ * Play() 会取消正在计时的切歌间隔、并清掉 EOF 标记，前端每秒重发几次
+ * 就等于每秒把「等间隔走完再切歌」这件事取消几次，间隔永远走不完。
+ */
 async function syncPlayState() {
+  const want = Boolean(state.playing);
+  if (backendPlaying === want) return;
   try {
-    if (state.playing) {
+    if (want) {
       await backend.playerPlay();
     } else {
       await backend.playerPause();
     }
+    backendPlaying = want;
   } catch (err) {
     console.warn("[audio] 同步播放状态失败", err);
   }
@@ -864,6 +907,7 @@ async function playFrom(ms) {
   try {
     await backend.playerSeek(ms);
     await backend.playerPlay();
+    backendPlaying = true;
   } catch (err) {
     console.warn("[audio] 重新起播失败", err);
   }

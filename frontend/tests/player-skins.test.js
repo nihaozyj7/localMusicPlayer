@@ -74,11 +74,12 @@ import {
 test("外部样式不能占用内置 id（否则内置样式会被磁盘上的旧副本永久顶替）", async () => {
   // 真实事故：magia 从第三方样式并入内置之后，用户数据目录里那份旧副本仍然存在，
   // 注册表按 id 覆盖 → 内置 magia 的修复永远跑不到。
+  // （magia 本身已在 2026-10 移除并备份，所以这里用仍然内置的 immersive 守住规则。）
   const mod =
-    "data:text/javascript," + encodeURIComponent("export default { id: 'magia', name: '旧副本', mount() {} };");
-  await assert.rejects(() => loadExternalSkin({ id: "magia", module: mod }), /与内置样式同名/);
+    "data:text/javascript," + encodeURIComponent("export default { id: 'immersive', name: '旧副本', mount() {} };");
+  await assert.rejects(() => loadExternalSkin({ id: "immersive", module: mod }), /与内置样式同名/);
   // 内置样式仍然在，且没有被改过
-  assert.equal(getSkin("magia")?.name, "魔法阵 · 手绘次元");
+  assert.equal(getSkin("immersive")?.name, "沉浸");
 });
 
 test("外部样式用不冲突的 id 时能正常注册，注销后消失", async () => {
@@ -230,17 +231,15 @@ test("fitScaleOf：优先量元素，元素没有尺寸时退回窗口，无窗�
    注册表
    -------------------------------------------------------------------------- */
 
-test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸 → 简约 → 二次元 → 魔法阵 → 星阵咏唱）", () => {
+test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸）", () => {
   // 内置样式是「产品的一部分」：这个清单变了就必须有人显式改这里，
   // 免得新增样式时漏注册、或者顺序被无意打乱。
-  assert.deepEqual(
-    listSkins().map((s) => s.id),
-    ["classic", "immersive", "minimal", "anime", "magia", "arcanum"]
-  );
-  assert.deepEqual(
-    BUILTIN_SKINS.map((s) => s.id),
-    ["classic", "immersive", "minimal", "anime", "magia", "arcanum"]
-  );
+  //
+  // 2026-10：简约 / 二次元手绘 / 魔法阵 / 星阵咏唱四款被移除并备份到桌面
+  //（`播放器样式备份/`），所以这里只剩两款。以后再加回内置样式时，
+  // 这里要跟着改 —— 这正是这份断言存在的意义。
+  assert.deepEqual(listSkins().map((s) => s.id), ["classic", "immersive"]);
+  assert.deepEqual(BUILTIN_SKINS.map((s) => s.id), ["classic", "immersive"]);
   for (const skin of BUILTIN_SKINS) {
     assert.equal(typeof skin.mount, "function", `${skin.id} 缺 mount`);
     assert.equal(typeof skin.update, "function", `${skin.id} 缺 update`);
@@ -250,14 +249,23 @@ test("内置样式都在注册表里，且顺序稳定（经典 → 沉浸 → �
   }
 });
 
-test("需要整窗背景层的内置样式（沉浸 / 特效类）都声明了 background", () => {
+test("需要整窗背景层的内置样式都声明了 background", () => {
   const withBg = BUILTIN_SKINS.filter((s) => s.background).map((s) => s.id);
-  assert.deepEqual(withBg, ["immersive", "anime", "magia", "arcanum"]);
-  // 经典与简约是「不铺满整窗」的两种：一个左唱片右歌词，一个只留文字
+  assert.deepEqual(withBg, ["immersive"]);
+  // 经典是「不铺满整窗」的那一款：左唱片右歌词
   assert.deepEqual(
     BUILTIN_SKINS.filter((s) => !s.background).map((s) => s.id),
-    ["classic", "minimal"]
+    ["classic"]
   );
+});
+
+test("被移除的四款样式不能再出现在注册表里（样式文件已删，留着会 import 失败）", () => {
+  for (const id of ["minimal", "anime", "magia", "arcanum"]) {
+    assert.equal(getSkin(id), null, `${id} 已移除备份，注册表里不该还有它`);
+    const { skin, fellBack } = resolveSkin(id);
+    assert.equal(fellBack, true, `配置里指向 ${id} 时必须走兜底`);
+    assert.equal(skin.id, DEFAULT_SKIN_ID, `兜底应当落到默认样式`);
+  }
 });
 
 test("resolveSkin：不认识的 id 回退到默认样式并标记 fellBack", () => {
@@ -265,9 +273,9 @@ test("resolveSkin：不认识的 id 回退到默认样式并标记 fellBack", ()
   assert.equal(missing.fellBack, true);
   assert.equal(missing.skin.id, DEFAULT_SKIN_ID);
 
-  const found = resolveSkin("minimal");
+  const found = resolveSkin("immersive");
   assert.equal(found.fellBack, false);
-  assert.equal(found.skin.id, "minimal");
+  assert.equal(found.skin.id, "immersive");
 });
 
 test("registerSkin：第三方样式注册后能被取到，并在清单里按 order 排序", () => {

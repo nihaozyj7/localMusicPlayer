@@ -92,9 +92,10 @@ Go · Wails v3 · Lit 3 · Vite · FFmpeg
 ### 界面
 
 - **主题**：内置深色极简 / 浅色极简 / 封面取色，支持放一份 CSS 自定义主题；
-- **播放界面样式包（皮肤）**：经典 / 沉浸 / 简约 / 二次元手绘 / 魔法阵 · 手绘次元 / 星阵咏唱
-  六种内置样式，第三方样式包放进数据目录即可加载，接口契约见
-  [`packages/player-skins`](frontend/packages/player-skins)；
+- **播放界面样式包（皮肤）**：内置**经典 / 沉浸**两款，第三方样式包放进数据目录即可加载，
+  接口契约见 [`packages/player-skins`](frontend/packages/player-skins)；
+  （2026-10 移除的简约 / 二次元手绘 / 魔法阵 · 手绘次元 / 星阵咏唱四款样式
+  已完整备份，可当第三方样式再加回来 —— 见 `docs/41-样式插件耦合报告.md`）
 - **排序**：工具栏一个按钮打开悬浮面板，字段（添加时间 / 标题 / 歌手 / 专辑 / 时长 / 文件大小 /
   播放次数）与方向（升序 / 降序）分开选，按钮上直接显示当前排序；点表头也能直接切换；
 - 列表密度、列显示、动画速度都可以调；关闭动画时全部动效统一归零；
@@ -124,9 +125,9 @@ Go · Wails v3 · Lit 3 · Vite · FFmpeg
 | --- | --- | --- |
 | ![主界面 · 深色](docs/screenshots/01-main-dark.png) | ![播放界面 · 经典](docs/screenshots/06-player-classic.png) | ![播放界面 · 沉浸](docs/screenshots/07-player-immersive.png) |
 
-| 主界面 · 浅色 | 播放界面 · 简约 | 封面取色主题 |
+| 主界面 · 浅色 | 播放界面 · 浅色 | 封面取色主题 |
 | --- | --- | --- |
-| ![主界面 · 浅色](docs/screenshots/02-main-light.png) | ![播放界面 · 简约](docs/screenshots/08-player-minimal.png) | ![封面取色主题](docs/screenshots/10-cover-dark.png) |
+| ![主界面 · 浅色](docs/screenshots/02-main-light.png) | ![播放界面 · 浅色](docs/screenshots/09-player-light.png) | ![封面取色主题](docs/screenshots/10-cover-dark.png) |
 
 | 播放队列 | 歌单 | 设置 · 音乐文件夹 |
 | --- | --- | --- |

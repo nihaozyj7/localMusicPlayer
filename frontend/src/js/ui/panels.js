@@ -381,16 +381,21 @@ define("mp-queue-panel", MpQueuePanel);
 
    现在有四项：
      · 歌词字号       —— 滑条（14~72）
+     · 显示歌词       —— 开关（这一项是从设置页搬过来的）
      · 桌面歌词       —— 三选一：[关闭 | 悬浮 | 背景]
      · 音效           —— 档位按钮（这一组是从设置页搬过来的）
      · 背景不透明度   —— 滑条
 
-   每一项都是一张小卡片：图标头（图标按功能选：A = 字号、显示器 = 桌面歌词、
-   波形 = 音效、半填的圆 = 不透明度）+ 控件。两个滑条的读数放在卡片头右侧
-   （不拖动时滑条自己不显示数值），滑条两端放的是**这项专属**的量程提示：
+   每一项都是一张小卡片：图标头（图标按功能选：A = 字号、歌词 = 显示歌词、
+   显示器 = 桌面歌词、波形 = 音效、半填的圆 = 不透明度）+ 控件。两个滑条的读数
+   放在卡片头右侧（不拖动时滑条自己不显示数值），滑条两端放的是**这项专属**的
+   量程提示：
      · 字号两端是量程 14 / 72（等宽数字）；
      · 不透明度两端是空心 → 实心两块小方，直接把「透明 → 不透明」画出来。
    卡片样式与定时停止面板（sleep-panel__option）同一套语言：surface 底 + hairline 边。
+
+   「显示歌词」是**开关**，所以它没有第二行控件：图标头右侧直接放开关，
+   卡片只有一行高 —— 与另外几项的视觉重量保持一致。
 
    「桌面歌词 / 桌面背景歌词」合成一组三选一，是因为它们在**后端本来就是
    互斥的**（见 desktop-mode.js：两个各占一个真实窗口，同时开会叠成一团）。
@@ -404,6 +409,7 @@ class MpOptionsPanel extends MpPanel {
     s.config.glassAlpha,
     s.config.glassAlphaCustom,
     s.config.effectPreset,
+    s.config.showLyrics,
     s.config.showDesktopLyrics,
     s.config.showDesktopWallpaper,
   ];
@@ -503,6 +509,22 @@ class MpOptionsPanel extends MpPanel {
               <span class="opt__range">${LYRIC_SIZE_MAX}</span>
             </div>
           </div>
+          <div class="opt" data-opt="show-lyrics">
+            <div class="opt__head">
+              <span class="opt__icon">${icon("lyrics")}</span>
+              <span class="opt__label">显示歌词</span>
+              <span class="u-spacer"></span>
+              <button
+                class="switch"
+                type="button"
+                role="switch"
+                id="opt-show-lyrics"
+                aria-checked=${String(state.config.showLyrics !== false)}
+                aria-label="显示歌词"
+                @click=${() => this.toggleShowLyrics()}
+              ></button>
+            </div>
+          </div>
           <div class="opt" data-opt="desktop">
             <div class="opt__head">
               <span class="opt__icon">${icon("desktop-lyrics")}</span>
@@ -588,6 +610,22 @@ class MpOptionsPanel extends MpPanel {
   pickDesktopMode(opt) {
     if (opt.value === currentDesktopMode()) return;
     switchDesktopMode(opt.value);
+  }
+
+  /**
+   * 切「显示歌词」。
+   *
+   * 它与详情页/桌面背景歌词共用同一个配置项（见 playerview.js 的 data-lyrics
+   * 与 desktop-wallpaper-window.js），所以这里只改配置 + commit：
+   * 详情页的 data-lyrics 由 Lit 的依赖数组跟着变，不需要额外通知谁。
+   *
+   * 默认是「显示」（配置里可能是 undefined），所以只有明确为 false 才算关 ——
+   * 直接取反会把 undefined 变成 false 再变不回 true（`!undefined` 与
+   * `undefined === false` 在这件事上语义不同）。
+   */
+  toggleShowLyrics() {
+    state.config.showLyrics = state.config.showLyrics === false;
+    commit();
   }
 
   /**

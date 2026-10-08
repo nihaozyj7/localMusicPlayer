@@ -55,7 +55,7 @@ const DEFAULT_CONFIG = {
   muted: false,
   autoScanOnStart: true,
   watchFolders: true,
-  playerViewMode: "classic", // classic | immersive | minimal
+  playerViewMode: "classic", // 内置 classic | immersive，也可以是第三方样式的 id
   // 与 Go 侧 bootstrap.Config 的默认值保持一致：
   // 内嵌歌词 → 同目录 .lrc → 歌词缓存 → 在线自动匹配
   lyricsSources: ["embedded", "lrc-file", "cache", "online"],

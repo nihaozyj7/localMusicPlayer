@@ -744,10 +744,29 @@ func (s *PlayerService) Diagnostics() map[string]any {
 // 为什么需要它：锚点只靠前端调 Play/Pause/Seek 时推是不够的 ——
 // 播放过程中没有任何一个 API 会被调用，前端却需要持续重新对齐。
 // 由后端主动节流推送，前端就不必轮询。
+//
+// ★ 停止（尤其「播完了」）那一次也必须推。
+//
+// 原来这里在 !Playing() 时直接 return，于是**前端永远不知道后端已经停了**：
+// 界面一直显示在播（按钮是暂停态、进度条停在末尾），而前端按锚点外推时
+// 每一次位置取整变化都会重跑 syncAudio → syncPlayState → Player.Play()；
+// 那一发会把引擎里正在计时的「播完间隔」取消掉并清掉 EOF 标记，引擎于是
+// 重新判定 EOF、重新起间隔 —— 如此循环，间隔永远走不完，player:ended
+// 永远不发出。用户看到的就是「歌播完了却不切下一首，进度条卡在末尾」。
+//
+// 这里推的那一条锚点让前端知道「后端已经不在播了」（前端据此停止外推、
+// 把播放按钮切回「播放」），它同时也让前端不再把 Play() 反复打回来。
 func (s *PlayerService) Tick() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.loaded || s.engine == nil || !s.engine.Playing() {
+	if !s.loaded || s.engine == nil {
+		return
+	}
+	// 播放中：照旧交给 pushAnchorLocked 做 500ms 节流。
+	// 已停止：只在「与上次推送的状态不同」时推一次（播完 / 定时停止 / 出错停下），
+	// 避免空闲时每 200ms 都发一条没有新信息的锚点。
+	playing := s.engine.Playing()
+	if !playing && playing == s.lastPlaying {
 		return
 	}
 	s.pushAnchorLocked("tick")

@@ -32,7 +32,7 @@ const SCENARIOS = [
   { name: "设置界面", url: "?probe=1&tab=settings" },
   { name: "播放界面 · 经典", url: "?probe=1&view=player&pv=classic&playing=1" },
   { name: "播放界面 · 沉浸", url: "?probe=1&view=player&pv=immersive&playing=1" },
-  { name: "播放界面 · 简约", url: "?probe=1&view=player&pv=minimal&playing=1" },
+  { name: "播放界面 · 经典（列表播放态）", url: "?probe=1&view=player&pv=classic&playing=1" },
   { name: "封面取色主题 · 沉浸", url: "?probe=1&theme=cover-dark&view=player&pv=immersive&playing=1" },
   { name: "搜索过滤", url: "?probe=1&query=%E9%99%88%E9%BB%98" },
   { name: "扫描中遮罩", url: "?probe=1&scan=1" },

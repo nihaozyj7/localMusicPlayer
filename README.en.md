@@ -111,9 +111,11 @@ library, cover art and lyric cache all live on your own disk.
 ### Interface
 
 - **Themes**: dark minimal / light minimal / cover-derived accent, plus custom themes as a single CSS file;
-- **Player skins**: classic / immersive / minimal / hand-drawn anime / magic-circle sketch / arcanum stage —
-  six built-in styles. Third-party packs are loaded from the data directory; the contract lives in
-  [`packages/player-skins`](frontend/packages/player-skins);
+- **Player skins**: classic / immersive — two built-in styles. Third-party packs are loaded from the
+  data directory; the contract lives in [`packages/player-skins`](frontend/packages/player-skins).
+  (Four more styles — minimal / hand-drawn anime / magic-circle sketch / arcanum stage — were removed
+  in 2026-10 and fully backed up; see `docs/41-样式插件耦合报告.md` for how to re-add them as
+  third-party skins.)
 - **Sorting**: one toolbar button opens a floating panel where the field (date added / title / artist /
   album / duration / file size / play count) and the direction (ascending / descending) are chosen
   separately. The button always shows the active sort, and clicking a column header still toggles it;
@@ -150,9 +152,9 @@ library, cover art and lyric cache all live on your own disk.
 | --- | --- | --- |
 | ![Main view (dark)](docs/screenshots/01-main-dark.png) | ![Player · classic](docs/screenshots/06-player-classic.png) | ![Player · immersive](docs/screenshots/07-player-immersive.png) |
 
-| Main view (light) | Player · minimal | Cover-derived theme |
+| Main view (light) | Player · light | Cover-derived theme |
 | --- | --- | --- |
-| ![Main view (light)](docs/screenshots/02-main-light.png) | ![Player · minimal](docs/screenshots/08-player-minimal.png) | ![Cover-derived theme](docs/screenshots/10-cover-dark.png) |
+| ![Main view (light)](docs/screenshots/02-main-light.png) | ![Player · light](docs/screenshots/09-player-light.png) | ![Cover-derived theme](docs/screenshots/10-cover-dark.png) |
 
 | Queue | Playlists | Settings · folders |
 | --- | --- | --- |

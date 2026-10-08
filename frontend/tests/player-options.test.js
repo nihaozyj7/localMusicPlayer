@@ -8,6 +8,11 @@
      2. 桌面歌词 / 桌面背景歌词合成一组三选一，底栏那两个独立按钮消失；
      3. 歌词字号量程改为 14~72，且设置页与面板必须用同一份常量。
 
+   后续两批（本文件后半部分）沿着同一条思路继续收口：
+     4. 「显示歌词」也从设置页搬进选项面板（边听边调的开关应该在一起）；
+     5. 设置页里桌面歌词的四个入口（两个开关 / 重置位置 / 启动时自动启用）
+        全部移除 —— 桌面歌词只剩选项面板那组三选一这一个入口。
+
    还有 AI 那个新开关：它管的是**写回用户文件**，所以「默认值一致」
    「在 SYNCED_KEYS 里」「后端 applyPatch 认这个键」三件事一件都不能少 ——
    少了任何一件，用户在设置里关掉它，重启后又会自动打开。
@@ -35,9 +40,18 @@ const read = (p) => readFileSync(join(root, p), "utf8");
 const panelsSrc = read("frontend/src/js/ui/panels.js");
 const playerbarSrc = read("frontend/src/js/ui/playerbar.js");
 const settingsViewSrc = read("frontend/src/js/ui/settings-view.js");
+const settingsSrc = read("frontend/src/js/settings.js");
 const storeSrc = read("frontend/src/js/store.js");
 const goConfigSrc = read("internal/bootstrap/config.go");
 const goServicesSrc = read("services.go");
+
+/** 取一个卡片方法的完整方法体（从 `xxxCard() {` 到下一个顶格注释块） */
+function cardBody(src, method) {
+  const start = src.indexOf(`${method}() {`);
+  assert.ok(start > 0, `找不到 ${method} 的定义`);
+  const end = src.indexOf("\n  /* ====", start);
+  return src.slice(start, end > 0 ? end : start + 4000);
+}
 
 /* ==========================================================================
    一、音效搬进播放选项面板
@@ -281,4 +295,92 @@ test("后端：AI 整理会写回标题 / 歌手 / 专辑标签", () => {
   // 开关与「AI 是否配置」都必须是闸门
   assert.match(aiTagSrc, /AIDownloadTag/, "必须读 AIDownloadTag 开关");
   assert.match(aiTagSrc, /s\.ai\.Enabled\(\)/, "必须确认 AI 已配置");
+});
+
+/* ==========================================================================
+   六、「显示歌词」搬进播放选项面板
+   --------------------------------------------------------------------------
+   它和「桌面歌词 / 音效」是同一类东西：**边听边调**的显示开关。埋在
+   设置 → 歌词 里要翻两层才找得到，所以跟其它几项一起放到选项面板。
+
+   搬完必须只有**一处**入口：设置页里留着的话，两个控件的选中态由不同的
+   渲染路径维护，很容易看起来不一致（这正是桌面歌词当初合并三选一的原因）。
+   ========================================================================== */
+
+test("「显示歌词」是选项面板里的一项（带开关，且 deps 里声明了它）", () => {
+  const start = panelsSrc.indexOf("class MpOptionsPanel");
+  const end = panelsSrc.indexOf('define("mp-options-panel"', start);
+  const body = panelsSrc.slice(start, end);
+
+  assert.match(body, /data-opt="show-lyrics"/, "选项面板里应当有「显示歌词」这一项");
+  assert.ok(body.includes("显示歌词"), "这一项要有中文标签");
+  assert.match(body, /id="opt-show-lyrics"/, "开关要有稳定的 id（验证脚本与样式都靠它）");
+  assert.match(body, /role="switch"/, "它是个开关");
+  assert.match(body, /aria-checked=/, "开关必须用 aria-checked 表达状态（.switch 的样式按它走）");
+  assert.match(body, /toggleShowLyrics\(\)/, "点击应当走本组件自己的切换方法");
+  assert.match(
+    body,
+    /s\.config\.showLyrics/,
+    "deps 里必须声明 showLyrics —— 少了它，在别处改了这个配置时开关不会重绘"
+  );
+});
+
+test("「显示歌词」的定义：只有显式为 false 才算关（默认是开）", () => {
+  const start = panelsSrc.indexOf("toggleShowLyrics() {");
+  assert.ok(start > 0, "找不到 toggleShowLyrics");
+  const body = panelsSrc.slice(start, panelsSrc.indexOf("\n  }", start));
+  // 直接取反会把 undefined（默认开）变成 false 且再也回不到「跟随默认」
+  assert.match(
+    body,
+    /state\.config\.showLyrics === false/,
+    "必须按「是否等于 false」判断，不能直接取反（默认值 undefined 时取反语义是错的）"
+  );
+  assert.match(body, /commit\(\)/, "改完要 commit（持久化 + 通知订阅者）");
+});
+
+test("设置页的歌词卡片里不再有「显示歌词」", () => {
+  const body = cardBody(settingsViewSrc, "lyricsCard");
+  assert.doesNotMatch(body, /"showLyrics"/, "设置页歌词卡片里不该再有显示歌词开关（会变成两处入口）");
+  // 卡片本身还在，而且来源优先级 / 字号 / 行数都保留
+  assert.match(body, /lyricsSourceLabels\(\)/, "歌词来源优先级应当保留");
+  assert.match(body, /set-lyric-size/, "歌词字号应当保留");
+  assert.match(body, /lyricsLines/, "居中高亮行数应当保留");
+});
+
+/* ==========================================================================
+   七、设置页不再有桌面歌词 / 桌面背景歌词入口
+   --------------------------------------------------------------------------
+   唯一入口是选项面板里那组三选一。设置页里原来还有两个独立开关、一个
+   「重置位置」按钮、一个「启动时自动启用背景歌词」开关 —— 它们与三选一是
+   两套状态源（开关的 selected 与单选按钮的 aria-checked），一并删掉。
+   ========================================================================== */
+
+test("设置页里桌面歌词相关的四个入口全部移除", () => {
+  for (const needle of [
+    "showDesktopLyrics",
+    "showDesktopWallpaper",
+    "autoStartDesktopWallpaper",
+    "reset-desktop-lyrics-pos",
+  ]) {
+    assert.doesNotMatch(
+      settingsViewSrc,
+      new RegExp(needle),
+      `设置页不该再有 ${needle} —— 桌面歌词的唯一入口是选项面板里的三选一`
+    );
+  }
+});
+
+test("设置页不再依赖 applyDesktopMode（已经没有会改桌面模式的控件）", () => {
+  assert.doesNotMatch(
+    settingsSrc,
+    /applyDesktopMode/,
+    "settings.js 里不该再引 applyDesktopMode：搬走之后它就是一段没人能触发的死代码"
+  );
+  assert.doesNotMatch(settingsSrc, /reset-desktop-lyrics-pos/, "重置位置那个动作的处理分支应当一起删掉");
+  // 三选一仍在选项面板里，并且仍走那个把「互斥」收口的入口
+  assert.match(panelsSrc, /applyDesktopMode/, "选项面板仍必须走 applyDesktopMode");
+});
+
+test("设置页仍保留主窗口位置重置（另一个独立按钮，不受影响）", () => {
+  assert.match(settingsSrc, /reset-main-window-geometry/, "主窗口几何重置不该被误删");
 });

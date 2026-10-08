@@ -28,7 +28,8 @@ import { applyResolvedTheme, discoverThemes, listThemes, removeTheme } from "./t
 import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
 import { applyEffectPreset, applyPlaybackOptions } from "./audio.js";
 import { animationDurationValue, setRuntimeToken, replaceStyleRules } from "./runtime-tokens.js";
-import { applyDesktopMode } from "./desktop-mode.js";
+// 桌面歌词 / 桌面背景歌词的开关已经不在设置页：唯一入口是底栏「选项」里
+// 那组三选一（见 desktop-mode.js 与 ui/panels.js），所以这里不引 desktop-mode。
 
 import { availableSkins, reloadSkins, removeSkin, setPlayerViewMode, skinLoadFailures } from "./playerhost.js";
 
@@ -881,29 +882,12 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       return;
     }
 
-    /* 桌面歌词位置记忆的出口：换显示器/改分辨率后存档可能落在别扭的地方，
-       给用户一个「回到默认」的按钮，而不是让他去删配置文件。 */
-    case "reset-desktop-lyrics-pos": {
-      if (!isWails()) {
-        toast("浏览器预览模式下没有独立歌词窗口", { duration: 2200 });
-        return;
-      }
-      try {
-        const res = await backend.desktopLyricsResetPos();
-        if (res && res.applied === false) {
-          toast("已清掉位置记忆；下次打开桌面歌词会用默认位置", { tone: "success", duration: 2600 });
-        } else {
-          toast("桌面歌词已移回默认位置", { tone: "success", duration: 2000 });
-        }
-      } catch (err) {
-        toast(`重置失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
-      }
-      return;
-    }
+    /* 主窗口位置/尺寸记忆的出口：换显示器之后存档若跑到屏幕外，后端会自己回默认；
+       但「用户就是想把窗口挪回屏幕中央」这种情况只有手动按钮能解决。
 
-    /* 主窗口位置/尺寸记忆的出口：与桌面歌词那个同一个用途。
-       正常情况下不需要它 —— 换显示器之后存档若跑到屏幕外，后端会自己回默认；
-       但「用户就是想把窗口挪回屏幕中央」这种情况只有手动按钮能解决。 */
+       （桌面歌词那个「重置位置」按钮已随设置页里的桌面歌词入口一起移除。
+       位置记忆在后端仍然生效：换显示器 / 改分辨率后落点不在任何屏幕上时，
+       后端会自己回默认位置。） */
     case "reset-main-window-geometry": {
       if (!isWails()) {
         toast("浏览器预览模式下没有独立窗口", { duration: 2200 });
@@ -1651,24 +1635,6 @@ export function handleSettingControl(actEl, ctx = {}) {
   const toggleKey = actEl.dataset.toggle;
   if (toggleKey) {
     const next = actEl.getAttribute("aria-checked") !== "true";
-
-    // 桌面歌词 / 桌面背景歌词必须在**写 state.config 之前**处理：
-    // applyDesktopMode 要靠「改动前是什么」判断这次该开哪个窗口，
-    // 提前把值写掉它就会以为「没变化」而跳过开窗。
-    // 两个开关是一组单选，所以走同一个入口（它会顺手把另一个关掉）。
-    if (toggleKey === "showDesktopLyrics" || toggleKey === "showDesktopWallpaper") {
-      const mode = toggleKey === "showDesktopLyrics" ? (next ? "lyrics" : "off") : next ? "wallpaper" : "off";
-      applyDesktopMode(mode).then((res) => {
-        // 按钮的选中态由 sync*Buttons 按配置写，这里只补「失败」的提示：
-        // 桌面背景歌词依赖系统的桌面窗口结构，确实会开不起来，得说清原因
-        if (res.ok === false) {
-          toast(`打不开：${res.reason || res.error || "未知原因"}`, { tone: "warning", duration: 3200 });
-        }
-        ctx.commit?.();
-      });
-      ctx.commit?.();
-      return true;
-    }
 
     actEl.setAttribute("aria-checked", String(next));
 

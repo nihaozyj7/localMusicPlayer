@@ -91,7 +91,8 @@ import { LYRIC_SIZE_MAX, LYRIC_SIZE_MIN } from "./lyric-size.js";
    归类原则：
      · 曲库      —— 管「有哪些歌」：音乐文件夹 + 过滤规则；
      · 播放      —— 管「怎么播」：播放模式、单击行为、静音跳过、切歌间隔；
-     · 歌词      —— 管「歌词怎么显示」：来源优先级、桌面歌词、字号与行数；
+     · 歌词      —— 管「歌词怎么显示」：来源优先级、字号与行数
+                    （「显示歌词」与「桌面歌词」在底栏「选项」面板里）；
      · 音质      —— 管「听起来怎么样」：响度均衡；
      · 外观      —— 管「长什么样」：主题、毛玻璃、动画、播放界面样式（皮肤）；
      · 歌曲列表  —— 管「列表长什么样」：专辑列与列表密度。
@@ -1171,6 +1172,13 @@ class MpSettingsLayer extends MpElement {
 
   /* ========================================================================
      歌词
+     ========================================================================
+     「显示歌词」搬到了播放选项面板（底栏「选项」），与「桌面歌词」一起 ——
+     它们都是「边听边调」的显示开关，埋在设置页里要翻两层才找得到。
+
+     「桌面歌词 / 桌面背景歌词」也不再在这里留开关：它们在后端本来就是
+     互斥的两个真实窗口，选项面板里那组三选一才是唯一入口（见 ui/panels.js）。
+     设置页里再放两个开关，只会多出一套与三选一不一致的状态源。
      ======================================================================== */
   lyricsCard() {
     return html` <section class="card" id="sec-lyrics" data-section="lyrics">
@@ -1188,40 +1196,8 @@ class MpSettingsLayer extends MpElement {
           control: html`<span class="chip"><i class="chip__dot"></i>${lyricsSourceLabels()}</span>`,
         })}
         ${settingRow({
-          label: "显示歌词",
-          hint: "关闭后播放界面只显示封面",
-          control: switchControl("showLyrics", state.config.showLyrics, "显示歌词"),
-        })}
-        ${settingRow({
-          label: "桌面歌词",
-          hint: "在桌面上显示一行置顶歌词（独立透明窗口，可拖动；底栏「桌面歌词」按钮同效）。位置会被记住；换显示器后如果位置不对，可以在这里重置",
-          control: html` ${switchControl("showDesktopLyrics", state.config.showDesktopLyrics, "桌面歌词")}
-            <button
-              class="btn btn--ghost btn--sm"
-              type="button"
-              data-act="reset-desktop-lyrics-pos"
-              data-tip="把桌面歌词窗口移回默认位置并清掉记忆"
-            >
-              重置位置
-            </button>`,
-        })}
-        ${settingRow({
-          label: "桌面背景歌词",
-          hint: "把播放界面的背景铺满桌面、垫在桌面图标之下，歌词跟着画在上面（与「桌面歌词」二选一；仅 Windows）",
-          control: switchControl("showDesktopWallpaper", state.config.showDesktopWallpaper, "桌面背景歌词"),
-        })}
-        ${settingRow({
-          label: "启动时自动启用桌面背景歌词",
-          hint: "开启后，只要退出时背景歌词是开着的，下次启动就会自动恢复；关闭则背景歌词只在本次启动生效，重启后不再自动出现（仍可在这里手动打开）",
-          control: switchControl(
-            "autoStartDesktopWallpaper",
-            state.config.autoStartDesktopWallpaper,
-            "启动时自动启用桌面背景歌词"
-          ),
-        })}
-        ${settingRow({
           label: "歌词字号",
-          hint: "歌词文字大小，当前播放的那一行会略微放大",
+          hint: "歌词文字大小，当前播放的那一行会略微放大（底栏「选项」里也能调）",
           control: rangeSlider("set-lyric-size", "lyricsFontSize", "歌词字号"),
         })}
         ${settingRow({
@@ -1252,10 +1228,13 @@ class MpSettingsLayer extends MpElement {
 
     return html` <section class="card" id="sec-loudness" data-section="audio">
       <div class="card__head">
-        <h2 class="card__title">${icon("scale")}<span>响度均衡</span></h2>
-        <p class="card__desc">
-          让不同来源的歌曲音量听起来一样大。播放到哪首就测哪首，测好后自动记住，下次播放直接用；改动目标响度后会自动重新计算。
-        </p>
+        <div class="card__icon">${icon("scale")}</div>
+        <div class="card__titles">
+          <div class="card__title">响度均衡</div>
+          <div class="card__desc">
+            让不同来源的歌曲音量听起来一样大。播放到哪首就测哪首，测好后自动记住，下次播放直接用；改动目标响度后会自动重新计算。
+          </div>
+        </div>
       </div>
 
       <div class="setting">

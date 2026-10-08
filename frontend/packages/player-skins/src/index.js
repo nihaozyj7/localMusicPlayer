@@ -6,31 +6,43 @@
    这个包里面提供播放详情界面的背景渲染和交互（歌词的渲染也包含在内）」）：
      · 定义**皮肤接口**（contract.js）；
      · 提供歌词渲染器与整窗背景层的可复用实现；
-     · 内置六种样式：经典 / 沉浸 / 简约 / 二次元手绘 / 魔法阵 · 手绘次元 /
-      星阵咏唱（纵深魔法舞台）；
+     · 内置两种样式：经典 / 沉浸；
      · 提供一个注册表：宿主用它列样式、按 id 取样式，第三方皮肤也能注册进来。
 
    扩展方式（两条路，接口完全一样）：
      1. 源码内新增：在本包 src/skins/ 下加一个模块并在这里 import；
      2. 运行时新增：把皮肤目录丢进数据目录 `<数据目录>/player-skins/<id>/`
         （见 README.md），宿主启动时通过清单发现它并 import 进来。
+
+   --------------------------------------------------------------------------
+   曾经内置六种，其中四款已移除（2026-10）：
+     简约（minimal） / 二次元手绘（anime） / 魔法阵 · 手绘次元（magia） /
+     星阵咏唱（arcanum）。
+
+   它们**不是被删掉了**：源文件完整备份在桌面 `播放器样式备份/`
+   （含这几款依赖的共用模块与移除前的包入口快照），以后可以按第三方样式的
+   形式再加回来。
+
+   与本文件直接相关的一条耦合：这几款样式原先都从这里**静态 import**。
+   静态 import 意味着「有哪些内置样式」是代码里写死的 —— 改样式清单必须改
+   源码并重新构建前端产物，而不是往样式目录里丢一个文件夹。
+   见 docs/41-样式插件耦合报告.md。
+
+   注意 arcanum-*.js（星阵的舞台 / 场景 / 逐字时间轴纯逻辑）仍然留在包内并
+   从这里导出：按「先不做解耦」的决定，这次只摘样式，不动辅助模块的归属。
    ========================================================================== */
 
 import { SKIN_API_VERSION, defineSkin, inspectSkinModule } from "./contract.js";
 import classic from "./skins/classic.js";
 import immersive from "./skins/immersive.js";
-import minimal from "./skins/minimal.js";
-import anime from "./skins/anime.js";
-import magia from "./skins/magia.js";
-import arcanum from "./skins/arcanum.js";
 import "./lyrics.css";
 import "./background-layer.css";
-// 特效歌词渲染器（fx-lyrics.js）的骨架样式：四个特效样式共用，必须有这一行，
-// 否则 .fxl / .fxl__scroll 完全没有布局，歌词会退化成一列不可滚动的纯文本。
+// 特效歌词渲染器的骨架样式（fx-lyrics.css 给 .fxl / .fxl__scroll 提供布局）。
+// 原来由 anime 使用；anime 已移除备份，渲染器模块仍从本包导出。
 import "./fx-lyrics.css";
 
 /** 内置样式（顺序即按钮组顺序的默认依据） */
-export const BUILTIN_SKINS = [classic, immersive, minimal, anime, magia, arcanum];
+export const BUILTIN_SKINS = [classic, immersive];
 
 /** 兜底样式：配置里写的 id 不认识时用它 */
 export const DEFAULT_SKIN_ID = "classic";
