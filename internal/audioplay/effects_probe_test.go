@@ -202,15 +202,6 @@ func rms(v []float64) float64 {
 	return math.Sqrt(s / float64(len(v)))
 }
 
-func rmsDiff(a, b []float64) float64 {
-	s := 0.0
-	for i := range a {
-		d := a[i] - b[i]
-		s += d * d
-	}
-	return math.Sqrt(s / float64(len(a)))
-}
-
 func rmsSum(a, b []float64) float64 {
 	s := 0.0
 	for i := range a {

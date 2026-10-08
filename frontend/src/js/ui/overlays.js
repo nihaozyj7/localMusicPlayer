@@ -335,12 +335,6 @@ export function toast(message, { tone = "info", duration = 2800, icon: ic = null
 /* --------------------------------------------------------------------------
    其它小工具
    -------------------------------------------------------------------------- */
-export function setBusy(btn, busy) {
-  if (!btn) return;
-  btn.classList.toggle("is-busy", Boolean(busy));
-  btn.disabled = Boolean(busy);
-}
-
 export function on(root, event, selector, handler) {
   root.addEventListener(event, (e) => {
     const target = e.target.closest(selector);

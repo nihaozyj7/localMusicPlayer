@@ -269,19 +269,6 @@ func (g *gainState) valueFor(stepFrames int) float64 {
 	return g.current
 }
 
-// value 返回当前增益，并把 current 朝 target 推进一步。
-// stepFrames 是本次回调处理的帧数，用于算出正确的斜坡速率。
-func (g *gainState) value(stepFrames int) float64 {
-	g.mu.Lock()
-	if g.current == g.target {
-		v := g.current
-		g.mu.Unlock()
-		return v
-	}
-	g.mu.Unlock()
-	return g.valueFor(stepFrames)
-}
-
 // currentValue 只读当前增益，不推进斜坡。
 // 给「缓冲内插值」用：需要知道本次缓冲的起点增益。
 func (g *gainState) currentValue() float64 {
@@ -391,8 +378,6 @@ type Engine struct {
 	// 只有回调线程推进它，读取时加锁。
 	posMu         sync.Mutex
 	positionFrame int64
-	// seekTarget 非 nil 时表示正在等待 seek 生效（回调用它重置计数）
-	pendingSeek *int64
 
 	// underruns 统计（诊断用）
 	underruns int64
@@ -911,7 +896,6 @@ func (e *Engine) Load(path string, startFrame, endFrame int64, gain float64) err
 	e.endFrame = end
 	e.trimStart = start
 	e.eof = false
-	e.pendingSeek = nil
 	e.posMu.Unlock()
 
 	e.startFeedLocked(start)

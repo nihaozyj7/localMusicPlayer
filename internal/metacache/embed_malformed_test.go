@@ -77,24 +77,6 @@ func writeTempM4A(t *testing.T, data []byte) string {
 	return path
 }
 
-// assertUnchanged 断言文件内容与给定的原始字节完全一致。
-// 「出错时原文件必须一字未改」是本文件的核心断言。
-func assertUnchanged(t *testing.T, path string, want []byte) {
-	t.Helper()
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("读回文件失败: %v", err)
-	}
-	if len(got) != len(want) {
-		t.Fatalf("原文件被改动了：长度 %d → %d（应当保持不变）", len(want), len(got))
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Fatalf("原文件被改动了：偏移 %d 处 %02x → %02x（应当保持不变）", i, want[i], got[i])
-		}
-	}
-}
-
 /* --------------------------------------------------------------------------
    用例 1：udta 长度字段被写成巨大值
    --------------------------------------------------------------------------

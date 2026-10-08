@@ -43,14 +43,6 @@ func fetchJSON(ctx context.Context, endpoint string, headers map[string]string, 
 	return nil
 }
 
-func fetchText(ctx context.Context, endpoint string, headers map[string]string) (string, error) {
-	body, err := fetchBytes(ctx, endpoint, headers)
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
-}
-
 func fetchBytes(ctx context.Context, endpoint string, headers map[string]string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {

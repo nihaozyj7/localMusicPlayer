@@ -16,12 +16,6 @@ import { requestAppUpdate } from "./ui/overlays.js";
 import { toast } from "./ui/overlays.js";
 import { fmtCount } from "./utils.js";
 
-export const VIEW_TITLES = {
-  library: "本地歌曲",
-  queue: "播放列表",
-  playlist: "歌单",
-};
-
 /** 清空本地筛选（空态里的「清空筛选」按钮用） */
 export function clearLocalFilter() {
   state.query = "";
@@ -55,15 +49,6 @@ export function navigate(view, playlistId = null) {
 /* --------------------------------------------------------------------------
    设置层：状态驱动的开合
    -------------------------------------------------------------------------- */
-/** 设置层当前高亮的分区（组件用它滚到对应卡片） */
-export function currentSettingsSection() {
-  return state.settingsSection || "library";
-}
-
-export function setSettingsSection(id) {
-  state.settingsSection = id;
-}
-
 export function openSettings(section = null) {
   state.settingsOpen = true;
   if (section) state.settingsSection = section;

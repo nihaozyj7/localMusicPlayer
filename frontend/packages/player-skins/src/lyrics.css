@@ -34,7 +34,6 @@
   --lyric-size: 16px;
   --lyric-size-active: 21px;
   --lyric-dim: 0.36;
-  --lyric-line-gap: 2px;
   --lyric-pad: 34%;
   /* 单行歌词的宽度上限：详情页铺满整窗后，不加限制在超宽屏上会长得难读 */
   --lyric-measure: 760px;

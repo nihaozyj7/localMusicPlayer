@@ -13,9 +13,6 @@ import (
 	"localmusicplayer/internal/ffmpeg"
 )
 
-// jsonUnmarshal 只是给测试用的薄封装
-func jsonUnmarshal(raw string, v any) error { return json.Unmarshal([]byte(raw), v) }
-
 func execCommand(name string, args ...string) *exec.Cmd { return exec.Command(name, args...) }
 
 const testTarget = -16.0

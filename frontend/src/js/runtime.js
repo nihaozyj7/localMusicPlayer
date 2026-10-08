@@ -80,8 +80,3 @@ export function startRuntime() {
   subscribe(run);
   run();
 }
-
-/** 强制下一次广播一定跑一遍（外部改了封面地址等场景） */
-export function invalidateRuntime() {
-  lastKey = "";
-}

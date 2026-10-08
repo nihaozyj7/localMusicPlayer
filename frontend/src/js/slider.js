@@ -20,7 +20,6 @@ export function createSlider(root, opts = {}) {
   let dragging = false;
 
   const fillEl = root.querySelector(".slider__fill");
-  const bufferEl = root.querySelector(".slider__buffer");
   const thumbEl = root.querySelector(".slider__thumb");
   const bubbleEl = root.querySelector(".slider__bubble");
 
@@ -148,9 +147,6 @@ export function createSlider(root, opts = {}) {
     },
     setDisabled(disabled) {
       root.dataset.disabled = disabled ? "true" : "false";
-    },
-    setBuffer(pct) {
-      if (bufferEl) bufferEl.style.transform = `scaleX(${clamp(pct, 0, 100) / 100})`;
     },
     /** 该值对应的展示文本（与气泡里的一致，供外部标签复用） */
     text(next = value) {

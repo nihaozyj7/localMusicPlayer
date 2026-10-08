@@ -1254,9 +1254,6 @@ func (m *Manager) CountInFolder(root string) int {
 	return n
 }
 
-// ErrNoFolders 未配置任何音乐文件夹
-var ErrNoFolders = errors.New("尚未配置音乐文件夹")
-
 // ValidateFolder 新增目录前的校验
 func ValidateFolder(path string) (string, error) {
 	p := bootstrap.ExpandPath(path)

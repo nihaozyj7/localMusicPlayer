@@ -114,7 +114,7 @@ for (const skin of listSkins()) {
 import { defineSkin } from "@localmusicplayer/player-skins/contract";
 
 export default defineSkin({
-  apiVersion: 1,
+  apiVersion: 2,
   id: "aurora",
   name: "极光",
   icon: "disc", // index.html 里图标 sprite 的 id
@@ -141,7 +141,6 @@ export default defineSkin({
 | ------------------ | -------------------------------------------------------------- |
 | `root`             | 挂载点（宿主已清空）                                           |
 | `backgroundRoot`   | 整窗背景层容器（声明 `background: true` 时宿主会就位）         |
-| `audio`            | 真实 `<audio>` 元素（只读用：读 `buffered`、挂监听）           |
 | `playback()`       | `{ position, duration, playing, volume, muted }`               |
 | `media()`          | `{ song, cover, covers, coverIndex, lyrics }` 快照             |
 | `options()`        | `{ showLyrics, lyricsFontSize, animations, coverCarousel, … }` |

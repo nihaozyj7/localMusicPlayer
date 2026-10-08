@@ -316,13 +316,6 @@ func PrimeSilenceInfo(path string, head, tail, total int64) {
 	silenceCachePut(key, SilenceInfo{HeadFrames: head, TailFrames: tail, TotalFrames: total})
 }
 
-// ClearSilenceCache 清空静音扫描缓存（文件被替换 / 用户手动清缓存时调用）。
-func ClearSilenceCache() {
-	silenceCacheMu.Lock()
-	silenceCache = map[silenceCacheKey]SilenceInfo{}
-	silenceCacheMu.Unlock()
-}
-
 func silenceCacheGet(key silenceCacheKey) (SilenceInfo, bool) {
 	silenceCacheMu.Lock()
 	defer silenceCacheMu.Unlock()

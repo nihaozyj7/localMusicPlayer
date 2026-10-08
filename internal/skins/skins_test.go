@@ -299,15 +299,6 @@ func authGet(t *testing.T, m *Manager, target, method string) *httptest.Response
 	return doGet(m.Handler(), target+sep+"t="+m.Token(), method)
 }
 
-// withToken 给已经带了查询串的路径补上 token。
-func withToken(m *Manager, target string) string {
-	sep := "?"
-	if strings.Contains(target, "?") {
-		sep = "&"
-	}
-	return target + sep + "t=" + m.Token()
-}
-
 // TestHandlerRequiresToken /skins/ 是唯一能读到用户数据目录内容的路由，
 // 必须有鉴权：无 token / 错 token 一律 403。
 func TestHandlerRequiresToken(t *testing.T) {

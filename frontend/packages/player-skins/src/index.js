@@ -98,7 +98,7 @@ export {
   unitWeight,
   waveBandIndex,
 } from "./arcanum-timing.js";
-export { ELEMENT_HUE, ELEMENT_NAME, bandSplit, createElementAnalyzer } from "./arcanum-audio.js";
+export { ELEMENT_NAME, bandSplit, createElementAnalyzer } from "./arcanum-audio.js";
 export { createStageCamera } from "./arcanum-stage.js";
 export { buildRunes } from "./arcanum-scene.js";
 

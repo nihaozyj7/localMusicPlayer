@@ -207,36 +207,6 @@ func parseDurationText(s string) int64 {
 	return total * 1000
 }
 
-// CidFromView 通过 view 接口查询视频主分 P 的 cid 与元数据。
-func (c *Client) CidFromView(ctx context.Context, bvid string) (int64, int64, error) {
-	var resp struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Data    struct {
-			BVID     string `json:"bvid"`
-			AID      int64  `json:"aid"`
-			CID      int64  `json:"cid"`
-			Duration int64  `json:"duration"`
-			Title    string `json:"title"`
-			Pic      string `json:"pic"`
-			Owner    struct {
-				Name string `json:"name"`
-			} `json:"owner"`
-		} `json:"data"`
-	}
-	params := url.Values{"bvid": {bvid}}
-	if err := c.getJSON(ctx, defaultBaseURL+"/x/web-interface/view", params, &resp, false); err != nil {
-		return 0, 0, err
-	}
-	if resp.Code != 0 {
-		return 0, 0, fmt.Errorf("bilibili 视频信息失败: code=%d %s", resp.Code, resp.Message)
-	}
-	if resp.Data.CID == 0 {
-		return 0, 0, fmt.Errorf("bilibili: 视频 %s 没有可用 cid", bvid)
-	}
-	return resp.Data.CID, resp.Data.Duration, nil
-}
-
 // ViewInfo 是 view 接口中播放器需要的少量字段。
 type ViewInfo struct {
 	BVID     string

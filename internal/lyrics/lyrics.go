@@ -14,7 +14,6 @@
 package lyrics
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,9 +203,4 @@ func decodeText(raw []byte) string {
 	s := string(raw)
 	s = strings.TrimPrefix(s, "\ufeff")
 	return s
-}
-
-// Describe 便于日志输出
-func Describe(r Result, audioPath string) string {
-	return fmt.Sprintf("lyrics(%s): %s", r.Source, filepath.Base(audioPath))
 }

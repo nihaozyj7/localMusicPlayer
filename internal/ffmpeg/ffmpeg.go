@@ -446,9 +446,6 @@ type ProbeInfo struct {
 	Codec       string
 }
 
-// Available 报告是否具备探测能力
-func (t Tools) CanProbe() bool { return t.FFmpeg != "" }
-
 // Probe 探测媒体文件。ctx 控制超时，建议给 5~10 秒。
 //
 // 注意 -vn 与 -c:a：m4a 里的内嵌封面是视频流，不禁掉会去选视频编码器；

@@ -30,7 +30,6 @@ import { DEFAULT_COVER, clamp, coverOf, esc } from "./utils.js";
 import { animationMs } from "./runtime-tokens.js";
 
 import {
-  SKIN_API_VERSION,
   findLyricIndex,
   listSkins,
   loadExternalSkin,
@@ -147,7 +146,7 @@ class BoundedSet extends Set {
   }
 }
 
-let lyricsCache = new BoundedMap(LYRICS_CACHE_MAX); // songId -> { lines, text, source, status }
+const lyricsCache = new BoundedMap(LYRICS_CACHE_MAX); // songId -> { lines, text, source, status }
 /** 已经做过在线匹配的歌曲（避免同一首歌反复联网） */
 const autoMatched = new BoundedSet(LYRICS_CACHE_MAX);
 const lyricsPending = new Set();
@@ -265,23 +264,6 @@ function buildFallbackLyrics(song) {
     );
   }
   return out.join("\n");
-}
-
-/** 丢弃某首（或不传 = 全部）的歌词缓存，下次会重新装载 */
-export function invalidateLyrics(songId) {
-  if (songId) {
-    lyricsCache.delete(songId);
-    autoMatched.delete(songId);
-    // 偏移也要一起清：它只是「对旧文本的临时修正」，文本换了再叠加就错了
-    lyricsOffsets.delete(songId);
-  } else {
-    // 必须是 BoundedMap：换成裸 Map 会静默丢掉上限（见 BoundedMap 的说明）
-    lyricsCache = new BoundedMap(LYRICS_CACHE_MAX);
-    autoMatched.clear();
-    lyricsOffsets.clear();
-  }
-  lastPushed.lyricsText = null;
-  lastPushed.lyricsStatus = null;
 }
 
 /* --------------------------------------------------------------------------
@@ -1441,11 +1423,6 @@ export function togglePlayer() {
   else openPlayer();
 }
 
-/** 当前可用的样式 id（含运行时加载的第三方样式） */
-export function playerSkinIds() {
-  return listSkins().map((s) => s.id);
-}
-
 /**
  * 当前可用的样式清单（设置界面展示用）。
  *
@@ -1462,6 +1439,3 @@ export function availableSkins() {
     source: s.source || "",
   }));
 }
-
-/** 皮肤接口版本（设置界面展示 / 排障用） */
-export const PLAYER_SKIN_API_VERSION = SKIN_API_VERSION;

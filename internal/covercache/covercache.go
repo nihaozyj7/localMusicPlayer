@@ -230,7 +230,6 @@ func (s *Store) Stats() (count int, bytes int64) {
 	return count, bytes
 }
 
-// extForMIME 是嗅探失败时的兜底（见 sniffExt）。
 // Prune 删除**未被引用**的封面文件，返回删除数与释放的字节数。
 //
 // keep 是「仍在使用」的文件名集合（由元数据缓存给出）。minAge 用于避开与新写入
@@ -265,6 +264,7 @@ func (s *Store) Prune(keep map[string]struct{}, minAge time.Duration) (removed i
 	return removed, freed
 }
 
+// extForMIME 是嗅探失败时的兜底（见 sniffExt）。
 func extForMIME(mime string) string {
 	switch strings.ToLower(strings.TrimSpace(mime)) {
 	case "image/png":

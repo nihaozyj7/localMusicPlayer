@@ -199,7 +199,7 @@ function skinReferenceSection(ref) {
   if (!ref?.dir) {
     return `（浏览器预览模式读不到本机目录，以下是源码仓库里的参考文件）
 1. 接口唯一定义（含 JSDoc 类型）：frontend/packages/player-skins/src/contract.js
-2. 内置三款实现（结构可参考）：frontend/packages/player-skins/src/skins/classic.js、immersive.js、minimal.js
+2. 内置实现（结构可参考）：frontend/packages/player-skins/src/skins/ 下的 classic.js、immersive.js、minimal.js、anime.js、magia.js、arcanum.js
 3. 可直接复制改名的最小示例包：数据目录下的 player-skins/_template/（skin.js / skin.css / skin.json）
 4. 说明文档：frontend/packages/player-skins/README.md`;
   }
@@ -231,7 +231,7 @@ function skinReferenceSection(ref) {
   } else {
     lines.push("4. 该目录里目前还没有第三方样式包 —— 你写的这个会是第一个。");
   }
-  lines.push("5. 宿主只加载 apiVersion 为 1 的样式，本程序用的就是这个版本。");
+  lines.push("5. 宿主只加载 apiVersion 为 2 的样式，本程序用的就是这个版本。");
   return lines.join("\n");
 }
 
@@ -301,7 +301,7 @@ export default {
   id: "<样式id>",               // 必需，与目录名一致
   name: "<显示名>",             // 必需，显示在样式按钮的提示里
   icon: "disc",                 // 可选，图标 sprite id，见下
-  order: 200,                   // 可选，样式按钮排序，越小越靠前（内置三款 10~30，第三方建议 >= 200）
+  order: 200,                   // 可选，样式按钮排序，越小越靠前（内置样式 10~30，第三方建议 >= 200）
   description: "<一句话说明>",  // 可选
   background: false,            // 可选，true 才需要整窗背景层（此时才用 ctx.backgroundRoot）
   mount(ctx) {},                // 必需，函数

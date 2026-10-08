@@ -27,17 +27,6 @@ import {
 } from "./store.js";
 import { esc, fmtCount } from "./utils.js";
 
-export const SORT_LABELS = {
-  addedAt: "添加时间",
-  title: "标题",
-  artist: "歌手",
-  album: "专辑",
-  duration: "时长",
-  size: "文件大小",
-  ext: "格式",
-  playCount: "播放次数",
-};
-
 /* --------------------------------------------------------------------------
    单击 / 双击行为
    --------------------------------------------------------------------------
@@ -472,7 +461,5 @@ export function playAllVisible(shuffled = false) {
   playContext(ids, 0, currentContext());
   toast(shuffled ? "已随机播放" : `开始播放 ${fmtCount(ids.length)} 首`, { duration: 1600 });
 }
-
-export const SORT_KEYS = ["addedAt", "title", "artist", "album", "duration", "size", "playCount"];
 
 export { esc };

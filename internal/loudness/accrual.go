@@ -31,7 +31,6 @@ package loudness
 
 import (
 	"math"
-	"sync"
 )
 
 // 真峰值插值系数（与 bs1770.go 的 truePeakPhases 是同一组，48kHz 标准值）
@@ -81,22 +80,12 @@ type Accumulator struct {
 	// 复用它是为了让「转码时顺手测量」这条路在整首歌上不产生垃圾 ——
 	// 那是一条跑在音频解码循环里的热路径。
 	kwScratch []float64
-
-	// —— 元信息 ——
-	frames int64
 }
 
 type kWeightState struct {
 	// 两级各自的两个状态
 	s1, s2 [2]float64
 }
-
-// AccChunkFrames 是建议的喂块大小（帧）。
-//
-// 取 1 秒：比 100ms 的块步长大一个数量级，块计算的分摊开销可以忽略；
-// 同时它让「喂进来的块边界」永远不会被误当成「块边界」——
-// 块边界完全由 stepLen 决定，与喂块边界无关。
-const AccChunkFrames = 44100
 
 // NewAccumulator 创建累积器。channels 目前只用得到 1 与 2。
 func NewAccumulator(rate, channels int) *Accumulator {
@@ -197,8 +186,6 @@ func (a *Accumulator) Write(samples []float64) {
 			a.emitBlock()
 		}
 	}
-
-	a.frames += int64(frames)
 
 	// —— 真峰值 ——
 	//
@@ -382,16 +369,6 @@ func (a *Accumulator) loudnessRange() float64 {
 	return hi - lo
 }
 
-// Frames 返回已喂入的总帧数（诊断 / 测试用）
-func (a *Accumulator) Frames() int64 { return a.frames }
-
 /* --------------------------------------------------------------------------
    便捷入口：一次性算完一段 PCM
    -------------------------------------------------------------------------- */
-
-// pcmAccPool 复用累积器里的临时切片，避免每次测量都重新分配。
-//
-// 为什么池化：一次测量会走几十毫秒的解码循环，期间会构造若干临时切片。
-// 池本身不是性能关键（测量本来就是后台工作），但它能让「同时跑 2 个测量」
-// 时的内存曲线是平的，而不是每次抖动一下。
-var pcmAccPool = sync.Pool{New: func() any { return make([]float64, 0, 8192) }}

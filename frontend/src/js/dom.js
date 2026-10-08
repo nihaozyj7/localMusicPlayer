@@ -14,7 +14,6 @@ export {
   $$,
   icon,
   on,
-  setBusy,
   toast,
   openMenu,
   closeMenu,

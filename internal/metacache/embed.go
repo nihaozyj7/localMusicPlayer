@@ -585,22 +585,6 @@ func findTopLevelBox(raw []byte, boxType string) (int, int, bool) {
 	return findTopLevelBoxAbs(raw, boxType)
 }
 
-// findNestedBox 保留给测试用：在容器 box 的载荷里找子 box（一层）。
-func findNestedBox(payload []byte, boxType string) []byte {
-	for off := 0; off+8 <= len(payload); {
-		size := int(binary.BigEndian.Uint32(payload[off : off+4]))
-		kind := string(payload[off+4 : off+8])
-		if size < 8 || off+size > len(payload) {
-			return nil
-		}
-		if kind == boxType {
-			return payload[off : off+size]
-		}
-		off += size
-	}
-	return nil
-}
-
 func box(kind string, payload []byte) []byte {
 	out := make([]byte, 0, len(payload)+8)
 	out = append(out, boxHeader(kind, len(payload)+8)...)
@@ -820,10 +804,6 @@ func setVorbisFieldIfAny(comments [][2]string, key, value string) [][2]string {
 // 只在**原文件没有 vendor**（或解析不出来）时才用它，否则保留原值 ——
 // 强行改写会把「这个文件是谁写的 / 被谁处理过」的线索抹掉。
 const vendorString = "LMPlayer"
-
-func buildVorbisComment(comments [][2]string) []byte {
-	return buildVorbisCommentWithVendor(comments, "")
-}
 
 // buildVorbisCommentWithVendor 拼 VORBIS_COMMENT 块体。
 // vendor 为空时使用本项目的标识。

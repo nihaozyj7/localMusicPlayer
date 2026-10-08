@@ -52,16 +52,6 @@ func (f *fakeEmitter) Emit(name string, payload any) {
 	f.events = append(f.events, fakeEvent{name: name, payload: m})
 }
 
-func (f *fakeEmitter) names() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]string, 0, len(f.events))
-	for _, e := range f.events {
-		out = append(out, e.name)
-	}
-	return out
-}
-
 func (f *fakeEmitter) count(name string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

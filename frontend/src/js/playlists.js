@@ -11,7 +11,6 @@
 
 import { html } from "lit";
 import {
-  LIKED_ID,
   addSongsToPlaylist,
   createPlaylist,
   deletePlaylist,
@@ -84,10 +83,6 @@ export function addSongsTo(id, songIds) {
   const added = addSongsToPlaylist(id, songIds);
   if (!added) toast("所选歌曲已在该歌单中");
   else toast(`已添加 ${added} 首到「${pl.name}」`, { tone: "success" });
-}
-
-export function likedPlaylist() {
-  return playlistById(LIKED_ID);
 }
 
 /**

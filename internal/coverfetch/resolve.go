@@ -180,13 +180,6 @@ collect:
 	return good, bad, nil
 }
 
-func (a *Aggregator) totalOrDefault() time.Duration {
-	if a.Total > 0 {
-		return a.Total
-	}
-	return DefaultTotalTimeout
-}
-
 func (a *Aggregator) perOrDefault() time.Duration {
 	if a.PerProvider > 0 {
 		return a.PerProvider

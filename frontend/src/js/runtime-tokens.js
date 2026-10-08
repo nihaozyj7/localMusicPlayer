@@ -94,11 +94,6 @@ export function setRuntimeTokens(patch) {
   flush();
 }
 
-export function clearRuntimeTokens() {
-  overrides.clear();
-  flush();
-}
-
 export function getRuntimeTokens() {
   return Object.fromEntries(overrides);
 }

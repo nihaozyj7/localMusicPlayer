@@ -21,13 +21,6 @@ func CommandContext(ctx context.Context, name string, args ...string) *exec.Cmd 
 	return cmd
 }
 
-// Command 等价于 exec.Command，但创建的子进程不会显示窗口。
-func Command(name string, args ...string) *exec.Cmd {
-	cmd := exec.Command(name, args...)
-	hideWindow(cmd)
-	return cmd
-}
-
 // CommandVisible 等价于 exec.Command，**不**对子进程设置任何隐藏窗口标志。
 //
 // 为什么需要它：Command 会往 STARTUPINFO 里写 SW_HIDE（SysProcAttr.HideWindow）

@@ -394,23 +394,6 @@ func (m *Manager) Get(song bootstrap.Song) (Measurement, bool) {
 	return item, true
 }
 
-// GetByPath 按文件路径取测量结果。
-//
-// 存在的意义是「转码时顺手测量」：media 服务手里只有转码产物的**路径**，
-// 而那条链路上不一定有 songID 可用。测量链路上不让测量去找 id，
-// 只让它找文件 —— id 只有增益表才需要。
-func (m *Manager) GetByPath(path string) (Measurement, bool) {
-	m.ensureLoaded()
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, item := range m.items {
-		if item.Path == path && item.Algo == AlgoVersion {
-			return item, true
-		}
-	}
-	return Measurement{}, false
-}
-
 // Count 缓存里的记录条数（含已过期的，仅供诊断显示）
 func (m *Manager) Count() int {
 	m.ensureLoaded()

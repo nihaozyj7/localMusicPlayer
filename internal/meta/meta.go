@@ -658,10 +658,6 @@ func sampleEntryRate(buf []byte) int {
 	return 0
 }
 
-func be16(b []byte) uint16 {
-	return uint16(b[0])<<8 | uint16(b[1])
-}
-
 func be32(b []byte) uint32 {
 	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
 }

@@ -211,7 +211,6 @@ export function createScene(canvas) {
   for (let i = 0; i < 3; i += 1) fog.push({ ph: i * 2.1, r: 100, grad: null });
 
   let shatter = 0;
-  let flash = 0;
   let rippleCursor = 0;
   let pulseCursor = 0;
   const scatterRnd = mulberry32(20260101);
@@ -392,9 +391,6 @@ export function createScene(canvas) {
         shatter = 1;
         for (let i = 0; i < 3; i += 1) spawnPulse();
         for (let i = 0; i < 4; i += 1) spawnRipple();
-      } else if (type === "flash") {
-        flash = 1;
-        spawnPulse();
       } else if (type === "dissolve") {
         for (let i = 0; i < 5; i += 1) spawnRipple();
       }
@@ -409,8 +405,6 @@ export function createScene(canvas) {
       if (!W || !H) return;
       shatter *= Math.exp(-dt / 0.55);
       if (shatter < 0.003) shatter = 0;
-      flash *= Math.exp(-dt / 0.16);
-      if (flash < 0.004) flash = 0;
 
       const low = clamp(s.low || 0, 0, 1);
       const bass = clamp(s.bass || 0, 0, 1);
@@ -781,12 +775,6 @@ export function createScene(canvas) {
         g.fillRect(0, 0, W, H);
       }
 
-      // 雷：白闪
-      if (flash > 0.004) {
-        g.globalCompositeOperation = "lighter";
-        g.fillStyle = rgba(tinted[0], clamp(flash * 0.16, 0, 0.25));
-        g.fillRect(0, 0, W, H);
-      }
       g.globalCompositeOperation = "source-over";
     },
 

@@ -68,4 +68,8 @@ config.local.json
 config.json
 
 # ---- 自检脚本的临时工作目录（.tmp-appinspect / .tmp-checkapp 等）----
+# ★ 必须同时写两条：`.tmp-*/`（带尾斜杠）**只匹配目录**，
+#   tools/ 下那些 `.tmp-*.mjs` 一次性探针是**文件**，只靠上面那条漏网过
+#   （曾经因此让 10 个探针脚本混进了版本库，见 docs/39）。
 .tmp-*/
+.tmp-*

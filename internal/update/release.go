@@ -3,7 +3,6 @@ package update
 import (
 	"fmt"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -260,17 +259,4 @@ func FormatSpeed(bytesPerSec float64) string {
 // FormatTag 把 tag_name 整理成展示用的版本号（去掉 `v` 前缀）。
 func FormatTag(tag string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(tag), "v"), "V")
-}
-
-// parseAssetID 从 API URL 里取出资产 id（诊断信息里用到）。
-func parseAssetID(apiURL string) int64 {
-	idx := strings.LastIndexByte(apiURL, '/')
-	if idx < 0 {
-		return 0
-	}
-	n, err := strconv.ParseInt(apiURL[idx+1:], 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n
 }

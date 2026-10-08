@@ -292,7 +292,6 @@
 .slider {
   --track-h: 4px;
   --thumb-size: 12px;
-  --fill: 0%;
   position: relative;
   flex: 1 1 auto;
   display: flex;
@@ -328,17 +327,6 @@
   border-radius: var(--r-full);
   background: var(--accent);
   transition: transform 80ms linear;
-}
-
-/* 缓冲进度（可选，二者不冲突）。与填充同理用 scaleX。 */
-.slider__buffer {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 100%;
-  transform: scaleX(0);
-  transform-origin: left center;
-  border-radius: var(--r-full);
-  background: var(--border-2);
 }
 
 .slider__thumb {

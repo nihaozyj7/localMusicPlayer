@@ -95,8 +95,6 @@ type PlayerService struct {
 	currentSongID string
 	// loaded 表示引擎里确实已经装载了这首歌（转码失败时为 false）
 	loaded bool
-	// playbackRate 恒为 1（预留：后端变速播放）
-	playbackRate float64
 
 	// lastAnchorAt 上次推锚点的时刻（nowMs 口径），用于节流
 	lastAnchorAt int64
@@ -169,10 +167,9 @@ func (b eventBridge) Emit(name string, payload any) {
 // resolve 必须能把歌曲 id 变成引擎可直接播放的 WAV 路径。
 func NewPlayerService(resolve func(string) (string, int64, error)) *PlayerService {
 	return &PlayerService{
-		engine:       audioplay.New(),
-		resolve:      resolve,
-		userVolume:   1,
-		playbackRate: 1,
+		engine:     audioplay.New(),
+		resolve:    resolve,
+		userVolume: 1,
 	}
 }
 
@@ -842,9 +839,4 @@ var timeBase = time.Now()
 // nowMs 返回自本进程启动起经过的毫秒数（单调）
 func nowMs() int64 {
 	return time.Since(timeBase).Milliseconds()
-}
-
-// songDurationMs 从歌曲元数据里取时长（取不到返回 0）
-func songDurationMs(song bootstrap.Song) int64 {
-	return song.Duration
 }

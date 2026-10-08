@@ -219,7 +219,6 @@ class MpPlayerbar extends MpElement {
                  Lit 的标记节点被 textContent 覆盖掉（Lit 会报 "Cannot set properties
                  of null"）。气泡里的时间由 createSlider 的 format 负责。 -->
             <div class="slider__rail">
-              <div class="slider__buffer" id="progress-buffer"></div>
               <div class="slider__fill" id="progress-fill"></div>
             </div>
             <div class="slider__thumb"></div>

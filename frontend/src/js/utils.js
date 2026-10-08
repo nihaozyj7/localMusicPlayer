@@ -11,16 +11,6 @@ export function fmtTime(ms) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-/** 毫秒 → h:mm:ss（超过 1 小时时用） */
-export function fmtTimeLong(ms) {
-  const total = Math.floor((ms || 0) / 1000);
-  const h = Math.floor(total / 3600);
-  if (h <= 0) return fmtTime(ms);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-
 /** 毫秒 → 中文时长描述（用于「全部播放 · 约 1 小时 20 分」） */
 export function fmtDurationCn(ms) {
   const total = Math.floor((ms || 0) / 1000);
@@ -77,47 +67,12 @@ export function uniq(arr) {
   return Array.from(new Set(arr));
 }
 
-/** 按 key 去重（保留先出现的） */
-export function uniqBy(arr, keyFn) {
-  const seen = new Set();
-  const out = [];
-  for (const item of arr) {
-    const k = keyFn(item);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push(item);
-  }
-  return out;
-}
-
-/** 数组按 key 分组 */
-export function groupBy(arr, keyFn) {
-  const map = new Map();
-  for (const item of arr) {
-    const k = keyFn(item);
-    if (!map.has(k)) map.set(k, []);
-    map.get(k).push(item);
-  }
-  return map;
-}
-
 /** LRC 解析与定位已随「歌词渲染」一起抽到 @localmusicplayer/player-skins（src/lrc.js）。
  *  这里刻意不再保留副本：两份实现迟早会漂，而歌词行号算错的表现是「高亮错行」，
  *  非常难查。需要解析/定位请从包入口 import。 */
 
-/** 自然排序（含中文数字感知） */
-const collator = new Intl.Collator("zh-Hans-CN", { numeric: true, sensitivity: "base" });
-
 /** 千分位格式化器（模块级复用，见 fmtCount） */
 const countFormatter = new Intl.NumberFormat("zh-CN");
-export function naturalCompare(a, b) {
-  return collator.compare(a ?? "", b ?? "");
-}
-
-/** 平台安全的文件名（用于歌单命名等） */
-export function sanitizeName(name) {
-  return (name || "").replace(/[\\/:*?"<>|]/g, "_").trim();
-}
 
 /** 防抖 */
 export function debounce(fn, wait = 200) {
@@ -200,12 +155,6 @@ export function placeholderCover(text = "♪", seed = 0) {
 <text x="150" y="172" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="72" fill="rgba(255,255,255,.62)">${glyph}</text>
 </svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-}
-
-/** 从当前主题读取令牌（供 JS 绘制 canvas / 取色等使用） */
-export function cssVar(name, fallback = "") {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name);
-  return (v || "").trim() || fallback;
 }
 
 /* --------------------------------------------------------------------------
@@ -294,19 +243,6 @@ export function setCoverOverrideGetter(fn) {
 function coverOverrideFor(id) {
   if (!id || typeof coverOverrideGetter !== "function") return "";
   return coverOverrideGetter(id) || "";
-}
-
-/**
- * 在线歌曲在「拿不到封面」时应该显示什么。
- *
- * 需求：在线封面获取不到时**不显示封面**，而不是留一个破图或占位图。
- * 这里返回 true 表示调用方应当渲染一个空槽位（或直接省略 <img>）。
- *
- * 注意与 isPlaceholderCoverUrl 的分工：本函数问的是「这首歌该不该画封面」，
- * 后者问的是「这个 <img src> 是不是那张占位图本身」（取色时要靠它把关）。
- */
-export function isPlaceholderCover(song) {
-  return coverOf(song) === DEFAULT_COVER;
 }
 
 /** 这个封面地址是不是那张默认占位封面（DEFAULT_COVER）本身 */

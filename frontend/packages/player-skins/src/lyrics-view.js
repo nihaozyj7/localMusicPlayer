@@ -18,15 +18,6 @@ import { findLyricIndex } from "./lrc.js";
 /** 用户滚动之后，多久重新接管自动滚动 */
 const USER_SCROLL_PAUSE_MS = 1200;
 
-/** 歌词行之间做高亮时的最小重排间隔（同一步内重复调用直接跳过的依据） */
-export const EMPTY_SOURCE_LABEL = {
-  none: "暂无歌词",
-  embedded: "内嵌歌词",
-  "lrc-file": "同名 .lrc",
-  cache: "本地缓存",
-  online: "在线匹配",
-};
-
 /** 歌词行的最小结构（与 lrc.js 解析结果一致） */
 /**
  * @typedef {{ time: number, text: string }} LyricLine

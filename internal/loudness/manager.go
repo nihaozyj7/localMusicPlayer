@@ -142,11 +142,6 @@ func (m *Manager) Measure(ctx context.Context, song bootstrap.Song) (Measurement
 	return m.measureUncached(ctx, song)
 }
 
-// ForceMeasure 忽略缓存重新测量（设置里点「重新测量」时用）
-func (m *Manager) ForceMeasure(ctx context.Context, song bootstrap.Song) (Measurement, error) {
-	return m.measureUncached(ctx, song)
-}
-
 // Store 把一份已经算好的测量结果记进缓存（**不跑 ffmpeg**）。
 //
 // ★ 这是「零成本测量」的入口。转码播放链路在解码过程中顺手用纯 Go 的

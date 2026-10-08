@@ -10,7 +10,8 @@
      · 不能有歌词显隐按钮（#btn-lyrics-visible / #sp-lyrics-toggle）——
        需求：歌词不提供隐藏入口，详情页那块歌词区只由设置 → 歌词控制；
      · 不能有全屏按钮（#btn-fullscreen）；
-     · 「桌面歌词」（#btn-desktop-lyrics）保留（桌面独立透明窗口，暂未实现）。
+     · 「桌面歌词」（#btn-desktop-lyrics）不能出现在底栏 ——
+       它的入口已经搬进「播放选项」面板（见 ui/panels.js）。
 
    用法：node tools/check-playerbar-tools.mjs [--port 5173]
    ========================================================================== */
@@ -141,7 +142,9 @@ check(
   JSON.stringify(tools.bar)
 );
 check("底栏没有全屏按钮", tools.hasFullscreen === false, JSON.stringify(tools.bar));
-check("底栏保留「桌面歌词」按钮", tools.hasDesktop === true, JSON.stringify(tools.bar));
+// 桌面歌词 / 桌面背景歌词的入口已搬进「播放选项」面板（见 ui/panels.js），
+// 底栏不再直接渲染这两个按钮 —— 这里断言「底栏没有」，而不是「保留」。
+check("底栏不再有桌面歌词按钮（入口已移入选项面板）", tools.hasDesktop === false, JSON.stringify(tools.bar));
 check("歌词入口在（不再依赖运行时 inject）", tools.bar.includes("btn-lyrics"), JSON.stringify(tools.bar));
 // 需求：图标是「词」字（放大镜/歌词线条都表达不出「歌词」）
 check(
@@ -149,20 +152,12 @@ check(
   tools.matchIcon === "#i-lyric-match" && tools.matchTip === "歌词",
   `${tools.matchIcon} / ${tools.matchTip}`
 );
-// 控件顺序：播放模式 / 歌词 / 桌面歌词 / 桌面背景歌词 / 定时停止 / 选项 / 播放列表
-// （桌面歌词与桌面背景歌词是互斥的一组，但外观上各自独立，见 index.html 的说明）
+// 控件顺序：播放模式 / 歌词 / 定时停止 / 选项 / 播放列表
+// （原来的「桌面歌词」「桌面背景歌词」两个按钮已移入选项面板，不再出现在底栏）
 check(
   "底栏控件顺序符合需求",
   JSON.stringify(tools.bar) ===
-    JSON.stringify([
-      "btn-mode",
-      "btn-lyrics",
-      "btn-desktop-lyrics",
-      "btn-desktop-wallpaper",
-      "btn-sleep",
-      "btn-options",
-      "btn-playlist",
-    ]),
+    JSON.stringify(["btn-mode", "btn-lyrics", "btn-sleep", "btn-options", "btn-playlist"]),
   JSON.stringify(tools.bar)
 );
 check("设置层紧凑控件里没有歌词显隐按钮", tools.hasSpLyrics === false, JSON.stringify(tools.sp));

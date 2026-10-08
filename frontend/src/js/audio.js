@@ -176,11 +176,6 @@ export async function probeBackend() {
   return backendReady;
 }
 
-/** 后端是否接管了播放（设置界面用来显示当前走的哪条链路） */
-export function isBackendPlayback() {
-  return backendReady;
-}
-
 /**
  * 告诉 store「真实音频已经接管进度」。
  *
@@ -245,18 +240,6 @@ export function startAudioEvents() {
   tickTimer = setInterval(extrapolate, 250);
 }
 
-/** 停止事件订阅与外推定时器（退出/热重载用） */
-export function stopAudioEvents() {
-  while (unsubscribers.length) {
-    try {
-      unsubscribers.pop()();
-    } catch {
-      /* 忽略 */
-    }
-  }
-  if (tickTimer) clearInterval(tickTimer);
-  tickTimer = null;
-}
 
 /* --------------------------------------------------------------------------
    锚点与外推
@@ -432,19 +415,6 @@ export async function applyEffectPreset() {
   } catch (err) {
     console.warn("[audio] 同步音效档位失败", err);
   }
-}
-
-/**
- * 音效状态快照（设置界面展示用）。
- *
- * backend=false 时说明后端原生音频不可用，音效无法生效 ——
- * 界面据此显示提示，而不是让用户点了按钮却听不出任何区别。
- */
-export function effectState() {
-  return {
-    backend: backendReady,
-    preset: state.config.effectPreset || "off",
-  };
 }
 
 /**
@@ -942,17 +912,6 @@ export function seekAudio(ms) {
   });
 }
 
-export function stopAudio() {
-  if (!backendReady) {
-    stopAudioLegacy();
-    return;
-  }
-  loadedFor = null;
-  backendSongId = null;
-  anchor = null;
-  backend.playerUnload().catch(() => {});
-}
-
 /* --------------------------------------------------------------------------
    频谱
    -------------------------------------------------------------------------- */
@@ -1011,15 +970,6 @@ export async function refreshSpectrum(bands = 32) {
   } catch {
     return null;
   }
-}
-
-/** 低频能量（0..1）：给「整体随鼓点放大」这类效果用 */
-export function bassLevel() {
-  const bands = spectrum(8);
-  if (!bands) return null;
-  let sum = 0;
-  for (let i = 0; i < 3; i += 1) sum += bands[i];
-  return sum / 3;
 }
 
 /* --------------------------------------------------------------------------
@@ -1104,14 +1054,6 @@ function setGain(songId, gainDB) {
       applyVolumeLegacy();
     }
   }
-  notify();
-}
-
-/** 批量补偿（后端返回 songId → dB） */
-export function applyGainMap(map) {
-  if (!map) return;
-  state.loudnessGains = { ...(state.loudnessGains || {}), ...map };
-  applyGainForSong();
   notify();
 }
 
@@ -1201,26 +1143,6 @@ export function audioGraphState() {
     backend: false,
     reason: backendReason,
   };
-}
-
-/** 后端诊断信息（设置界面排查「声音断续」） */
-export async function backendDiagnostics() {
-  if (!backendReady) return null;
-  try {
-    return await backend.playerDiagnostics();
-  } catch {
-    return null;
-  }
-}
-
-/** 真实音频元素：后端播放时没有 <audio>，返回 null（皮肤契约已移除这一项） */
-export function audioElement() {
-  if (backendReady) return null;
-  try {
-    return audioEl();
-  } catch {
-    return null;
-  }
 }
 
 /* ==========================================================================
@@ -1494,16 +1416,6 @@ function seekAudioLegacy(ms) {
   } catch {
     pendingSeek = ms;
   }
-}
-
-function stopAudioLegacy() {
-  if (!el) return;
-  el.pause();
-  el.removeAttribute("src");
-  el.load();
-  loadedFor = null;
-  switchPhase = SWITCH_IDLE;
-  selfPause = false;
 }
 
 function spectrumLegacy(bands = 32) {

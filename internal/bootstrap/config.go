@@ -277,7 +277,7 @@ type Config struct {
 
 	// EffectPreset 是当前的音效档位（见 internal/audioplay/effects.go）。
 	//
-	// 取值：off | vocal | bass | surround | live | hall
+	// 取值：off | vocal | bass | surround
 	//
 	// ★ 默认 off 是刻意的，与「响度均衡」「跳过静音」同一立场：
 	// 任何改动音频本身的处理都必须由用户明确开启。开音效会改变用户

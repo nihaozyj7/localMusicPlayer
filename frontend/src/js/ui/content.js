@@ -445,9 +445,6 @@ class MpContent extends MpElement {
       case "sort":
         this.openSortMenu();
         break;
-      case "add-folder":
-        await handleSettingsAction({ dataset: { act: "add-folder" } }, SETTINGS_CTX);
-        break;
       case "play-all":
         playAllVisible(false);
         break;

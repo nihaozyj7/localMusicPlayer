@@ -184,7 +184,7 @@ export function hashStr(s) {
 }
 
 /** 确定性伪随机（mulberry32）：同一颗种子永远给出同一串数 */
-export function mulberry32(seed) {
+function mulberry32(seed) {
   let a = seed >>> 0;
   return function next() {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -239,9 +239,8 @@ export function latinAdvanceEm(ch) {
   const lower = ch.toLowerCase();
   const lowerHit = LATIN_ADVANCE[lower];
   if (lowerHit != null) return lowerHit;
-  const code = ch.charCodeAt(0);
   // 西里尔 / 希腊 / 拉丁扩展一律按 0.55 走，偏差可以接受
-  return Number.isFinite(code) ? LATIN_ADVANCE_FALLBACK : LATIN_ADVANCE_FALLBACK;
+  return LATIN_ADVANCE_FALLBACK;
 }
 
 /**

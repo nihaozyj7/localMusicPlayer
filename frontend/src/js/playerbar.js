@@ -11,7 +11,7 @@
        与「面板怎么画」无关。
    ========================================================================== */
 
-import { commit, currentSong, nextIndex, songById, state, togglePlay } from "./store.js";
+import { commit, currentSong, state, togglePlay } from "./store.js";
 import { toast } from "./ui/overlays.js";
 
 export const MODE_META = {
@@ -61,16 +61,6 @@ export function toggleSleepPanel(force) {
 /* --------------------------------------------------------------------------
    定时停止
    -------------------------------------------------------------------------- */
-/** 剩余时长文案：1 小时 05 分 / 05:20 */
-export function fmtRemain(ms) {
-  const total = Math.max(0, Math.round(ms / 1000));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) return `${h} 小时 ${String(m).padStart(2, "0")} 分`;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-
 /** 把滑条读数落地成真正的定时器 */
 export function applySleepMinutes(minutes) {
   const n = Math.round(Number(minutes) || 0);
@@ -118,16 +108,6 @@ export function checkSleepTimer() {
   if (state.playing) togglePlay();
   else commit();
   toast("已按定时停止播放", { duration: 1800 });
-}
-
-/** 供播放界面显示「下一曲」提示 */
-export function nextSongPreview() {
-  const i = nextIndex(1);
-  return i >= 0 ? songById(state.queue[i]) : null;
-}
-
-export function modeLabel(mode = state.playMode) {
-  return MODE_META[mode]?.label ?? "";
 }
 
 export { currentSong };

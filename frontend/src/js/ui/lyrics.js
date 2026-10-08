@@ -155,15 +155,6 @@ class MpLyricsPanel extends MpElement {
     if (activeTab === "edit") this.paintEditorFollow();
   }
 
-  refreshAll() {
-    this._refreshHeader();
-    ensureLyricsLoaded().then(() => {
-      this._refreshHeader();
-      if (activeTab === "online") this.refreshOnlineHint();
-      if (activeTab === "edit") this.ensureDraft().then(() => this.forceUpdate());
-    });
-  }
-
   _refreshHeader() {
     // 头部信息直接读 currentLyricsInfo()，模板表达式里用得到；
     // 这里只需要触发一次重绘（歌词装载完成是 store 之外的变化）
@@ -883,11 +874,6 @@ class MpLyricsPanel extends MpElement {
     bumpLyricsPanelTick();
   }
 
-  /** 草稿文本：保留未打轴的行（serializeLrc 会把它们丢掉，那是对外格式） */
-  serializeDraftText() {
-    return draft.lines.map((l) => (typeof l.time === "number" ? formatLrcTime(l.time) + l.text : l.text)).join("\n");
-  }
-
   setDraftText(next) {
     this._pendingText = next;
     bumpLyricsPanelTick();
@@ -1081,10 +1067,6 @@ export function closePanel() {
 export function toggleLyricsPanel(tab) {
   if (state.lyricsOpen) closePanel();
   else openPanel(tab);
-}
-
-export function isLyricsPanelOpen() {
-  return state.lyricsOpen === true;
 }
 
 /* --------------------------------------------------------------------------

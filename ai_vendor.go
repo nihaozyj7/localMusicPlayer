@@ -66,13 +66,6 @@ var aiVendorCatalog = []aiVendorInfo{
 	{ID: aiVendorOllama, Label: "Ollama（本地，OpenAI 兼容）", Hint: "本地兼容层用 reasoning_effort；GPT-OSS 无法完全关闭"},
 }
 
-// aiProvidersForUI 返回给前端的厂商清单。
-func aiProvidersForUI() []aiVendorInfo {
-	out := make([]aiVendorInfo, len(aiVendorCatalog))
-	copy(out, aiVendorCatalog)
-	return out
-}
-
 func isValidAIVendor(id string) bool {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -232,16 +225,6 @@ func aiDropTemperature(vendor string) bool {
 		return true
 	}
 	return false
-}
-
-// aiVendorHint 返回该厂商的限制说明（设置界面展示）。
-func aiVendorHint(vendor string) string {
-	for _, v := range aiVendorCatalog {
-		if v.ID == vendor {
-			return v.Hint
-		}
-	}
-	return ""
 }
 
 func containsAny(haystack string, needles ...string) bool {

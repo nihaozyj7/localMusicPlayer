@@ -217,10 +217,9 @@ function initialState() {
     updateRev: 0,
     pvMode: "classic",
     query: "",
-    // 搜索浮层：{ open: boolean, tab: 'local'|'online' }。
+    // 搜索浮层：{ open: boolean }。
     // 放在 state 里是为了让「清空前不销毁、可复用」这个行为有唯一真源。
     searchOpen: false,
-    searchTab: "online",
     sortKey: "addedAt",
     sortDir: "desc",
 
@@ -1104,21 +1103,9 @@ export function setSelectedSongs(ids) {
   commit();
 }
 
-export function clearSelectedSongs() {
-  state.selectedIds = new Set();
-  commit();
-}
-
 /* --------------------------------------------------------------------------
    播放队列（需求 B3 / B4 / B5）
    -------------------------------------------------------------------------- */
-export function setQueue(songIds, origin = null) {
-  state.queue = songIds.slice();
-  state.queueOrigin = origin;
-  state.forcedNextId = "";
-  commit();
-}
-
 export function appendToQueue(songIds) {
   state.queue = uniq([...state.queue, ...songIds]);
   commit();
@@ -1670,17 +1657,6 @@ export function setCoverSets(map) {
   commit();
 }
 
-/** 兼容旧调用：设置「唯一一张」封面（空值 = 清空） */
-export function setCoverOverride(id, dataURL) {
-  if (!id) return;
-  if (dataURL) setCoverSet(id, { items: [{ preview: dataURL, source: "user" }], active: 0 });
-  else {
-    state.coverSets.delete(id);
-    bumpCoverVersion();
-    commit();
-  }
-}
-
 /** 兼容旧调用：取当前生效封面 */
 export function coverOverrideOf(id) {
   return activeCoverOf(id);
@@ -1695,12 +1671,6 @@ setCoverOverrideGetter(coverOverrideOf);
    密度是全列表共用的显示设置，存在后端配置里（listDensity），
    这样所有列表（本地歌曲 / 播放列表 / 歌单）一起生效。
    -------------------------------------------------------------------------- */
-export function setListDensity(value) {
-  const ok = ["compact", "cozy", "roomy"];
-  state.config.listDensity = ok.includes(value) ? value : "cozy";
-  commit();
-}
-
 /* --------------------------------------------------------------------------
    排序
    --------------------------------------------------------------------------
@@ -1770,15 +1740,6 @@ export function registerOnlineSong(song) {
   state.onlineSongs.set(song.id, merged);
   // 队列里已经引用了它就够；不 commit（调用方紧接着会 playContext）
   return merged;
-}
-
-/** 清掉不再被引用的在线曲目（切歌、清空队列后顺手回收）。 */
-export function pruneOnlineSongs() {
-  const keep = new Set(state.queue);
-  if (state.currentId) keep.add(state.currentId);
-  for (const id of [...state.onlineSongs.keys()]) {
-    if (!keep.has(id) && id !== state.currentId) state.onlineSongs.delete(id);
-  }
 }
 
 export function currentSong() {
@@ -2079,11 +2040,6 @@ export function startMockTicker() {
     // 进度高频刷新：不重算列表、不写存储，只通知订阅者
     notify();
   }, 250);
-}
-
-export function stopMockTicker() {
-  if (tickTimer) clearInterval(tickTimer);
-  tickTimer = null;
 }
 
 /* --------------------------------------------------------------------------
