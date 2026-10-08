@@ -91,6 +91,23 @@ let lastProgressPersistAt = 0;
 /** 位置外推的定时器 */
 let tickTimer = null;
 
+/**
+ * 「下一首要来了」——从切歌开始，到最后一次把位置写进 store 为止。
+ *
+ * ★ 它解决的是切歌瞬间进度条的乱跳（真实报障：「进度条会反复横跳一下」）。
+ *
+ * 切歌发生时 state.position 会被 store 清零，但**旧歌的锚点还挂在本模块里**：
+ * 后端的 tick 每 200ms 就会按旧歌的位置推一个锚点过来，外推也仍在按旧锚点
+ * 算位置。这些数字写进 store 就是「清零 → 又跳回旧位置 → 再清零」的横跳。
+ * 更糟的是它还会被写进 noteProgress（记忆播放进度）——于是刚播的新歌
+ * 可能带着旧歌的位置被记下来，下次打开就跑到了中间。
+ *
+ * 所以从切歌那一刻起，直到新歌真正装载完成，一律**不接受**锚点：
+ *   · applyAnchor 直接丢掉（那一定是旧歌的）；
+ *   · 外推停摆，位置停在 store 刚清零的 0 上。
+ */
+let switchPending = false;
+
 /** 取消订阅函数集合 */
 const unsubscribers = [];
 
@@ -254,6 +271,11 @@ export function startAudioEvents() {
  * 之后用它做外推基准。
  */
 function applyAnchor(payload) {
+  // 切歌途中：这一定是**上一首**的锚点（后端要到 playerLoad 返回才换成新歌），
+  // 收下就会把进度条拉回旧歌的位置，还会污染「记忆播放进度」。直接丢。
+  // 新歌的锚点由 loadSong 在装载完成后主动拉一次（见那里的 playerState）。
+  if (switchPending) return;
+
   const durationMs = Number(payload.durationMs) || 0;
   const positionMs = Number(payload.positionMs) || 0;
 
@@ -297,6 +319,8 @@ function applyAnchor(payload) {
 function extrapolate() {
   if (!anchor || !backendReady) return;
   if (!state.currentId) return;
+  // 切歌途中不推进：此刻 anchor 还是上一首的，推进它就是在给进度条喂旧位置
+  if (switchPending) return;
 
   let pos = anchor.positionMs;
   if (anchor.playing) {
@@ -630,14 +654,7 @@ export async function syncAudio() {
 
   if (!song) {
     if (loadedFor !== null) {
-      loadedFor = null;
-      backendSongId = null;
-      anchor = null;
-      try {
-        await backend.playerUnload();
-      } catch {
-        /* 卸载失败不影响后续装载 */
-      }
+      await unloadCurrent();
     }
     return;
   }
@@ -658,12 +675,61 @@ export async function syncAudio() {
   syncPlayState();
 }
 
+/**
+ * 停止当前播放（清空队列 / 停止时走这里）。
+ *
+ * 顺序是刻意的：**先**让后端停下来，**再**清本地的记账。
+ *
+ * 反过来（先清空再调用）会留下一个真实的安全洞：switchPending 被置上之后，
+ * 下一次 syncAudio 会因为 loadedFor === null 而**直接返回、根本不调
+ * playerUnload**（那段判定的目的正是「已经卸载过就别重复卸载」）。
+ * 于是引擎还在出声，界面却显示已停止。写状态与卸载必须成对出现，
+ * 不能依赖一个「之后一定会再跑一次」的同步。
+ */
+async function unloadCurrent() {
+  switchPending = false;
+  loadedFor = null;
+  backendSongId = null;
+  anchor = null;
+  lastPushedPosition = -1;
+  try {
+    await backend.playerUnload();
+  } catch {
+    /* 卸载失败不影响后续装载 */
+  }
+}
+
 /** 装载一首歌并起播 */
 async function loadSong(song) {
   loadedFor = song.id;
   const seq = ++requestSeq;
   anchor = null;
   lastPushedPosition = -1;
+
+  // ★★★ 从这一行开始，界面不再显示任何旧位置（见 switchPending 的说明）。
+  //
+  // 置位要**早**于下面那次 await：pushLoudnessToBackend 是一次 IPC 往返，
+  // 在它返回之前旧歌的锚点完全可能先到（后端 tick 是 200ms 一次），
+  // 那个锚点会把进度条拽回旧位置。
+  switchPending = true;
+
+  // ★ 手动切歌是即时意图：先取消后端可能还挂着的「切歌间隔」。
+  //
+  // 不管它，用户会看到「下一首要过一会儿才被播放」：引擎在间隔中只输出静音
+  // 且不读缓冲、不推进位置（见 audioplay.Engine.onData 的间隔分支），
+  // 于是新歌即便几毫秒就装载好了，也要等**剩下的**间隔走完才出声
+  //（默认间隔就是 1.5 秒，而且那期间听不到任何东西）。
+  //
+  // 后端的 Load 与 Play 各自也会取消间隔，所以这一发不是唯一的一道 ——
+  // 它只是把「用户意图 → 出声」的窗口压到最短。
+  try {
+    await backend.playerCancelGap();
+  } catch {
+    /* 后端没这个接口（旧版本）时忽略：Load 里还有一道 */
+  }
+  // 取消间隔是异步的：这期间可能又切了一次歌。这时别再往下走 ——
+  // 否则两次 playerLoad 会并发压在同一个解析/转码上，白白多跑一遍。
+  if (seq !== requestSeq) return;
 
   // 换歌期间先把响度补偿压到 0 dB（不抬升也不压低）。
   //
@@ -744,9 +810,15 @@ async function loadSong(song) {
     if (state.playing) {
       await backend.playerPlay();
     }
-    // 立刻拉一次状态：不等下一个锚点，避免刚切歌时进度条停在旧位置
+    // 立刻拉一次状态：不等下一个锚点，避免刚切歌时进度条停在旧位置。
+    //
+    // ★ 顺序要紧：必须**先**解除 switchPending 再 applyAnchor，否则这条
+    // 新歌的锚点会被 applyAnchor 自己的「切歌途中」判定丢掉。
+    // 这也是整条链路上唯一一次解除 —— 位置从这一刻起才允许再写进 store。
     const st = await backend.playerState();
-    if (seq === requestSeq && st) applyAnchor(st);
+    if (seq !== requestSeq) return; // 期间又切歌了：新歌的这条状态已经过期
+    switchPending = false;
+    if (st) applyAnchor(st);
   } catch (err) {
     if (seq !== requestSeq) return;
     // 装载失败（转码失败 / 文件损坏 / 取不到地址）走统一处理：
@@ -754,8 +826,23 @@ async function loadSong(song) {
     // handlePlaybackFailure 统一发，顺便把去重与熔断一起做了。
     loadedFor = null;
     backendSongId = null;
+    // 失败也要收尾：handlePlaybackFailure 会接着 playNext(true)，
+    // 那会立刻再进一次 loadSong 并重新置位。但熔断（连续失败就停下）与
+    // 「暂停中点了首坏歌」这两种情况不会再装载 —— 留在置位状态会让
+    // 界面永远冻结在「加载中」。
+    switchPending = false;
     handlePlaybackFailure(song.id, err?.message ?? "装载失败", "load");
   }
+}
+
+/**
+ * 当前是否正处于「切歌中」（新歌还没装载完成）。
+ *
+ * 给界面用：切歌期间进度条不显示（此刻既没有可信的位置，也没有可信的时长，
+ * 画出来的任何一帧都是错的）。它只是**展示**用的判定，不参与任何播放决策。
+ */
+export function switchingTrack() {
+  return switchPending;
 }
 
 /** 把「该播还是该停」同步给后端 */

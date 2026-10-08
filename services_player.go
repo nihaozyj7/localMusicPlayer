@@ -290,6 +290,12 @@ func (s *PlayerService) Available() map[string]any {
 //
 // 这个方法会**阻塞**到歌曲可以起播为止（需要转码时可能几秒）。
 // 前端应当把它当作「切歌」来用，并在此期间显示加载态。
+//
+// ★ 它是「手动切歌」的入口，因此**不会有**切歌间隔的停顿：
+// 引擎的 Load 会把上一首播完留下的那个间隔作废（见 audioplay.Engine.Load）。
+// 自动切歌（上一首播完，见 setEOFHandler）**不**走这里 —— 它只发一条
+// player:ended 事件，之后由前端决定放哪首，间隔在那一刻也已经走完了。
+// 换句话说：间隔只花在「自动接下一首」上，手动点的一下永远是立即的。
 func (s *PlayerService) Load(songID string) (map[string]any, error) {
 	if songID == "" {
 		return nil, fmt.Errorf("歌曲 id 为空")
@@ -312,6 +318,10 @@ func (s *PlayerService) Load(songID string) (map[string]any, error) {
 		return nil, fmt.Errorf("后端音频不可用")
 	}
 
+	// ★ 换歌为什么不该有「切歌间隔」的停顿：间隔是「自动接下一首」的停顿，
+	// 而走到这里的每一次都是**有人明确点了某一首**。取消不在这里做，而在
+	// 引擎里（audioplay.Engine.Load 与 Play）—— 见那里的说明。
+	//
 	// 换歌前记录：竞态下如果已经切到别的歌了，就别覆盖状态
 	//
 	// 增益与音频在同一个 Load 里一起换（见 audioplay.Engine.Load 的说明）：
@@ -483,6 +493,23 @@ func (s *PlayerService) Seek(positionMs float64) (map[string]any, error) {
 	// 否则前端会在旧的锚点上继续外推，进度条会先弹回旧位置再跳过来。
 	s.pushAnchorLocked("seek")
 	return s.stateLocked(), nil
+}
+
+// CancelTrackGap 取消可能还挂着的「切歌间隔」，不改变当前播放的内容。
+//
+// 供前端在**明确的即时切歌意图**上调用，好让「用户意图 → 出声」的窗口不被
+// 一次多余的等待拉长。引擎的 Load / Play 各自也会取消（见那里的说明），
+// 所以它不是唯一的一道 —— 先发它只是把窗口压到最短，并让
+// 「间隔里用户点了下一首」这种时序有一个确定的落点。
+//
+// 播放器还没装载、或本来就没有间隔时，它同样是安全的空操作。
+func (s *PlayerService) CancelTrackGap() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.engine != nil {
+		s.engine.CancelTrackGap()
+	}
+	return s.stateLocked()
 }
 
 // Unload 停止播放并卸载当前歌曲（前端清空播放队列 / 停止时调用）

@@ -272,6 +272,9 @@ const backendImpl = {
   playerPlay: () => call(bindings?.Player?.Play),
   playerPause: () => call(bindings?.Player?.Pause),
   playerSeek: (positionMs) => call(bindings?.Player?.Seek, positionMs),
+  // 取消挂着的「切歌间隔」：手动切歌是即时意图，不该等间隔走完
+  //（见 services_player.go#CancelTrackGap 与 audio.js#loadSong）。
+  playerCancelGap: () => call(bindings?.Player?.CancelTrackGap),
   playerStop: () => call(bindings?.Player?.Unload),
   playerUnload: () => call(bindings?.Player?.Unload),
   playerState: () => call(bindings?.Player?.State),

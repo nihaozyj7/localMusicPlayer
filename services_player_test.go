@@ -1576,3 +1576,154 @@ func TestPlayerServiceSeekCancelsGap(t *testing.T) {
 		// 正确：seek 取消了间隔
 	}
 }
+
+/* --------------------------------------------------------------------------
+   12. 「人主动要它现在出声」不得被「切歌间隔」挡住（真实报障的回归测试）
+   --------------------------------------------------------------------------
+   用户报的现象：
+     · 点下一首之后，当前歌曲还会继续播放一会儿，下一首要过一会儿才出声；
+     · 进度条会反复横跳一下。
+
+   现象拆成两半，各由一处负责：
+
+     · **进度条横跳** — 前端的账。切歌时 store 把位置清零了，但 audio.js 里
+       还挂着旧歌的锚点，外推与后端 tick 会继续把旧歌的位置写回去。
+       修法见 audio.js 的 switchPending（本文件不测，Go 侧看不到它）。
+
+     · **下一首要过一会儿才出声** — 后端的账。配了「切歌间隔」（默认 1.5 秒）
+       之后，一首歌播完时引擎进入「间隔」：音频回调只输出静音、**不读缓冲、
+       也不推进位置**（见 audioplay.Engine.onData 的间隔分支）。于是：
+
+         t0  上一首播完 → 间隔 Armed，引擎不再出声；
+         t1  用户点下一首 → 上层 Load 新歌（几毫秒就完成）+ Play；
+         t2  若间隔还挂着，音频回调会一直停在「间隔中只输出静音」那一支：
+             已经装载好的新歌被压着不出声，要等**剩下的**间隔走完才响。
+
+       「同歌重播」（单曲循环播完重来、播完即停后手动重播）更彻底：
+       它只调 Play、根本不调 Load，所以**任何**放在 Load 里的取消都救不了它。
+
+     修法：引擎的两处都在「人主动要它现在出声」时作废间隔 ——
+       · Engine.Load：换歌本来就要丢掉上一首的一切，间隔也不例外；
+       · Engine.Play：覆盖「只 Play 不 Load」的重播路径。
+
+     两者都不会削弱「间隔只作用于自动切歌」这条约定，因为真正区分「自动」
+     与「手动」的不是谁取消了间隔，而是**谁先被调用** ——
+     自动切歌是 markEOF 先 Arm，间隔跑完才回调上层，上层随后才 Load/Play；
+     手动切歌则是在间隔还没跑完时就把 Play 发下来了。
+     间隔留给自动切歌这件事由 TestPlayerServiceTrackGapDelaysEOF 守着。
+   -------------------------------------------------------------------------- */
+
+// TestPlayerServiceLoadCancelsPendingGap 间隔挂起时手动切歌（Load + Play）
+// 必须立刻出声，而不是等间隔走完。
+func TestPlayerServiceLoadCancelsPendingGap(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "load-during-gap.wav")
+	writeServiceTestWAV(t, wav, 0.3)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 300)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	// 3 秒间隔：长到「没取消」时用例必然超时，短到用例不至于太慢
+	withSilenceConfig(svc, false, false, 3.0)
+
+	if _, err := svc.Load("song-gap-switch"); err != nil {
+		t.Fatalf("首次 Load 失败: %v", err)
+	}
+	svc.Play()
+
+	// 等音频播完、进入间隔（0.3 秒音频 + 一段余量）
+	time.Sleep(700 * time.Millisecond)
+	if !svc.engine.TrackGapActive() {
+		t.Skip("没有进入切歌间隔（音频设备时序抖动），跳过本用例")
+	}
+
+	// 用户点「下一首」：这就是手动切歌
+	start := time.Now()
+	if _, err := svc.Load("song-gap-switch"); err != nil {
+		t.Fatalf("间隔中 Load 失败: %v", err)
+	}
+	svc.Play()
+
+	// 立刻就要在出声：间隔被取消后 engine.Playing() 必须为 true。
+	// 不取消的话这里是 false（引擎还在间隔里），要等 2.3 秒才会变 true。
+	if !svc.engine.Playing() {
+		t.Fatalf("手动切歌后引擎仍在「切歌间隔」里（%v）—— 用户会听到点了没反应",
+			time.Since(start))
+	}
+	if svc.engine.TrackGapActive() {
+		t.Fatal("手动切歌没有取消挂起的切歌间隔（新歌会被静音压着不出声）")
+	}
+}
+
+// TestPlayerServicePlayCancelsPendingGap 同歌重播（只 Play 不 Load）也必须
+// 立刻出声，不能被挂着的切歌间隔挡住。
+//
+// 这条路径与上一个用例不同：单曲循环播完重来、播完即停之后又点播放，
+// 都是**只调 Play**。Engine.Load 里那次取消覆盖不到它们，
+// 靠的是 Engine.Play 里新加的那一次取消。
+func TestPlayerServicePlayCancelsPendingGap(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "play-during-gap.wav")
+	writeServiceTestWAV(t, wav, 0.3)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 300)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, false, false, 3.0)
+
+	if _, err := svc.Load("song-replay-gap"); err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	svc.Play()
+
+	// 等音频播完、进入间隔
+	time.Sleep(800 * time.Millisecond)
+	if !svc.engine.TrackGapActive() {
+		t.Skip("没有进入切歌间隔（音频设备时序抖动），跳过本用例")
+	}
+
+	// 用户点了播放（同歌重播，不换歌）
+	svc.Play()
+	if !svc.engine.Playing() {
+		t.Fatal("间隔里点播放后引擎仍未进入播放态 —— 用户会听到点了没反应")
+	}
+	if svc.engine.TrackGapActive() {
+		t.Fatal("Play 没有取消挂起的切歌间隔（重播会被静音压着不出声）")
+	}
+}
+
+// TestPlayerServiceCancelTrackGapRPC 前端的 CancelTrackGap 接口必须真能取消间隔。
+//
+// 存在的意义：前端在「手动切歌」时会先发一次它（见 audio.js#loadSong），
+// 让「用户意图 → 出声」的窗口不被多余的等待拉长。它必须是个安全的空操作 ——
+// 没装载、没间隔时都不能报错。
+func TestPlayerServiceCancelTrackGapRPC(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	wav := filepath.Join(dir, "cancel-gap.wav")
+	writeServiceTestWAV(t, wav, 0.3)
+
+	svc, _, closeSvc := newPlayerSvcHarness(t, wav, 300)
+	defer func() { closeSvc(); cleanupDir(dir) }()
+	withSilenceConfig(svc, false, false, 3.0)
+
+	// 还没装载就调：安全
+	if res := svc.CancelTrackGap(); res == nil {
+		t.Fatal("CancelTrackGap 应当返回状态快照，实际 nil")
+	}
+
+	if _, err := svc.Load("song-cancel-gap"); err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	svc.Play()
+
+	time.Sleep(700 * time.Millisecond)
+	if !svc.engine.TrackGapActive() {
+		t.Skip("没有进入切歌间隔（音频设备时序抖动），跳过本用例")
+	}
+
+	svc.CancelTrackGap()
+	if svc.engine.TrackGapActive() {
+		t.Fatal("CancelTrackGap 之后间隔仍然挂着")
+	}
+}

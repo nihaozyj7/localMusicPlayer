@@ -14,7 +14,7 @@ import { MpElement, define, html, nothing, icon } from "./base.js";
 import { coverSrc } from "./track-table.js";
 import { toast, openMenu } from "./overlays.js";
 import { createSlider } from "../slider.js";
-import { applyVolume, seekTo } from "../audio.js";
+import { applyVolume, seekTo, switchingTrack } from "../audio.js";
 import { addSongsTo, promptNewPlaylist } from "../playlists.js";
 import { toggleLyricsPanel } from "../lyrics-panel.js";
 import { togglePlayer } from "../playerhost.js";
@@ -120,6 +120,19 @@ class MpPlayerbar extends MpElement {
    * 不会出现两处写得不一样。
    */
   paintProgress() {
+    // 切歌途中：位置与时长都还没有可信值（旧歌的时长配新歌的封面、
+    // 旧歌的位置配新歌的标题，画出来的每一帧都是错的）。
+    // 这里把进度条归零并禁用，而不是让它按旧锚点继续推进 —— 那正是用户
+    // 看到的「进度条反复横跳一下」。新歌装载完成后 loadSong 会推一次
+    // 真实锚点，下一帧就恢复正常。
+    if (switchingTrack()) {
+      const cur = this.querySelector("#time-current");
+      if (cur && cur.textContent !== "--:--") cur.textContent = "--:--";
+      this._progress?.set(0, { silent: true });
+      this._progress?.setDisabled(true);
+      return;
+    }
+
     const pos = Math.round(state.position);
     const dur = Math.round(state.duration || 0);
 
