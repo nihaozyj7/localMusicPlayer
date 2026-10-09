@@ -129,6 +129,34 @@
   opacity: calc(var(--lyric-dim) * 0.9);
 }
 
+/* —— 行退场：当前行唱完、交棒给下一句时的那一下 ——
+   以前只有上面那条 opacity 过渡，观感是「字一唱完就缩没、颜色一跳」，
+   像被删掉而不是退场。这里补一段 350ms 的动画：先保持高亮态的大小，
+   再上浮一截、沉回过去态。
+   ★ 仍然只动 opacity / transform：字号收缩用 scale 顶替（21/16 ≈ 1.31），
+     font-size 一旦进过渡，整段滚动区会在动画期间持续重排 + 重新栅格化。
+   ★ 只有 JS 挂上 data-exit 的那一行会播（见 lyrics-view.js#setActive）——
+     seek 会让一整段行同时变成 past，它们不该集体退场。 */
+@keyframes lyric-exit {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(calc(var(--lyric-size-active) / var(--lyric-size)));
+  }
+  55% {
+    opacity: calc(var(--lyric-dim) * 1.5);
+    transform: translateY(-5px) scale(1.1);
+  }
+  100% {
+    opacity: calc(var(--lyric-dim) * 0.9);
+    transform: translateY(0) scale(1);
+  }
+}
+
+.lyric[data-exit="1"] {
+  /* both：播完停在 100%（= 过去态的成色），属性被摘掉时也不会闪 */
+  animation: lyric-exit calc(var(--dur) * 1.4) var(--ease) both;
+}
+
 /* 逐字歌词：当前行内的高亮进度 */
 .lyric__word {
   color: inherit;

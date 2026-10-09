@@ -186,6 +186,11 @@ export function createLyricsView(host, opts = {}) {
       </div>`;
   }
 
+  /** 按 data-lyric-index 取某一行的元素（下标来自 setLines 时写入的属性） */
+  function lineElAt(i) {
+    return /** @type {HTMLElement|null} */ (scroll.querySelector(`.lyric[data-lyric-index="${i}"]`));
+  }
+
   /**
    * 高亮第 idx 行并把视图滚过去。
    * @param {number} idx
@@ -196,13 +201,21 @@ export function createLyricsView(host, opts = {}) {
     if (destroyed) return;
     if (!scroll.querySelector(".lyric")) return;
     if (idx === activeIndex && !o.immediate) return;
+    // 上一句当前行是谁（先记下来：下面的循环会把 aria-current 洗掉）
+    const prev = activeIndex >= 0 && activeIndex !== idx ? lineElAt(activeIndex) : null;
     activeIndex = idx;
 
     scroll.querySelectorAll(".lyric").forEach((node, i) => {
       const active = i === idx;
       node.setAttribute("aria-current", String(active));
       /** @type {HTMLElement} */ (node).dataset.past = String(idx >= 0 && i < idx);
+      // 新的当前行要是还挂着上一次的退场状态，先摘掉（顺带让下一次退场能重播）
+      if (active) node.removeAttribute("data-exit");
     });
+
+    // 行退场：只给**上一句当前行**挂 data-exit —— seek 跳过去会让一整段行
+    // 变成 past，那不该集体播一遍退场动画
+    if (prev) prev.dataset.exit = "1";
 
     // 用户正在手动翻歌词时不抢滚动位置
     if (Date.now() < userScrollingUntil) return;

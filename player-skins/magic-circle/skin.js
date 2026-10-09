@@ -41,13 +41,13 @@ const { ROLE_NAMES, buildWorld, pickTransition, gapSecBetween, leadFor, indexOfT
 const { createCamera } = await load("camera.js");
 const { KIND, createPool } = await load("particles.js");
 const { createRenderer } = await load("render.js");
-const { drawBackdrop } = await load("backdrop.js");
 const { clamp, mulberry32, smoothTo, TAU } = await load("util.js");
 
 /** 舞台 DOM */
 const SHELL = `
   <div class="mc">
     <canvas class="mc__canvas" aria-hidden="true"></canvas>
+    <div class="mc__vig" aria-hidden="true"></div>
     <div class="mc__hud">
       <div class="mc__top">
         <div class="mc__track">
@@ -64,7 +64,6 @@ const SHELL = `
 /** 整窗背景层 DOM（清单声明了 capabilities.background 才有容器） */
 const BG_SHELL = `
   <div class="mc-bg">
-    <canvas class="mc-bg__canvas"></canvas>
     <div class="mc-bg__nebula mc-bg__nebula--a"></div>
     <div class="mc-bg__nebula mc-bg__nebula--b"></div>
     <div class="mc-bg__veil"></div>
@@ -368,8 +367,10 @@ function paintBackground(ctx) {
   if (!root) return false;
   if (!root.querySelector(".mc-bg")) root.innerHTML = BG_SHELL;
   root.hidden = false; // 容器的 hidden 归皮肤管；进出场是宿主的 data-state
-  // 整窗场景：静态，挂载与 resize 各画一次（画布还没布局时返回 false，下帧再试）
-  return drawBackdrop(root.querySelector(".mc-bg__canvas"), S && S.renderer ? S.renderer.size().dpr : 1);
+  // 整窗夜空全部由 CSS 渐变给出（见 skin.css 的 .mc-bg）。这里以前还画一张
+  // backdrop canvas（夜空 + 星域 + 巨型底阵）—— 舞台铺满整窗之后它被完全盖住，
+  // 却仍要占一整张全窗口位图（dpr1 5MB / dpr1.5 12MB），所以去掉。
+  return true;
 }
 
 /* ==========================================================================
@@ -570,11 +571,37 @@ function syncStage(now) {
   // 兜底归位：既不在焦点、也不是正在唱的那句，就不该继续亮着（字形也一并释放）
   const hasLyric = hasLyricLines();
   for (const n of S.world.nodes) {
-    if (n.state === "approaching" && n.i !== S.focusIdx) n.state = "idle";
-    if (n.state === "active" && hasLyric && n.i !== S.singIdx) n.state = "idle";
+    // ★ 一律走 leaveNode（→ passing）：直接 state = "idle" 会让整行 alpha 瞬间归零，
+    //   表现就是“唱完字啪一下没掉”。passing 会先用 shatterSec 把字淡出飘散。
+    if (n.state === "approaching" && n.i !== S.focusIdx) leaveNode(n, now, null, { burst: false });
+    if (n.state === "active" && hasLyric && n.i !== S.singIdx) leaveNode(n, now, null, { burst: true });
     if (n.state === "idle" && n.glyphs && n.i !== S.focusIdx && n.i !== S.singIdx) n.glyphs = null;
   }
   advanceStates(now);
+}
+
+/**
+ * 让节点走**退场**：state → passing（drawText 的 scatter 会把字淡出、往飞行方向
+ * 漂走，同时撒一把符文碎片），1.6s 后由 advanceStates 收回 idle 并释放字形。
+ *
+ * 「每句唱完」的退场只走这里 —— 以前兜底分支写的是 `state = "idle"`，
+ * 而 idle 的 assemble 恒为 0、整行 alpha 归零，于是每句结束都是直接消失。
+ *
+ * @param {{state?:string,stateAt?:number}|null} node
+ * @param {number} now
+ * @param {{x:number,y:number}|null} dir 飘散方向；null 表示不改风向
+ * @param {{burst?:boolean}} [opts] burst = false 时只淡出、不撒粒子
+ */
+function leaveNode(node, now, dir, opts = {}) {
+  if (!node) return;
+  if (node.state === "passing" || node.state === "idle") return;
+  node.state = "passing";
+  node.stateAt = now;
+  if (dir) {
+    S.windX = dir.x * NODE.shatterDrift;
+    S.shatterDriftX = S.windX;
+  }
+  if (opts.burst !== false && S.anim) shatter(node, dir || { x: 1, y: 0 });
 }
 
 /** 焦点变了 → 起飞 + 该节点开始拼字 */
@@ -584,7 +611,10 @@ function onFocus(next, now) {
   S.focusIdx = next;
 
   const prevNode = prevIdx >= 0 ? nodes[prevIdx] : null;
-  if (prevNode && prevNode.state === "approaching") prevNode.state = "idle";
+  if (prevNode && prevNode.state === "approaching" && prevIdx !== S.singIdx) {
+    // 镜头还没落地就被下一句抢走：淡出即可，不必撒粒子（字本来就只拼了一半）
+    leaveNode(prevNode, now, null, { burst: false });
+  }
 
   const node = next >= 0 ? nodes[next] : null;
   if (!node) {
@@ -616,24 +646,44 @@ function onFocus(next, now) {
   node.assembleDur = Math.max(0.25, adjacent ? dur : Math.min(dur, 1));
 }
 
-/** 宿主的高亮行变了 → 上一句碎裂、这一句全亮 */
+/**
+ * 这一句换了之后，上一句是不是该退场。
+ *
+ * 以**命名导出**暴露，是为了让自检能直接打这条判据 —— 画布上的文字没法从 DOM
+ * 查（见 tools/check-lyric-exit.mjs）。宿主的 composeSkin 只认 default，
+ * 多一个具名导出不影响加载。
+ *
+ * ★ 关键就在 **!==**：正常播放时下一句的下标比上一句**大**（prev < sing）。
+ *   这里以前写的是 `prev > sing`，等于只有“往回 seek”才会退场 —— 平时每句结束
+ *   都掉进 syncStage 的兜底分支被直接抹成 idle，表现就是“唱完字啪一下没了”。
+ *
+ * @param {number} prevIdx 上一句的下标（-1 = 还没唱过）
+ * @param {number} singIdx 这一句的下标（-1 = 当前不在唱）
+ * @returns {boolean}
+ */
+export function shouldLeave(prevIdx, singIdx) {
+  return prevIdx >= 0 && prevIdx !== singIdx;
+}
+
+/** 宿主的高亮行变了 → 上一句退场、这一句全亮 */
 function onSing(sing, now) {
   const nodes = S.world.nodes;
   const prevIdx = S.singIdx;
   S.singIdx = sing;
-  if (!hasLyricLines()) return;
-
   const prevNode = prevIdx >= 0 ? nodes[prevIdx] : null;
+
+  if (!hasLyricLines()) {
+    // 歌词被清空 / 换成纯音乐：正在唱的那句也要体面地退场（否则它会一直亮着）
+    leaveNode(prevNode, now, null, { burst: true });
+    return;
+  }
+
   const node = sing >= 0 ? nodes[sing] : null;
 
   // 上一句唱完 → passing：文字碎成粒子，沿镜头飞行方向飘散
-  if (prevNode && prevIdx > sing && (prevNode.state === "active" || prevNode.state === "approaching")) {
+  if (prevNode && shouldLeave(prevIdx, sing) && (prevNode.state === "active" || prevNode.state === "approaching")) {
     const dir = node ? dirOf(prevNode, node) : { x: 1, y: 0 };
-    prevNode.state = "passing";
-    prevNode.stateAt = now;
-    S.windX = dir.x * NODE.shatterDrift;
-    S.shatterDriftX = S.windX;
-    shatter(prevNode, dir);
+    leaveNode(prevNode, now, dir, { burst: true });
   }
 
   // 这一句开口 → active（seek 直接跳过来的节点 stateAt 可能是 0，

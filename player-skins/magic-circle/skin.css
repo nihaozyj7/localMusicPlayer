@@ -34,6 +34,17 @@
   touch-action: none;
 }
 
+/* 暗角：以前是画在画布上的最后一层**整屏**径向渐变（软件光栅下 ~3ms/帧），
+   现在换成这层静态 CSS 覆盖 —— 位置在画布之上、HUD 之下，观感与原来一致。
+   数值换算自原实现（inner = min(W,H)*0.32、outer = max(W,H)*0.78、终点 0.55）：
+   按 farthest-corner 归一后 = 32% → 136%，线性插值逐点等价。 */
+.mc__vig {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle farthest-corner at 50% 50%, rgba(0, 0, 0, 0) 32%, rgba(0, 0, 0, 0.55) 136%);
+}
+
 /* HUD：全部绝对定位 + 不吃指针事件，点击只会落到画布上（点节点跳转）
    上下两条边要让开宿主壳：整窗背景型样式的舞台铺满整窗（标题栏 / 头部行 /
    底栏都压在画面上），这两块占掉的高度由宿主通过 --skin-inset-* 给出；
@@ -140,10 +151,12 @@
    滑出时舞台是半透明的，这一层负责底下那块同幅度滑动的夜空，避免「画面在滑、
    后面却是一块死的底色」。
 
-   里面那张 canvas 由 lib/backdrop.js 画与舞台同一套视觉语言（夜空 + 星域 +
-   巨型底阵 + 中心辉光），挂载与 resize 各画一次，静态。
+   ★ 这里以前还有一张 canvas（lib/backdrop.js 画的夜空 + 星域 + 巨型底阵），
+     已经去掉：舞台铺满整窗后它 100% 被盖住，只剩挂载/resize 各一次的整窗
+     重绘和一整张全窗口位图（dpr1 下 5MB、dpr1.5 下 12MB）纯占内存。
+     进出场要的那点「夜空」由下面的 CSS 渐变本身给出。
 
-   两团星云与暗角压在 canvas 之上做色彩层（不用 @keyframes —— 这份 CSS 在
+   两团星云与暗角压在上面做色彩层（不用 @keyframes —— 这份 CSS 在
    @scope 里，键帧规则在嵌套作用域下并不可靠；画布之外宁可不动）。
    ========================================================================== */
 
@@ -155,15 +168,6 @@
     radial-gradient(120% 80% at 50% 18%, rgba(24, 42, 96, 0.55) 0%, rgba(4, 6, 13, 0) 60%),
     radial-gradient(90% 70% at 18% 90%, rgba(38, 24, 82, 0.5) 0%, rgba(4, 6, 13, 0) 65%),
     linear-gradient(180deg, #05070f 0%, #070c1a 55%, #04060d 100%);
-}
-
-/* 整窗场景画布（挂载 / resize 时画一次，静态） */
-.mc-bg__canvas {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
 }
 
 .mc-bg__nebula {

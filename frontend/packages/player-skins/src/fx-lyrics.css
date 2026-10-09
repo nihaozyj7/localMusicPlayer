@@ -125,6 +125,29 @@
   opacity: calc(var(--fxl-dim) * 0.72);
 }
 
+/* —— 行退场：当前行唱完、交棒给下一句的那一下 ——
+   与 lyrics.css 的 lyric-exit 同一套观感：保持高亮态的大小起手，
+   上浮一截再沉回过去态；字号收缩用 scale 顶替（不进 font-size 过渡）。
+   挂在 [data-exit] 上、由 JS 只标给上一句当前行（fx-lyrics.js#setActive）。 */
+@keyframes fxl-exit {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(calc(var(--fxl-size-active) / var(--fxl-size)));
+  }
+  55% {
+    opacity: calc(var(--fxl-dim) * 1.5);
+    transform: translateY(-5px) scale(1.08);
+  }
+  100% {
+    opacity: calc(var(--fxl-dim) * 0.72);
+    transform: translateY(0) scale(1);
+  }
+}
+
+.fxl__line[data-exit="1"] {
+  animation: fxl-exit calc(var(--dur) * 1.4) var(--fxl-ease) both;
+}
+
 .fxl__line[data-state="active"] {
   opacity: 1;
   font-size: var(--fxl-size-active);

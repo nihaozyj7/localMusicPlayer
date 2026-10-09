@@ -200,14 +200,30 @@ try {
   console.log("\n[1] 详情页歌词区：多语言折叠成一条（主行 + 副行）");
   const page1 = await evaluate(`
     (async () => {
-      const store = await import("/js/store.js");
-      const host = await import("/js/playerhost.js");
-      const audio = await import("/js/audio.js");
+      // 必须 import **页面实际用的那一条 URL**：Vite HMR 会给源文件加 ?t= 时间戳，
+      // 用裸路径再 import 一次会得到第二份模块实例 —— 它的 lyricsCache / skinHost
+      // 都是空的，注入看起来成功、实则什么都没发生（实测踩过）。
+      const app = async (name) => {
+        const urls = performance.getEntriesByType("resource").map((e) => e.name);
+        return import(urls.find((n) => n.includes("/js/" + name + ".js")) || "/js/" + name + ".js");
+      };
+      const store = await app("store");
+      const host = await app("playerhost");
+      const audio = await app("audio");
       const id = store.state.currentId;
       if (!id) return { error: "没有当前歌曲" };
-      await host.applyOnlineLyrics(id, ${JSON.stringify(LRC)}, "preview");
+      // 预置歌词的“自动匹配”可能在我们注入**之后**才落地、把注入的歌词盖掉，
+      // 所以反复注入并确认真的渲染成 4 行，再在同一段求值里读数据（不吃时序）
+      let n = 0;
+      for (let k = 0; k < 8; k += 1) {
+        await host.applyOnlineLyrics(id, ${JSON.stringify(LRC)}, "preview");
+        await new Promise((r) => setTimeout(r, 250));
+        n = document.querySelectorAll("#pv-lyrics .lyric").length;
+        if (n === 4) break;
+      }
+      if (n !== 4) return { error: "注入没生效（渲染了 " + n + " 行，预置歌词盖掉了它）" };
       audio.seekTo(12500);
-      await new Promise((r) => setTimeout(r, 800));
+      await new Promise((r) => setTimeout(r, 700));
       const scroll = document.querySelector("#pv-lyrics .lyrics__scroll");
       if (!scroll) return { error: "找不到歌词区" };
       const rows = [...scroll.querySelectorAll(".lyric")].map((el) => ({
@@ -323,20 +339,44 @@ try {
       if (!btn) return { skipped: true };
       btn.click();
       await new Promise((r) => setTimeout(r, 1500));
+      // 与 [1] 同理：换样式后重新注入，并确认渲染出来的是我们那份（4 行）
+      const urls = performance.getEntriesByType("resource").map((e) => e.name);
+      const app = async (name) =>
+        import(urls.find((n) => n.includes("/js/" + name + ".js")) || "/js/" + name + ".js");
+      const store = await app("store");
+      const host = await app("playerhost");
+      const id = store.state.currentId;
+      let n = 0;
+      for (let k = 0; k < 8; k += 1) {
+        await host.applyOnlineLyrics(id, ${JSON.stringify(LRC)}, "preview");
+        await new Promise((delay) => setTimeout(delay, 250));
+        n = document.querySelectorAll("#pv-lyrics .lyric").length;
+        if (n === 4) break;
+      }
       const scroll = document.querySelector("#pv-lyrics .lyrics__scroll");
       const rows = scroll ? [...scroll.querySelectorAll(".lyric")].length : 0;
       const withTrans = scroll ? [...scroll.querySelectorAll(".lyric__trans")].length : 0;
       const classic = document.querySelector('[data-pv-skin="classic"]');
       classic?.click();
       await new Promise((r) => setTimeout(r, 1200));
-      return { skipped: false, rows, withTrans, skin: document.getElementById("playerview")?.dataset.skin };
+      return {
+        skipped: false,
+        injected: n,
+        rows,
+        withTrans,
+        skin: document.getElementById("playerview")?.dataset.skin,
+      };
     })()
   `);
   console.log("   ", JSON.stringify(back));
   if (back.skipped) {
     console.log("  SKIP 没有内置样式按钮（跳过）");
   } else {
-    check(back.rows === 4 && back.withTrans === 3, "沉浸样式同样是 4 条 / 3 条副行", JSON.stringify(back));
+    check(
+      back.injected === 4 && back.rows === 4 && back.withTrans === 3,
+      "沉浸样式同样是 4 条 / 3 条副行",
+      JSON.stringify(back)
+    );
     check(back.skin === "classic", "能切回来", String(back.skin));
   }
 

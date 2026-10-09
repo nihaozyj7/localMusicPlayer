@@ -37,11 +37,86 @@ export function createRenderer(canvas) {
   /** @type {{x:number,y:number,size:number,ph:number,sp:number,bucket:number}[]} */
   const stars = [];
   let bgGrad = null;
-  let vignette = null;
+  /* —— 预烘精灵（见 bake* 的说明：渐变 fill 是逐像素现算的，blit 不是）—— */
+  let bgSprite = null;
+  let bodySprite = null;
+  let glowSprite = null;
+  /** draw() 每帧复用的两个集合（原先是每次 new，帧循环里的稳定 GC 压力） */
+  const heroes = [];
+  const near = [];
   /** 符文的固定形状（挂载一次，之后只是平移旋转） */
   const runes = buildRunes(NODE.runes);
   /** 文字测量缓存：text → {width, chars:[{ch,w}]} */
   const measureCache = new Map();
+
+  /* ------------------------------------------------------------------ 精灵图
+     为什么要有这套东西：画布的 createLinear/RadialGradient + fill 是**逐像素现算**
+     的，而整屏铺一次（背景、暗角）或世界铺一次（阵体、光晕）都是「每帧铺满」的
+     操作。实测（.tmp-magic/cpu-profile.mjs）93% 的采样时间落在原生绘制里，
+     JS 侧根本不是瓶颈 —— 于是把**颜色不随帧变**的部分预烘成位图，
+     运行期只做 drawImage（采样拷贝）；随频谱变的量交给 globalAlpha 与缩放，
+     观感一致。
+     ------------------------------------------------------------------------ */
+
+  /** 新建一张离屏画布交给 paint 画；任何一步失败都返回 null（调用方走渐变兜底） */
+  function bake(w, h, paint) {
+    try {
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(w));
+      cv.height = Math.max(1, Math.round(h));
+      const cg = cv.getContext("2d");
+      if (!cg) return null;
+      paint(cg, cv.width, cv.height);
+      return cv;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 背景：竖直渐变，按**半分辨率**烘一次、贴回时铺满 —— 拉伸只有 2 倍，
+   *  而这条渐变在纵向本来就是平滑的（2 倍上采样看不出差别）。
+   *  以前是 4×512 横向拉 360 倍：软件光栅下每个目标像素都要双线性采样，
+   *  实测 3.3ms/帧；半分辨率版本既把内存从 5.2MB 压到 1.3MB，帧代价也接近 0。 */
+  function bakeBackground() {
+    const w = Math.max(2, Math.round(W / 2));
+    const h = Math.max(2, Math.round(H / 2));
+    return bake(w, h, (cg, cw, ch) => {
+      const grad = cg.createLinearGradient(0, 0, 0, ch);
+      grad.addColorStop(0, PALETTE.bg0);
+      grad.addColorStop(0.55, PALETTE.bg1);
+      grad.addColorStop(1, PALETTE.bg0);
+      cg.fillStyle = grad;
+      cg.fillRect(0, 0, cw, ch);
+    });
+  }
+
+  /** 巨型底阵的阵体辉光：颜色定死（取频谱明暗的上限），明暗交给 globalAlpha。
+   *  256² 够用 —— 这是一团极淡的径向填充，放大到整屏也看不出台阶。 */
+  function bakeBaseBody() {
+    return bake(256, 256, (cg, w, h) => {
+      const c = w / 2;
+      const grad = cg.createRadialGradient(c, c, c * 0.1, c, c, c);
+      grad.addColorStop(0, hsl(PALETTE.hueHigh, 80, 46, 0.17));
+      grad.addColorStop(0.72, hsl(PALETTE.hueHigh, 80, 42, 0.1));
+      grad.addColorStop(1, hsl(PALETTE.hueHigh, 80, 40, 0));
+      cg.fillStyle = grad;
+      cg.fillRect(0, 0, w, h);
+    });
+  }
+
+  /** 节点光晕：同上（色相取静态的中值，半径 / 亮度仍随频谱走） */
+  function bakeGlow() {
+    return bake(256, 256, (cg, w, h) => {
+      const c = w / 2;
+      const hue = lerp(PALETTE.hueLow, PALETTE.hueHigh, 0.7);
+      const grad = cg.createRadialGradient(c, c, c * 0.1, c, c, c);
+      grad.addColorStop(0, hsl(hue, 85, 62, 0.3));
+      grad.addColorStop(0.5, hsl(hue, 85, 55, 0.12));
+      grad.addColorStop(1, hsl(hue, 85, 50, 0));
+      cg.fillStyle = grad;
+      cg.fillRect(0, 0, w, h);
+    });
+  }
 
   /* ------------------------------------------------------------------ 尺寸 */
 
@@ -58,14 +133,13 @@ export function createRenderer(canvas) {
     canvas.style.width = `${W}px`;
     canvas.style.height = `${H}px`;
 
+    // 渐变对象留着当兜底（精灵建不出来时还能画），精灵才是每帧走的那条路
     bgGrad = g.createLinearGradient(0, 0, 0, H);
     bgGrad.addColorStop(0, PALETTE.bg0);
     bgGrad.addColorStop(0.55, PALETTE.bg1);
     bgGrad.addColorStop(1, PALETTE.bg0);
 
-    vignette = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.32, W / 2, H / 2, Math.max(W, H) * 0.78);
-    vignette.addColorStop(0, "rgba(0,0,0,0)");
-    vignette.addColorStop(1, "rgba(0,0,0,0.55)");
+    bgSprite = bakeBackground();
   }
 
   /* ------------------------------------------------------------------ 星域 */
@@ -111,26 +185,32 @@ export function createRenderer(canvas) {
     return Math.abs(x - rect.cx) <= rect.hw + pad && Math.abs(y - rect.cy) <= rect.hh + pad;
   }
 
-  /* ------------------------------------------------------------------ 主绘制 */
+  /* ---------------------------------------------------------------- 主绘制 */
 
   function draw(st) {
     ensureStars();
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.fillStyle = bgGrad;
-    g.fillRect(0, 0, W, H);
+    // 背景：按画布尺寸预烘的 1:1 精灵（≈ 直接拷贝）；建不出来才退回逐帧渐变
+    if (bgSprite) g.drawImage(bgSprite, 0, 0, W, H);
+    else {
+      g.fillStyle = bgGrad;
+      g.fillRect(0, 0, W, H);
+    }
 
     drawStars(st);
     drawBase(st);
     drawPaths(st);
 
     // —— 主角（正在唱的 / 镜头正在落的 / 正在碎的）画全细节，且永远不被剔掉 ——
-    const heroes = [];
-    for (const idx of [st.singIdx, st.focusIdx]) {
+    // 两个集合复用实例上的缓冲区：帧循环里不 new 对象（见文件头的性能约定）
+    heroes.length = 0;
+    near.length = 0;
+    for (let k = 0; k < 2; k += 1) {
+      const idx = k === 0 ? st.singIdx : st.focusIdx;
       const n = idx >= 0 && idx != null ? st.world.nodes[idx] : null;
       if (n && heroes.indexOf(n) < 0) heroes.push(n);
     }
     const view = visible(st, PARALLAX.nodes, 900);
-    let near = [];
     for (const n of st.world.nodes) {
       if (!inRect(view, n.x, n.y, NODE.radius * 2 + 400)) continue;
       if (n.state === "passing" && heroes.indexOf(n) < 0) heroes.push(n);
@@ -138,7 +218,7 @@ export function createRenderer(canvas) {
     }
     if (near.length > PERF.maxNodes) {
       near.sort((a, b) => dist2(st, a) - dist2(st, b));
-      near = near.slice(0, PERF.maxNodes);
+      near.length = PERF.maxNodes;
       for (const h of heroes) {
         if (near.indexOf(h) < 0) {
           near.pop();
@@ -159,8 +239,8 @@ export function createRenderer(canvas) {
       g.fillStyle = `rgba(255,255,255,${(st.flash * 0.92).toFixed(3)})`;
       g.fillRect(0, 0, W, H);
     }
-    g.fillStyle = vignette;
-    g.fillRect(0, 0, W, H);
+    // 暗角不再画在画布上：那是一次整屏径向渐变 / 放大贴图（实测 ~3ms/帧），
+    // 改成 skin.css 里那层静态覆盖（视觉换算见 .mc__vig 的注释）。
   }
 
   function dist2(st, n) {
@@ -210,17 +290,19 @@ export function createRenderer(canvas) {
     // 拉远俯瞰（LOD）时反而要更亮：细节全砍了，只剩轮廓，再暗就是整屏发黑
     const baseAlpha = (detail ? 0.1 + sp.total * 0.32 : 0.3 + sp.total * 0.45) * (st.baseBright ?? 1);
 
-    // 阵体：一圈极淡的径向填充。拉远时它把“地图”从纯黑背景里托起来，
-    // 没有它的话俯瞰镜头下只剩几根细线，看着像没加载出来
-    const body = g.createRadialGradient(0, 0, WORLD.R * 0.1, 0, 0, WORLD.R);
-    const bodyHue = PALETTE.hueHigh + swing;
-    body.addColorStop(0, hsl(bodyHue, 80, 46, (0.07 + sp.total * 0.1) * (st.baseBright ?? 1)));
-    body.addColorStop(0.72, hsl(bodyHue, 80, 42, (0.04 + sp.total * 0.06) * (st.baseBright ?? 1)));
-    body.addColorStop(1, hsl(bodyHue, 80, 40, 0));
-    g.fillStyle = body;
-    g.beginPath();
-    g.arc(0, 0, WORLD.R, 0, TAU);
-    g.fill();
+    // 阵体辉光：一圈极淡的径向填充 —— **只在拉远俯瞰时画**。
+    // 拉远时它把“地图”从纯黑背景里托起来（没有它俯瞰只剩几根细线，像没加载出来）；
+    // 拉近时整屏都落在阵心那块近乎恒定的色里，却要为这一次贴图铺满全屏
+    // （实测 ~5ms/帧，是整帧最贵的一笔），所以 detail 档直接不画。
+    // 颜色不随帧变的部分预烘成精灵（baked 取频谱明暗的上限 0.17/0.10），
+    // 明暗交给 globalAlpha，按 (0.07+0.1t)/0.17 折算；色相摆动不参与这一层
+    // —— 0.04~0.17 的透明度上 ±20° 在夜空底上肉眼不可见，省一次整世界重烘。
+    const body = detail ? null : bodySprite || (bodySprite = bakeBaseBody());
+    if (body) {
+      g.globalAlpha = clamp((0.412 + 0.588 * sp.total) * (st.baseBright ?? 1), 0, 1);
+      g.drawImage(body, -WORLD.R, -WORLD.R, WORLD.R * 2, WORLD.R * 2);
+      g.globalAlpha = 1;
+    }
 
     // 同心环
     g.lineWidth = strokeW(v.z, detail ? 1.6 : 2.6, 0.6);
@@ -400,10 +482,19 @@ export function createRenderer(canvas) {
     g.restore();
   }
 
-  /** 光晕（total → 径向渐变半径） */
+  /** 光晕（total → 半径；亮度 → globalAlpha） */
   function drawGlow(st, b, swing) {
     const sp = st.spec;
     const r = NODE.radius * (1.25 + sp.total * 1.6);
+    const spr = glowSprite || (glowSprite = bakeGlow());
+    if (spr) {
+      // 精灵是按 b=1 烘的（0.3 / 0.12 / 0 三档），整体透明度就是节点亮度
+      g.globalAlpha = clamp(b, 0, 1);
+      g.drawImage(spr, -r, -r, r * 2, r * 2);
+      g.globalAlpha = 1;
+      return;
+    }
+    // 精灵建不出来（画布受限）时退回逐帧渐变 —— swing 只有这条路在用
     const grad = g.createRadialGradient(0, 0, NODE.radius * 0.2, 0, 0, r);
     const hue = lerp(PALETTE.hueLow, PALETTE.hueHigh, 0.7) + swing;
     grad.addColorStop(0, hsl(hue, 85, 62, 0.3 * b));
@@ -641,11 +732,15 @@ export function createRenderer(canvas) {
   function ensureGlyphs(n) {
     const lay = layoutOf(n);
     if (!lay) return null;
-    // 出图分辨率 = 这一轮镜头的目标缩放 × dpr（保证屏幕像素 1:1，缩放正好）
-    const scale = Math.max(0.25, (n.targetZoom || 1) * dpr);
+    // 出图分辨率 = 这一轮镜头的目标缩放 × dpr（保证屏幕像素 1:1，缩放正好）。
+    // 夹到 2：短句会被镜头放得很大（targetZoom 可以到 4+），位图跟着 4 倍化，
+    // 一颗字就是几百 KB —— 上限 2× 足够清晰（再放大也只是轻微柔化），内存少一半以上。
+    const scale = clamp((n.targetZoom || 1) * dpr, 0.25, 2);
     if (n.glyphs && n.glyphs.text === lay.text && n.glyphs.scale === scale) return n.glyphs;
 
-    const pad = Math.ceil(lay.fs * 0.4 * scale);
+    // 字形位图的上下留白：0.3em 足够盖住拉丁降部（~0.22em）与 CJK 满框（±0.5em）
+    // 又不至于把每颗字撑成 1.8 倍高 —— 这一格直接决定字形位图的内存。
+    const pad = Math.ceil(lay.fs * 0.3 * scale);
     const items = [];
     try {
       for (const c of lay.chars) {
@@ -808,12 +903,24 @@ export function createRenderer(canvas) {
     const cv = document.createElement("canvas");
     const cg = cv.getContext("2d");
     if (!cg) return null;
-    cg.font = `500 ${fontPx * scale}px ${FONT_FAMILY}`;
-    const m = cg.measureText(label);
-    cv.width = Math.max(2, Math.ceil(m.width + fontPx * 0.4 * scale));
-    cv.height = Math.ceil(fontPx * 1.6 * scale);
+
+    // 按**最终会显示的宽度**（maxPx）先定字号再烘：以前按原字号烘满整行、
+    // 再在绘制时缩小 —— 44 个字的位图 ≈ 100KB/颗，30 颗就是 3MB 白占。
+    // ar（宽高比）是字号无关的，所以绘制侧 dw/dh 算出来跟以前一模一样，
+    // 而位图现在正好是显示尺寸的 1:1 设备像素。
+    let fs = fontPx * scale;
+    cg.font = `500 ${fs}px ${FONT_FAMILY}`;
+    let m = cg.measureText(label);
+    const limit = NODE.hint.maxPx * scale;
+    if (m.width > limit && m.width > 1) {
+      fs = Math.max(8 * scale, (limit / m.width) * fs);
+      cg.font = `500 ${fs}px ${FONT_FAMILY}`;
+      m = cg.measureText(label);
+    }
+    cv.width = Math.max(2, Math.ceil(m.width + fs * 0.4));
+    cv.height = Math.max(2, Math.ceil(fs * 1.6));
     // 画布尺寸一改，上下文状态会被重置 —— 字体 / 对齐要重设
-    cg.font = `500 ${fontPx * scale}px ${FONT_FAMILY}`;
+    cg.font = `500 ${fs}px ${FONT_FAMILY}`;
     cg.textAlign = "center";
     cg.textBaseline = "middle";
     cg.fillStyle = "rgba(226,234,255,0.96)";

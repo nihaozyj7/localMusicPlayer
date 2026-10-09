@@ -244,6 +244,9 @@ export function createFxLyrics(host, opts = {}) {
       for (let k = 0; k < prevNodes.length; k += 1) {
         if (prevNodes[k].dataset.hold !== "done") prevNodes[k].dataset.hold = "done";
       }
+      // 行退场动画：只挂给**上一句当前行**（seek 会让一整段行变 past，
+      // 那不该集体播一遍），同一个下标反复成当前行时不播
+      if (activeIndex !== idx) prev.dataset.exit = "1";
     }
 
     activeIndex = idx;
@@ -253,6 +256,7 @@ export function createFxLyrics(host, opts = {}) {
       const el = lineEls[idx];
       el.dataset.state = "active";
       el.setAttribute("aria-current", "true");
+      el.removeAttribute("data-exit"); // 摘掉旧的退场状态（也保证下一次能重播）
       // 重新触发入场动画（同一行反复成为当前行时也要重放）
       el.dataset.enter = String(Number(el.dataset.enter || 0) + 1);
     }

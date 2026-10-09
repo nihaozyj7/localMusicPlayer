@@ -8,6 +8,9 @@
      4. 窗口适配比例（fit.js 的倍数怎么算、夹取与 0 尺寸兜底）。
    DOM 行为（挂载、歌词滚动、整窗背景层）由无头浏览器自检负责：
      node tools/check-player-host.mjs
+   行退场动画与多语言副行（同时间戳多句）：
+     node tools/check-lyric-exit.mjs
+     node tools/check-multilingual-lyrics.mjs
    ========================================================================== */
 
 import test from "node:test";
