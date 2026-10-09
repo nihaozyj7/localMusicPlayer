@@ -27,6 +27,7 @@ import {
   getSkin,
   inspectSkinModule,
   listSkins,
+  lyricDisplayText,
   noteBuiltin,
   parseLrc,
   PATCH_TYPES,
@@ -113,6 +114,54 @@ test("findLyricIndex：二分定位（未到第一句返回 -1，末尾落在最
   assert.equal(findLyricIndex(lines, 10000), 1);
   assert.equal(findLyricIndex(lines, 999999), 2);
   assert.equal(findLyricIndex([], 100), -1);
+});
+
+/* --------------------------------------------------------------------------
+   多语言歌词（同一时间戳 = 同唱的多语种文本，必须折叠成一行一起显示）
+   -------------------------------------------------------------------------- */
+
+test("parseLrc：同一时间戳的多行折叠成一行（第一行主行，其余进 trans）", () => {
+  const text = ["[00:12.00]Hello world", "[00:12.00]你好世界", "[00:20.00]Next"].join("\n");
+  const lines = parseLrc(text);
+  assert.equal(lines.length, 2, "两种语言算同一句，不该拆成两行");
+  assert.equal(lines[0].text, "Hello world", "文件里先出现的那行是主行");
+  assert.deepEqual(lines[0].trans, ["你好世界"]);
+  assert.equal(lines[1].trans, undefined, "单语言行不带 trans 键（形状与从前一致）");
+});
+
+test("parseLrc：同刻度三行全收，顺序就是文件顺序", () => {
+  const text = ["[22:22]原文A", "[22:22]译文B", "[22:22]罗马音C", "[22:30]下一句"].join("\n");
+  const lines = parseLrc(text);
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].text, "原文A");
+  assert.deepEqual(lines[0].trans, ["译文B", "罗马音C"]);
+});
+
+test("parseLrc：多语言折叠后高亮只有一行 —— 整句期间不会中途跳行", () => {
+  const lines = parseLrc(["[00:12.00]Hello world", "[00:12.00]你好世界", "[00:20.00]Next"].join("\n"));
+  assert.equal(findLyricIndex(lines, 11999), -1);
+  assert.equal(findLyricIndex(lines, 12000), 0, "开口即命中这一整句");
+  assert.equal(findLyricIndex(lines, 19999), 0, "翻译行不会把主行挤成「上一句」");
+  assert.equal(findLyricIndex(lines, 20000), 1);
+});
+
+test("parseLrc：一行多时间标签（重复句）不与折叠混淆", () => {
+  // 同一句歌词带两个时间标签 → 展开成两条**不同**时间的行，各自独立
+  const lines = parseLrc("[00:10.00][01:00.00]副歌\n[00:10.00]副歌翻译");
+  assert.equal(lines.length, 2, "10s 处的两行折叠，60s 处那一行独立");
+  assert.equal(lines[0].text, "副歌");
+  assert.deepEqual(lines[0].trans, ["副歌翻译"]);
+  assert.equal(lines[1].text, "副歌");
+  assert.equal(lines[1].trans, undefined);
+});
+
+test("lyricDisplayText：单语言原样返回，多语言用分隔符拼成一行", () => {
+  assert.equal(lyricDisplayText({ time: 0, text: "Hello" }), "Hello");
+  assert.equal(lyricDisplayText({ time: 0, text: "Hello", trans: ["你好"] }), "Hello · 你好");
+  assert.equal(lyricDisplayText({ time: 0, text: "A", trans: ["B", "C"] }), "A · B · C");
+  assert.equal(lyricDisplayText({ time: 0, text: "A", trans: ["B"] }, " / "), "A / B");
+  assert.equal(lyricDisplayText(null), "");
+  assert.equal(lyricDisplayText(undefined), "");
 });
 
 /* --------------------------------------------------------------------------

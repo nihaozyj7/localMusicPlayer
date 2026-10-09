@@ -335,14 +335,16 @@ ctx 是插件唯一的入口（只读，直接改它不会生效）：
 - ctx.media()         返回 { song, cover, covers, coverIndex, lyrics }（聚合快照）
                       · song：当前曲目（可能为 null），即 track() 那一份
                       · cover：当前封面（data URL 或同源 URL）；covers：全部封面（至少一张）；coverIndex：轮播下标
-                      · lyrics：{ lines: [{ time, text }], text, source, index, status, statusText }
+                      · lyrics：{ lines: [{ time, text, trans? }], text, source, index, status, statusText }
+                        （trans = 同一时间戳上的其它语言行：多语言歌词在解析时已折叠成一行，
+                         第一行是 text、其余进 trans —— 要么一起画，要么用 sdk.lyricDisplayText 拼成一行）
 - ctx.lyrics()        同上歌词那一份；ctx.covers() 同上封面那一份
 - ctx.playback()      返回 { position, duration, playing, volume, muted }，时间单位毫秒
 - ctx.options()       返回 { showLyrics, lyricsFontSize, animations, coverCarousel, coverCarouselInterval, interactive, performanceMode }
 - ctx.env()           返回 { themeId, mode, width, height, dpr, reducedMotion, foreground }
 - ctx.spectrum()      实时频谱（**拉取式**）：返回 { bands: Float32Array(128 段对数全谱, 0..1), at: 采样时刻 } 或 null；
                       调用本身就是采样门控（不调就不采，节流 ~30Hz）；null = 没在播放 / 刚开播 / 没声明 capabilities.spectrum
-- ctx.sdk             复用零件：createLyricsView / createFxLyrics / createCamera / createBackgroundLayer / applyFit / fitScale / parseLrc / findLyricIndex / formatLrcTime / html / util
+- ctx.sdk             复用零件：createLyricsView / createFxLyrics / createCamera / createBackgroundLayer / applyFit / fitScale / parseLrc / findLyricIndex / formatLrcTime / lyricDisplayText / html / util
 - ctx.actions         受控动作：seek(ms) / seekBy(ms) / seekRatio(0~1) / togglePlay / next / prev / toggleLike / like / unlike / openFolder / openCoverPanel / openLyricsPanel / reportBackdrop({bg,fg})
 - ctx.on(type, fn)    订阅宿主推送，返回取消订阅的函数
 - ctx.defaultCover    封面兜底图（内联 SVG data URL），封面加载失败时用它

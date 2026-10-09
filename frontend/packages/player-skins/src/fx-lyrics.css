@@ -140,6 +140,19 @@
   z-index: 1;
 }
 
+/* 多语言副行：同一时间戳上的翻译 / 罗马音（parseLrc 折叠进 line.trans）。
+   逐字点亮只作用于 .fxl__text 里的单元，副行独立成块，不受它影响。 */
+.fxl__trans {
+  position: relative;
+  z-index: 1;
+  display: block;
+  margin-top: 2px;
+  font-size: calc(var(--fxl-size) * 0.78);
+  font-weight: var(--fw-normal);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
 .fxl__line[data-state="active"]::after {
   content: attr(data-text);
   position: absolute;

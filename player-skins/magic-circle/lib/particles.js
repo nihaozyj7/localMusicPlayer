@@ -10,12 +10,13 @@
    一整首歌跑下来 GC 压力接近零。
    ========================================================================== */
 
-/** 粒子类型（决定 update 里的运动规律与 render 里的画法） */
+/** 粒子类型（决定 update 里的运动规律与 render 里的画法）
+ *  ★ 没有 RIPPLE 了：那种「从中心往外扩的白色线条波纹」按使用者要求去掉了
+ *    （打节点、落地两处都停发），落点 / 打击反馈改用灵光与光点。 */
 export const KIND = {
   SHARD: 0, // 符文碎片（文字碎裂）
   MOTE: 1, // 灵光（从节点中心升起）
   DUST: 2, // 星尘（世界空间缓慢漂移）
-  RIPPLE: 3, // 涟漪（flux 触发的扩散圆环）
   FEATHER: 4, // 光羽（屏幕空间，从画面上方飘落）
   SPARK: 5, // 屏幕空间的闪点
 };
@@ -106,7 +107,6 @@ export function createPool(cap, space) {
         continue;
       }
       const kind = pool.kind[i];
-      if (kind === KIND.RIPPLE) continue; // 只扩散不位移
 
       if (kind === KIND.SHARD) {
         pool.vx[i] = (pool.vx[i] + wind * s) * dragK;

@@ -36,6 +36,7 @@ import {
   getSkin,
   listSkins,
   loadSkin,
+  lyricDisplayText,
   noteBuiltin,
   parseLrc,
   resetBuiltins,
@@ -322,7 +323,14 @@ function linesForSong(song) {
   const offset = lyricsOffsetOf(song?.id);
   if (!offset || !raw.length) return raw;
   if (shiftedCache.songId === song.id && shiftedCache.offset === offset) return shiftedCache.lines;
-  const out = raw.map((l) => ({ time: l.time + offset, text: l.text }));
+  // 多语言副行（trans）必须跟着偏移一起走 —— 漏了它会让「应用了微调的歌词」
+  // 退化成只剩原文。只有真的有副行才挂这个键，单语言行的形状与从前一致。
+  const out = raw.map((l) => {
+    /** @type {{time:number,text:string,trans?:string[]}} */
+    const next = { time: l.time + offset, text: l.text };
+    if (l.trans) next.trans = l.trans;
+    return next;
+  });
   shiftedCache = { songId: song.id, offset, lines: out };
   return out;
 }
@@ -388,7 +396,8 @@ export function currentLyricLine() {
   const lines = linesForSong(song);
   if (!lines.length) return "";
   const idx = findLyricIndex(lines, state.position);
-  return idx >= 0 ? lines[idx].text : "";
+  // 多语言歌词：桌面歌词只有一条，把同一时间戳的其它语言行拼在后面一起显示
+  return idx >= 0 ? lyricDisplayText(lines[idx]) : "";
 }
 
 /**
@@ -407,9 +416,9 @@ export function currentLyricWindow() {
   const idx = findLyricIndex(lines, state.position);
   if (idx < 0) return empty;
   return {
-    prev: lines[idx - 1]?.text || "",
-    text: lines[idx].text || "",
-    next: lines[idx + 1]?.text || "",
+    prev: lyricDisplayText(lines[idx - 1]) || "",
+    text: lyricDisplayText(lines[idx]) || "",
+    next: lyricDisplayText(lines[idx + 1]) || "",
   };
 }
 

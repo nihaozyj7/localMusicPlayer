@@ -10,15 +10,25 @@
      · 一行可以带多个时间标签（`[00:12.00][01:20.00]同一句`），要展开成多行；
      · 分秒是 `mm:ss`，小数部分 `.xx` / `.xxx` / `:xx` 都接受，按毫秒补齐；
      · 没有时间标签的行（作词/作曲之类的元信息行）直接丢掉 —— 它们没有
-       时间轴，留在列表里会永远停在高亮不到的位置。
+       时间轴，留在列表里会永远停在高亮不到的位置；
+     · **同一时间戳上的多行是多语言歌词**（原唱 + 翻译 / 罗马音，两行用同一个
+       `[22:22]` 标签），合成一行：第一行做主行 `text`，其余进 `trans`。
+       不合并的后果是实打实的：`findLyricIndex` 只会命中最后一行，前面几种
+       语言会被当成「已经唱过去的上一句」瞬间变暗，看起来就是多语言歌词在
+       跳行、闪一下就没。
    ========================================================================== */
 
 const TIME_TAG = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
 
 /**
- * LRC 文本 → 按时间升序的 `[{ time, text }]`（time 单位毫秒）。
+ * LRC 文本 → 按时间升序的 `[{ time, text, trans? }]`（time 单位毫秒）。
+ *
+ * 同时间戳的多行会折叠成一行：`text` 是文件里先出现的那行（通常是对白/原唱），
+ * `trans` 是其余行（翻译 / 罗马音），只在真的有副行时才带这个键 —— 单语言歌词
+ * 的行结构与以前完全一样。
+ *
  * @param {string} text
- * @returns {Array<{time:number,text:string}>}
+ * @returns {Array<{time:number,text:string,trans?:string[]}>}
  */
 export function parseLrc(text) {
   if (!text) return [];
@@ -38,7 +48,40 @@ export function parseLrc(text) {
     if (!times.length || !content) continue;
     for (const t of times) out.push({ time: t, text: content });
   }
-  return out.sort((a, b) => a.time - b.time);
+  out.sort((a, b) => a.time - b.time);
+
+  // 同时间戳折叠：Array#sort 在现代内核里是稳定排序，所以同刻度的行保持
+  // 文件里的先后顺序 —— 第一行就是这一句的「原文」。
+  /** @type {Array<{time:number,text:string,trans?:string[]}>} */
+  const grouped = [];
+  for (const line of out) {
+    const last = grouped[grouped.length - 1];
+    if (last && last.time === line.time) {
+      if (last.trans) last.trans.push(line.text);
+      else last.trans = [line.text];
+    } else {
+      grouped.push(line);
+    }
+  }
+  return grouped;
+}
+
+/**
+ * 一行歌词的**展示文本**：主行 + 同时间的其它语言行。
+ *
+ * 单语言时原样返回主行（不分配新字符串）。多语言时用分隔符拼起来 ——
+ * 给「只能显示一行」的地方用：桌面歌词、悬浮歌词条、画布类皮肤。
+ *
+ * @param {{text?:string,trans?:string[]}|null|undefined} line
+ * @param {string} [sep]
+ * @returns {string}
+ */
+export function lyricDisplayText(line, sep = " · ") {
+  if (!line) return "";
+  const base = String(line.text ?? "");
+  const trans = line.trans;
+  if (!Array.isArray(trans) || !trans.length) return base;
+  return [base, ...trans].join(sep);
 }
 
 /**

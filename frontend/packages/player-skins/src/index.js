@@ -59,6 +59,7 @@ export {
   mergeDraftTimes,
   formatLrcTime,
   findLyricIndex,
+  lyricDisplayText,
 } from "./lrc.js";
 export { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf, lyricsEmptyText } from "./html.js";
 

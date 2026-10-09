@@ -18,9 +18,9 @@ import { findLyricIndex } from "./lrc.js";
 /** 用户滚动之后，多久重新接管自动滚动 */
 const USER_SCROLL_PAUSE_MS = 1200;
 
-/** 歌词行的最小结构（与 lrc.js 解析结果一致） */
+/** 歌词行的最小结构（与 lrc.js 解析结果一致；trans = 同时间的其它语言行） */
 /**
- * @typedef {{ time: number, text: string }} LyricLine
+ * @typedef {{ time: number, text: string, trans?: string[] }} LyricLine
  */
 
 /**
@@ -136,8 +136,27 @@ export function createLyricsView(host, opts = {}) {
   }
 
   /**
+   * 一行 → DOM。主行是原文，`trans` 里的每一行各画一条**副行**
+   * （`.lyric__trans`，样式在 lyrics.css）—— 多语言歌词必须显示在同一条里，
+   * 否则同一时间戳的两种语言会被拆成两行，只有一行能拿到高亮。
+   *
+   * @param {{time:number,text:string,trans?:string[]}} l
+   * @param {number} i
+   */
+  function lineHtml(l, i) {
+    const trans =
+      Array.isArray(l.trans) && l.trans.length
+        ? l.trans.map((t) => `<span class="lyric__trans">${esc(t)}</span>`).join("")
+        : "";
+    const attrs = `data-time="${l.time}" data-lyric-index="${i}"`;
+    return interactive
+      ? `<div class="lyric" role="button" tabindex="0" ${attrs}>${esc(l.text)}${trans}</div>`
+      : `<div class="lyric" ${attrs}>${esc(l.text)}${trans}</div>`;
+  }
+
+  /**
    * 设定歌词内容。
-   * @param {Array<{time:number,text:string}>} next
+   * @param {LyricLine[]} next
    * @param {{ emptyText?: string, emptyHint?: string, showOpenFolder?: boolean }} [meta]
    */
   function setLines(next, meta = {}) {
@@ -147,15 +166,7 @@ export function createLyricsView(host, opts = {}) {
       renderEmpty(meta);
       return;
     }
-    scroll.innerHTML = lines
-      .map((l, i) =>
-        interactive
-          ? `<div class="lyric" role="button" tabindex="0" data-time="${l.time}" data-lyric-index="${i}">${esc(
-              l.text
-            )}</div>`
-          : `<div class="lyric" data-time="${l.time}" data-lyric-index="${i}">${esc(l.text)}</div>`
-      )
-      .join("");
+    scroll.innerHTML = lines.map((l, i) => lineHtml(l, i)).join("");
     scroll.scrollTop = 0;
   }
 

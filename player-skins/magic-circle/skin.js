@@ -41,6 +41,7 @@ const { ROLE_NAMES, buildWorld, pickTransition, gapSecBetween, leadFor, indexOfT
 const { createCamera } = await load("camera.js");
 const { KIND, createPool } = await load("particles.js");
 const { createRenderer } = await load("render.js");
+const { drawBackdrop } = await load("backdrop.js");
 const { clamp, mulberry32, smoothTo, TAU } = await load("util.js");
 
 /** 舞台 DOM */
@@ -63,13 +64,14 @@ const SHELL = `
 /** 整窗背景层 DOM（清单声明了 capabilities.background 才有容器） */
 const BG_SHELL = `
   <div class="mc-bg">
+    <canvas class="mc-bg__canvas"></canvas>
     <div class="mc-bg__nebula mc-bg__nebula--a"></div>
     <div class="mc-bg__nebula mc-bg__nebula--b"></div>
     <div class="mc-bg__veil"></div>
   </div>`;
 
-/** 打击检测的手感：通量阈值 / 冷却 / 涟漪半径 */
-const BEAT = { threshold: 0.14, cooldown: 0.34, rippleR: NODE.radius * 1.1 };
+/** 打击检测的手感：通量阈值 / 冷却 */
+const BEAT = { threshold: 0.14, cooldown: 0.34 };
 
 /** @type {object|null} 运行期状态（换样式会先 destroy 再 mount，因此是单例） */
 let S = null;
@@ -138,6 +140,8 @@ export default {
       lyricsKey: "",
       /** 上一帧是否还在飞行（用来抓“刚落地”那一刻撒涟漪） */
       hadFlight: false,
+      /** 整窗背景画好了没（容器可能还没布局，画不上就下帧再试） */
+      bgPainted: false,
       windX: 0,
       shatterDriftX: 0,
       // 粒子生成的分数累加器（速率按“每秒几个”给，逐帧攒余数）
@@ -156,7 +160,7 @@ export default {
     S.posAt = S.now; // 位置外推的时钟起点（首帧起就在同一条时间轴上）
     S.idleSince = S.now;
 
-    paintBackground(ctx);
+    S.bgPainted = paintBackground(ctx);
     syncOptions(ctx);
     syncLyrics(ctx);
     syncTrack(ctx);
@@ -203,10 +207,12 @@ export default {
         S.renderer.resize(Number(patch.width) || 0, Number(patch.height) || 0, env.dpr || 1);
         syncOverview();
         reflowText(); // 舞台宽度变了 → 文字占屏比例要重算
+        // 窗口尺寸变了 → 整窗背景也重画一次（容器还没布局就等下一帧重试）
+        S.bgPainted = paintBackground(ctx);
         break;
       }
       case "theme":
-        paintBackground(ctx);
+        S.bgPainted = paintBackground(ctx);
         break;
       case "close":
         stopLoop();
@@ -258,7 +264,7 @@ function syncLyrics(ctx) {
   if (key === S.lyricsKey) return;
   S.lyricsKey = key;
 
-  S.world = buildWorld(l.lines);
+  S.world = buildWorld(withDisplayText(ctx, l.lines));
   // 没歌词：焦点恒为阵心那颗（syncLyrics 已把它点亮，别让 onFocus 又把它按回去）
   S.focusIdx = hasLyricLines() ? -1 : 0;
   S.singIdx = -1;
@@ -288,6 +294,33 @@ function syncLyrics(ctx) {
 /** 这个世界里有没有“带歌词的节点” */
 function hasLyricLines() {
   return S.world.nodes.some((n) => Boolean(n.line));
+}
+
+/**
+ * 多语言歌词 → 画布上的一行字。
+ *
+ * 同一时间戳的多行（原唱 + 翻译 / 罗马音）在宿主解析时已经折叠成
+ * `{ text, trans[] }`（见包里 lrc.js 的 parseLrc）。歌词区那种「主行 + 副行」
+ * 的两行排版在画布上没有对应物，所以这里把副行用分隔符拼进主行 —— 两种语言
+ * 必须一起出现，否则只画第一行就等于把翻译丢了。
+ *
+ * 优先用 ctx.sdk.lyricDisplayText（与宿主、其它样式同一份实现），
+ * 老宿主没有这个零件时退回本地拼接。
+ *
+ * 以**命名导出**暴露一份，是为了让自检能直接打它（画布上的文字没法从 DOM 查，
+ * 见 tools/check-multilingual-lyrics.mjs）—— 宿主的 composeSkin 只认 default，
+ * 多一个具名导出不影响加载。
+ *
+ * @param {object} ctx
+ * @param {Array<{time:number,text:string,trans?:string[]}>} lines
+ */
+export function withDisplayText(ctx, lines) {
+  const join = ctx?.sdk?.lyricDisplayText;
+  return lines.map((line) => {
+    if (!line.trans || !line.trans.length) return line;
+    const text = typeof join === "function" ? join(line) : [line.text, ...line.trans].join(" · ");
+    return { ...line, text };
+  });
 }
 
 /** 显示设置 → 帧率档位 / 动效开关 / 文字字号 */
@@ -332,9 +365,11 @@ function setText(key, value) {
 
 function paintBackground(ctx) {
   const root = ctx.backgroundRoot;
-  if (!root) return;
+  if (!root) return false;
   if (!root.querySelector(".mc-bg")) root.innerHTML = BG_SHELL;
   root.hidden = false; // 容器的 hidden 归皮肤管；进出场是宿主的 data-state
+  // 整窗场景：静态，挂载与 resize 各画一次（画布还没布局时返回 false，下帧再试）
+  return drawBackdrop(root.querySelector(".mc-bg__canvas"), S && S.renderer ? S.renderer.size().dpr : 1);
 }
 
 /* ==========================================================================
@@ -453,6 +488,7 @@ function frame(ts) {
   S.now = now;
 
   ensureSize();
+  if (!S.bgPainted) S.bgPainted = paintBackground(S.ctx); // 容器布局好之前画不上，补一帧
 
   // —— 128 段全谱 → 派生量（没在播放时输入为 0，全部平滑值自然衰减）——
   const snap = S.ctx.spectrum();
@@ -616,23 +652,15 @@ function advanceStates(now) {
   }
 }
 
-/** 刚刚落地 → 在目标节点上撒一圈涟漪与灵光（“聚焦”的落点反馈） */
+/** 刚刚落地 → 在目标节点上撒一把灵光（“聚焦”的落点反馈）
+ *  ★ 不再撒涟漪：那种「从中心往外扩的白色线条波纹」按使用者要求去掉了，
+ *    落点感交给下面这些会亮一下的光点。 */
 function syncArrival() {
   const flying = Boolean(S.camCtl.cam.flight);
   if (S.hadFlight && !flying && S.anim) {
     const node = S.world.nodes[S.focusIdx];
     if (node) {
       const rnd = S.acc.rnd;
-      S.pools.world.spawn({
-        kind: KIND.RIPPLE,
-        x: node.x,
-        y: node.y,
-        life: 0.9,
-        size: NODE.radius * 0.9,
-        hue: 200 + S.analyser.out.centroid * 40,
-        sat: 88,
-        light: 76,
-      });
       for (let i = 0; i < 14; i += 1) {
         const a = rnd() * TAU;
         const r = NODE.radius * (0.5 + rnd() * 0.6);
@@ -708,18 +736,9 @@ function spawnParticles(dt, now, sp) {
 
   if (!S.anim) return;
 
-  // 打击检测（flux 超阈值 + 冷却）→ 涟漪 + 灵光爆发
+  // 打击检测（flux 超阈值 + 冷却）→ 一圈灵光爆发
+  // ★ 不撒涟漪了：白色扩散波纹按使用者要求去掉（见 syncArrival 的说明）
   if (active && beatFire(sp, now, BEAT.threshold, BEAT.cooldown)) {
-    world.spawn({
-      kind: KIND.RIPPLE,
-      x: active.x,
-      y: active.y,
-      life: 1.15,
-      size: BEAT.rippleR,
-      hue: 200 + sp.centroid * 40,
-      sat: 85,
-      light: 72,
-    });
     const burst = 10 + Math.round(sp.flux * 26);
     for (let i = 0; i < burst; i += 1) {
       const a = rnd() * TAU;

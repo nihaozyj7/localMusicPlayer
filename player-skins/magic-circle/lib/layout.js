@@ -213,6 +213,8 @@ function makeNode(i, x, y, section, role, posInSection, line, entry) {
     layout: null,
     /** 预渲染出来的字形位图（按需建、闲置即弃，见 render.js） */
     glyphs: null,
+    /** 跳转预览小字位图（按需建，见 render.js → ensureHint） */
+    hint: null,
     /** 这一轮镜头的目标缩放（预渲染字形要按它出图才清晰） */
     targetZoom: 0,
     /** 悬停态（鼠标移到节点上） */

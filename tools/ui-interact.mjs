@@ -290,6 +290,9 @@ try {
     const s = document.querySelector(".sidebar");
     const r = pv.getBoundingClientRect();
     const cs = getComputedStyle(document.documentElement);
+    // 整窗背景型样式（capabilities.background）的舞台铺满整窗 ——
+    // 标题栏与底栏浮在画面上，见宿主 layout.css
+    const fullBleed = pv.dataset.skinBackground === "yes";
     return {
       hidden: pv.hidden,
       state: pv.dataset.state,
@@ -302,8 +305,11 @@ try {
       pvLeft: Math.round(r.left),
       pvRight: Math.round(r.right),
       appView: document.getElementById("app").dataset.view,
-      expectTop: parseFloat(cs.getPropertyValue("--h-titlebar")),
-      expectBottom: window.innerHeight - parseFloat(cs.getPropertyValue("--h-playerbar")),
+      fullBleed,
+      expectTop: fullBleed ? 0 : parseFloat(cs.getPropertyValue("--h-titlebar")),
+      expectBottom: fullBleed
+        ? window.innerHeight
+        : window.innerHeight - parseFloat(cs.getPropertyValue("--h-playerbar")),
       vw: window.innerWidth,
     };
   `);
@@ -313,7 +319,9 @@ try {
     `opacity=${opened.opacity} transform=${opened.transform}`
   );
   check(
-    "详情页铺满整个窗口（标题栏之下、底栏之上，左右到边）",
+    opened.fullBleed
+      ? "整窗背景型样式的详情页铺满整窗（标题栏与底栏浮在画面上）"
+      : "详情页铺满整个窗口（标题栏之下、底栏之上，左右到边）",
     opened.pvTop === opened.expectTop &&
       opened.pvBottom === opened.expectBottom &&
       opened.pvLeft === 0 &&

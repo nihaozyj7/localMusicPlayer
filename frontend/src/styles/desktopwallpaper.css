@@ -61,6 +61,14 @@ html.wp-window .playerview {
   will-change: auto;
 }
 
+/* 主界面给「整窗背景型样式」的舞台算了两块 chrome 占位（标题栏 + 头部行 /
+   底栏），皮肤据此把内容往里让。这个窗口按需求**去掉了 UI**，两块都不存在 ——
+   不归零的话，歌词与 HUD 会凭空空出上 88px、下 92px 一条边。 */
+html.wp-window .playerview[data-skin-background="yes"] {
+  --skin-inset-top: 0px;
+  --skin-inset-bottom: 0px;
+}
+
 /* 舞台占满剩余高度。主界面里这一行是 grid-template-rows: auto minmax(0,1fr)
    的第一行给头部（auto）—— 这里没有头部，直接让舞台吃满。 */
 html.wp-window .playerview__stage {

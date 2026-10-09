@@ -191,6 +191,37 @@
   border-right-color: transparent;
 }
 
+/* —— 整窗背景型样式：舞台也铺满整窗 ——
+   标题栏与底栏下面那两块以前归**背景层**管（挂载时画一次的静态图），
+   于是窗口读起来是「中间一块在动的画面 + 上下两条死的背景」。
+   现在把舞台本身放大到整窗：整个窗口是同一张连续的画面，
+   标题栏 / 底栏 / 头部行只是浮在它上面的透明宿主壳。
+
+   几何没有变，只是「谁画到哪里」变了：
+     · 头部行仍然停在标题栏之下（margin-top），按钮位置与从前一致；
+     · 仍排在文档流里的皮肤内容（歌词 / 唱片）不能顶到窗口边，
+       宿主把这两块 chrome 占掉的高度作为 --skin-inset-* 交给皮肤，
+       皮肤自己让开（声明了 background 的样式才需要读它）。
+       桌面背景歌词窗口没有这两块 chrome，那里把它们归零 —— 见
+       desktopwallpaper.css。 */
+.playerview[data-skin-background="yes"] {
+  inset: 0;
+  --skin-inset-top: calc(var(--h-titlebar) + var(--h-pv-head));
+  --skin-inset-bottom: var(--h-playerbar);
+}
+
+.playerview[data-skin-background="yes"] .playerview__head {
+  position: relative;
+  /* 舞台改成了绝对定位铺满整窗，会盖住文档流里的头部行 —— 抬回它上面 */
+  z-index: 2;
+  margin-top: var(--h-titlebar);
+}
+
+.playerview[data-skin-background="yes"] .playerview__stage {
+  position: absolute;
+  inset: 0;
+}
+
 /* —— 窄窗口：只压缩底栏高度 ——
    需求：左侧曲库 / 歌单栏不做响应式折叠（--w-sidebar 固定），
    因此这里**不再**随窗口宽度收窄侧边栏，只调整底栏高度。 */

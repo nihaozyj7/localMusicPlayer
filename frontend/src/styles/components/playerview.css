@@ -14,7 +14,7 @@
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  height: 52px;
+  height: var(--h-pv-head);
   /* 详情页铺满整窗，head 自己留出内边距，别让「返回」贴着窗口边 */
   padding: 0 var(--sp-6);
 }

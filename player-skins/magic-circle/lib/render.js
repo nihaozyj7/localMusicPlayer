@@ -196,7 +196,10 @@ export function createRenderer(canvas) {
 
   /**
    * 巨型底阵：同心环 + 径向辐条 + 外圈刻度 + 落点标记。
-   * 静态几何 + 一个缓慢自转角，全部攒成 3~4 条路径一次 stroke。
+   * 静态几何，全部攒成 3~4 条路径一次 stroke。
+   *
+   * ★ 外围**不自转**（按使用者要求）：阵是地基，角度恒定；
+   *   会动的只有频谱 —— 下面的明暗、色相、阵体辉光仍然逐帧读 spec。
    */
   function drawBase(st) {
     layer(st, PARALLAX.base);
@@ -204,7 +207,6 @@ export function createRenderer(canvas) {
     const detail = v.z >= PERF.detailZoom;
     const sp = st.spec;
     const swing = hueSwing(sp);
-    const rot = st.anim ? st.now * 0.02 * (1 + sp.low * 0.8) : 0;
     // 拉远俯瞰（LOD）时反而要更亮：细节全砍了，只剩轮廓，再暗就是整屏发黑
     const baseAlpha = (detail ? 0.1 + sp.total * 0.32 : 0.3 + sp.total * 0.45) * (st.baseBright ?? 1);
 
@@ -233,7 +235,7 @@ export function createRenderer(canvas) {
     // 径向辐条
     g.beginPath();
     for (let i = 0; i < WORLD.SPOKES; i += 1) {
-      const a = rot + (i / WORLD.SPOKES) * TAU;
+      const a = (i / WORLD.SPOKES) * TAU;
       const c = Math.cos(a);
       const s = Math.sin(a);
       g.moveTo(c * 320, s * 320);
@@ -248,7 +250,7 @@ export function createRenderer(canvas) {
     const outer = WORLD.RINGS[WORLD.RINGS.length - 1];
     g.beginPath();
     for (let i = 0; i < 240; i += 1) {
-      const a = rot + (i / 240) * TAU;
+      const a = (i / 240) * TAU;
       const c = Math.cos(a);
       const s = Math.sin(a);
       const long = i % 10 === 0;
@@ -268,7 +270,7 @@ export function createRenderer(canvas) {
     g.beginPath();
     for (const r of WORLD.RINGS) {
       for (let i = 0; i < WORLD.SPOKES; i += 1) {
-        const a = rot + (i / WORLD.SPOKES) * TAU;
+        const a = (i / WORLD.SPOKES) * TAU;
         const x = Math.cos(a) * r;
         const y = Math.sin(a) * r;
         const s = r === outer ? 26 : 16;
@@ -384,7 +386,9 @@ export function createRenderer(canvas) {
     else drawSimpleRing(st, b, swing);
     drawMidRing(st, b, swing, full);
     if (detail) drawCore(st, b, swing);
+    // 主角画大字；待命的阵画一行浅色小字（告诉用户点它会跳到哪一句）
     if (full) drawText(st, n, b);
+    else drawHint(st, n);
 
     if (hover > 0.01) {
       g.strokeStyle = hsl(PALETTE.hueHigh + swing, 90, 72, hover * 0.5);
@@ -412,13 +416,15 @@ export function createRenderer(canvas) {
   }
 
   /**
-   * 外环 128 刻度（核心视觉）：刻度长度与亮度直读 fast[]，
-   * 镜像层与本体同色同 alpha → 一圈 256 根、只 stroke 128 次。
+   * 外环 128 刻度 —— **全图唯一的频谱环**（按使用者要求：只留一圈）。
+   * 刻度长度与亮度直读 fast[]，镜像层与本体同色同 alpha → 一圈 256 根、
+   * 只 stroke 128 次。
+   *
+   * ★ 不自转：角度固定，逐帧变化的只有长度与亮度（频谱本身）。
    */
   function drawTicks(st, n, isActive, b, swing) {
     const sp = st.spec;
     const mirror = NODE.mirrorTicks;
-    const baseRot = st.anim ? st.now * (isActive ? 0.22 : 0.08) * (1 + sp.low * 1.4) : 0;
     const arr = isActive ? sp.fast : sp.slow;
     const gain = isActive ? 1 : 0.42;
     const detailTicks = isActive || st.view.z >= 0.32;
@@ -428,7 +434,7 @@ export function createRenderer(canvas) {
     // 底阵的 1.6px，也可能是某个环的 3px），不同节点看起来会不一样粗
     g.lineWidth = strokeW(st.view.z, 1.5, 0.5);
     for (let i = 0; i < 128; i += 1) {
-      const a = baseRot + (i / 128) * TAU - Math.PI / 2;
+      const a = (i / 128) * TAU - Math.PI / 2;
       const raw = arr[i];
       const len = NODE.tickMin + raw * NODE.tickSpan * gain;
       const alpha = (0.15 + raw * 0.85) * b * (isActive ? 1 : 0.75);
@@ -482,11 +488,13 @@ export function createRenderer(canvas) {
     g.stroke();
   }
 
-  /** 中环：反向自转 + 符文逐个点亮（midHi 频段，像跑马灯） */
+  /**
+   * 中环：符文按 midHi 频段逐个点亮。
+   * ★ 不自转、也不再跑跑马灯（按使用者要求：外围都不转，只有频谱在变）。
+   */
   function drawMidRing(st, b, swing, isActive) {
     const sp = st.spec;
     const r = NODE.radius * 0.66;
-    const dir = st.anim ? -st.now * 0.3 * (1 + sp.low * 1.2) : 0;
     g.lineWidth = strokeW(st.view.z, 2.4, 0.7);
     g.strokeStyle = hsl(PALETTE.hueHigh + swing, 70, 66, b * 0.5);
     g.beginPath();
@@ -494,11 +502,10 @@ export function createRenderer(canvas) {
     g.stroke();
 
     const lit = Math.floor(clamp(sp.midHi * 3.2, 0, 1) * runes.length);
-    const runner = st.anim ? Math.floor(st.now * 2.4) % runes.length : -1;
     const scale = 1 + sp.midHi * 0.15;
     for (let k = 0; k < runes.length; k += 1) {
-      const on = isActive && (k < lit || k === runner);
-      const a = dir + (k / runes.length) * TAU;
+      const on = isActive && k < lit;
+      const a = (k / runes.length) * TAU;
       const x = Math.cos(a) * r;
       const y = Math.sin(a) * r;
       g.save();
@@ -518,15 +525,14 @@ export function createRenderer(canvas) {
     }
   }
 
-  /** 内核几何：呼吸脉冲（midLo → 填充与透明度） */
+  /** 内核几何：呼吸脉冲（midLo → 半径、填充与透明度）—— 形状固定，不自转 */
   function drawCore(st, b, swing) {
     const sp = st.spec;
     const sides = 6;
-    const rot = st.anim ? st.now * (0.5 + sp.low * 1.5) : 0;
     const r = NODE.radius * (0.34 + sp.midLo * 0.12);
     g.beginPath();
     for (let i = 0; i <= sides; i += 1) {
-      const a = rot + (i / sides) * TAU;
+      const a = (i / sides) * TAU;
       const x = Math.cos(a) * r;
       const y = Math.sin(a) * r;
       if (i === 0) g.moveTo(x, y);
@@ -569,6 +575,33 @@ export function createRenderer(canvas) {
     return out;
   }
 
+  /**
+   * 给每个字配一组**稳定**的姿态：大小、角度、高低、摇曳相位 —— 这就是
+   * 「魔法味」的来源（同一句里的字大小/角度略微不一样，再各自慢慢摆）。
+   *
+   * 用**文本哈希**而不是 Math.random：同一句每一帧画出来都一样，
+   * 不会逐帧乱抖；换一句才换姿态。
+   *
+   * @param {string} text
+   * @param {number} k 字序
+   */
+  function charPose(text, k) {
+    let h = 0x811c9dc5 ^ text.length;
+    for (let i = 0; i < text.length; i += 1) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+    h = Math.imul(h ^ (k + 0x9e3779b9), 0x85ebca6b);
+    const next = () => {
+      h = Math.imul(h ^ (h >>> 16), 0x27d4eb2d);
+      h ^= h >>> 15;
+      return ((h >>> 0) % 10000) / 10000;
+    };
+    return {
+      tilt: (next() - 0.5) * 0.2, // ±5.7°
+      scale: 1 + (next() - 0.5) * 0.13, // ±6.5%
+      dy: (next() - 0.5) * 0.16, // 相对字号的高低差
+      phase: next() * TAU, // 摇曳相位（各自错开）
+    };
+  }
+
   /* -------------------------------------------------------------------- 文字 */
 
   /** 按行长算出实际字号与布局（缓存在节点上，换文字才重算） */
@@ -583,7 +616,13 @@ export function createRenderer(canvas) {
       fs = Math.max(42, (NODE.maxTextWidth / m.width) * fs);
       m = measure(text, fs);
     }
-    n.layout = { text, fs, width: m.width, chars: m.chars };
+    n.layout = {
+      text,
+      fs,
+      width: m.width,
+      // measure 的结果是跨节点共享的，姿态要另建一份（别改它）
+      chars: m.chars.map((c, k) => ({ ...c, ...charPose(text, k) })),
+    };
     return n.layout;
   }
 
@@ -719,24 +758,91 @@ export function createRenderer(canvas) {
       }
       if (alpha <= 0.02) continue;
 
-      const alphaAll = alpha * b;
+      // —— 每个字自带一组姿态：大小 / 角度 / 高低，再各自慢慢摇曳（魔法味）——
+      const twinkle = st.anim ? 0.92 + 0.08 * Math.sin(st.now * 1.25 + c.phase * 2.1) : 1;
+      const a = alpha * b * twinkle;
+      if (a <= 0.02) continue;
+      const sway = st.anim ? Math.sin(st.now * 0.85 + c.phase) * 0.045 : 0;
+      const bob = st.anim ? Math.sin(st.now * 0.6 + c.phase * 1.7) * 0.04 : 0;
+
+      g.save();
+      g.translate(x, y + lay.fs * (c.dy + bob));
+      g.rotate(c.tilt + sway);
+      g.scale(c.scale, c.scale);
       const cv = glyphs && glyphs.items[k];
       if (cv) {
         // 位图 → 世界尺寸（出图时按 targetZoom 放大过，这里换算回去）
         const gw = cv.width / glyphs.scale;
         const gh = cv.height / glyphs.scale;
-        g.globalAlpha = alphaAll;
-        g.drawImage(cv, x - gw / 2, y - gh / 2, gw, gh);
-        g.globalAlpha = 1;
-        continue;
+        g.globalAlpha = a;
+        g.drawImage(cv, -gw / 2, -gh / 2, gw, gh);
+      } else {
+        if (a > 0.25) {
+          g.fillStyle = `rgba(150,190,255,${(a * 0.3).toFixed(3)})`;
+          g.fillText(c.ch, -c.w / 2 - 3, 2);
+        }
+        g.fillStyle = `rgba(236,240,255,${a.toFixed(3)})`;
+        g.fillText(c.ch, -c.w / 2, 0);
       }
-      if (alphaAll > 0.25) {
-        g.fillStyle = `rgba(150,190,255,${(alphaAll * 0.3).toFixed(3)})`;
-        g.fillText(c.ch, x - c.w / 2 - 3, y + 2);
-      }
-      g.fillStyle = `rgba(236,240,255,${alphaAll.toFixed(3)})`;
-      g.fillText(c.ch, x - c.w / 2, y);
+      g.restore();
     }
+  }
+
+  /**
+   * 跳转预览小字的位图（整行一次成图）。
+   *
+   * 待命的魔法阵是可以点的，但上面什么字都没有 —— 用户不知道点下去会跳到
+   * 哪一句。所以给每颗待命阵挂一行浅色小字，**按需建、一次成图**：
+   * 位图是屏幕像素尺寸，画的时候按当前 zoom 缩放，拉近拉远都不至于糊掉。
+   *
+   * @returns {{text:string, canvas:HTMLCanvasElement, ar:number}|null}
+   */
+  function ensureHint(n) {
+    const text = String(n.line?.text ?? "").trim();
+    if (!text) return null;
+    if (n.hint && n.hint.text === text) return n.hint;
+
+    const fontPx = NODE.hint.fontPx;
+    const scale = clamp(dpr, 1, 2);
+    const label = text.length > 44 ? `${text.slice(0, 43)}…` : text;
+    const cv = document.createElement("canvas");
+    const cg = cv.getContext("2d");
+    if (!cg) return null;
+    cg.font = `500 ${fontPx * scale}px ${FONT_FAMILY}`;
+    const m = cg.measureText(label);
+    cv.width = Math.max(2, Math.ceil(m.width + fontPx * 0.4 * scale));
+    cv.height = Math.ceil(fontPx * 1.6 * scale);
+    // 画布尺寸一改，上下文状态会被重置 —— 字体 / 对齐要重设
+    cg.font = `500 ${fontPx * scale}px ${FONT_FAMILY}`;
+    cg.textAlign = "center";
+    cg.textBaseline = "middle";
+    cg.fillStyle = "rgba(226,234,255,0.96)";
+    cg.fillText(label, cv.width / 2, cv.height / 2);
+    n.hint = { text, canvas: cv, ar: cv.width / cv.height };
+    return n.hint;
+  }
+
+  /** 待命节点下方的浅色小字（主角不画 —— 主角有大字） */
+  function drawHint(st, n) {
+    if (!st.showLyrics) return;
+    const h = ensureHint(n);
+    if (!h) return;
+    const z = st.view.z;
+    if (!(z > 0.04)) return; // 拉到只剩一片点阵时就不写字了
+    const hovered = n.hover > 0.01;
+    const px = NODE.hint.px * (hovered ? 1.18 : 1);
+    let dh = px / z;
+    let dw = dh * h.ar;
+    const maxW = NODE.hint.maxPx / z;
+    if (dw > maxW) {
+      const k = maxW / dw;
+      dw *= k;
+      dh *= k;
+    }
+    const cy = NODE.radius + (NODE.hint.offsetY + (hovered ? 2 : 0)) / z;
+    g.globalAlpha = hovered ? NODE.hint.hoverAlpha : NODE.hint.alpha;
+    g.drawImage(h.canvas, -dw / 2, cy - dh / 2, dw, dh);
+    g.globalAlpha = 1;
   }
 
   /* ---------------------------------------------------------------- Layer 4 */
@@ -814,18 +920,6 @@ export function createRenderer(canvas) {
       if (!inRect(rect, x, y, 60)) continue;
       const t = clamp(p.life[i] / p.max[i], 0, 1);
       const kind = p.kind[i];
-
-      if (kind === KIND.RIPPLE) {
-        const grow = 1 + 2.6 * (1 - t);
-        const r = p.size[i] * grow;
-        g.strokeStyle = hsl(p.hue[i], p.sat[i], p.light[i], Math.pow(t, 1.6) * 0.45);
-        g.lineWidth = strokeW(st.view.z, 6 * t, 1);
-        g.beginPath();
-        g.arc(x, y, r, 0, TAU);
-        g.stroke();
-        continue;
-      }
-
       const size = p.size[i] * (0.5 + t * 0.7);
       g.fillStyle = hsl(p.hue[i], p.sat[i], p.light[i], Math.sin(Math.PI * t) * 0.9);
       if (kind === KIND.SHARD) {

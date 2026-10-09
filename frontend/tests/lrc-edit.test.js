@@ -49,6 +49,16 @@ test("serializeLrc：按时间升序、丢掉未打轴的行", () => {
   assert.equal(text, "[00:10.00]第一句\n[00:30.00]第三句");
 });
 
+test("parseLyricDraft：同时间戳的行在编辑器里仍分行（折叠只发生在展示层）", () => {
+  const src = ["[00:12.00]Hello", "[00:12.00]你好", "[00:20.00]Next"].join("\n");
+  const draft = parseLyricDraft(src);
+  assert.equal(draft.length, 3, "多语言歌词在工作台里必须是两行，否则没法分别改");
+  assert.deepEqual(draft[0], { time: 12000, text: "Hello" });
+  assert.deepEqual(draft[1], { time: 12000, text: "你好" });
+  // 存回去仍是「同一时间戳两行」的 LRC —— 折叠是渲染层的事，不能写进文件
+  assert.equal(serializeLrc(draft), src);
+});
+
 test("shiftLrc：整体平移（一行多标签也逐个平移），无标签行原样保留", () => {
   const src = ["[00:10.00]A", "[00:20.00][00:30.00]B", "作词：某人"].join("\n");
   assert.equal(shiftLrc(src, 500), ["[00:10.50]A", "[00:20.50][00:30.50]B", "作词：某人"].join("\n"));

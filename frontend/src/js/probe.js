@@ -203,6 +203,33 @@ export function runProbe() {
     if (tbBg !== "rgba(0, 0, 0, 0)") issues.push(`沉浸模式标题栏仍有背景色: ${tbBg}`);
   }
 
+  /* 4.3b 整窗背景型样式（capabilities.background，不限于内置「沉浸」）：
+          舞台必须铺满整窗 —— 标题栏与底栏下面是**画面本身**，
+          而不是一层挂载时画一次的静态背景（layout.css 的规则）。
+          量**布局盒**（offsetWidth/Height）而不是 rect：详情页进出场是
+          translateY(38px) 动画，过渡期整块 rect 会平移，那不是「没铺满」；
+          头部行同理，按它相对详情页顶边的距离量。 */
+  if (pv?.dataset.state === "opened" && pv.dataset.skinBackground === "yes") {
+    const stageEl = document.getElementById("playerview-stage");
+    const headEl = document.querySelector(".playerview__head");
+    const tbH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--h-titlebar")) || 0;
+    const sw = stageEl ? stageEl.offsetWidth : 0;
+    const sh = stageEl ? stageEl.offsetHeight : 0;
+    const pvRect = pv.getBoundingClientRect();
+    const headOff = headEl ? headEl.getBoundingClientRect().top - pvRect.top : null;
+    info.fullBleed = { view: `${pv.offsetWidth}x${pv.offsetHeight}`, stage: `${sw}x${sh}`, headOffset: headOff };
+    if (!stageEl) issues.push("整窗背景型样式缺少舞台");
+    else if (pv.offsetWidth !== vw || pv.offsetHeight !== vh || sw < vw - 1 || sh < vh - 1) {
+      issues.push(
+        `整窗背景型样式的舞台未铺满窗口: 详情页=${pv.offsetWidth}x${pv.offsetHeight} 舞台=${sw}x${sh} ≠ ${vw}x${vh}`
+      );
+    }
+    // 头部行（返回 / 封面 / 样式按钮）仍要待在标题栏之下，别被铺满一起顶上去
+    if (headOff !== null && Math.abs(headOff - tbH) > 1) {
+      issues.push(`整窗背景型样式的头部行离开了标题栏之下: 距详情页顶 ${Math.round(headOff)} ≠ ${tbH}`);
+    }
+  }
+
   /* 4.4 歌词区：能滚动（内容高度超过容器）且当前行已定位 */
   const lyrScroll = document.querySelector("#pv-lyrics .lyrics__scroll");
   if (lyrScroll && pv?.dataset.state === "opened") {

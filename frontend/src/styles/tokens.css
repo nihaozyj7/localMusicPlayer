@@ -153,6 +153,10 @@
   --h-titlebar: 36px;
   --w-sidebar: 232px;
   --h-playerbar: 92px;
+  /* 播放详情页头部行（返回 / 封面 / 样式按钮组）的高度。
+     写成令牌是因为「整窗背景型样式」要把标题栏 + 这一行的高度一起
+     算进 --skin-inset-top（见 layout.css），不能再有第二处硬编码。 */
+  --h-pv-head: 52px;
   --h-header: 64px;
   --row-h: 56px;
   --row-h-compact: 44px;

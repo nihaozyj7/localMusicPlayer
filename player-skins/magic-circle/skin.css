@@ -34,14 +34,17 @@
   touch-action: none;
 }
 
-/* HUD：全部绝对定位 + 不吃指针事件，点击只会落到画布上（点节点跳转） */
+/* HUD：全部绝对定位 + 不吃指针事件，点击只会落到画布上（点节点跳转）
+   上下两条边要让开宿主壳：整窗背景型样式的舞台铺满整窗（标题栏 / 头部行 /
+   底栏都压在画面上），这两块占掉的高度由宿主通过 --skin-inset-* 给出；
+   桌面背景歌词窗口没有 chrome，那两个值是 0，HUD 回到贴边 20/18px。 */
 .mc__hud {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 20px 26px 18px;
+  padding: calc(var(--skin-inset-top, 0px) + 20px) 26px calc(var(--skin-inset-bottom, 0px) + 18px);
   pointer-events: none;
   box-sizing: border-box;
 }
@@ -130,9 +133,18 @@
 
 /* ==========================================================================
    整窗背景层（ctx.backgroundRoot 里的 .skin-bg）
-   只在标题栏 / 底栏的半透明区域露出来，所以是**静态**的渐变 + 两团星云：
-   不用 @keyframes —— 这份 CSS 在 @scope 里，键帧规则在嵌套作用域下并不可靠，
-   而每帧写内联样式又会白费一次样式重算。画布之外的地方，宁可不动。
+   --------------------------------------------------------------------------
+   容器（.skin-bg）是 position:fixed + inset:0，盖住整个窗口，但**在舞台之下**。
+   舞台现在铺满整窗（宿主 layout.css 按 capabilities.background 放大舞台），
+   稳态时这一层其实被完全盖住；它真正出场的时刻只有进出场 —— 详情页滑入 /
+   滑出时舞台是半透明的，这一层负责底下那块同幅度滑动的夜空，避免「画面在滑、
+   后面却是一块死的底色」。
+
+   里面那张 canvas 由 lib/backdrop.js 画与舞台同一套视觉语言（夜空 + 星域 +
+   巨型底阵 + 中心辉光），挂载与 resize 各画一次，静态。
+
+   两团星云与暗角压在 canvas 之上做色彩层（不用 @keyframes —— 这份 CSS 在
+   @scope 里，键帧规则在嵌套作用域下并不可靠；画布之外宁可不动）。
    ========================================================================== */
 
 .mc-bg {
@@ -143,6 +155,15 @@
     radial-gradient(120% 80% at 50% 18%, rgba(24, 42, 96, 0.55) 0%, rgba(4, 6, 13, 0) 60%),
     radial-gradient(90% 70% at 18% 90%, rgba(38, 24, 82, 0.5) 0%, rgba(4, 6, 13, 0) 65%),
     linear-gradient(180deg, #05070f 0%, #070c1a 55%, #04060d 100%);
+}
+
+/* 整窗场景画布（挂载 / resize 时画一次，静态） */
+.mc-bg__canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .mc-bg__nebula {

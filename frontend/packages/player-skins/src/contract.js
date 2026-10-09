@@ -153,7 +153,9 @@ export const PATCH_TYPES = [
 
 /**
  * @typedef {Object} SkinLyrics
- * @property {Array<{time:number,text:string}>} lines 已解析并应用过偏移的 LRC 行
+ * @property {Array<{time:number,text:string,trans?:string[]}>} lines 已解析并应用过偏移的 LRC 行
+ *   （**多语言**：同一时间戳的多行已折叠成一行 —— 第一行是 `text`，
+ *    其余语言进 `trans`，于是它们一起高亮、一起显示，不会各算各的行号）
  * @property {string} text 原始 LRC 文本
  * @property {string} source none | embedded | lrc-file | cache | online | preview
  * @property {string} status none | loading | matching | failed | ok
@@ -228,6 +230,7 @@ export const PATCH_TYPES = [
  * @property {Function} parseLrc
  * @property {Function} findLyricIndex
  * @property {Function} formatLrcTime
+ * @property {Function} lyricDisplayText 一行的展示文本（主行 + `trans` 用分隔符拼起来）
  * @property {Object} html { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf, lyricsEmptyText }
  * @property {Object} util { clamp, esc, debounce }
  * @property {string} version SDK 版本（= HOST_API_VERSION）

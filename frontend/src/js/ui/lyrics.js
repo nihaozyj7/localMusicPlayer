@@ -24,7 +24,14 @@ import {
 } from "../playerhost.js";
 import { coverOf, fmtTime } from "../utils.js";
 import { providerListLabel } from "../provider-names.js";
-import { formatLrcTime, mergeDraftTimes, parseLyricDraft, serializeLrc, shiftLrc } from "@localmusicplayer/player-skins";
+import {
+  formatLrcTime,
+  lyricDisplayText,
+  mergeDraftTimes,
+  parseLyricDraft,
+  serializeLrc,
+  shiftLrc,
+} from "@localmusicplayer/player-skins";
 
 /** 与 bridge.js 同理：绑定是按 URL 在运行时解析的，不能让打包器按文件路径解析 */
 const BINDINGS_ENTRY = "../bindings/localmusicplayer/index.js";
@@ -427,7 +434,7 @@ class MpLyricsPanel extends MpElement {
           @click=${() => seek(t)}
         >
           <span class="nudge__time">${formatLrcTime(line.time + offset).slice(1, -1)}</span>
-          <span class="nudge__text">${line.text}</span>
+          <span class="nudge__text">${lyricDisplayText(line)}</span>
         </div>
       `);
     }

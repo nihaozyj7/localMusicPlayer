@@ -39,7 +39,11 @@
 .playerview__stage {
   display: grid;
   place-items: center;
-  padding: var(--sp-5) var(--sp-6) var(--sp-6);
+  /* 整窗背景型样式的舞台铺满整窗（见宿主 layout.css）：标题栏 + 头部行、
+     底栏这两块 chrome 占掉的高度由 --skin-inset-* 给出，加回来之后
+     歌词区的位置与从前逐像素一致；桌面背景歌词窗口把它们归零。 */
+  padding: calc(var(--skin-inset-top, 0px) + var(--sp-5)) var(--sp-6)
+    calc(var(--skin-inset-bottom, 0px) + var(--sp-6));
 }
 
 /* 歌词容器：没有任何卡片背景 / 边框 / 阴影，纯文字浮在封面虚化图上 */
