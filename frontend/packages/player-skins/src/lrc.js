@@ -16,43 +16,287 @@
        不合并的后果是实打实的：`findLyricIndex` 只会命中最后一行，前面几种
        语言会被当成「已经唱过去的上一句」瞬间变暗，看起来就是多语言歌词在
        跳行、闪一下就没。
+     · **字级（逐字）歌词**：行内带逐字时间戳时，行上多一个 `words`
+       （每个**字素**一个起始毫秒，与 `splitGraphemes(text)` 一一对应），
+       渲染层据此按字点亮；没有逐字时间轴的行**不带**这个键（形状与以前
+       完全一样）。后端已经在读进来时把 QRC / KRC / YRC / klyric 归一化成
+       增强 LRC（见 Go 侧 internal/lyrics/wordlevel.go），这里再认一遍是
+       渲染层的最后一道防线（例如用户把 QRC 原文粘进歌词工作台的瞬间）。
    ========================================================================== */
 
 const TIME_TAG = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
 
+/** 行首时间标签（sticky：只吃行首连续的那几个，行内再出现的是字级标记） */
+const HEAD_TIME_TAG = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/y;
+/** QRC / KRC / YRC 的行标签：[起始毫秒,时长] */
+const HEAD_MS_TAG = /\[(\d{1,7}),(\d{1,7})\]/y;
+/** 字级标记（时间形态）：<00:12.000> */
+const WORD_TIME_TAG = /<(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?>/g;
+
 /**
- * LRC 文本 → 按时间升序的 `[{ time, text, trans? }]`（time 单位毫秒）。
+ * 把一行文本切成「字素单元」（保留空白，位置对得上）。
+ *
+ * 为什么必须全仓共用这一份：`line.words` 的下标就是按它排的，
+ * 渲染层用另一套切法（或另一个分词粒度）就会逐字错位。
+ * 优先用 Intl.Segmenter（emoji / 组合字符不会被劈成两半），老内核退回 Array.from。
+ *
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function splitGraphemes(text) {
+  const s = String(text ?? "");
+  if (!s) return [];
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    try {
+      const seg = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+      return Array.from(seg.segment(s), (part) => part.segment);
+    } catch (err) {
+      /* 落到下面的兜底 */
+    }
+  }
+  return Array.from(s);
+}
+
+/** "m:ss.x" / "m:ss:xx" → 毫秒（整数运算，避免 12.345*1000 的浮点尾数） */
+function clockTagMs(s) {
+  const colon = s.indexOf(":");
+  if (colon <= 0) return null;
+  const minPart = s.slice(0, colon);
+  let rest = s.slice(colon + 1);
+  let frac = "";
+  const dot = rest.search(/[.:]/);
+  if (dot >= 0) {
+    frac = rest.slice(dot + 1);
+    rest = rest.slice(0, dot);
+  }
+  if (!/^\d+$/.test(minPart) || !/^\d+$/.test(rest)) return null;
+  let fracMs = 0;
+  if (frac) {
+    if (!/^\d+$/.test(frac)) return null;
+    fracMs = Number(frac.slice(0, 3).padEnd(3, "0"));
+  }
+  return (Number(minPart) * 60 + Number(rest)) * 1000 + fracMs;
+}
+
+/** "a,b" / "a,b,c" → [a, b]（QRC/KRC/YRC 的数字对标记） */
+function pairTag(s) {
+  const parts = String(s).split(",");
+  if (parts.length < 2 || parts.length > 3) return null;
+  const a = parts[0].trim();
+  const b = parts[1].trim();
+  if (!/^\d+$/.test(a) || !/^\d+$/.test(b)) return null;
+  return [Number(a), Number(b)];
+}
+
+/**
+ * 一行歌词 → `{ stamps, text, words }`。
+ *
+ * 规则与 Go 侧 internal/lyrics/wordlevel.go 逐条对齐（两处不一致的表现是
+ * 「界面显示的歌词和保存下来的歌词对不上」）：
+ *   · **只有行首连续的时间标签算行标签**；行内再出现的时间标签是字级标记
+ *     （网易云 klyric 的写法，也天然兼容「一行多个时间标签」）；
+ *   · (a,b) / <a,b,c> / [a,b,c] 这类数字对标记**只在行标签是
+ *     [起始毫秒,时长]（QRC/KRC/YRC）时才认**，行级歌词正文里的
+ *     (2019,2020) 不会被吃掉；
+ *   · `words` 是**每个字素一个起始毫秒**，只有真的识别到字级标记才有值。
+ *
+ * @param {string} raw
+ * @returns {{stamps: number[], text: string, words: number[]|null}}
+ */
+function parseLyricLine(raw) {
+  const empty = { stamps: [], text: "", words: null };
+  let rest = String(raw).replace(/^[ \t]+/, "");
+  /** @type {number[]} */
+  const stamps = [];
+  let qrcForm = false;
+
+  for (;;) {
+    HEAD_TIME_TAG.lastIndex = 0;
+    const m1 = HEAD_TIME_TAG.exec(rest);
+    if (m1 && m1.index === 0) {
+      stamps.push(clockTagMs(m1[0].slice(1, -1)) ?? 0);
+      rest = rest.slice(m1[0].length);
+      continue;
+    }
+    HEAD_MS_TAG.lastIndex = 0;
+    const m2 = HEAD_MS_TAG.exec(rest);
+    if (m2 && m2.index === 0) {
+      stamps.push(Number(m2[1]));
+      qrcForm = true;
+      rest = rest.slice(m2[0].length);
+      continue;
+    }
+    break;
+  }
+  if (!stamps.length) return empty;
+
+  rest = rest.replace(/^[ \t]+/, "");
+  const { segs, wordy } = tokenizeWords(rest, stamps[0], qrcForm);
+  if (!segs.length) return { stamps, text: "", words: null };
+
+  segs[0].text = segs[0].text.replace(/^[ \t]+/, "");
+  segs[segs.length - 1].text = segs[segs.length - 1].text.replace(/[ \t]+$/, "");
+  while (segs.length && !segs[0].text) segs.shift();
+  while (segs.length && !segs[segs.length - 1].text) segs.pop();
+  if (!segs.length) return { stamps, text: "", words: null };
+
+  const text = segs.map((s) => s.text).join("");
+  if (!text) return { stamps, text: "", words: null };
+
+  const words = wordy ? wordStartsByGrapheme(segs, text) : null;
+  // 行标签与逐字时间轴对不上（典型场景：用户在歌词工作台里给这一行**重新
+  // 打了轴**，只改了行时间）时，把整段逐字时间平移到行首。保住的是行内的
+  // 相对节奏；不平移的话逐字时间全落在行时间之前，一开口整行就「瞬间全亮」。
+  if (words && words.length && words[0] < stamps[0]) {
+    const shift = stamps[0] - words[0];
+    for (let i = 0; i < words.length; i += 1) words[i] += shift;
+  }
+  return { stamps, text, words };
+}
+
+/**
+ * 把字级分段摊成「每个字素一个起始毫秒」。
+ *
+ * 对不上（分段与整行的字素切分不一致，例如 emoji 恰好横跨两个词）时返回
+ * null —— 与其点亮错位，不如退回行级插值。
+ *
+ * @param {{start:number,text:string}[]} segs
+ * @param {string} text
+ * @returns {number[]|null}
+ */
+function wordStartsByGrapheme(segs, text) {
+  /** @type {number[]} */
+  const out = [];
+  for (const seg of segs) {
+    const n = splitGraphemes(seg.text).length;
+    for (let k = 0; k < n; k += 1) out.push(seg.start);
+  }
+  if (!out.length || out.length !== splitGraphemes(text).length) return null;
+  return out;
+}
+
+/**
+ * 正文 → 字级分段。
+ *
+ * 前缀标记（<…> / 行内 […]）表示「后面这段文字从这个时刻开始」；
+ * 后缀标记（(偏移,时长)，QRC）表示「它前面那段文字从这个时刻开始」。
+ *
+ * @param {string} s
+ * @param {number} lineStart
+ * @param {boolean} qrcForm
+ */
+function tokenizeWords(s, lineStart, qrcForm) {
+  /** @type {{start:number,text:string}[]} */
+  const segs = [];
+  let pending = "";
+  let cur = lineStart;
+  let wordy = false;
+
+  const flush = (start) => {
+    if (!pending) return;
+    segs.push({ start, text: pending });
+    pending = "";
+  };
+
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c !== "<" && c !== "(" && c !== "[") {
+      pending += c;
+      i += 1;
+      continue;
+    }
+    const closing = c === "<" ? ">" : c === "(" ? ")" : "]";
+    const j = s.indexOf(closing, i + 1);
+    if (j < 0) {
+      pending += c;
+      i += 1;
+      continue;
+    }
+    const content = s.slice(i + 1, j);
+    const next = j + 1;
+
+    // (偏移,时长) —— QRC 的词级后缀标记
+    if (c === "(") {
+      const pair = pairTag(content);
+      if (pair && qrcForm) {
+        flush(lineStart + pair[0]);
+        cur = lineStart + pair[0] + pair[1];
+        wordy = true;
+        i = next;
+        continue;
+      }
+      pending += c;
+      i += 1;
+      continue;
+    }
+
+    // <mm:ss.xxx> / 行内 [mm:ss.xxx] —— 绝对时刻的字级标记
+    const clock = clockTagMs(content);
+    if (clock !== null) {
+      flush(cur);
+      cur = clock;
+      wordy = true;
+      i = next;
+      continue;
+    }
+
+    // <偏移,时长>（KRC，相对行首） / 行内 [起始毫秒,时长]（YRC，绝对）
+    const pair = pairTag(content);
+    if (pair && qrcForm) {
+      const start = c === "<" ? lineStart + pair[0] : pair[0];
+      flush(cur);
+      cur = start;
+      wordy = true;
+      i = next;
+      continue;
+    }
+
+    // 认不出来的标记当正文原样保留
+    pending += c;
+    i += 1;
+  }
+  flush(cur);
+  return { segs, wordy };
+}
+
+/**
+ * LRC 文本 → 按时间升序的 `[{ time, text, trans?, words? }]`（time 单位毫秒）。
  *
  * 同时间戳的多行会折叠成一行：`text` 是文件里先出现的那行（通常是对白/原唱），
  * `trans` 是其余行（翻译 / 罗马音），只在真的有副行时才带这个键 —— 单语言歌词
  * 的行结构与以前完全一样。
  *
+ * `words` 只有字级（逐字）歌词才有：每个字素一个起始毫秒，与
+ * `splitGraphemes(text)` 一一对应。
+ *
  * @param {string} text
- * @returns {Array<{time:number,text:string,trans?:string[]}>}
+ * @returns {Array<{time:number,text:string,trans?:string[],words?:number[]}>}
  */
 export function parseLrc(text) {
   if (!text) return [];
-  /** @type {Array<{time:number,text:string}>} */
+  /** @type {Array<{time:number,text:string,words?:number[]}>} */
   const out = [];
   for (const raw of String(text).split(/\r?\n/)) {
-    const times = [];
-    TIME_TAG.lastIndex = 0;
-    let m;
-    while ((m = TIME_TAG.exec(raw))) {
-      const min = Number(m[1]);
-      const sec = Number(m[2]);
-      const frac = m[3] ? Number(`0.${m[3].padEnd(3, "0")}`) : 0;
-      times.push((min * 60 + sec + frac) * 1000);
+    if (!raw.trim()) continue;
+    const line = parseLyricLine(raw);
+    if (!line.stamps.length || !line.text) continue;
+    const base = line.stamps[0];
+    for (const t of line.stamps) {
+      /** @type {{time:number,text:string,words?:number[]}} */
+      const item = { time: t, text: line.text };
+      if (line.words) {
+        // 同一句挂多个时间标签：展开的每一遍都要带上自己的逐字时间
+        item.words = t === base ? line.words : line.words.map((w) => w + (t - base));
+      }
+      out.push(item);
     }
-    const content = raw.replace(TIME_TAG, "").trim();
-    if (!times.length || !content) continue;
-    for (const t of times) out.push({ time: t, text: content });
   }
   out.sort((a, b) => a.time - b.time);
 
   // 同时间戳折叠：Array#sort 在现代内核里是稳定排序，所以同刻度的行保持
   // 文件里的先后顺序 —— 第一行就是这一句的「原文」。
-  /** @type {Array<{time:number,text:string,trans?:string[]}>} */
+  /** @type {Array<{time:number,text:string,trans?:string[],words?:number[]}>} */
   const grouped = [];
   for (const line of out) {
     const last = grouped[grouped.length - 1];
@@ -188,11 +432,36 @@ export function serializeLrc(lines) {
     .join("\n");
 }
 
+/** 行级时间标签的毫秒数（整数运算，避免 12.345*1000 的浮点尾数） */
+function stampMs(mm, ss, ff) {
+  const frac = ff ? Number(String(ff).padEnd(3, "0")) : 0;
+  return (Number(mm) * 60 + Number(ss)) * 1000 + frac;
+}
+
+/**
+ * 毫秒 → 字级标记 `<mm:ss.mmm>`（与 Go 侧 formatWordStamp 逐字一致）。
+ *
+ * 字级用毫秒精度、行标签仍是百分秒：逐字点亮差 10ms 就能看出抖，
+ * 而且两边格式一致才谈得上「微调一遍之后文本还能对上」。
+ * @param {number} ms
+ */
+function formatWordTime(ms) {
+  const clamped = Math.max(0, Math.round(Number(ms) || 0));
+  const min = Math.floor(clamped / 60000);
+  const rest = clamped % 60000;
+  const sec = Math.floor(rest / 1000);
+  const frac = rest % 1000;
+  return `<${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}.${String(frac).padStart(3, "0")}>`;
+}
+
 /**
  * 整体平移所有时间标签（微调：整首歌提前/延后）。
  *
  * 负数结果钳到 0 而不是丢掉该行 —— 丢掉会让用户「调一下少了三句」，
  * 钳到 0 只是那几句挤在开头，还能看出来并继续调整。
+ *
+ * 字级（逐字）标记 `<00:12.000>` 必须跟着一起平移：只动行标签的话，
+ * 微调之后「行高亮挪了、字却还按原时间点亮」，比不微调更糟。
  *
  * @param {string} text LRC 文本
  * @param {number} deltaMs 正数 = 整体延后，负数 = 整体提前
@@ -208,11 +477,11 @@ export function shiftLrc(text, deltaMs) {
       // 一行可能有多个时间标签，要逐个平移
       const next = raw.replace(TIME_TAG, (_all, mm, ss, ff) => {
         any = true;
-        const base = (Number(mm) * 60 + Number(ss) + (ff ? Number(`0.${String(ff).padEnd(3, "0")}`) : 0)) * 1000;
-        return formatLrcTime(base + delta);
+        return formatLrcTime(stampMs(mm, ss, ff) + delta);
       });
       // 没有时间标签的行原样保留（作词/作曲之类的信息行）
-      return any ? next : raw;
+      if (!any) return raw;
+      return next.replace(WORD_TIME_TAG, (_all, mm, ss, ff) => formatWordTime(stampMs(mm, ss, ff) + delta));
     })
     .join("\n");
 }

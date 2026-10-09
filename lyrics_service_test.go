@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"localmusicplayer/internal/bootstrap"
@@ -165,25 +166,42 @@ func TestLyricsSaveEmbedsIntoFile(t *testing.T) {
 	}
 }
 
-// 字级歌词（逐字时间戳）在「应用」时先归一化成行级，再写缓存与歌曲文件。
-func TestLyricsSaveNormalizesWordLevel(t *testing.T) {
+// 字级歌词（逐字时间戳）在「应用」时**保留成增强 LRC 写进缓存**（界面按字点亮
+// 靠它），而写进歌曲文件的那一份才剥成行级 —— 逐字标记进了标签，别的播放器会
+// 把 <00:12.00> 当成歌词正文显示。
+func TestLyricsSaveKeepsWordLevel(t *testing.T) {
 	f := newLyricsFixture(t)
 
 	res, err := f.svc.Save("t_m4a", "[00:12.00]<00:12.00>你<00:12.30>好", "online:qq", boolPtr(true))
 	if err != nil {
 		t.Fatalf("Save 失败: %v", err)
 	}
-	if res["lrc"] != "[00:12.00]你好" {
-		t.Fatalf("返回的歌词应当是行级，实际 %v", res["lrc"])
+	if res["lrc"] != "[00:12.00]<00:12.000>你<00:12.300>好" {
+		t.Fatalf("缓存里的应当是字级（增强 LRC），实际 %v", res["lrc"])
 	}
-	if res["converted"] != true || res["lineLevel"] != false {
-		t.Fatalf("应当标记为「做过字级转换」: %+v", res)
+	if res["wordLevel"] != true || res["lineLevel"] != false || res["converted"] != false {
+		t.Fatalf("字级应当被原样保留: %+v", res)
+	}
+	if res["embedded"] != true {
+		t.Fatalf("应当写进了歌曲文件: %+v", res)
 	}
 
-	// 清掉缓存层，只从文件里读：写进文件的也必须已经是行级
+	// 默认来源下（内嵌排第一）读到的仍应是**字级**那一份：字级 > 行级
+	got, err := f.svc.Load("t_m4a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Source != lyrics.SourceCache || !strings.Contains(got.LRC, "<00:12.000>") {
+		t.Fatalf("应当优先返回字级的缓存，实际 %+v", got)
+	}
+
+	// 把缓存删掉，只剩文件里那一份：写进去的必须已经是行级
+	if _, err := f.cache.DeleteLyrics("t_m4a"); err != nil {
+		t.Fatalf("删除歌词缓存失败: %v", err)
+	}
 	f.setConfig(t, map[string]any{"lyricsSources": []any{"embedded"}})
 	svc2 := f.reload(t)
-	got, err := svc2.Load("t_m4a")
+	got, err = svc2.Load("t_m4a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,6 +210,30 @@ func TestLyricsSaveNormalizesWordLevel(t *testing.T) {
 	}
 	if got.LRC != "[00:12.00]你好" {
 		t.Fatalf("内嵌进文件的应是行级歌词，实际 %q", got.LRC)
+	}
+}
+
+// 在线自动匹配拿到 QRC/KRC 这类字级写法时，落缓存前归一化成增强 LRC（不丢逐字）。
+func TestLyricsAutoMatchKeepsWordLevel(t *testing.T) {
+	f := newLyricsFixture(t)
+	f.match.lrc = "[12000,800]你(0,300)好(300,500)"
+
+	got, err := f.svc.AutoMatch("t_m4a")
+	if err != nil {
+		t.Fatalf("AutoMatch 失败: %v", err)
+	}
+	if got.LRC != "[00:12.00]<00:12.000>你<00:12.300>好" {
+		t.Fatalf("字级应被归一化成增强 LRC，实际 %q", got.LRC)
+	}
+
+	// 第二次（相当于重启）读缓存，逐字时间轴必须还在
+	svc2 := f.reload(t)
+	loaded, err := svc2.Load("t_m4a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(loaded.LRC, "<00:12.300>") {
+		t.Fatalf("缓存里不该丢掉逐字时间轴: %q", loaded.LRC)
 	}
 }
 

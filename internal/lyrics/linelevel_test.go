@@ -63,14 +63,4 @@ func TestNormalizeLineLevel(t *testing.T) {
 	}
 }
 
-func TestHasWordTiming(t *testing.T) {
-	if !HasWordTiming("[00:12.00]<00:12.00>你") {
-		t.Fatal("增强 LRC 应被判为字级")
-	}
-	if !HasWordTiming("[12000,800]<0,300,0>你") {
-		t.Fatal("KRC 应被判为字级")
-	}
-	if HasWordTiming("[00:12.00]普通行级歌词") {
-		t.Fatal("普通行级 LRC 不该被判为字级")
-	}
-}
+// 字级识别（HasWordTiming）已随字级归一化挪到 wordlevel_test.go。

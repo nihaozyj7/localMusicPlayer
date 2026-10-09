@@ -324,11 +324,14 @@ function linesForSong(song) {
   if (!offset || !raw.length) return raw;
   if (shiftedCache.songId === song.id && shiftedCache.offset === offset) return shiftedCache.lines;
   // 多语言副行（trans）必须跟着偏移一起走 —— 漏了它会让「应用了微调的歌词」
-  // 退化成只剩原文。只有真的有副行才挂这个键，单语言行的形状与从前一致。
+  // 退化成只剩原文。字级时间轴（words，每个字素一个起始毫秒）同理：漏了它
+  // 就会出现「行高亮挪了、字却还按原时间点亮」。只有真的有这些键才挂，
+  // 单语言、行级的行形状与从前一致。
   const out = raw.map((l) => {
-    /** @type {{time:number,text:string,trans?:string[]}} */
+    /** @type {{time:number,text:string,trans?:string[],words?:number[]}} */
     const next = { time: l.time + offset, text: l.text };
     if (l.trans) next.trans = l.trans;
+    if (l.words) next.words = l.words.map((w) => w + offset);
     return next;
   });
   shiftedCache = { songId: song.id, offset, lines: out };

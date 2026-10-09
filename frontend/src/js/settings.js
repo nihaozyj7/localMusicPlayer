@@ -335,16 +335,18 @@ ctx 是插件唯一的入口（只读，直接改它不会生效）：
 - ctx.media()         返回 { song, cover, covers, coverIndex, lyrics }（聚合快照）
                       · song：当前曲目（可能为 null），即 track() 那一份
                       · cover：当前封面（data URL 或同源 URL）；covers：全部封面（至少一张）；coverIndex：轮播下标
-                      · lyrics：{ lines: [{ time, text, trans? }], text, source, index, status, statusText }
+                      · lyrics：{ lines: [{ time, text, trans?, words? }], text, source, index, status, statusText }
                         （trans = 同一时间戳上的其它语言行：多语言歌词在解析时已折叠成一行，
-                         第一行是 text、其余进 trans —— 要么一起画，要么用 sdk.lyricDisplayText 拼成一行）
+                         第一行是 text、其余进 trans —— 要么一起画，要么用 sdk.lyricDisplayText 拼成一行；
+                         words = 字级（逐字）时间轴，每个**字素**一个起始毫秒，与 sdk.splitGraphemes(text)
+                         一一对应 —— 行级歌词没有这个键）
 - ctx.lyrics()        同上歌词那一份；ctx.covers() 同上封面那一份
 - ctx.playback()      返回 { position, duration, playing, volume, muted }，时间单位毫秒
 - ctx.options()       返回 { showLyrics, lyricsFontSize, animations, coverCarousel, coverCarouselInterval, interactive, performanceMode }
 - ctx.env()           返回 { themeId, mode, width, height, dpr, reducedMotion, foreground }
 - ctx.spectrum()      实时频谱（**拉取式**）：返回 { bands: Float32Array(128 段对数全谱, 0..1), at: 采样时刻 } 或 null；
                       调用本身就是采样门控（不调就不采，节流 ~30Hz）；null = 没在播放 / 刚开播 / 没声明 capabilities.spectrum
-- ctx.sdk             复用零件：createLyricsView / createFxLyrics / createCamera / createBackgroundLayer / applyFit / fitScale / parseLrc / findLyricIndex / formatLrcTime / lyricDisplayText / html / util
+- ctx.sdk             复用零件：createLyricsView / createFxLyrics / createCamera / createBackgroundLayer / applyFit / fitScale / parseLrc / splitGraphemes / findLyricIndex / formatLrcTime / lyricDisplayText / html / util
 - ctx.actions         受控动作：seek(ms) / seekBy(ms) / seekRatio(0~1) / togglePlay / next / prev / toggleLike / like / unlike / openFolder / openCoverPanel / openLyricsPanel / reportBackdrop({bg,fg})
 - ctx.on(type, fn)    订阅宿主推送，返回取消订阅的函数
 - ctx.defaultCover    封面兜底图（内联 SVG data URL），封面加载失败时用它
@@ -370,6 +372,9 @@ patch 只带与该类型相关的字段；不确定时用 ctx.track() / ctx.lyri
 1. 不要 import 应用内部模块（store / bridge / utils / playerhost / @localmusicplayer/player-skins 等）；数据只从 ctx 拿，动作只走 ctx.actions；不要直接操作音频元素或应用状态。
 2. 不要轮询：禁止用 setInterval 或定时 setTimeout 反复拉数据（动画、防抖、一次性延时除外）。
 3. 歌词高亮优先用 ctx.sdk.createLyricsView（或 ctx.lyrics().index 与 lines），不要自己解析 LRC 文本。
+   行上带 words 就是字级（逐字）歌词，上面两个渲染零件会自己按字点亮；再把
+   setPosition(pos, { playing })（或 setPlaying(playing)）也喂上，逐字高亮才会在两次
+   250ms 进度推送之间平滑推进，否则是 4Hz 的阶梯值。
 4. 动效要尊重 ctx.options().animations（false 时不要做位移动效）与时长与缓动令牌；窗口收起（patch.type === "visibility" 或 close）时停掉帧循环。
 5. destroy(ctx) 里清掉定时器、事件监听、ResizeObserver 与大对象引用；切换插件会先 destroy 再 mount，两个方法都可能被多次调用。
 6. 不要往 window / document 上挂全局变量或样式，不要改 document.documentElement 上的 data-* 属性。

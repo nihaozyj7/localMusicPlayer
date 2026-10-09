@@ -153,9 +153,12 @@ export const PATCH_TYPES = [
 
 /**
  * @typedef {Object} SkinLyrics
- * @property {Array<{time:number,text:string,trans?:string[]}>} lines 已解析并应用过偏移的 LRC 行
+ * @property {Array<{time:number,text:string,trans?:string[],words?:number[]}>} lines 已解析并应用过偏移的 LRC 行
  *   （**多语言**：同一时间戳的多行已折叠成一行 —— 第一行是 `text`，
- *    其余语言进 `trans`，于是它们一起高亮、一起显示，不会各算各的行号）
+ *    其余语言进 `trans`，于是它们一起高亮、一起显示，不会各算各的行号；
+ *    **字级**：行带 `words` 时是逐字时间轴 —— 每个**字素**一个起始毫秒，
+ *    与 `sdk.splitGraphemes(text)` 一一对应，渲染层据此按字点亮；
+ *    没有逐字时间轴的行不带这个键）
  * @property {string} text 原始 LRC 文本
  * @property {string} source none | embedded | lrc-file | cache | online | preview
  * @property {string} status none | loading | matching | failed | ok
@@ -220,14 +223,18 @@ export const PATCH_TYPES = [
  *
  * @typedef {Object} SkinSdk
  * @property {(skin: any) => any} define 形状校验（可选：宿主加载时已经校验过清单与入口）
- * @property {Function} createLyricsView 滚动歌词渲染器
- * @property {Function} createFxLyrics 特效歌词渲染器（逐字入场 / 卡拉OK）
+ * @property {Function} createLyricsView 滚动歌词渲染器（含字级按字点亮；
+ *   把 `setPosition(pos, { playing })` 或 `setPlaying(playing)` 喂上，
+ *   它才会按墙钟补齐 250ms 进度之间的帧，否则逐字高亮是 4Hz 的阶梯值）
+ * @property {Function} createFxLyrics 特效歌词渲染器（逐字入场 / 卡拉OK，
+ *   同样认 `setPosition(pos, { playing })` / `setPlaying`）
  * @property {Function} createCamera 运镜（分层视差 + 机位切换 + 手持微动）
  * @property {Function} createBackgroundLayer 整窗背景层
  * @property {Function} applyFit 把「舞台短边 / 基准短边」写进自定义属性
  * @property {Function} fitScale
  * @property {Function} fitScaleOf
  * @property {Function} parseLrc
+ * @property {Function} splitGraphemes 文本 → 字素数组（与 `line.words` 的下标对齐）
  * @property {Function} findLyricIndex
  * @property {Function} formatLrcTime
  * @property {Function} lyricDisplayText 一行的展示文本（主行 + `trans` 用分隔符拼起来）

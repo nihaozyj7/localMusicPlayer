@@ -11,7 +11,7 @@
      ctx.sdk.createCamera(target, opts)     运镜（分层视差 / 机位 / 手持微动）
      ctx.sdk.createBackgroundLayer(root)    整窗背景层（铺图 + 模糊 + 亮度 + 缩放）
      ctx.sdk.applyFit(el, "--xxx-fit")      窗口适配比例（桌面背景投屏时等比放大）
-     ctx.sdk.parseLrc / findLyricIndex / formatLrcTime / lyricDisplayText
+     ctx.sdk.parseLrc / findLyricIndex / formatLrcTime / lyricDisplayText / splitGraphemes
      ctx.sdk.html.{EMPTY_TRACK,escapeHtml,setCoverImage,subtitleOf,lyricsEmptyText}
      ctx.sdk.util.{clamp,esc,debounce}
 
@@ -26,7 +26,7 @@ import { createFxLyrics } from "./fx-lyrics.js";
 import { createCamera, prefersReducedMotion } from "./fx-camera.js";
 import { createBackgroundLayer } from "./background-layer.js";
 import { applyFit, fitScale, fitScaleOf } from "./fit.js";
-import { parseLrc, findLyricIndex, formatLrcTime, lyricDisplayText } from "./lrc.js";
+import { parseLrc, findLyricIndex, formatLrcTime, lyricDisplayText, splitGraphemes } from "./lrc.js";
 import { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf, lyricsEmptyText } from "./html.js";
 import { defineSkin, HOST_API_VERSION } from "./contract.js";
 
@@ -68,6 +68,7 @@ export function createSdk() {
     fitScale,
     fitScaleOf,
     parseLrc,
+    splitGraphemes,
     findLyricIndex,
     formatLrcTime,
     lyricDisplayText,

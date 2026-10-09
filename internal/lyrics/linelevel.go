@@ -8,18 +8,18 @@ import (
 )
 
 /* --------------------------------------------------------------------------
-   字级歌词 → 行级歌词
+   行级 LRC 归一化（只服务「写进歌曲文件」这一步）
    --------------------------------------------------------------------------
-   本程序只支持「行」级别的歌词：一行一个时间戳，前端按行高亮。
-   但部分在线来源会给「字」级别的歌词（每个字/词单独带时间），常见三种：
+   程序内部的时间轴有两种形态（见 wordlevel.go）：行级与字级（增强 LRC）。
+   **读进来**时统一走 NormalizeWordLevel（字级会被原样保留），而**写进音频
+   文件**之前必须走这里 —— 逐字标记 <00:12.00>、(0,300) 一旦进了标签，
+   别的播放器会把它们当成歌词正文显示出来。
+
+   三种常见字级写法：
 
      1. 增强 LRC：      [00:12.00]<00:12.00>你<00:12.30>好
      2. QRC（QQ 音乐）：[12000,800]你(0,300)好(300,500)
      3. KRC（酷狗）：   [12000,800]<0,300,0>你<300,500,0>好
-
-   这些文本直接内嵌进歌曲文件后，别的播放器（以及本程序自己的行高亮）
-   会把 <00:12.00>、(0,300) 当成歌词正文显示出来，所以必须在**写入文件之前**
-   把它们还原成标准的行级 LRC。
 
    规则：
      · 一行里的多个标准时间标签（[00:12.00][01:20.00]同一句）展开成多行；
@@ -34,9 +34,11 @@ var (
 	reLrcTimeTag = regexp.MustCompile(`\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]`)
 	// QRC / KRC 的行标签：[起始毫秒,时长]（两段都是纯数字，与 mm:ss 天然区分）
 	reQrcLineTag = regexp.MustCompile(`^\[(\d{1,7}),(\d{1,7})\]`)
-	// 字级标记：<00:12.00> 或 <0,300,0>
-	reWordTag = regexp.MustCompile(`<[^>]*>`)
-	// 词级时长标注：(0,300)
+	// 字级标记（时间形态）：<00:12.00> / <00:12.000> —— 任何来源都可能是这个写法
+	reWordTag = regexp.MustCompile(`<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>`)
+	// 字级标记（偏移形态）：<0,300,0> —— 只在 QRC/KRC（[毫秒,时长] 行标签）里出现
+	reWordTagPair = regexp.MustCompile(`<\d{1,7},\d{1,7}(?:,\d{1,7})?>`)
+	// 词级时长标注：(0,300) —— 同样只属于 QRC
 	reWordSpan = regexp.MustCompile(`\(\s*\d{1,6}\s*,\s*\d{1,6}\s*\)`)
 )
 
@@ -75,13 +77,17 @@ func NormalizeLineLevel(text string) string {
 			}
 		}
 
-		// ③ 取出正文：剥掉时间标签、字级标记与词级时长标注
+		// ③ 取出正文：剥掉时间标签、字级标记与词级时长标注。
+		//
+		// 偏移形态的标记（<0,300,0> / (0,300)）**只有 QRC/KRC 行标签出现过才剥**：
+		// 行级歌词的正文里出现 (2019,2020) 这种数字对是正常内容，剥掉就是丢字。
 		body := reLrcTimeTag.ReplaceAllString(raw, "")
 		body = reQrcLineTag.ReplaceAllString(body, "")
 		if strings.Contains(body, "<") {
 			body = reWordTag.ReplaceAllString(body, "")
 		}
-		if strings.Contains(body, "(") {
+		if qrcForm := reQrcLineTag.MatchString(raw); qrcForm {
+			body = reWordTagPair.ReplaceAllString(body, "")
 			body = reWordSpan.ReplaceAllString(body, "")
 		}
 		body = strings.TrimSpace(body)
@@ -112,10 +118,7 @@ func NormalizeLineLevel(text string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// HasWordTiming 判断文本是否带「逐字」标记（用于界面提示 / 日志）。
-func HasWordTiming(text string) bool {
-	return reWordTag.MatchString(text) || reQrcLineTag.MatchString(text) || reWordSpan.MatchString(text)
-}
+// HasWordTiming 已移到 wordlevel.go（字级识别要认五种写法，与归一化放在一起）。
 
 // lrcStampMillis 把 mm / ss / 小数 换算成毫秒。
 func lrcStampMillis(min, sec, frac string) int64 {

@@ -12,11 +12,13 @@
             一份做拖尾，不需要第二份 DOM；
          4) 扫光（sweep）：由各皮肤用 background-clip:text + 动画自己实现。
 
-   为什么拆字素要自己算行内进度：宿主只推「当前毫秒」，逐字时间戳在 LRC 里
-   本来就没有（只有行级）。这里用「本行起点 → 下一行起点」做线性插值 ——
-   与市面上绝大多数 LRC 播放器一致，行内节奏均匀，不会越走越偏。
-   字素切分优先用 Intl.Segmenter（emoji / 组合字符不会被劈成两半），
-   老内核退回 Array.from。
+   逐字时间从哪来：
+     · 行上有 `words`（lrc.js#parseLrc 解析出的字级时间轴，每个字素一个起始
+       毫秒）时**按它点亮** —— 节奏跟着音源，不再是对整行做线性插值；
+     · 没有字级的歌词退回「本行起点 → 下一行起点」的线性插值，与市面上绝大多数
+       LRC 播放器一致，行内节奏均匀，不会越走越偏。
+     字素切分优先用 Intl.Segmenter（emoji / 组合字符不会被劈成两半），
+     老内核退回 Array.from —— 切分实现与 lrc.js 共用一份（下标必须对得上）。
 
    性能约定（照抄 folia 的 guardrail）：
      · setPosition 每帧被调用，但只有「高亮行变了」或「点亮位置变了」才写 DOM；
@@ -24,29 +26,19 @@
      · 不在 rAF 里创建任何新对象（切分结果在 setLines 时一次算好）。
    ========================================================================== */
 
-import { findLyricIndex } from "./lrc.js";
+import { findLyricIndex, splitGraphemes } from "./lrc.js";
+
+export { splitGraphemes };
 
 /** 用户手动滚动后，多久重新接管自动滚动 */
 const USER_SCROLL_PAUSE_MS = 1200;
 
 /**
- * @typedef {{ time: number, text: string, trans?: string[] }} LyricLine
+ * @typedef {{ time: number, text: string, trans?: string[], words?: number[] }} LyricLine
  */
 
-/** 把一行文本切成「字素单元」（保留空白，位置对得上） */
-export function splitGraphemes(text) {
-  const s = String(text ?? "");
-  if (!s) return [];
-  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
-    try {
-      const seg = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-      return Array.from(seg.segment(s), (part) => part.segment);
-    } catch (err) {
-      /* 落到下面的兜底 */
-    }
-  }
-  return Array.from(s);
-}
+/** 把一行文本切成「字素单元」的实现已挪到 lrc.js（与 parseLrc 的 words 下标
+ *  共用同一份切法，避免两套实现漂移），这里 re-export 保持旧的导入路径可用。 */
 
 /** 最小 HTML 转义（包不依赖宿主 utils） */
 function defaultEscape(s) {
@@ -101,6 +93,18 @@ export function createFxLyrics(host, opts = {}) {
   let resumeTimer = null;
   let destroyed = false;
   let lastWanted = -1;
+
+  /* 平滑推进：宿主的进度按 250ms 量化（见宿主 audio.js），逐字点亮只吃这个
+     节奏会「一跳一跳」。皮肤给过 playing 时按墙钟补齐中间帧；没给的保持原样。 */
+  const SMOOTH_MAX_MS = 700;
+  let basePos = 0;
+  let baseAt = 0;
+  let playing = false;
+  let smoothRaf = 0;
+
+  function nowMs() {
+    return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+  }
 
   const markUserScroll = () => {
     userScrollingUntil = Date.now() + USER_SCROLL_PAUSE_MS;
@@ -167,6 +171,7 @@ export function createFxLyrics(host, opts = {}) {
     activeIndex = -1;
     holdUnit = -1;
     lastWanted = -1;
+    syncSmooth();
 
     if (!lines.length) {
       inner.innerHTML = `<div class="fxl__empty">${esc(meta.emptyText || "暂无歌词")}</div>`;
@@ -209,11 +214,21 @@ export function createFxLyrics(host, opts = {}) {
     const chars = units[idx] || [];
     const n = chars.length;
     if (!n) return;
-    const start = lines[idx].time;
-    const end = lines[idx + 1]?.time ?? start + 4000;
-    const span = Math.max(1, end - start);
-    const progress = Math.max(0, Math.min(1, (positionMs - start) / span));
-    const hold = Math.max(0, Math.min(n, Math.ceil(progress * n)));
+
+    const starts = lines[idx].words;
+    let hold;
+    if (Array.isArray(starts) && starts.length === n) {
+      // 字级（逐字）：按下标对应的起始时刻点亮，节奏跟着音源走
+      hold = 0;
+      while (hold < n && starts[hold] <= positionMs) hold += 1;
+    } else {
+      // 没有字级时间轴：本行起点 → 下一行起点线性插值（与主流 LRC 播放器一致）
+      const start = lines[idx].time;
+      const end = lines[idx + 1]?.time ?? start + 4000;
+      const span = Math.max(1, end - start);
+      const progress = Math.max(0, Math.min(1, (positionMs - start) / span));
+      hold = Math.max(0, Math.min(n, Math.ceil(progress * n)));
+    }
     if (hold === holdUnit) return;
     holdUnit = hold;
     const nodes = /** @type {HTMLElement[]} */ (Array.from(el.querySelector(".fxl__text").children));
@@ -265,11 +280,63 @@ export function createFxLyrics(host, opts = {}) {
     scrollToLine(idx, Boolean(o?.immediate));
   }
 
-  /** 按播放进度推进（宿主每帧调用一次） */
+  /**
+   * 按播放进度推进（宿主每帧调用一次）。
+   *
+   * `o.playing` 给了才开「按墙钟补齐中间帧」的平滑推进（见 setPlaying）。
+   * @param {number} positionMs
+   * @param {{ immediate?: boolean, playing?: boolean }} [o]
+   */
   function setPosition(positionMs, o = {}) {
+    basePos = positionMs;
+    baseAt = nowMs();
+    if (typeof o.playing === "boolean") playing = o.playing;
     const idx = findLyricIndex(lines, positionMs);
     if (idx !== activeIndex) setActive(idx, o);
     if (idx >= 0) paintHold(idx, positionMs);
+    syncSmooth();
+  }
+
+  /** 播放状态（皮肤在 state / progress 补丁里带上）。给了才会开平滑推进。 */
+  function setPlaying(value) {
+    playing = Boolean(value);
+    if (playing) {
+      baseAt = nowMs();
+    } else if (activeIndex >= 0) {
+      paintHold(activeIndex, basePos); // 暂停：清掉外推值，按最后已知位置落一次
+    }
+    syncSmooth();
+  }
+
+  function smoothTick() {
+    smoothRaf = 0;
+    if (destroyed || !playing || activeIndex < 0 || !Array.isArray(lines[activeIndex]?.words)) return;
+    const extra = nowMs() - baseAt;
+    // 距上次进度推送最多外推这么久：超过说明推送停了（暂停没同步 / 卡缓冲 /
+    // 窗口被隐藏），继续外推会让字比声音先唱完 —— 冻住等下一次推送。
+    if (extra > SMOOTH_MAX_MS) {
+      paintHold(activeIndex, basePos);
+      return;
+    }
+    paintHold(activeIndex, basePos + extra);
+    smoothRaf = requestAnimationFrame(smoothTick);
+  }
+
+  function syncSmooth() {
+    const want =
+      playing &&
+      activeIndex >= 0 &&
+      Array.isArray(lines[activeIndex]?.words) &&
+      typeof requestAnimationFrame === "function" &&
+      typeof cancelAnimationFrame === "function";
+    if (!want) {
+      if (smoothRaf) {
+        cancelAnimationFrame(smoothRaf);
+        smoothRaf = 0;
+      }
+      return;
+    }
+    if (!smoothRaf) smoothRaf = requestAnimationFrame(smoothTick);
   }
 
   function markMeasure() {
@@ -280,6 +347,10 @@ export function createFxLyrics(host, opts = {}) {
     destroyed = true;
     if (resumeTimer) clearTimeout(resumeTimer);
     resumeTimer = null;
+    if (smoothRaf) {
+      cancelAnimationFrame(smoothRaf);
+      smoothRaf = 0;
+    }
     scroll.removeEventListener("wheel", markUserScroll);
     scroll.removeEventListener("touchmove", markUserScroll);
     scroll.removeEventListener("pointerdown", markUserScroll);
@@ -297,6 +368,7 @@ export function createFxLyrics(host, opts = {}) {
     setLines,
     setActive,
     setPosition,
+    setPlaying,
     markMeasure,
     destroy,
     get lines() {

@@ -17,6 +17,7 @@ import (
 	"localmusicplayer/internal/bilibili"
 	"localmusicplayer/internal/bootstrap"
 	"localmusicplayer/internal/coverfetch"
+	"localmusicplayer/internal/lyrics"
 	"localmusicplayer/internal/lyricsfetch"
 	"localmusicplayer/internal/onlinecache"
 )
@@ -257,8 +258,10 @@ func (s *OnlineService) Lyrics(title, artist string, duration int64) (map[string
 	if err != nil {
 		return map[string]any{"lrc": "", "source": "none"}, nil
 	}
+	// 在线来源可能给的是 QRC/KRC/klyric 这类字级写法：归一化成增强 LRC
+	// 再交给前端（前端与歌词工作台只认这一种格式），逐字时间轴不会丢。
 	return map[string]any{
-		"lrc":           res.LRC,
+		"lrc":           lyrics.NormalizeWordLevel(res.LRC),
 		"source":        "online:" + res.Provider,
 		"provider":      res.Provider,
 		"matchedTitle":  res.Candidate.Title,
@@ -789,7 +792,7 @@ func (s *OnlineService) FetchLyrics(provider, id string) (map[string]any, error)
 		return nil, fmt.Errorf("no lyrics returned")
 	}
 	return map[string]any{
-		"lrc":      item.LRC,
+		"lrc":      lyrics.NormalizeWordLevel(item.LRC),
 		"source":   "online:" + item.Provider,
 		"provider": item.Provider,
 	}, nil

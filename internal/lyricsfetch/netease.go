@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"localmusicplayer/internal/lyrics"
 )
 
 type neteaseProvider struct {
@@ -16,6 +18,8 @@ type neteaseProvider struct {
 	// 拼进用户看到的提示里。命中限流后安静地退避几分钟再试。
 	mu            sync.Mutex
 	cooldownUntil time.Time
+	// baseURL 接口根地址（测试时可替换成 httptest 服务器，与 qqProvider 一致）
+	baseURL string
 }
 
 func NewNetease() Provider { return &neteaseProvider{} }
@@ -24,6 +28,13 @@ func NewNetease() Provider { return &neteaseProvider{} }
 const neteaseCooldown = 5 * time.Minute
 
 func (p *neteaseProvider) Name() string { return "netease" }
+
+func (p *neteaseProvider) base() string {
+	if strings.TrimSpace(p.baseURL) == "" {
+		return "https://music.163.com"
+	}
+	return strings.TrimRight(p.baseURL, "/")
+}
 
 // cooling 当前是否处于限流退避中。
 func (p *neteaseProvider) cooling() bool {
@@ -74,7 +85,7 @@ func (p *neteaseProvider) Search(ctx context.Context, req SearchRequest) ([]Cand
 	if p.cooling() {
 		return nil, fmt.Errorf("netease: 搜索接口正在限流退避中")
 	}
-	endpoint := "https://music.163.com/api/search/get/web?s=" + url.QueryEscape(q) + "&type=1&offset=0&limit=20"
+	endpoint := p.base() + "/api/search/get/web?s=" + url.QueryEscape(q) + "&type=1&offset=0&limit=20"
 	headers := map[string]string{"Referer": "https://music.163.com/", "User-Agent": sourceUA}
 	var resp neteaseSearchResp
 	if err := fetchJSON(ctx, endpoint, headers, &resp); err != nil {
@@ -114,10 +125,16 @@ type neteaseLyricResp struct {
 	LRC    struct{ Lyric string }
 	Tlyric struct{ Lyric string }
 	Klyric struct{ Lyric string }
+	// Yrc 网易云的「逐字歌词」（yrc）。这个字段只有请求里带上 yrcVersion 才会
+	// 回，而且部分歌曲要登录态；拿不到时下面自动回落到 klyric / lrc。
+	Yrc struct{ Lyric string }
 }
 
 func (p *neteaseProvider) Fetch(ctx context.Context, c Candidate) (Result, error) {
-	endpoint := "https://music.163.com/api/song/lyric?id=" + url.QueryEscape(c.ID) + "&lv=1&kv=1&tv=-1"
+	// yrcVersion=1：向接口要逐字歌词。带了它不给 yrc 时返回体与原来完全一样
+	// （实测 lrc/klyric/tlyric 照常返回），所以这一个参数是「要到了就赚」。
+	endpoint := p.base() + "/api/song/lyric?id=" + url.QueryEscape(c.ID) +
+		"&lv=1&kv=1&tv=-1&yrcVersion=1"
 	headers := map[string]string{"Referer": "https://music.163.com/", "User-Agent": sourceUA}
 	var resp neteaseLyricResp
 	if err := fetchJSON(ctx, endpoint, headers, &resp); err != nil {
@@ -126,10 +143,7 @@ func (p *neteaseProvider) Fetch(ctx context.Context, c Candidate) (Result, error
 	if resp.Code != 200 && resp.Code != 0 {
 		return Result{}, fmt.Errorf("netease: 歌词接口返回 code %d（可能被限流）", resp.Code)
 	}
-	lrc := strings.TrimSpace(resp.LRC.Lyric)
-	if lrc == "" {
-		lrc = strings.TrimSpace(resp.Klyric.Lyric)
-	}
+	lrc := neteaseLyricText(&resp)
 	if lrc == "" {
 		return Result{}, fmt.Errorf("netease: empty lyrics")
 	}
@@ -139,4 +153,22 @@ func (p *neteaseProvider) Fetch(ctx context.Context, c Candidate) (Result, error
 		Provider:    p.Name(),
 		Source:      p.Name(),
 	}, nil
+}
+
+// neteaseLyricText 在 lrc / klyric / yrc 里挑出要交给上层的那份。
+//
+// 字级优先：yrc（逐字）→ klyric（卡拉OK）→ lrc（行级）。
+// 但只有**真的带逐字时间轴**的字段才能顶掉行级那份 —— 接口在拿不到逐字歌词
+// 时会回一个空的 klyric，直接按字段顺序取会把「有歌词」变成「没歌词」。
+func neteaseLyricText(resp *neteaseLyricResp) string {
+	lrc := strings.TrimSpace(resp.LRC.Lyric)
+	for _, cand := range []string{strings.TrimSpace(resp.Yrc.Lyric), strings.TrimSpace(resp.Klyric.Lyric)} {
+		if cand != "" && lyrics.HasWordTiming(cand) {
+			return cand
+		}
+	}
+	if lrc == "" {
+		lrc = strings.TrimSpace(resp.Klyric.Lyric)
+	}
+	return lrc
 }

@@ -667,9 +667,10 @@ func (s *LyricsService) AutoMatch(songID string) (lyrics.Result, error) {
 		return lyrics.Result{LRC: "", Source: lyrics.SourceNone}, nil
 	}
 
-	// 有的来源会给「字级」歌词（逐字时间戳 / QRC / KRC）。本程序只认行级，
-	// 而且这份文本之后可能被写进歌曲文件，所以在落缓存之前先归一化一次。
-	lrc = lyrics.NormalizeLineLevel(lrc)
+	// 有的来源会给「字级」歌词（逐字时间戳 / QRC / KRC / klyric / YRC）。
+	// 这里归一化成**增强 LRC**：逐字时间轴原样保留（前端按字点亮），
+	// 只有「写进歌曲文件」那一步才再剥成行级（见 Save）。
+	lrc = lyrics.NormalizeWordLevel(lrc)
 	if strings.TrimSpace(lrc) == "" {
 		return lyrics.Result{LRC: "", Source: lyrics.SourceNone}, nil
 	}
@@ -701,14 +702,15 @@ func (s *LyricsService) Save(songID, lrc, source string, embed *bool) (map[strin
 		return nil, errors.New("歌词缓存不可用")
 	}
 
-	// 用户点「应用」时把字级歌词筛成行级：本程序只支持行级高亮，
-	// 而且下一步可能把它内嵌进歌曲文件 —— 逐字标记进了文件就会变成
-	// 别的播放器里的「正文」，所以必须在写入之前处理。
+	// 用户点「应用」时把歌词归一化成**增强 LRC**：字级（逐字 / QRC / KRC）
+	// 时间轴要保留下来 —— 界面按字点亮、微调面板的平移都靠它。
+	// 写进歌曲文件的那份另外剥成行级（见下面 embedLrc）。
 	wasWordLevel := lyrics.HasWordTiming(raw)
-	lrc = lyrics.NormalizeLineLevel(raw)
+	lrc = lyrics.NormalizeWordLevel(raw)
 	if strings.TrimSpace(lrc) == "" {
 		return nil, errors.New("歌词内容为空")
 	}
+	keptWordLevel := lyrics.HasWordTiming(lrc)
 
 	if _, err := s.cache.SaveLyrics(songID, lrc, source); err != nil {
 		return nil, err
@@ -720,8 +722,10 @@ func (s *LyricsService) Save(songID, lrc, source string, embed *bool) (map[strin
 		"source":    source,
 		"embedded":  false,
 		"lrc":       lrc,
-		"lineLevel": !wasWordLevel,
-		"converted": wasWordLevel,
+		"wordLevel": keptWordLevel,
+		"lineLevel": !keptWordLevel,
+		// 「输入是字级、归一化后没了」只可能发生在识别不出的写法上
+		"converted": wasWordLevel && !keptWordLevel,
 	}
 	song, ok := s.songs(songID)
 	if !ok {
@@ -742,7 +746,10 @@ func (s *LyricsService) Save(songID, lrc, source string, embed *bool) (map[strin
 		out["note"] = "歌词已缓存；该格式暂不支持写入文件"
 		return out, nil
 	}
-	res, err := metacache.EmbedLyrics(song.Path, lrc)
+	// 写进歌曲文件的必须是行级：逐字标记（<00:12.00> / (0,300)）进了标签，
+	// 别的播放器会把它们当成歌词正文显示出来。缓存里存的仍是字级那一份。
+	embedLrc := lyrics.NormalizeLineLevel(lrc)
+	res, err := metacache.EmbedLyrics(song.Path, embedLrc)
 	switch {
 	case err == nil && res.OK:
 		out["embedded"] = true
@@ -755,10 +762,11 @@ func (s *LyricsService) Save(songID, lrc, source string, embed *bool) (map[strin
 	return out, nil
 }
 
-// LoadCached 只读缓存（前端在「本地 + 在线」都拿不到时用它确认一次）。
+// LoadCached 只读缓存（前端在「本地 + 在线」都拿不到时确认一次）。
 func (s *LyricsService) LoadCached(songID string) map[string]any {
 	if text, ok := s.cacheGet(songID); ok {
-		return map[string]any{"lrc": text, "source": lyrics.SourceCache, "cached": true}
+		// 老缓存里可能是当年被剥成行级的文本，新读出来统一过一遍归一化
+		return map[string]any{"lrc": lyrics.NormalizeWordLevel(text), "source": lyrics.SourceCache, "cached": true}
 	}
 	return map[string]any{"lrc": "", "source": lyrics.SourceNone, "cached": false}
 }

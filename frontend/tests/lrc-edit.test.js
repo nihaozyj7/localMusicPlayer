@@ -66,6 +66,17 @@ test("shiftLrc：整体平移（一行多标签也逐个平移），无标签行
   assert.equal(shiftLrc(src, 0), src, "偏移为 0 时必须原样返回");
 });
 
+test("shiftLrc：字级（逐字）标记要跟着一起平移", () => {
+  const src = "[00:10.00]<00:10.000>A<00:10.500>B";
+  assert.equal(shiftLrc(src, 500), "[00:10.50]<00:10.500>A<00:11.000>B");
+  // 负数钳到 0：行标签与逐字标签一起钳，不能出现「行在 0、字还在 10s」
+  assert.equal(shiftLrc(src, -10000), "[00:00.00]<00:00.000>A<00:00.500>B");
+});
+
+test("shiftLrc：没有时间标签的行原样保留（哪怕正文里有尖括号）", () => {
+  assert.equal(shiftLrc("作词：某人 <某某工作室>", 500), "作词：某人 <某某工作室>");
+});
+
 test("lrcTimeRange：给微调面板算上下限", () => {
   assert.deepEqual(lrcTimeRange("[00:10.00]A\n[00:30.00]B"), { min: 10000, max: 30000, count: 2 });
   assert.deepEqual(lrcTimeRange("没有时间标签"), { min: 0, max: 0, count: 0 });

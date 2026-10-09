@@ -45,6 +45,7 @@ import {
   FIT_MIN,
   FIT_MAX,
   lyricsEmptyText,
+  splitGraphemes,
 } from "@localmusicplayer/player-skins";
 
 /* --------------------------------------------------------------------------
@@ -156,6 +157,72 @@ test("parseLrc：一行多时间标签（重复句）不与折叠混淆", () => 
   assert.deepEqual(lines[0].trans, ["副歌翻译"]);
   assert.equal(lines[1].text, "副歌");
   assert.equal(lines[1].trans, undefined);
+});
+
+/* --------------------------------------------------------------------------
+   字级（逐字）歌词：行上多一个 words（每个字素一个起始毫秒）
+   -------------------------------------------------------------------------- */
+
+test("parseLrc：增强 LRC 的逐字标记解析成「每个字素一个起始毫秒」", () => {
+  const lines = parseLrc("[00:12.00]<00:12.000>你<00:12.300>好");
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].time, 12000);
+  assert.equal(lines[0].text, "你好", "逐字标记绝不能出现在正文里");
+  assert.deepEqual(lines[0].words, [12000, 12300]);
+  assert.equal(lines[0].words.length, splitGraphemes(lines[0].text).length, "words 必须与字素一一对应");
+});
+
+test("parseLrc：QRC / KRC / 网易云 klyric / YRC 四种写法都能吃下", () => {
+  const cases = [
+    "[12000,800]你(0,300)好(300,500)", // QRC：后缀 (偏移,时长)
+    "[12000,800]<0,300,0>你<300,500,0>好", // KRC：前缀 <偏移,时长,音高>
+    "[00:12.00]你[00:12.30]好", // klyric：行内时间标签
+    "[12000,300]你[12300,300]好", // YRC：行内 [毫秒,时长]
+  ];
+  for (const src of cases) {
+    const lines = parseLrc(src);
+    assert.equal(lines.length, 1, src);
+    assert.equal(lines[0].time, 12000, src);
+    assert.equal(lines[0].text, "你好", src);
+    assert.deepEqual(lines[0].words, [12000, 12300], src);
+  }
+});
+
+test("parseLrc：行级歌词不带 words 键（没有字级时形状与从前完全一致）", () => {
+  const line = parseLrc("[00:12.00]普通行")[0];
+  assert.equal(line.words, undefined);
+  assert.deepEqual(Object.keys(line).sort(), ["text", "time"]);
+});
+
+test("parseLrc：行级正文里的 (2019,2020) 不会被当成字级标记", () => {
+  const line = parseLrc("[00:10.00](2019,2020)发行纪念")[0];
+  assert.equal(line.text, "(2019,2020)发行纪念");
+  assert.equal(line.words, undefined);
+});
+
+test("parseLrc：同一句挂多个时间标签时，逐字时间跟着平移", () => {
+  const lines = parseLrc("[00:10.00][01:00.00]<00:10.000>A<00:10.500>B");
+  assert.equal(lines.length, 2);
+  assert.deepEqual(lines[0].words, [10000, 10500]);
+  assert.deepEqual(lines[1].words, [60000, 60500], "第二遍必须整体平移，否则唱到那时字早就点亮完了");
+});
+
+test("parseLrc：行时间被重新打过轴时，逐字时间整体平移到行首", () => {
+  // 打轴只改行时间、不动正文里的 <…>，不平移的话一开口整行就「瞬间全亮」
+  const line = parseLrc("[00:20.00]<00:12.000>你<00:12.300>好")[0];
+  assert.equal(line.time, 20000);
+  assert.deepEqual(line.words, [20000, 20300], "行内相对节奏要保住");
+});
+
+test("splitGraphemes：与 words 下标共用同一套切法（emoji 不被劈开）", () => {
+  assert.deepEqual(splitGraphemes("你好"), ["你", "好"]);
+  assert.deepEqual(splitGraphemes(""), []);
+  // 家庭 emoji 由多个码点组成，但算**一个字素**
+  const line = parseLrc("[00:12.00]<00:12.000>我<00:12.300>👨‍👩‍👧")[0];
+  assert.equal(line.text, "我👨‍👩‍👧");
+  assert.equal(line.words.length, splitGraphemes(line.text).length, "两边切法必须一致，否则逐字会错位");
+  assert.deepEqual(line.words.slice(0, 1), [12000]);
+  assert.ok(line.words.slice(1).every((w) => w === 12300));
 });
 
 test("lyricDisplayText：单语言原样返回，多语言用分隔符拼成一行", () => {

@@ -73,7 +73,7 @@ export default {
       case "song": {
         inst.paintSong();
         inst.paintLyrics();
-        inst.lyrics.setPosition(ctx.playback().position, { immediate: true });
+        inst.lyrics.setPosition(ctx.playback().position, { immediate: true, playing: ctx.playback().playing });
         break;
       }
       case "media":
@@ -81,11 +81,12 @@ export default {
         break;
       case "lyrics": {
         inst.paintLyrics();
-        inst.lyrics.setPosition(ctx.playback().position, { immediate: true });
+        inst.lyrics.setPosition(ctx.playback().position, { immediate: true, playing: ctx.playback().playing });
         break;
       }
       case "progress":
-        inst.lyrics.setPosition(patch.position);
+        // playing 一并给它：字级（逐字）歌词要按墙钟补齐 250ms 进度之间的帧
+        inst.lyrics.setPosition(patch.position, { playing: patch.playing });
         break;
       case "close":
         // 详情页收起时把整窗背景也收掉，别让它在曲库界面上继续盖着

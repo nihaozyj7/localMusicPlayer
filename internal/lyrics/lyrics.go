@@ -2,11 +2,14 @@
 //
 // 来源优先级（可在设置界面调整顺序）：
 //  1. embedded  音频内嵌歌词（ID3 USLT / MP4 ©lyr / Vorbis LYRICS）
-//  2. lrc-file  同名 .lrc 文件（支持 song.lrc / song.zh.lrc）
+//  2. lrc-file  同名歌词文件（.lrc / .qrc / .krc / .yrc，含 song.zh.lrc 这类语言后缀）
 //  3. cache     本程序的歌词缓存（用户手动匹配或自动匹配过的结果）
 //  4. online    在线自动匹配（由上层调用 lyricsfetch，本包只负责「要不要试」）
 //
-// 返回内容统一为 LRC 文本，由前端 utils.js#parseLrc 解析时间轴。
+// 返回内容统一为 LRC 文本，由前端 packages/player-skins 的 parseLrc 解析时间轴：
+// 行级是 `[00:12.00]正文`，字级（逐字）是增强 LRC `[00:12.00]<00:12.000>你`。
+// 几种来源写法（QRC / KRC / YRC / klyric）在读进来时先归一化成增强 LRC，
+// 并且**字级结果优先于行级结果**（见 Load 与 wordlevel.go）。
 //
 // 为什么要加 cache 这一层：用户手动匹配到歌词之后，如果只放在前端内存里，
 // 下次打开应用就没了（这是实测到的问题）。缓存目录才是持久真源，
@@ -95,24 +98,27 @@ type Cache func(songID string) (string, bool)
 
 // Load 按优先级加载歌词。
 //
+// 两条选词规则（需求：**优先使用字级歌词**）：
+//  1. 只要排在前面的来源里出现了「字级」（逐字）时间轴，就用它 —— 字级 > 行级；
+//  2. 都是行级时，才按配置的来源顺序取第一个有内容的。
+//
+// 返回的文本统一过一遍 NormalizeWordLevel：QRC/KRC/YRC/klyric 这些写法
+// 被归一化成增强 LRC，前端与歌词工作台只认这一种格式。
+//
 //	cache 可以为 nil（没有缓存层时自动跳过）。
 func Load(songID, audioPath string, sources []string, cache Cache) Result {
 	sources = NormalizeSources(sources)
+	var first Result
 	for _, src := range sources {
+		var text string
 		switch src {
 		case SourceEmbedded:
-			if text, ok := readEmbedded(audioPath); ok {
-				return Result{LRC: text, Source: SourceEmbedded}
-			}
+			text, _ = readEmbedded(audioPath)
 		case SourceLRCFile:
-			if text, ok := readLRCFile(audioPath); ok {
-				return Result{LRC: text, Source: SourceLRCFile}
-			}
+			text, _ = readLRCFile(audioPath)
 		case SourceCache:
 			if cache != nil {
-				if text, ok := cache(songID); ok {
-					return Result{LRC: text, Source: SourceCache}
-				}
+				text, _ = cache(songID)
 			}
 		case SourceOnline:
 			// 在线匹配需要网络，不能在这里同步做：本函数会在「播放一首歌」时
@@ -120,6 +126,24 @@ func Load(songID, audioPath string, sources []string, cache Cache) Result {
 			// 由上层（LyricsService.Load 之后 / AutoMatch）决定要不要联网。
 			continue
 		}
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		text = NormalizeWordLevel(text)
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		if first.LRC == "" {
+			first = Result{LRC: text, Source: src}
+		}
+		// 第一个「字级」结果就是它了：再往后的来源优先级更低，不值得为了
+		// 可能更好的字级去读完全部来源（同为字级时以先出现的为准）。
+		if HasWordTiming(text) {
+			return Result{LRC: text, Source: src}
+		}
+	}
+	if first.LRC != "" {
+		return first
 	}
 	return Result{LRC: "", Source: SourceNone}
 }
@@ -134,16 +158,22 @@ func WantOnline(sources []string) bool {
 	return false
 }
 
-// readLRCFile 找同名 .lrc
+// readLRCFile 找同名歌词文件。
+//
+// 除 .lrc 之外还认三种**字级**伴随文件（QQ/酷狗/网易云导出的逐字歌词）：
+// .qrc / .krc / .yrc。多个文件同时存在时**优先字级那一份**（需求：
+// 优先使用字级歌词），同为字级才按下面的顺序取第一个。
 func readLRCFile(audioPath string) (string, bool) {
 	dir := filepath.Dir(audioPath)
 	base := strings.TrimSuffix(filepath.Base(audioPath), filepath.Ext(audioPath))
 
-	candidates := []string{
-		filepath.Join(dir, base+".lrc"),
-		filepath.Join(dir, base+".LRC"),
+	// ① 完全同名的文件：先行级（.lrc）后字级（.qrc/.krc/.yrc），
+	//    大小写各试一遍（Windows 上不区分大小写，但别的平台区分）
+	var candidates []string
+	for _, ext := range []string{".lrc", ".LRC", ".qrc", ".QRC", ".krc", ".KRC", ".yrc", ".YRC"} {
+		candidates = append(candidates, filepath.Join(dir, base+ext))
 	}
-	// 形如 song.zh.lrc / song.chi.lrc 的翻译歌词也顺带支持
+	// ② 形如 song.zh.lrc / song.chi.lrc 的翻译歌词也顺带支持（含字级扩展名）
 	if entries, err := os.ReadDir(dir); err == nil {
 		prefix := strings.ToLower(base) + "."
 		for _, e := range entries {
@@ -151,21 +181,41 @@ func readLRCFile(audioPath string) (string, bool) {
 				continue
 			}
 			name := strings.ToLower(e.Name())
-			if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, ".lrc") {
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			switch strings.ToLower(filepath.Ext(name)) {
+			case ".lrc", ".qrc", ".krc", ".yrc":
 				candidates = append(candidates, filepath.Join(dir, e.Name()))
 			}
 		}
 	}
 
+	var first string
+	seen := make(map[string]bool, len(candidates))
 	for _, c := range candidates {
+		if seen[c] {
+			continue
+		}
+		seen[c] = true
 		raw, err := os.ReadFile(c)
 		if err != nil {
 			continue
 		}
-		text := decodeText(raw)
-		if strings.TrimSpace(text) != "" {
+		text := NormalizeWordLevel(decodeText(raw))
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		// 字级文件直接命中，不再往后看（多个字级文件时按上面的顺序取第一个）
+		if HasWordTiming(text) {
 			return text, true
 		}
+		if first == "" {
+			first = text
+		}
+	}
+	if first != "" {
+		return first, true
 	}
 	return "", false
 }

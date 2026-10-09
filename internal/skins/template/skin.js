@@ -99,7 +99,8 @@ export default {
         break;
       }
       case "progress":
-        this.lyrics.setPosition(patch.position);
+        // playing 一并给它：字级（逐字）歌词要按墙钟补齐 250ms 进度之间的帧
+        this.lyrics.setPosition(patch.position, { playing: patch.playing });
         break;
       default:
         break;

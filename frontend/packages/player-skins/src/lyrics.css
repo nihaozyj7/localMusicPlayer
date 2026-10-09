@@ -157,13 +157,26 @@
   animation: lyric-exit calc(var(--dur) * 1.4) var(--ease) both;
 }
 
-/* 逐字歌词：当前行内的高亮进度 */
+/* —— 字级（逐字）歌词：当前行内的按字点亮 ——
+   `.lyric__word` 只存在于**当前行**（其它行保持纯文本，见 lyrics-view.js），
+   所以可以直接挂在 [aria-current] 下面：
+     · 还没唱到的字：正文色 + 压暗（整行仍是亮的，一眼看出这是当前句，
+       而「只点亮了几个字」靠明暗差表达 —— 只换颜色的话，在强调色接近白/黑
+       的主题里根本看不出来）；
+     · 唱到的字：强调色 + 全亮，跟行高亮连成一片。
+   没有字级的歌词不产生任何 .lyric__word，观感与从前完全一致。 */
 .lyric__word {
   color: inherit;
 }
 
-.lyric__word[data-active="true"] {
+.lyric[aria-current="true"] .lyric__word {
+  color: var(--text-1);
+  opacity: 0.45;
+}
+
+.lyric[aria-current="true"] .lyric__word[data-active="true"] {
   color: var(--accent);
+  opacity: 1;
 }
 
 /* 翻译 / 罗马音副行 */

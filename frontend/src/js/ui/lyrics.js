@@ -169,6 +169,9 @@ class MpLyricsPanel extends MpElement {
   render() {
     const info = currentLyricsInfo();
     const song = info.song;
+    // 字级（逐字）歌词：行上带 words 就说明这首歌拿到的是逐字时间轴 ——
+    // 来源徽标上明说，用户才看得出「优先用字级」这条规则真的生效了。
+    const wordLevel = info.lines.some((l) => Array.isArray(l.words) && l.words.length > 0);
     return html`
       <section
         class="lyricspanel"
@@ -195,7 +198,7 @@ class MpLyricsPanel extends MpElement {
                   ? "歌词匹配中…"
                   : info.status === "failed"
                     ? "歌词匹配失败"
-                    : lyricsSourceLabel(info.source)}
+                    : `${lyricsSourceLabel(info.source)}${wordLevel ? " · 逐字" : ""}`}
               </span>
               <span class="lyricspanel__artist" data-song-artist>${song ? song.artist || "" : ""}</span>
             </div>

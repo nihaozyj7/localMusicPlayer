@@ -60,6 +60,7 @@ export {
   formatLrcTime,
   findLyricIndex,
   lyricDisplayText,
+  splitGraphemes,
 } from "./lrc.js";
 export { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf, lyricsEmptyText } from "./html.js";
 

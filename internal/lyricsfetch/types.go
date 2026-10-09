@@ -229,6 +229,16 @@ const (
 )
 
 // Match 自动匹配并抓取歌词：先取评分最高的候选，失败时按分数向后重试。
+//
+// 关于**字级（逐字）歌词**的取舍（需求：优先使用字级歌词）——
+// 抓取之前无从知道一个候选给的是行级还是字级，想挑字级就只能「抓到行级再去
+// 抓下一个候选」；而绝大多数来源给的就是行级，那等于把每次自动匹配都变成两次
+// 请求。自动匹配跑在**切歌**路径上（25s 预算，实测慢一拍就会被当成「卡住了」），
+// 用稳定的一次请求去换一个多数时候不存在的字级并不划算。
+//
+// 于是字级偏好放在另外两层，这里只负责「挑对版本」：
+//   - 同一个来源的返回里**优先取字级字段**（见 netease.go#neteaseLyricText）；
+//   - 本地来源之间**字级优先于行级**（见 internal/lyrics#Load）。
 func (a *Aggregator) Match(ctx context.Context, req SearchRequest) (Result, error) {
 	req = prepareRequest(req)
 	if req.Title == "" && req.Keyword == "" {

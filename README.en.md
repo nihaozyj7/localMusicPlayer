@@ -49,7 +49,7 @@ library, cover art and lyric cache all live on your own disk.
 | [Library](#library) | Multiple watched folders, filter rules, tag & multi-cover parsing, stable IDs |
 | [Playback](#playback) | Byte-exact seeking, embedded-FFmpeg transcoding cache, loudness normalisation, silence skipping, track gap, three sound effects, bad-track fallback |
 | [Cover art](#cover-art) | Several covers per track, cache vs embedded managed separately, five online sources, atomic write-back |
-| [Lyrics](#lyrics) | Four-level fallback, lyrics workbench, floating desktop lyrics, wallpaper lyrics |
+| [Lyrics](#lyrics) | Four-level fallback, word-level (karaoke) lyrics, lyrics workbench, floating desktop lyrics, wallpaper lyrics |
 | [Interface](#interface) | Three themes + custom CSS, six player skins, sorting / columns / density / frame-rate presets |
 | [Online & AI](#online--ai) | Search → preview → download, preview-is-cache, optional AI metadata cleanup and post-download tagging |
 | [Updates](#updates) | Manual or on-start update check, multi-mirror downloads, per-version skip |
@@ -101,6 +101,10 @@ library, cover art and lyric cache all live on your own disk.
 
 - A four-level fallback chain: embedded → sibling `.lrc` → app cache → automatic online match
   (LRCLIB / NetEase / QQ Music);
+- **Word-level (karaoke) lyrics**: enhanced LRC / QRC / KRC / NetEase klyric·YRC are all recognised and
+  normalised to enhanced LRC; **word-level wins over line-level**, and the player view lights up
+  character by character (only the copy written into the audio file is stripped down to line level,
+  so other players never see `<00:12.000>` as lyric text; the workbench badge says "word-level");
 - **Lyrics workbench**: online matching, whole-song nudging (±10s), and manual timing (tap space while playing);
 - **Desktop lyrics**: a separate transparent, always-on-top window that only becomes a "normal window"
   with a style dropdown when the mouse enters; its position is remembered;

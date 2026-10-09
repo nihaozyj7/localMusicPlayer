@@ -11,16 +11,23 @@
      1) 播放时自动把当前行滚到容器垂直中央；
      2) 用户可以用滚轮 / 拖动滚动条自己翻歌词 —— 此时自动滚动必须让位，
         停手约 1.2 秒后再自动接管。少了 2) 会出现「用户刚滚上去就被拽回来」。
+
+   字级（逐字）歌词：
+     · 行上带 `words`（每个字素一个起始毫秒，见 lrc.js#parseLrc）时，
+       **只把当前行**拆成 `.lyric__word` 字素 span，按时间点亮 —— 不给
+       整篇歌词都拆开（一首歌几十行 × 每行几十个字就是上千个节点，
+       而非当前行根本不需要逐字高亮）；
+     · 离开当前行时还原成纯文本，DOM 形状与没有字级时完全一样。
    ========================================================================== */
 
-import { findLyricIndex } from "./lrc.js";
+import { findLyricIndex, splitGraphemes } from "./lrc.js";
 
 /** 用户滚动之后，多久重新接管自动滚动 */
 const USER_SCROLL_PAUSE_MS = 1200;
 
 /** 歌词行的最小结构（与 lrc.js 解析结果一致；trans = 同时间的其它语言行） */
 /**
- * @typedef {{ time: number, text: string, trans?: string[] }} LyricLine
+ * @typedef {{ time: number, text: string, trans?: string[], words?: number[] }} LyricLine
  */
 
 /**
@@ -28,8 +35,9 @@ const USER_SCROLL_PAUSE_MS = 1200;
  * @property {HTMLElement} element `.lyrics` 根节点
  * @property {HTMLElement} scrollElement `.lyrics__scroll` 滚动容器
  * @property {(lines: LyricLine[], meta?: { emptyText?: string, emptyHint?: string, showOpenFolder?: boolean }) => void} setLines
- * @property {(index: number, opts?: { immediate?: boolean }) => void} setActive
- * @property {(positionMs: number, opts?: { immediate?: boolean }) => void} setPosition
+ * @property {(index: number, opts?: { immediate?: boolean, playing?: boolean }) => void} setActive
+ * @property {(positionMs: number, opts?: { immediate?: boolean, playing?: boolean }) => void} setPosition
+ * @property {(playing: boolean) => void} setPlaying
  * @property {() => void} destroy
  * @property {LyricLine[]} lines
  * @property {number} activeIndex
@@ -63,12 +71,29 @@ export function createLyricsView(host, opts = {}) {
   root.appendChild(scroll);
   host.appendChild(root);
 
-  /** @type {Array<{time:number,text:string}>} */
+  /** @type {LyricLine[]} */
   let lines = [];
   let activeIndex = -1;
   let userScrollingUntil = 0;
   let resumeTimer = null;
   let destroyed = false;
+
+  /* ---- 字级（逐字）歌词的状态：只作用于**当前行**（见文件头注释） ---- */
+  /** 正在拆字素的那一行下标（-1 = 当前行没有字级或还没进入） */
+  let wordIdx = -1;
+  /** @type {HTMLElement[]} 该行的字素 span */
+  let wordEls = [];
+  /** @type {number[]|null} 该行每个字素的起始毫秒 */
+  let wordStarts = null;
+  /** 上一次点亮到第几个（不变化就不写 DOM） */
+  let wordHold = -1;
+
+  /* ---- 平滑推进（宿主的进度是 250ms 一跳，逐字点亮必须自己补齐中间帧） ---- */
+  /** 最近一次 setPosition 的锚点：位置 + 它被推过来的时刻 */
+  let basePos = 0;
+  let baseAt = 0;
+  let playing = false;
+  let smoothRaf = 0;
 
   const markUserScroll = () => {
     userScrollingUntil = Date.now() + USER_SCROLL_PAUSE_MS;
@@ -136,22 +161,157 @@ export function createLyricsView(host, opts = {}) {
   }
 
   /**
-   * 一行 → DOM。主行是原文，`trans` 里的每一行各画一条**副行**
-   * （`.lyric__trans`，样式在 lyrics.css）—— 多语言歌词必须显示在同一条里，
+   * 一行的**内容**（不含行容器属性）：主行是原文，`trans` 里的每一行各画一条
+   * 副行（`.lyric__trans`，样式在 lyrics.css）—— 多语言歌词必须显示在同一条里，
    * 否则同一时间戳的两种语言会被拆成两行，只有一行能拿到高亮。
    *
    * @param {{time:number,text:string,trans?:string[]}} l
-   * @param {number} i
+   * @returns {string}
    */
-  function lineHtml(l, i) {
+  function lineInnerHtml(l) {
     const trans =
       Array.isArray(l.trans) && l.trans.length
         ? l.trans.map((t) => `<span class="lyric__trans">${esc(t)}</span>`).join("")
         : "";
+    return `${esc(l.text)}${trans}`;
+  }
+
+  /**
+   * 一行 → DOM。
+   * @param {{time:number,text:string,trans?:string[]}} l
+   * @param {number} i
+   */
+  function lineHtml(l, i) {
     const attrs = `data-time="${l.time}" data-lyric-index="${i}"`;
     return interactive
-      ? `<div class="lyric" role="button" tabindex="0" ${attrs}>${esc(l.text)}${trans}</div>`
-      : `<div class="lyric" ${attrs}>${esc(l.text)}${trans}</div>`;
+      ? `<div class="lyric" role="button" tabindex="0" ${attrs}>${lineInnerHtml(l)}</div>`
+      : `<div class="lyric" ${attrs}>${lineInnerHtml(l)}</div>`;
+  }
+
+  /* --------------------------------------------------------------------------
+     字级（逐字）：进入 / 点亮 / 还原
+     -------------------------------------------------------------------------- */
+
+  /**
+   * 把当前行拆成字素 span（没有字级、或字素数与 words 对不上时什么都不做 ——
+   * 对不上就退回行级，点亮错位比不逐字更糟）。
+   * @param {number} idx
+   */
+  function enterWords(idx) {
+    const l = lines[idx];
+    const el = lineElAt(idx);
+    const starts = l?.words;
+    if (!el || !Array.isArray(starts) || !starts.length) return;
+    const graphemes = splitGraphemes(l.text);
+    if (!graphemes.length || graphemes.length !== starts.length) return;
+
+    const trans =
+      Array.isArray(l.trans) && l.trans.length
+        ? l.trans.map((t) => `<span class="lyric__trans">${esc(t)}</span>`).join("")
+        : "";
+    const body = graphemes
+      .map((ch, k) => `<span class="lyric__word" data-i="${k}" data-active="false">${esc(ch)}</span>`)
+      .join("");
+    el.innerHTML = body + trans;
+
+    wordIdx = idx;
+    wordEls = Array.from(el.querySelectorAll(".lyric__word"));
+    wordStarts = starts;
+    wordHold = -1;
+  }
+
+  /** 把某一行还原成纯文本（离开当前行时调用，DOM 形状回到没有字级的样子） */
+  function leaveWords(idx) {
+    if (idx < 0) return;
+    const l = lines[idx];
+    const el = lineElAt(idx);
+    if (l && el) el.innerHTML = lineInnerHtml(l);
+  }
+
+  /** 保证「正在拆字素的那一行」就是当前行 */
+  function syncWordLine() {
+    if (wordIdx >= 0 && wordIdx !== activeIndex) {
+      leaveWords(wordIdx);
+      wordIdx = -1;
+      wordEls = [];
+      wordStarts = null;
+      wordHold = -1;
+    }
+    if (activeIndex >= 0 && wordIdx !== activeIndex) enterWords(activeIndex);
+  }
+
+  /**
+   * 按播放进度点亮当前行的字。只在位置真的推进了时才写 DOM。
+   * @param {number} positionMs
+   */
+  function paintWords(positionMs) {
+    if (wordIdx < 0 || !wordStarts || !wordEls.length) return;
+    let hold = 0;
+    while (hold < wordStarts.length && wordStarts[hold] <= positionMs) hold += 1;
+    if (hold === wordHold) return;
+    wordHold = hold;
+    for (let k = 0; k < wordEls.length; k += 1) {
+      const want = k < hold ? "true" : "false";
+      const node = wordEls[k];
+      if (node.dataset.active !== want) node.dataset.active = want;
+    }
+  }
+
+  /* --------------------------------------------------------------------------
+     平滑推进：宿主的进度按 250ms 量化（见宿主 audio.js），逐字点亮如果只吃
+     这个节奏会明显「一跳一跳」。给过 playing 时自己按墙钟补齐中间帧；
+     没给 playing 的皮肤（第三方样式）保持原样，按每次 setPosition 点亮。
+     -------------------------------------------------------------------------- */
+
+  /** 距上次进度推送最多外推多久：超过说明推送停了（暂停没同步 / 卡缓冲 / 窗口
+   *  被隐藏），继续外推会让字比声音先唱完，所以冻在最后已知位置等下一次推送。 */
+  const SMOOTH_MAX_MS = 700;
+
+  function nowMs() {
+    return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+  }
+
+  function hasWordLine() {
+    return activeIndex >= 0 && wordIdx === activeIndex && Array.isArray(wordStarts) && wordStarts.length > 0;
+  }
+
+  function smoothTick() {
+    smoothRaf = 0;
+    if (destroyed || !playing || !hasWordLine()) return;
+    const extra = nowMs() - baseAt;
+    if (extra > SMOOTH_MAX_MS) {
+      paintWords(basePos); // 推送停了：退回最后已知位置并停止外推
+      return;
+    }
+    paintWords(basePos + extra);
+    smoothRaf = requestAnimationFrame(smoothTick);
+  }
+
+  function syncSmooth() {
+    const want =
+      playing &&
+      hasWordLine() &&
+      typeof requestAnimationFrame === "function" &&
+      typeof cancelAnimationFrame === "function";
+    if (!want) {
+      if (smoothRaf) {
+        cancelAnimationFrame(smoothRaf);
+        smoothRaf = 0;
+      }
+      return;
+    }
+    if (!smoothRaf) smoothRaf = requestAnimationFrame(smoothTick);
+  }
+
+  /** 播放状态（皮肤在 state / progress 补丁里带上）。给了才会开平滑推进。 */
+  function setPlaying(value) {
+    playing = Boolean(value);
+    if (playing) {
+      baseAt = nowMs();
+    } else {
+      paintWords(basePos); // 暂停时按最后已知位置落一次（外推值要清掉）
+    }
+    syncSmooth();
   }
 
   /**
@@ -162,6 +322,12 @@ export function createLyricsView(host, opts = {}) {
   function setLines(next, meta = {}) {
     lines = Array.isArray(next) ? next : [];
     activeIndex = -1;
+    // 整块 DOM 重画：字素 span 也随之消失，状态必须一起清掉
+    wordIdx = -1;
+    wordEls = [];
+    wordStarts = null;
+    wordHold = -1;
+    syncSmooth();
     if (!lines.length) {
       renderEmpty(meta);
       return;
@@ -217,20 +383,39 @@ export function createLyricsView(host, opts = {}) {
     // 变成 past，那不该集体播一遍退场动画
     if (prev) prev.dataset.exit = "1";
 
+    // 字级（逐字）：离开旧行要还原成纯文本，进入新行才拆字素
+    syncWordLine();
+    paintWords(basePos);
+
     // 用户正在手动翻歌词时不抢滚动位置
     if (Date.now() < userScrollingUntil) return;
     scrollToLine(idx, { immediate: Boolean(o.immediate) });
   }
 
-  /** 按播放进度推算出应该高亮的行（宿主只推进度，行号在这里算，避免两处各算一遍） */
+  /**
+   * 按播放进度推算出应该高亮的行（宿主只推进度，行号在这里算，避免两处各算一遍）。
+   *
+   * `o.playing` 给了才开「按墙钟补齐中间帧」的平滑推进（见 setPlaying）。
+   * @param {number} positionMs
+   * @param {{ immediate?: boolean, playing?: boolean }} [o]
+   */
   function setPosition(positionMs, o = {}) {
+    basePos = positionMs;
+    baseAt = nowMs();
+    if (typeof o.playing === "boolean") playing = o.playing;
     setActive(findLyricIndex(lines, positionMs), o);
+    paintWords(positionMs);
+    syncSmooth();
   }
 
   function destroy() {
     destroyed = true;
     if (resumeTimer) clearTimeout(resumeTimer);
     resumeTimer = null;
+    if (smoothRaf) {
+      cancelAnimationFrame(smoothRaf);
+      smoothRaf = 0;
+    }
     scroll.removeEventListener("wheel", markUserScroll);
     scroll.removeEventListener("touchmove", markUserScroll);
     scroll.removeEventListener("pointerdown", markUserScroll);
@@ -245,6 +430,7 @@ export function createLyricsView(host, opts = {}) {
     setLines,
     setActive,
     setPosition,
+    setPlaying,
     destroy,
     get lines() {
       return lines;

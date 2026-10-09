@@ -91,7 +91,7 @@ export default {
         inst.paintSong();
         inst.paintLyrics();
         inst.paintSpin();
-        inst.lyrics.setPosition(ctx.playback().position, { immediate: true });
+        inst.lyrics.setPosition(ctx.playback().position, { immediate: true, playing: ctx.playback().playing });
         break;
       }
       case "media":
@@ -99,15 +99,17 @@ export default {
         break;
       case "lyrics": {
         inst.paintLyrics();
-        inst.lyrics.setPosition(ctx.playback().position, { immediate: true });
+        inst.lyrics.setPosition(ctx.playback().position, { immediate: true, playing: ctx.playback().playing });
         break;
       }
       case "progress":
-        // 让 SDK 的渲染器自己按进度算行号：宿主只推进度，避免两处各算一遍
-        inst.lyrics.setPosition(patch.position);
+        // 让 SDK 的渲染器自己按进度算行号：宿主只推进度，避免两处各算一遍。
+        // playing 一并给它：字级（逐字）歌词要按墙钟补齐 250ms 进度之间的帧。
+        inst.lyrics.setPosition(patch.position, { playing: patch.playing });
         break;
       case "state":
         inst.paintSpin();
+        inst.lyrics.setPlaying?.(patch.playing);
         break;
       default:
         break;
