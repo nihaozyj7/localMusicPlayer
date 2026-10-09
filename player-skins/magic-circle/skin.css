@@ -1,0 +1,175 @@
+/* ==========================================================================
+   magic-circle/skin.css — 魔法阵歌词舞台 · 外观
+   --------------------------------------------------------------------------
+   ★ 选择器是**相对舞台根**写的：宿主把这份 CSS 包成
+
+       @layer skin { @scope (.playerview[data-skin="magic-circle"],
+                             .skin-bg[data-skin="magic-circle"]) { … } }
+
+     所以前缀不用自己写（写了反而可能匹配不到），也写不到宿主的标题栏 / 底栏 /
+     浮层 —— 那些地方的配色由清单里的 colors 决定，与本文件无关。
+
+   ★ HUD 的颜色是**写死的浅色**，不跟主题令牌走：本样式的画布恒为夜空底色
+     （魔法阵只在夜里成立），浅色主题下如果 HUD 用 --text-1 会糊在夜空上看不见。
+     宿主壳（标题栏 / 底栏 / 浮层）仍然跟随主题与 colors 声明，不受这里影响。
+   ========================================================================== */
+
+/* 舞台自身：画布铺满，不加内边距（法阵要顶到边才有“世界”的感觉） */
+::scope {
+  position: relative;
+  overflow: hidden;
+  background: #04060d;
+}
+
+.mc {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.mc__canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  touch-action: none;
+}
+
+/* HUD：全部绝对定位 + 不吃指针事件，点击只会落到画布上（点节点跳转） */
+.mc__hud {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 20px 26px 18px;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.mc__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.mc__track {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  max-width: 62%;
+}
+
+.mc__title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: rgba(236, 239, 255, 0.92);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.6);
+}
+
+.mc__artist {
+  font-size: 12.5px;
+  color: rgba(176, 192, 232, 0.7);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.55);
+}
+
+/* 当前段落（主歌 / 副歌 / 桥段 / 尾奏）：把“镜头为什么在飞”讲清楚 */
+.mc__section {
+  flex: none;
+  font-size: 12px;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: rgba(140, 176, 255, 0.72);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6);
+  padding-top: 4px;
+}
+
+/* 没有歌词时的空态（有歌词时它为空，不占空间也不显示） */
+.mc__empty {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 70%;
+  font-size: 19px;
+  letter-spacing: 0.12em;
+  text-align: center;
+  color: rgba(186, 202, 240, 0.72);
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.7);
+}
+
+.mc__empty:empty {
+  display: none;
+}
+
+/* 悬停提示（只有鼠标落在某个节点上才出现） */
+.mc__hint {
+  align-self: center;
+  font-size: 12.5px;
+  letter-spacing: 0.18em;
+  text-indent: 0.18em;
+  color: rgba(150, 186, 255, 0.66);
+  min-height: 1.3em;
+  opacity: 0;
+  transition: opacity 260ms ease;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.6);
+}
+
+.mc__hint:not(:empty) {
+  opacity: 1;
+}
+
+/* ==========================================================================
+   整窗背景层（ctx.backgroundRoot 里的 .skin-bg）
+   只在标题栏 / 底栏的半透明区域露出来，所以是**静态**的渐变 + 两团星云：
+   不用 @keyframes —— 这份 CSS 在 @scope 里，键帧规则在嵌套作用域下并不可靠，
+   而每帧写内联样式又会白费一次样式重算。画布之外的地方，宁可不动。
+   ========================================================================== */
+
+.mc-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 50% 18%, rgba(24, 42, 96, 0.55) 0%, rgba(4, 6, 13, 0) 60%),
+    radial-gradient(90% 70% at 18% 90%, rgba(38, 24, 82, 0.5) 0%, rgba(4, 6, 13, 0) 65%),
+    linear-gradient(180deg, #05070f 0%, #070c1a 55%, #04060d 100%);
+}
+
+.mc-bg__nebula {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.55;
+}
+
+.mc-bg__nebula--a {
+  width: 56vw;
+  height: 56vw;
+  left: -14vw;
+  top: -18vh;
+  background: radial-gradient(circle, rgba(62, 104, 224, 0.5) 0%, rgba(62, 104, 224, 0) 70%);
+}
+
+.mc-bg__nebula--b {
+  width: 48vw;
+  height: 48vw;
+  right: -12vw;
+  bottom: -16vh;
+  background: radial-gradient(circle, rgba(128, 78, 214, 0.42) 0%, rgba(128, 78, 214, 0) 70%);
+}
+
+.mc-bg__veil {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 50% 50%, rgba(0, 0, 0, 0) 45%, rgba(0, 0, 0, 0.45) 100%);
+}

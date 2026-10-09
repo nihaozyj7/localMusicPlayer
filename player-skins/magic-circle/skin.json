@@ -1,0 +1,25 @@
+{
+  "id": "magic-circle",
+  "name": "魔法阵舞台",
+  "version": "1.0.0",
+  "apiVersion": "3.0",
+  "author": "第三方样式（按「世界地图 + 运镜」设计稿实现）",
+  "description": "歌词钉在贯穿全图的巨型魔法阵上，镜头按段落飞过去：平移 / 弧线 / 拉远俯瞰 / 旋转入场 / 穿越白闪，128 段频谱直驱刻度环",
+  "entry": "skin.js",
+  "styles": ["skin.css"],
+  "icon": { "file": "assets/icon.svg" },
+  "order": 260,
+  "capabilities": {
+    "spectrum": true,
+    "background": true,
+    "interactive": true
+  },
+  "colors": {
+    "bg": "#04060d",
+    "fg": "#ecefff",
+    "accent": "#7aa2ff"
+  },
+  "performance": {
+    "budgetFps": 45
+  }
+}

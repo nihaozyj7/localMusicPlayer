@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="魔法阵舞台">
+  <defs>
+    <linearGradient id="mcg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8fd0ff"/>
+      <stop offset="0.55" stop-color="#7aa2ff"/>
+      <stop offset="1" stop-color="#c79bff"/>
+    </linearGradient>
+    <g id="tick">
+      <rect x="31.2" y="3" width="1.6" height="5" rx="0.6" fill="url(#mcg)"/>
+    </g>
+  </defs>
+
+  <g fill="none" stroke="url(#mcg)" stroke-width="1.6">
+    <circle cx="32" cy="32" r="27.5" opacity="0.85"/>
+    <circle cx="32" cy="32" r="21" opacity="0.55"/>
+    <circle cx="32" cy="32" r="13.5" opacity="0.75"/>
+    <circle cx="32" cy="32" r="6.5" opacity="0.9"/>
+  </g>
+
+  <!-- 外圈刻度（128 段频谱环的缩影） -->
+  <g>
+    <use href="#tick"/>
+    <use href="#tick" transform="rotate(30 32 32)"/>
+    <use href="#tick" transform="rotate(60 32 32)"/>
+    <use href="#tick" transform="rotate(90 32 32)"/>
+    <use href="#tick" transform="rotate(120 32 32)"/>
+    <use href="#tick" transform="rotate(150 32 32)"/>
+    <use href="#tick" transform="rotate(180 32 32)"/>
+    <use href="#tick" transform="rotate(210 32 32)"/>
+    <use href="#tick" transform="rotate(240 32 32)"/>
+    <use href="#tick" transform="rotate(270 32 32)"/>
+    <use href="#tick" transform="rotate(300 32 32)"/>
+    <use href="#tick" transform="rotate(330 32 32)"/>
+  </g>
+
+  <!-- 六芒（内核几何） -->
+  <path
+    d="M32 18.5 L43.6 39 L20.4 39 Z M32 45.5 L20.4 25 L43.6 25 Z"
+    fill="none"
+    stroke="url(#mcg)"
+    stroke-width="1.3"
+    opacity="0.8"
+  />
+  <circle cx="32" cy="32" r="2.6" fill="#dce8ff"/>
+</svg>
