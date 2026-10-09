@@ -43,7 +43,7 @@ export function Load(songID) {
 }
 
 /**
- * LoadCached 只读缓存（前端在「本地 + 在线」都拿不到时用它确认一次）。
+ * LoadCached 只读缓存（前端在「本地 + 在线」都拿不到时确认一次）。
  * @param {string} songID
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */
