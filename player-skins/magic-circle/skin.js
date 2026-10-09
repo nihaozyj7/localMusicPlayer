@@ -14,15 +14,33 @@
        任何一条宿主补丁都会把它拉起来）；
      · 不碰 window / document.documentElement，不发网络请求；
      · 频谱是拉取式：在自己的帧循环里现取（清单已声明 capabilities.spectrum）。
+
+   ★ 为什么子模块是 `await import(...)` 而不是静态 import（别改成静态的）
+     /skins/ 是**逐文件**鉴权的：入口被加载成
+         /skins/magic-circle/skin.js?t=sk_xxx
+     而 ES 模块解析相对说明符时**只保留路径、丢掉 query**，于是写
+         import { … } from "./lib/config.js"
+     实际会去请求 /skins/magic-circle/lib/config.js（没带 t）→ 403，
+     表现为「Failed to fetch dynamically imported module」，而且报错挂在
+     **入口**上，极难定位（内置两款都是单文件，所以一直没暴露）。
+     这里把入口 URL 上的 query 原样透传给子模块；子模块内部的依赖也各
+     自透传（它们的 import.meta.url 已经带着 token）。浏览器预览没有 query，
+     透传的是空串，退化成普通相对导入 —— 两种环境都成立。
+     （宿主侧的根因修复见 internal/skins：带 token 的响应下发 Path=/skins 的
+      cookie，之后子资源凭 cookie 放行；那需要重新编译才生效，这份是
+      **现在就能用**的那一半。）
    ========================================================================== */
 
-import { NODE, PERF, POOL, TRANSITIONS, WORLD } from "./lib/config.js";
-import { createAnalyser, beatFire } from "./lib/spectrum.js";
-import { ROLE_NAMES, buildWorld, pickTransition } from "./lib/layout.js";
-import { createCamera } from "./lib/camera.js";
-import { KIND, createPool } from "./lib/particles.js";
-import { createRenderer } from "./lib/render.js";
-import { clamp, mulberry32, smoothTo, TAU } from "./lib/util.js";
+const Q = new URL(import.meta.url).search;
+const load = (file) => import(`./lib/${file}${Q}`);
+
+const { NODE, PERF, POOL, TRANSITIONS, WORLD } = await load("config.js");
+const { createAnalyser, beatFire } = await load("spectrum.js");
+const { ROLE_NAMES, buildWorld, pickTransition } = await load("layout.js");
+const { createCamera } = await load("camera.js");
+const { KIND, createPool } = await load("particles.js");
+const { createRenderer } = await load("render.js");
+const { clamp, mulberry32, smoothTo, TAU } = await load("util.js");
 
 /** 舞台 DOM */
 const SHELL = `

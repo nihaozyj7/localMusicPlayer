@@ -14,7 +14,9 @@
    所有平滑值自然衰减到 0 —— 舞台退成待机的暗转，不需要额外分支。
    ========================================================================== */
 
-import { avgRange, clamp, smoothTo } from "./util.js";
+// 子模块依赖同样要透传 token（原因见 skin.js 顶部那段说明）
+const Q = new URL(import.meta.url).search;
+const { avgRange, clamp, smoothTo } = await import(`./util.js${Q}`);
 
 /**
  * 创建一个分析器（一次挂载一个）。

@@ -15,10 +15,12 @@
      · zoom < PERF.detailZoom 时只画轮廓（拉远俯瞰时的 LOD）。
    ========================================================================== */
 
-import { INTERACT, NODE, PALETTE, PARALLAX, PERF, WORLD } from "./config.js";
-import { zoomForText } from "./layout.js";
-import { KIND } from "./particles.js";
-import { clamp, easeOutCubic, hsl, lerp, mulberry32, TAU } from "./util.js";
+// 子模块依赖同样要透传 token（原因见 skin.js 顶部那段说明）
+const Q = new URL(import.meta.url).search;
+const { INTERACT, NODE, PALETTE, PARALLAX, PERF, WORLD } = await import(`./config.js${Q}`);
+const { zoomForText } = await import(`./layout.js${Q}`);
+const { KIND } = await import(`./particles.js${Q}`);
+const { clamp, easeOutCubic, hsl, lerp, mulberry32, TAU } = await import(`./util.js${Q}`);
 
 const FONT_FAMILY = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const STAR_COUNT = 420;

@@ -10,8 +10,10 @@
    ★ 想给某首歌手调位置：改 config.js 的 LAYOUT.nodes（见那里的示例）。
    ========================================================================== */
 
-import { LAYOUT, TRANSITIONS } from "./config.js";
-import { clamp, lerp } from "./util.js";
+// 子模块依赖同样要透传 token（原因见 skin.js 顶部那段说明）
+const Q = new URL(import.meta.url).search;
+const { LAYOUT, TRANSITIONS } = await import(`./config.js${Q}`);
+const { clamp, lerp } = await import(`./util.js${Q}`);
 
 const DEG = Math.PI / 180;
 

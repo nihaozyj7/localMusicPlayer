@@ -11,17 +11,12 @@
              消除“数字静止感”。
    ========================================================================== */
 
-import { TRANSITIONS } from "./config.js";
-import {
-  clamp,
-  easeInCubic,
-  easeInOutCubic,
-  easeInOutQuint,
-  easeOutBack,
-  easeOutCubic,
-  lerp,
-  quadAt,
-} from "./util.js";
+// 子模块依赖同样要透传 token（原因见 skin.js 顶部那段说明）
+const Q = new URL(import.meta.url).search;
+const { TRANSITIONS } = await import(`./config.js${Q}`);
+const { clamp, easeInCubic, easeInOutCubic, easeInOutQuint, easeOutBack, easeOutCubic, lerp, quadAt } = await import(
+  `./util.js${Q}`
+);
 
 /** 镜头跟随的靠近系数（60fps 下每帧 0.06 ≈ 0.7 秒到位） */
 const FOLLOW_ALPHA = 0.06;

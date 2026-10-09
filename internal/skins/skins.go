@@ -666,7 +666,16 @@ func (m *Manager) Handler() http.Handler {
 		}
 
 		// 鉴权：与 /audio/、/cover/ 同一套口径（本机随机 token，随进程变化）。
-		if r.URL.Query().Get("t") != m.token {
+		//
+		// ★ 为什么还会有一张 cookie 票：入口模块是**带 token** 加载的
+		//   （/skins/<id>/skin.js?t=xxx），而 ES 模块解析相对说明符时只保留
+		//   路径、**丢掉 query** —— 插件包内 `lib/*.js` 的相对导入拿到的 URL
+		//   没有 t，按老规矩直接 403，表现为「Failed to fetch dynamically
+		//   imported module」，而且报错挂在**入口**上，极难定位。
+		//   契约（docs/42 §4.1、设置页的 AI 提示词）明确允许插件带私有模块，
+		//   所以给「拿对 token 进来」的那次响应签一张 Path=/skins 的会话票，
+		//   之后的子资源凭票放行。
+		if !m.authorize(w, r) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -689,6 +698,43 @@ func (m *Manager) Handler() http.Handler {
 		}
 		m.serveData(w, r, rel)
 	})
+}
+
+// authCookie 鉴权会话票的 cookie 名（Path 只覆盖 /skins/，值随进程 token 变化）。
+const authCookie = "lmplayer_skin"
+
+// authorize 判定这次请求能不能读样式资源：
+//
+//   - query 里带对了 token → 放行，并**顺手签发**上面那张会话票；
+//   - 或者带着我们签发的会话票 → 放行（插件包内 lib/ 的相对导入走这条）。
+//
+// 安全口径不降级：
+//   - 票只在「已经拿对 token」的那次响应上签发，Path=/skins + HttpOnly +
+//     SameSite=Strict —— 页面 JS 拿不到它，**跨站请求根本不会带上它**
+//     （浏览器里随便一个网页 fetch /skins/ 依然 403），而同源的两个舞台
+//     （详情页 / 桌面背景歌词）本来就有 token，语义不变；
+//   - 直接在地址栏敲 /skins/…（无 query 也无票）仍然 403；
+//   - token 是随进程随机的，进程退出票即失效。
+func (m *Manager) authorize(w http.ResponseWriter, r *http.Request) bool {
+	// token 为空说明 Manager 没初始化好：此时**一律拒绝**
+	// （否则空 query `?t=` 会与空 token 相等，等于没有鉴权）
+	if m.token == "" {
+		return false
+	}
+	if r.URL.Query().Get("t") == m.token {
+		http.SetCookie(w, &http.Cookie{
+			Name:     authCookie,
+			Value:    m.token,
+			Path:     Prefix,
+			HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+		})
+		return true
+	}
+	if c, err := r.Cookie(authCookie); err == nil && c.Value == m.token {
+		return true
+	}
+	return false
 }
 
 // serveBuiltin 尝试从内嵌资源里取文件；取到返回 true。
