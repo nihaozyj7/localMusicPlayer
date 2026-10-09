@@ -24,7 +24,7 @@ import { $ } from "./dom.js";
 import { requestAppUpdate } from "./ui/base.js";
 import { MOCK_LYRICS, MOCK_LYRICS_ALT } from "./mock.js";
 import { backend, isWails } from "./bridge.js";
-import { refreshSpectrum, seekTo, spectrum } from "./audio.js";
+import { seekTo, spectrumSnapshot } from "./audio.js";
 import { commit, isLiked, playNext, playPrev, songById, state, toggleLike, togglePlay } from "./store.js";
 import { DEFAULT_COVER, clamp, coverOf } from "./utils.js";
 import { animationMs } from "./runtime-tokens.js";
@@ -859,6 +859,12 @@ function ensureSkinHost() {
       options: optionsSnapshot,
       env: skinEnvSnapshot,
       defaultCover: DEFAULT_COVER,
+      /**
+       * 频谱（拉取式，契约 v3）：插件真的调 ctx.spectrum() 时才会走到这里 ——
+       * 「读到才采样」的门控天然成立（30Hz 节流在 spectrum.js）。
+       * 没在播放返回 null，与旧约定一致（停止 = 无频谱，皮肤回待机起伏）。
+       */
+      spectrum: () => (state.playing ? spectrumSnapshot() : null),
       actions: {
         seek(ms) {
           seekTo(ms);
@@ -1288,72 +1294,20 @@ export function syncPlaybackState({ force = false, lyricIndex } = {}) {
   //   而这条路径在播放期间每 250ms 走一次）。调用方若已经算过就直接传进来。
   const idx = typeof lyricIndex === "number" ? lyricIndex : lyricIndexOf(currentSong());
   push({ type: "progress", ...playback, lyricIndex: idx });
-  pushSpectrum(playback.playing);
+  // 频谱不再随这条路径推送（契约 v3 拉取式）：插件自己在帧循环里调
+  // ctx.spectrum()，读到才采样 —— 见 spectrum.js 的读门控说明。
 }
 
 /* --------------------------------------------------------------------------
-   频谱：由宿主采样，再按帧推给皮肤
+   频谱：插件拉取（ctx.spectrum()），宿主不再推送 spectrum 补丁
    --------------------------------------------------------------------------
-   需求原文是「采样应该在主程序里采出来之后交给样式」，这条就是那样做的：
+   这里曾经是「宿主 30Hz 采样 → push spectrum 补丁」的整套循环（含段数参数化、
+   停止帧、Array.from 序列化）。契约改为纯拉取后：
 
-     · 谁有音频谁负责采。详情页宿主有 <audio>（audio.js 里的 AnalyserNode 分接），
-       桌面背景歌词宿主没有 —— 两者现在都是**推**：那个窗口的频谱由主窗口采好
-       经 IPC 送过去（见 desktop-wallpaper.js）。皮肤只有一条渲染路径。
-     · 皮肤用 defineSkin 的 spectrum 字段声明自己要多少段（例如按频段起伏的电平柱），
-       没声明的皮肤这里一次采样都不做，也不会有任何推送。
-     · 30Hz 而不是每帧：电平柱是离散的像素方块，30Hz 看不出台阶，
-       推送量却只有逐帧的 50%。停止播放时补推 bands:null，皮肤回到待机起伏。
+     · 采样/缓存/节流全在 spectrum.js（读门控：插件不读就一次都不采）；
+     · 段数固定 128（全谱），插件自己切粒度；
+     · 主窗口的 provider 接在 ensureSkinHost 的 source.spectrum 上。
    -------------------------------------------------------------------------- */
-
-/** 频谱推送频率（Hz）。 */
-const SPECTRUM_HZ = 30;
-/** 皮肤声明 spectrum: true 时的默认段数。 */
-const SPECTRUM_DEFAULT_BANDS = 32;
-
-let lastSpecAt = 0;
-/** 皮肤当前是否处在「有频谱」的状态（用来只推一次停止帧）。 */
-let specLive = false;
-
-/** 皮肤要多少段频谱；0 = 这个样式不需要。 */
-function skinSpectrumBands() {
-  const flag = host.skin?.spectrum;
-  if (!flag) return 0;
-  const n = Number(flag);
-  if (!Number.isFinite(n) || n <= 0) return SPECTRUM_DEFAULT_BANDS;
-  return Math.max(1, Math.min(256, Math.round(n)));
-}
-
-function pushSpectrum(playing) {
-  const bands = playing === true ? skinSpectrumBands() : 0;
-  if (!bands) {
-    lastSpecAt = 0;
-    if (!specLive) return;
-    specLive = false;
-    push({ type: "spectrum", bands: null });
-    return;
-  }
-  const at = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
-  if (lastSpecAt && at - lastSpecAt < 1000 / SPECTRUM_HZ) return;
-
-  // 后端播放时频谱由 Go 侧算，先异步拉一次再读缓存。
-  // 不等它（fire-and-forget）：本函数在逐帧循环里被调，等异步会让整个
-  // 渲染循环挂住；频谱晚一帧用上完全看不出来。
-  void refreshSpectrum(bands);
-
-  const data = spectrum(bands);
-  if (!data) {
-    // 音频图还没建起来（还没真正播过第一首）：一直不推，等它可用
-    if (!specLive) return;
-    lastSpecAt = 0;
-    specLive = false;
-    push({ type: "spectrum", bands: null });
-    return;
-  }
-  lastSpecAt = at;
-  specLive = true;
-  // 统一成普通数组：两个宿主的补丁形状一致，皮肤不用分辨 Float32Array
-  push({ type: "spectrum", bands: Array.from(data, (v) => Math.round(v * 1000) / 1000) });
-}
 
 /* --------------------------------------------------------------------------
    主题变化

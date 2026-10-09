@@ -672,8 +672,10 @@ func (s *PlayerService) State() map[string]any {
 
 // Spectrum 返回当前频谱（0..1 的数组）。拿不到时 bands 为 nil。
 //
-// bands 参数是皮肤声明的段数（见 contract.js 的 spectrum 字段）。
-// 越界会被钳到 1..128，与前端 audio.js#spectrum 的口径一致。
+// 契约 v3 的频谱是**拉取式**（插件调 ctx.spectrum()），前端固定请求
+// 128 段对数全谱（见 frontend/src/js/spectrum.js 的 SPECTRUM_BANDS），
+// 插件要更细/更粗的粒度都由它自己从这份全谱里切。
+// bands 参数保留（绑定签名不变），越界仍钳到 1..128，与前端口径一致。
 func (s *PlayerService) Spectrum(bands int) map[string]any {
 	if bands <= 0 {
 		bands = audioplay.DefaultBands

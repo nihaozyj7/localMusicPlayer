@@ -29,6 +29,7 @@ import {
   listSkins,
   noteBuiltin,
   parseLrc,
+  PATCH_TYPES,
   registerSkin,
   resetBuiltins,
   resolveSkin,
@@ -156,6 +157,13 @@ test("defineSkin：补齐默认值，order 默认排在内置样式之后", () =
   assert.deepEqual(skin.styles, []);
   assert.deepEqual(skin.colorsMissing, []);
   assert.ok(skin.order >= 100);
+});
+
+test("PATCH_TYPES：没有 spectrum 补丁 —— 契约 v3 的频谱是拉取式 ctx.spectrum()", () => {
+  assert.equal(PATCH_TYPES.includes("spectrum"), false, "spectrum 补丁必须已移除（改拉取）");
+  assert.ok(PATCH_TYPES.includes("progress"), "高频进度补丁还在");
+  assert.ok(PATCH_TYPES.includes("state"));
+  assert.equal(new Set(PATCH_TYPES).size, PATCH_TYPES.length, "类型不能重复");
 });
 
 test("composeSkin：元数据以清单为准，生命周期以模块为准", () => {

@@ -50,6 +50,7 @@ import {
   state,
 } from "./store.js";
 import { toast } from "./dom.js";
+import { SPECTRUM_BANDS, spectrumSnapshot as pullSpectrum } from "./spectrum.js";
 
 /* --------------------------------------------------------------------------
    模块状态
@@ -1048,59 +1049,25 @@ export function seekAudio(ms) {
    -------------------------------------------------------------------------- */
 
 /**
- * 取当前频谱（0..1 的归一化幅度数组）。
+ * 频谱快照（契约 v3 拉取式）：插件经 `ctx.spectrum()` 读到的就是它。
  *
- * 后端可用时由 Go 侧算（internal/audioplay 的 Analyzer，逐语义复刻了原来
- * 前端 AnalyserNode 的算法：同样的对数分桶、同样的字节域平滑），
- * 所以皮肤的观感与迁移前一致。
+ * 返回 `{bands, at} | null`：
+ *   · bands —— 固定 **128 段**对数分桶全谱（0..1），插件自己切需要的粒度；
+ *   · at    —— 采样时刻（performance.now()），插件可据此判断新鲜度 / 插值；
+ *   · null  —— 还没有可用样本（开播第一帧、后端未就绪、预览无音频）。
  *
- * 这是**同步**接口（皮肤在 rAF 里直接调），所以这里返回的是最近一次
- * 异步拉取的缓存值 —— 真正的数据由 refreshSpectrum() 按需刷新。
+ * 读到才刷新（读门控，见 spectrum.js）：插件不读 = 一次采样都不做。
+ * 这里只多做一件事 —— 后端不可用时退回 Web Audio 的 AnalyserNode
+ * （浏览器预览路径；分桶算法与 Go 侧逐语义一致）。
  *
- * @param {number} [bands] 想要的频段数（1..128）
- * @returns {Float32Array|null}
+ * @returns {{bands: Float32Array, at: number}|null}
  */
-let spectrumCache = null;
-let spectrumBands = 0;
-
-export function spectrum(bands = 32) {
+export function spectrumSnapshot() {
   if (!backendReady) {
-    // 回退路径：仍然用 Web Audio 的 AnalyserNode
-    return spectrumLegacy(bands);
+    const legacy = spectrumLegacy(SPECTRUM_BANDS);
+    return legacy ? { bands: legacy, at: performance.now() } : null;
   }
-  const n = Math.max(1, Math.min(128, Math.floor(bands) || 32));
-  if (!spectrumCache || spectrumBands !== n) return null;
-  return spectrumCache;
-}
-
-/**
- * 向后端拉一次频谱并更新缓存。由需要频谱的调用方按自己的节奏调
- * （桌面背景歌词是 30Hz，详情页皮肤由宿主每帧调）。
- *
- * 用「拉」而不是「推」：频谱是 30Hz 的高频数据，推给前端意味着每秒
- * 30 次 web message 编解码；而它只在「详情页打开 + 皮肤声明了 spectrum」
- * 时才有用。拉的方式让不需要时完全没有开销。
- */
-export async function refreshSpectrum(bands = 32) {
-  if (!backendReady) return null;
-  const n = Math.max(1, Math.min(128, Math.floor(bands) || 32));
-  try {
-    const res = await backend.playerSpectrum(n);
-    const arr = res?.bands;
-    if (!arr || !arr.length) {
-      spectrumCache = null;
-      return null;
-    }
-    // 复用同一个 Float32Array，避免每帧分配
-    if (!spectrumCache || spectrumCache.length !== arr.length) {
-      spectrumCache = new Float32Array(arr.length);
-      spectrumBands = n;
-    }
-    for (let i = 0; i < arr.length; i += 1) spectrumCache[i] = arr[i];
-    return spectrumCache;
-  } catch {
-    return null;
-  }
+  return pullSpectrum();
 }
 
 /* --------------------------------------------------------------------------

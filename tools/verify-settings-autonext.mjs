@@ -69,9 +69,29 @@ writePack(
     entry: "skin.js",
     styles: ["skin.css"],
     order: 300,
+    // 同时声明频谱能力：用来验收拉取式 ctx.spectrum()（固定 128 段全谱）
+    capabilities: { spectrum: true },
     colors: { bg: "#0b0f1a", fg: "#eaf2ff", accent: "#7aa2ff" },
   },
-  `export default {\n  mount(ctx) {\n    ctx.root.innerHTML = '<div class="demo"><div class="demo__t">accept-chrome</div></div>';\n  },\n};\n`
+  `export default {
+  mount(ctx) {
+    ctx.root.innerHTML = '<div class="demo"><div class="demo__t">accept-chrome</div></div>';
+    window.__spec = { reads: 0, nulls: 0, len: 0, at: 0 };
+  },
+  update(ctx) {
+    const p = window.__spec;
+    if (!p) return;
+    p.reads += 1;
+    const s = ctx.spectrum();
+    if (s) {
+      p.len = s.bands.length;
+      p.at = s.at;
+    } else {
+      p.nulls += 1;
+    }
+  },
+};
+`
 );
 writePack(
   "accept-plain",
@@ -83,8 +103,16 @@ writePack(
     entry: "skin.js",
     styles: ["skin.css"],
     order: 301,
+    // 故意**不声明** spectrum：验收"没声明就给 null（且宿主不采样）"
   },
-  `export default {\n  mount(ctx) {\n    ctx.root.innerHTML = '<div class="demo"><div class="demo__t">accept-plain</div></div>';\n  },\n};\n`
+  `export default {
+  mount(ctx) {
+    ctx.root.innerHTML = '<div class="demo"><div class="demo__t">accept-plain</div></div>';
+    // 没声明 capabilities.spectrum 却来读：应当拿到 null（宿主会在控制台提醒一次）
+    window.__specPlain = ctx.spectrum();
+  },
+};
+`
 );
 console.log("数据目录:", DATA);
 
@@ -548,6 +576,38 @@ try {
     switched2 && snap2?.ended >= before.ended + 1,
     JSON.stringify({ switched2, ended: snap2?.ended })
   );
+
+  /* ---- 6. 频谱拉取式（契约 v3 修订：删 spectrum 补丁，改 ctx.spectrum()）---- */
+  // 此刻音频正在真实播放（5c 刚接过下一首）。
+  // ① 声明了 capabilities.spectrum 的插件：每次更新现取，应拿到固定 128 段全谱；
+  // ② 没声明的插件（accept-plain 在 mount 里读一次）：应拿到 null —— 能力门生效。
+  await evalJs(`(() => { window.__app.setPlayerViewMode("accept-chrome"); window.__app.openPlayer(); return true; })()`);
+  await sleep(2600);
+  const spec = await evalJs(`(() => {
+    const p = window.__spec;
+    return p ? { reads: p.reads, nulls: p.nulls, len: p.len, at: Math.round(p.at) } : null;
+  })()`);
+  console.log("频谱快照（声明了 spectrum 的插件）:", JSON.stringify(spec));
+  check(
+    "拉取式频谱：声明 capabilities.spectrum 的插件读到固定 128 段全谱",
+    spec && spec.len === 128 && spec.reads > 5 && spec.at > 0 && spec.nulls < spec.reads,
+    JSON.stringify(spec)
+  );
+
+  await evalJs(`(() => { window.__app.setPlayerViewMode("accept-plain"); return true; })()`);
+  await sleep(1400);
+  const specPlain = await evalJs(
+    `(() => ({ probe: typeof window.__specPlain === "undefined" ? "unmounted" : window.__specPlain }))()`
+  );
+  check(
+    "未声明 capabilities.spectrum 的插件读 ctx.spectrum() 得到 null（能力门生效）",
+    specPlain?.probe === null,
+    JSON.stringify(specPlain)
+  );
+
+  // 复位回内置样式并收起详情页，保持与前面检查结束时一致的状态
+  await evalJs(`(() => { window.__app.setPlayerViewMode("classic"); window.__app.state.playerOpen = false; window.__app.commit(); return true; })()`);
+  await sleep(700);
 
   console.log("--- 控制台相关日志 ---");
   console.log(logs.filter((l) => /skins|样式|player|音频/.test(l)).slice(-15).join("\n"));

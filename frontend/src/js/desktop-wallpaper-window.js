@@ -27,12 +27,14 @@
    （唯一的例外是报「首帧已提交」时用的那两次 requestAnimationFrame，
    见本文件末尾的 afterPaint：那是**一次性**的，不是循环。）
 
-   连实时频谱也是这样：那个窗口没有音频图，采样由**主窗口**做完，
-   按 ~25Hz 以 spectrum 补丁推过来（desktop-wallpaper.js），皮肤只负责画。
-   所以这里不需要任何「渲染循环」—— 推一帧画一帧，不推就不画。
+   连实时频谱也是拉取式（契约 v3）：频谱在 **Go 后端**算，两个窗口都能直接拉 ——
+   插件在 update() 里调 ctx.spectrum() 才按需采样（读门控，见 spectrum.js），
+   主窗口推来的 progress 补丁天然就是「读取时机」。
+   所以这里仍然不需要任何「渲染循环」—— 推一帧画一帧，不推就不画。
    ========================================================================== */
 
 import { backend, connect, on } from "./bridge.js";
+import { spectrumSnapshot } from "./spectrum.js";
 import { DEFAULT_COVER } from "./utils.js";
 import { loadSkin, resolveSkin } from "@localmusicplayer/player-skins";
 import { createSkinHost } from "./skinhost.js";
@@ -115,6 +117,12 @@ function ensureSkinHost() {
       options: () => state.options,
       env: envSnapshot,
       defaultCover: DEFAULT_COVER,
+      /**
+       * 频谱（拉取式）：这个窗口没有音频图，但频谱在 Go 后端算 ——
+       * 插件读 ctx.spectrum() 时直接向后端要（读门控，见 spectrum.js）。
+       * 读不到（预览 / 后端没起）返回 null，插件按"无频谱"画。
+       */
+      spectrum: () => (state.playback.playing ? spectrumSnapshot() : null),
       actions: NOOP_ACTIONS,
     },
   });

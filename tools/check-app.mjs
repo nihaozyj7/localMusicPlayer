@@ -146,31 +146,41 @@ check(
   JSON.stringify(skins)
 );
 
-/* ---- 2：/skins/ 同源托管真的通（含 MIME 与 no-store）---- */
-const route = await evaluate(`(async () => {
+/* ---- 2：/skins/ 同源托管真的通（含鉴权 / MIME / no-store）---- */
+//
+// /skins/ 带**随进程随机**的 token（与 /audio/、/cover/ 同口径，见 skins.go）。
+// token 只存在于运行中的进程里，从页面的调试钩子取（main.js 的 window.__app）。
+const token = await evaluate("window.__app && window.__app.skinsToken ? window.__app.skinsToken() : ''");
+if (!token) {
+  check("取得 /skins/ 访问令牌", false, "window.__app.skinsToken 不可用");
+}
+const route = await evaluate(`(async (t) => {
+  const q = "?t=" + encodeURIComponent(t);
   const out = {};
-  const j = await fetch("/skins/_template/skin.js");
+  const j = await fetch("/skins/_template/skin.js" + q);
   out.jsStatus = j.status;
   out.jsType = j.headers.get("content-type") || "";
   out.noStore = j.headers.get("cache-control") || "";
   out.bodyHasExport = (await j.text()).includes("export default");
-  out.traversal = (await fetch("/skins/../main.go")).status;
-  out.dotfile = (await fetch("/skins/.git/config")).status;
-  out.post = (await fetch("/skins/_template/skin.js", { method: "POST" })).status;
+  out.traversal = (await fetch("/skins/../main.go" + q)).status;
+  out.dotfile = (await fetch("/skins/.git/config" + q)).status;
+  out.post = (await fetch("/skins/_template/skin.js" + q, { method: "POST" })).status;
+  out.noToken = (await fetch("/skins/_template/skin.js")).status;
   return out;
-})()`);
+})(${JSON.stringify(token || "")})`);
 check(
-  "示例样式随应用落盘，并且 /skins/ 能同源取到（MIME + no-store）",
+  "示例样式随应用落盘，并且 /skins/ 能同源取到（鉴权 + MIME + no-store）",
   route?.jsStatus === 200 &&
     /text\/javascript/.test(route.jsType) &&
     route.noStore.includes("no-store") &&
-    route.bodyHasExport === true,
+    route.bodyHasExport === true &&
+    route.noToken === 403,
   JSON.stringify(route)
 );
 check(
   "/skins/ 挡住了目录穿越、隐藏文件与非 GET 请求",
   route?.traversal === 404 && route?.dotfile === 404 && route?.post === 405,
-  `traversal=${route?.traversal} dotfile=${route?.dotfile} post=${route?.post}`
+  `traversal=${route?.traversal} dotfile=${route?.dotfile}（带 token 后隐藏段 = 404 NotFound） post=${route?.post}`
 );
 
 /* ---- 3：新绑定在运行时存在（Cover 多封面 API + Skins）---- */

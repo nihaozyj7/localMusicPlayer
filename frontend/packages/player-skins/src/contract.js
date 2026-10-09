@@ -13,6 +13,7 @@
        宿主的 DOM 里只留一个空的挂载点，插件内部结构宿主一概不碰。
      · 信息变化由宿主**主动推**（`update(ctx, patch)` + `ctx.on(type, fn)`），
        插件不需要轮询，也不需要 import 宿主内部模块。
+ *        （唯一例外是**实时频谱**：它是拉取式，插件调 `ctx.spectrum()` 取。）
 
    ★ v3 相对 v2 的**破坏性**变化（现在没有第三方样式在野，是重写成本最低的窗口）：
      1. 插件包格式改为「清单（skin.json）+ 入口 + 自带 CSS/图标/私有模块」，
@@ -28,6 +29,11 @@
      5. 修正 v2 的四处契约漂移：`ctx.spectrum`（从未写进契约）、歌词对象的
         `status/statusText`（实际存在）、`song` 里的 `path/online`（提示词写错，
         实际只给 5 个字段）、以及第二宿主残留的 `ctx.audio`。
+ *      6. （3.0 落地后的同窗口修订）实时频谱从「宿主 30Hz 硬推 spectrum 补丁」改为
+ *         **拉取式 ctx.spectrum()**：固定 128 段全谱一次给足、插件自己切粒度，
+ *         **读到才采样**（不读 = 零开销），并消灭"补丁在两帧之间到达"的错位。
+ *         数据仍在 Go 后端算（internal/audioplay/spectrum.go），只改分发方式。
+ *         破坏面为零：内置两款都不声明频谱、此时还没有第三方 3.0 插件在野。
    ========================================================================== */
 
 /**
@@ -60,7 +66,9 @@ export const PATCH_TYPES = [
   "lyrics", // 歌词装载完成或更新：{ lyrics }
   "progress", // 播放进度（宿主已按帧节流）：{ position, duration, playing, lyricIndex }
   "state", // 播放状态变化（播放/暂停/音量/静音）：{ playing, volume, muted }
-  "spectrum", // 实时频谱（宿主采样，约 30Hz）：{ bands: number[] | null }
+  // ★「spectrum」补丁已移除：契约 v3 的频谱是**拉取式** —— 插件调
+  //   ctx.spectrum() 主动取全谱，读到才采样（30Hz 节流，固定 128 段）。
+  //   没有补丁就意味着"插件不读 = 一次采样都没有"，这条是硬性省电保证。
   "options", // 设置项变化：{ options }
   "theme", // 主题/深浅色变化：{ themeId, mode }
   "resize", // 舞台尺寸变化：{ width, height }
@@ -95,8 +103,10 @@ export const PATCH_TYPES = [
  * 能力声明：宿主据此决定采不采样、给不给背景层容器、允不允许交互。
  *
  * @typedef {Object} SkinCapabilities
- * @property {number|boolean} [spectrum] 需要实时频谱；数字 = 段数（1~128），true = 32 段。
- *   未声明时宿主**一次都不采样**（省掉后端算频谱的开销）。
+ * @property {number|boolean} [spectrum] 需要实时频谱的**许可**（写 true 即可；
+ *   历史写法的数字同样只当许可用，段数固定为 128 段全谱，插件自己切粒度）。
+ *   未声明时 ctx.spectrum() 返回 null 且宿主一次都不采样。
+ *   数据是**拉取式**的：插件真的调 ctx.spectrum() 才会触发采样（读门控）。
  * @property {boolean} [background] true = 需要「整窗背景层」容器（ctx.backgroundRoot）。
  *   宿主同时会把 `.app` 的 `data-skin-background` 置为 yes —— 宿主壳会据此退成半透明，
  *   这正是 v2 里靠 `data-mode="immersive"` 写死的那件事。
@@ -224,6 +234,21 @@ export const PATCH_TYPES = [
  */
 
 /**
+ * 实时频谱快照（拉取式）。
+ *
+ * `bands` 是固定 **128 段**对数分桶全谱（Go 侧 BucketExponent 分桶，值域 0..1）：
+ * 插件要画 16 根电平柱就自己抽 16 个、要画细频谱就整条用 —— 分辨率不随调用变化，
+ * 所以同一份缓存可以服务插件里的多种视觉。
+ *
+ * `at` 是采样时刻（performance.now()），用于判断新鲜度 / 帧间插值：
+ * 读得比 30Hz 密会拿到同一份数据（at 不变），这是正常状态。
+ *
+ * @typedef {Object} SpectrumSnapshot
+ * @property {Float32Array} bands 128 段对数全谱（0..1，**只读**：不要改它）
+ * @property {number} at 采样时刻（performance.now()）
+ */
+
+/**
  * @typedef {Object} SkinContext 宿主上下文（插件拿到的唯一入口）
  * @property {HTMLElement} root 插件自己的挂载点（宿主已清空）
  * @property {HTMLElement} backgroundRoot 整窗背景层的容器（宿主已就位，按需填充）
@@ -234,6 +259,8 @@ export const PATCH_TYPES = [
  * @property {() => {list:string[],index:number,current:string}} covers 封面集合
  * @property {() => SkinOptions} options 显示相关设置
  * @property {() => SkinEnv} env 运行环境（尺寸 / 主题 / 清晰度 / 前后台）
+ * @property {() => SpectrumSnapshot|null} spectrum 实时频谱（拉取式）：
+ *   调用本身即采样门控 —— 不读就不采；null = 没在播放 / 样本未攒够 / 未声明能力
  * @property {SkinSdk} sdk 可复用渲染 SDK
  * @property {(type: string, fn: (patch: any) => void) => () => void} on 订阅宿主推送
  * @property {SkinActions} actions 受控动作（不要在插件里直接操作宿主状态）

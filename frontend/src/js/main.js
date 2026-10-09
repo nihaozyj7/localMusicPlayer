@@ -714,4 +714,7 @@ window.__app = {
   nextIndex,
   setPlayerViewMode,
   applyGainForSong,
+  // 自动化验收钩子（tools/check-app.mjs）：/skins/ 资源路由带**随进程随机**的
+  // token，页面外的工具拿不到它 —— 与上面 setPlayerViewMode 同类的测试入口。
+  skinsToken: () => backend.skinsToken(),
 };

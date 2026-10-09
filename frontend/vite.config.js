@@ -102,118 +102,30 @@ function wailsRuntimeShim() {
   };
 }
 
+import { servePreviewSkins } from "../tools/serve-preview-skins.mjs";
+
 /* --------------------------------------------------------------------------
    内置样式预览（只在预览服务器上存在，不进任何构建产物）
    --------------------------------------------------------------------------
-   契约 v3 起**内置样式是 Go 侧的只读资源**（internal/skins/resources/player-skins），
-   不在前端包里 —— 浏览器预览（npm run dev，没有 Go 后端）因此一个样式都看不到，
-   详情页会是空舞台。这个中间件镜像 `internal/skins` 的扫描与清单归一化
-   （见 internal/skins/skins.go 的 Reload / normalizeManifest，字段形状必须同形），
-   让预览拿到与真机**完全一样**的清单，再走同一条 loadSkin 路径。
-   真机走 Go，不经过这里；这里也没有 token（预览服务器本就只在本机开发时运行）。
+   实现抽到 tools/serve-preview-skins.mjs —— 与 tools/verify-wallpaper-first-frame
+   的假后端**共用一份**（两处都是"没有 Go 的场景"，影子清单与 Go 的 List() 必须
+   同形，改一边要改另一边）。契约 v3 起内置样式在 Go 侧只读资源里，浏览器预览
+   没有 Go，没有这份影子清单就一个样式都看不到。真机走 Go，不经过这里。
    -------------------------------------------------------------------------- */
 
-const SKINS_PREVIEW_ROOT = path.join(repoRoot, "internal", "skins", "resources", "player-skins");
-
-const SKINS_PREVIEW_MIME = {
-  ...MIME,
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-  ".woff2": "font/woff2",
-};
-
-/** 与 skins.go#normalizeManifest 同形的默认值补齐 */
-function previewManifest(raw, id) {
-  const m = raw && typeof raw === "object" ? raw : {};
-  const rel = (v) => {
-    const s = typeof v === "string" ? v.trim() : "";
-    return s && !s.includes("..") && !s.startsWith("/") ? s : "";
-  };
-  return {
-    ...m,
-    id: m.id || id,
-    name: m.name || id,
-    version: m.version || "",
-    apiVersion: m.apiVersion || "3.0", // 老清单没写版本 → 按当前契约处理（同 Go）
-    author: m.author || "",
-    description: m.description || "",
-    entry: rel(m.entry || m.module) || "skin.js",
-    styles: (Array.isArray(m.styles) ? m.styles.map(rel).filter(Boolean) : []),
-  };
-}
-
-function listPreviewSkins() {
-  const out = [];
-  let names = [];
-  try {
-    names = fs
-      .readdirSync(SKINS_PREVIEW_ROOT, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && !d.name.startsWith("_") && !d.name.startsWith("."))
-      .map((d) => d.name)
-      .sort();
-  } catch {
-    return out;
-  }
-  for (const id of names) {
-    const dir = path.join(SKINS_PREVIEW_ROOT, id);
-    let raw = null;
-    try {
-      raw = JSON.parse(fs.readFileSync(path.join(dir, "skin.json"), "utf8"));
-    } catch {
-      /* 坏清单 → 按没有清单处理（同 Go） */
-    }
-    const manifest = previewManifest(raw, id);
-    if (!fs.existsSync(path.join(dir, manifest.entry))) continue; // 没入口就不算样式包
-    let styles = manifest.styles.filter((s) => fs.existsSync(path.join(dir, s)));
-    if (!manifest.styles.length) {
-      try {
-        styles = fs
-          .readdirSync(dir)
-          .filter((f) => f.toLowerCase().endsWith(".css") && !f.startsWith("."))
-          .sort();
-      } catch {
-        styles = [];
-      }
-      manifest.styles = styles;
-    }
-    out.push({ id, name: manifest.name, version: manifest.version, module: manifest.entry, styles, builtin: true, source: "builtin", manifest });
-  }
-  return out;
-}
-
 function previewSkins() {
-  const install = (server) => {
-    server.middlewares.use((req, res, next) => {
-      const raw = String(req.url || "");
-      if (!raw.startsWith("/preview-skins/")) return next();
-      const query = raw.indexOf("?");
-      const pathname = decodeURIComponent(query >= 0 ? raw.slice(0, query) : raw);
-      const rel = path.normalize(pathname.replace(/^\/preview-skins\/?/, "")).replace(/^([/\\])+/, "");
-
-      if (rel === "__list.json") {
-        res.setHeader("Content-Type", "application/json; charset=utf-8");
-        res.setHeader("Cache-Control", "no-store");
-        res.end(JSON.stringify(listPreviewSkins()));
-        return;
-      }
-      const full = path.join(SKINS_PREVIEW_ROOT, rel);
-      if (!full.startsWith(SKINS_PREVIEW_ROOT) || !fs.existsSync(full) || !fs.statSync(full).isFile()) {
-        res.statusCode = 404;
-        res.end("404 Not Found");
-        return;
-      }
-      res.setHeader("Content-Type", SKINS_PREVIEW_MIME[path.extname(full).toLowerCase()] || "application/octet-stream");
-      res.setHeader("Cache-Control", "no-store");
-      fs.createReadStream(full).pipe(res);
-    });
-  };
   return {
-    name: "lmplayer:preview-skins",
-    configureServer: install,
-    configurePreviewServer: install,
+    name: "preview-skins",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const raw = req.url || "";
+        const q = raw.indexOf("?");
+        const pathname = decodeURIComponent(q >= 0 ? raw.slice(0, q) : raw);
+        if (servePreviewSkins(pathname, res)) return;
+        next();
+      });
+    },
   };
 }
 

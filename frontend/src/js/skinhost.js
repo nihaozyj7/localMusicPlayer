@@ -32,6 +32,8 @@ const ERROR_STREAK_LIMIT = 5;
  * @property {() => object} source.media
  * @property {() => object} source.options
  * @property {() => object} source.env
+ * @property {() => {bands: Float32Array, at: number}|null} [source.spectrum]
+ *   频谱快照（拉取式）：读到才采样，宿主在没播放时返回 null
  * @property {object} source.actions
  * @property {string} source.defaultCover
  * @property {(active:boolean, skin:object|null) => void} [onChromeApplied] 壳层配色变化后的回调（诊断/测试用）
@@ -56,6 +58,8 @@ export function createSkinHost(opts) {
   let ctx = null;
   let errorStreak = 0;
   let chromeActive = false;
+  /** 忘声明 capabilities.spectrum 却来读的提醒（每个插件只喊一次，别刷屏） */
+  let warnedNoSpectrumCapability = false;
 
   function makeCtx() {
     return {
@@ -84,6 +88,28 @@ export function createSkinHost(opts) {
       },
       options: () => source.options(),
       env: () => source.env(),
+      /**
+       * 实时频谱（契约 v3 拉取式）：
+       *   → { bands: Float32Array(128段对数全谱, 0..1), at: 采样时刻 } | null
+       * null = 当前没有频谱（没在播放 / 样本还没攒够 / 预览无后端）。
+       *
+       * 调用本身就是门控：只有真的读了，宿主才会去采样（30Hz 节流在 spectrum.js）。
+       * 但清单里必须声明 capabilities.spectrum —— 没声明就返回 null 并提醒一次，
+       * 这样"忘了声明"能立刻在控制台看到，而不是默默白嫖采样开销。
+       */
+      spectrum() {
+        if (!skin) return null;
+        if (!skin.spectrum) {
+          if (!warnedNoSpectrumCapability) {
+            warnedNoSpectrumCapability = true;
+            console.warn(
+              `[skins] ${skin.id} 读了 ctx.spectrum()，但清单没声明 capabilities.spectrum —— 已返回 null。要频谱请在 skin.json 里加 "capabilities": { "spectrum": true }`
+            );
+          }
+          return null;
+        }
+        return source.spectrum?.() ?? null;
+      },
       actions: source.actions,
       on(type, fn) {
         if (typeof fn !== "function") return () => {};
@@ -162,6 +188,7 @@ export function createSkinHost(opts) {
     skin = next;
     mountedId = next.id;
     errorStreak = 0;
+    warnedNoSpectrumCapability = false;
 
     if (view) {
       // data-skin 是插件 CSS 的作用域钩子（宿主注入的 @scope 也用它）

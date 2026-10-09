@@ -27,6 +27,7 @@ import { join, dirname, extname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
+import { servePreviewSkins } from "./serve-preview-skins.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(root, "frontend", "dist");
@@ -49,6 +50,10 @@ function bindingId(file, fnName) {
 }
 const READY_ID = bindingId("windowservice.js", "MarkDesktopWallpaperReady");
 const PAINTED_ID = bindingId("windowservice.js", "MarkDesktopWallpaperPainted");
+// 契约 v3 起内置样式靠运行期发现（页面问 Go 要清单）——stub 得把这两个调用
+// 接到本工具服务器的影子清单上，否则 registry 是空的、皮肤永远挂不上。
+const LIST_ID = bindingId("skinservice.js", "List");
+const TOKEN_ID = bindingId("skinservice.js", "Token");
 
 const EDGE = [
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
@@ -65,11 +70,15 @@ export class CancellablePromise extends Promise { cancel() {} cancelOn() { retur
 const st = (window.__stub = { calls: [], painted: 0, handlers: {}, readyPayload: {} });
 const READY = ${READY_ID};
 const PAINTED = ${PAINTED_ID};
+const LIST = ${LIST_ID};
+const TOKEN = ${TOKEN_ID};
 export const Call = {
   ByID(id) {
     st.calls.push(id);
     if (id === READY) return Promise.resolve(st.readyPayload || {});
     if (id === PAINTED) { st.painted += 1; return Promise.resolve({ ok: true }); }
+    if (id === LIST) return fetch("/preview-skins/__list.json").then((r) => r.json()).catch(() => ({}));
+    if (id === TOKEN) return Promise.resolve("");
     return Promise.resolve({});
   },
   ByName() { return Promise.resolve({}); },
@@ -102,6 +111,9 @@ const server = createServer((req, res) => {
     res.writeHead(200, { "Content-Type": MIME[".js"], "Cache-Control": "no-store" });
     return res.end(RUNTIME_STUB);
   }
+  // 样式清单 + 样式文件（/preview-skins/* 与真机形状的 /skins/*）——
+  // 与 vite 预览共用 tools/serve-preview-skins.mjs 的影子实现
+  if (servePreviewSkins(p, res)) return;
   const f = join(DIST, (p === "/" ? "/index.html" : p).replace(/^\//, ""));
   if (!f.startsWith(DIST) || !existsSync(f) || statSync(f).isDirectory()) {
     res.writeHead(404);
@@ -254,13 +266,24 @@ check("皮肤容器已撤掉 hidden", mounted.hidden === false);
 check("整窗背景层的 mode 钩子已打上", mounted.appMode === "classic");
 
 /* ---- 场景 2：先媒体、后样式（IPC 顺序不保证）---- */
+//
+// 语义修订（随契约 v3 落地后的行为）：初始载荷里没有 skinId 时，页面会先挂
+// **默认样式**（见 desktop-wallpaper-window.js 的 applyPatch：`|| !skinHost?.skin`
+// —— 主窗口的初始载荷理论上总带 skinId，这里防御的是"那条先丢/后到"的极端序，
+// 空窗永远黑着比短暂顶默认样式严重得多）。所以"媒体先到就通知显示"是合法的：
+// 此时皮肤 + 数据都齐，帧是有效的。真正要保证的是 —— 顺序颠倒后**最终样式
+// 正确**、且通知**只有一次**。
 await load({});
+const beforeSkin = await evaluate(`document.getElementById("wp-playerview").dataset.skin || ""`);
 await emit(SONG_PATCH);
 await sleep(300);
-check("只有媒体、还没有样式时不显示", (await painted()) === 0);
+const early = await painted();
 await emit(THEME);
 await sleep(300);
-check("样式随后到位 → 通知显示", (await painted()) === 1);
+check("song 先到、theme 后到：最终通知显示且只通知一次", (await painted()) === 1);
+const finalSkin = await evaluate(`document.getElementById("wp-playerview").dataset.skin || ""`);
+check("顺序颠倒后最终挂上的仍是 theme 指定的样式", finalSkin === "classic");
+console.log(`  （初始样式=${beforeSkin || "无"}；媒体先到时已通知=${early === 1}）`);
 
 /* ---- 场景 3：曲库为空（song 是 null）也算合法画面 ---- */
 await load({});

@@ -294,14 +294,14 @@ function skinAiPrompt(ref = null) {
   "styles": ["skin.css"],
   "icon": { "file": "assets/icon.svg" },
   "order": 200,
-  "capabilities": { "spectrum": 32, "background": false, "interactive": true },
+  "capabilities": { "spectrum": true, "background": false, "interactive": true },
   "colors": { "bg": "#0b1020", "fg": "#f2f4ff", "accent": "#7aa2ff" },
   "performance": { "budgetFps": 45 }
 }
 规则：
 1. colors 必填，二选一：{"bg":…,"fg":…} 或 {"theme":true}（跟随宿主主题）。宿主用它决定**自己的控件栏与浮层**配色并做对比度兜底；缺了不报错，但设置页会在你的样式卡片上显示一个警告图标，且宿主把控件栏降级成主题配色。
 2. colors 里能用纯 hex / rgb() / hsl() / oklch() / color-mix()；不要放 var(--…) 这种宿主令牌（宿主无法据此算对比度）。
-3. capabilities.spectrum 要几段实时频谱（1~128，true = 32）；不声明就一次都收不到（值是 null）。capabilities.background = true 表示你要整窗背景层（ctx.backgroundRoot），宿主会据此把标题栏/底栏/侧边栏退成半透明。capabilities.interactive 默认 true；false 表示你可能被挂到"只能看"的舞台（桌面背景歌词窗口）。
+3. capabilities.spectrum = true 表示"我要用实时频谱"（写 true 即可，段数固定由宿主给 128 段全谱，你要几根柱子自己切）；不声明就一次都收不到（ctx.spectrum() 返回 null，且宿主一次都不采样）。数据是**拉取式**的：真的调 ctx.spectrum() 才采样，不调就零开销。capabilities.background = true 表示你要整窗背景层（ctx.backgroundRoot），宿主会据此把标题栏/底栏/侧边栏退成半透明。capabilities.interactive 默认 true；false 表示你可能被挂到"只能看"的舞台（桌面背景歌词窗口）。
 4. entry 与 styles 必须是本目录内的相对路径，不能含 .. 或写绝对路径。
 5. 目录里可放子目录与静态资源（.js .mjs .css .json .png .jpg .jpeg .webp .gif .svg .woff .woff2）；以 _ 或 . 开头的文件与目录不会被提供，请避开。
 6. 不要依赖打包器、npm 包、CDN、外链字体或图片；产物必须能直接放进目录就运行。
@@ -340,6 +340,8 @@ ctx 是插件唯一的入口（只读，直接改它不会生效）：
 - ctx.playback()      返回 { position, duration, playing, volume, muted }，时间单位毫秒
 - ctx.options()       返回 { showLyrics, lyricsFontSize, animations, coverCarousel, coverCarouselInterval, interactive, performanceMode }
 - ctx.env()           返回 { themeId, mode, width, height, dpr, reducedMotion, foreground }
+- ctx.spectrum()      实时频谱（**拉取式**）：返回 { bands: Float32Array(128 段对数全谱, 0..1), at: 采样时刻 } 或 null；
+                      调用本身就是采样门控（不调就不采，节流 ~30Hz）；null = 没在播放 / 刚开播 / 没声明 capabilities.spectrum
 - ctx.sdk             复用零件：createLyricsView / createFxLyrics / createCamera / createBackgroundLayer / applyFit / fitScale / parseLrc / findLyricIndex / formatLrcTime / html / util
 - ctx.actions         受控动作：seek(ms) / seekBy(ms) / seekRatio(0~1) / togglePlay / next / prev / toggleLike / like / unlike / openFolder / openCoverPanel / openLyricsPanel / reportBackdrop({bg,fg})
 - ctx.on(type, fn)    订阅宿主推送，返回取消订阅的函数
@@ -347,7 +349,8 @@ ctx 是插件唯一的入口（只读，直接改它不会生效）：
 - ctx.themeId / ctx.mode（getter）
 
 宿主推送：update(ctx, patch) 与 ctx.on() 收到同一份 patch，patch.type 取值：
-mount（挂载后立即一次，带全量快照）/ song（换歌）/ media（封面变化或轮播切图）/ lyrics（歌词装载完成或匹配状态变化）/ progress（播放进度，已按帧节流）/ state（播放、暂停、音量）/ spectrum（实时频谱 { bands: number[]|null }，按清单声明采样）/ options / theme / resize / visibility（详情页开关，据此停帧）/ close / destroy。
+mount（挂载后立即一次，带全量快照）/ song（换歌）/ media（封面变化或轮播切图）/ lyrics（歌词装载完成或匹配状态变化）/ progress（播放进度，已按帧节流）/ state（播放、暂停、音量）/ options / theme / resize / visibility（详情页开关，据此停帧）/ close / destroy。
+没有 spectrum 补丁：实时频谱是**拉取式**（ctx.spectrum()，见上），推的那套已删除。
 patch 只带与该类型相关的字段；不确定时用 ctx.track() / ctx.lyrics() / ctx.playback() 现取快照（推送之后快照与载荷一定一致）。
 
 【四、CSS 约定】
@@ -369,7 +372,7 @@ patch 只带与该类型相关的字段；不确定时用 ctx.track() / ctx.lyri
 5. destroy(ctx) 里清掉定时器、事件监听、ResizeObserver 与大对象引用；切换插件会先 destroy 再 mount，两个方法都可能被多次调用。
 6. 不要往 window / document 上挂全局变量或样式，不要改 document.documentElement 上的 data-* 属性。
 7. 不要发网络请求（CSP 也会拦），不要用 eval / new Function。
-8. 用到实时频谱就必须在清单 capabilities.spectrum 里写明段数；没写就别用（bands 恒为 null）。
+8. 用到实时频谱就必须在清单 capabilities.spectrum 里声明 true；没声明就别调 ctx.spectrum()（返回 null 并在控制台提醒一次）。频谱是拉取式的：在你自己的帧循环/更新里现取即可，不要指望宿主推给你。
 9. 自绘封面取色类效果算出的配色，用 ctx.actions.reportBackdrop({bg, fg}) 回报给宿主（宿主据此重算控件栏配色），不要自己去改宿主 DOM。
 
 【六、交付前自检清单】
@@ -379,7 +382,7 @@ patch 只带与该类型相关的字段；不确定时用 ctx.track() / ctx.lyri
 4. CSS 选择器是相对舞台根写的（舞台自身用 ::scope），没有加 .playerview[data-skin=…] 前缀；
 5. 没有 fetch、没有 setInterval 轮询、没有全局选择器、没有 !important、没有碰宿主 UI 的选择器；
 6. 换歌、歌词装载、进度更新、深浅色切换、窗口缩放、切走再切回都不会报错，也不留残余节点或监听；
-7. 声明了 spectrum 才用频谱；用了背景层才声明 background。
+7. 声明了 spectrum 才调 ctx.spectrum()（拉取式，不调不采样）；用了背景层才声明 background。
 
 【七、参考资料】
 ${skinReferenceSection(ref)}

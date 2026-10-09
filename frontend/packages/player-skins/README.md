@@ -43,7 +43,7 @@
   "styles": ["skin.css"],
   "icon": { "file": "assets/icon.svg" },
   "order": 200,
-  "capabilities": { "spectrum": 32, "background": false, "interactive": true },
+  "capabilities": { "spectrum": true, "background": false, "interactive": true },
   "colors": { "bg": "#0b1020", "fg": "#f2f4ff", "accent": "#7aa2ff" },
   "performance": { "budgetFps": 45 }
 }
@@ -81,6 +81,8 @@ ctx.covers()     { list, index, current }
 ctx.playback()   { position, duration, playing, volume, muted }
 ctx.options()    { showLyrics, lyricsFontSize, animations, coverCarousel, …, interactive }
 ctx.env()        { themeId, mode, width, height, dpr, reducedMotion, foreground }
+ctx.spectrum()   { bands: Float32Array(128 段对数全谱, 0..1), at } | null
+                 ← 拉取式：调用才采样（30Hz 节流）；不调不采、没声明不给
 ctx.sdk          复用零件（见 sdk.js）
 ctx.actions      seek / seekBy / seekRatio / togglePlay / next / prev /
                  toggleLike / like / unlike / openFolder / openCoverPanel /
@@ -97,9 +99,11 @@ ctx.defaultCover / ctx.themeId / ctx.mode
 | `song` / `media` / `lyrics` | 对应快照 | 换歌 / 封面轮播 / 歌词装载 |
 | `progress` | `{ position, duration, playing, lyricIndex }` | 已按帧节流 |
 | `state` | `{ playing, volume, muted }` | 播放状态与音量 |
-| `spectrum` | `{ bands: number[] \| null }` | 按清单 `capabilities.spectrum` 采样，约 30Hz；未声明则恒为 null |
 | `options` / `theme` / `resize` / `visibility` / `chrome` | 对应对象 | 设置、主题、尺寸、前后台、壳层配色 |
 | `close` / `destroy` | — | 收起 / 即将卸载 |
+
+**没有 `spectrum` 补丁**：实时频谱是**拉取式** `ctx.spectrum()`（固定 128 段全谱、
+读到才采样，见上）。插件不读 = 一次采样都没有；也不再有"补丁在两帧之间到达"的错位。
 
 不确定时用 `ctx.track() / ctx.lyrics() / ctx.playback()` 现取快照：**任何一次推送
 之后，快照与载荷一定一致**（`ctx.media()` 是它们的聚合）。

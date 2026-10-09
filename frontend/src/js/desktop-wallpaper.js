@@ -45,11 +45,9 @@
 
 import { backend, isWails } from "./bridge.js";
 import { commit, state } from "./store.js";
-import { refreshSpectrum, spectrum } from "./audio.js";
 import { paintFloatingLyricBar } from "./desktop-lyrics.js";
 import { requestAppUpdate } from "./ui/base.js";
 import { getRuntimeTokens } from "./runtime-tokens.js";
-import { resolveSkin } from "@localmusicplayer/player-skins";
 import {
   currentLyricWindow,
   currentMediaSnapshot,
@@ -301,17 +299,6 @@ function collectWallpaperPatches() {
   // 暂停时 position 不动，下面的比对会自然把它挡掉，不会空转。
   const at = now();
 
-  // —— ⑧ 频谱：给「会跟着旋律动」的样式 ——
-  //
-  // 这是唯一一条**按固定频率采样**的增量（其余都靠值比对去重）：波形每帧都在变，
-  // 逐帧比对没有意义，而去重后的结果就是「一直推」。所以按 ~25Hz 推，
-  // 并且只在「桌面背景歌词开着 + 正在播放 + 当前样式声明了 spectrum」时才推。
-  //
-  // 那个窗口里没有 <audio>、也没有音频图（它自己算不出频谱），所以数据只能由
-  // 主窗口送过去 —— 靠频谱律动的样式（例如像素电平柱）就是靠这一条动起来的。
-  const spec = spectrumPatch(at, playback.playing);
-  if (spec) patches.push(spec);
-
   const due =
     playback.position !== last.position ||
     media.lyrics.index !== last.lyricIndex ||
@@ -340,83 +327,15 @@ function now() {
 }
 
 /* --------------------------------------------------------------------------
-   频谱：为什么单开一条「按频率推」的增量
+   频谱：不再由主窗口中继（契约 v3 拉取式）
    --------------------------------------------------------------------------
-   桌面背景歌词窗口里挂的是同一个皮肤，但它没有播放器、没有音频图。采样统一在
-   主程序里做（audio.js 的 AnalyserNode），这里只负责把采到的帧送过去 ——
-   详情页那边由 playerhost.js 直接推给皮肤，这边推给另一个窗口。
-   没有这一条，那种跟着频谱律动的电平柱投到桌面上就是一排匀速起伏的死方块。
+   旧设计：那个窗口没有音频图，所以主窗口代采、按 ~25Hz 打包成 spectrum 补丁
+   经 IPC 送过去 —— 只要窗口开着就一直推，对面读不读都推。
 
-   采样频率取 25Hz 而不是主窗口的每帧：电平柱是像素方块的离散高度，
-   25Hz 已经看不出台阶，而 IPC 量只有逐帧推送的 40%。
-   停止播放（或换到不需要频谱的样式）时补推一帧 bands:null，
-   让对面回到皮肤自己的待机起伏，而不是冻在最后一帧上。
+   新设计：频谱在 **Go 后端**算（PlayerService.Spectrum），两个窗口都能直接
+   拉；壁纸窗口自己在插件读 ctx.spectrum() 时按需拉（见 spectrum.js 的读门控）。
+   少掉一条每秒 25 次的常驻 IPC，"插件不读就不采样"也贯彻到了第二个窗口。
    -------------------------------------------------------------------------- */
-
-/** 两次频谱推送之间的最小间隔（ms）。40ms ≈ 25Hz。 */
-const SPECTRUM_INTERVAL = 40;
-/** 样式只声明 spectrum: true（没说段数）时用的默认段数。 */
-const SPECTRUM_DEFAULT_BANDS = 32;
-
-/** 上一次推频谱的时刻；0 表示「当前没在推」。 */
-let lastSpectrumAt = 0;
-/** 对面窗口当前是否处在「有频谱」的状态（用来只推一次停止帧）。 */
-let spectrumLive = false;
-
-/** 对面那个样式要多少段频谱（皮肤自己在 defineSkin 里声明）；0 = 不需要。 */
-function skinSpectrumBands() {
-  const id = state.pvMode || state.config.playerViewMode || "";
-  try {
-    // 注意 resolveSkin() 返回的是 { skin, fellBack } 而不是皮肤本身 ——
-    // 写成 resolveSkin(id)?.spectrum 恒为 undefined（踩过一次：频谱一直不推）。
-    const flag = resolveSkin(id).skin?.spectrum;
-    if (!flag) return 0;
-    const n = Number(flag);
-    if (!Number.isFinite(n) || n <= 0) return SPECTRUM_DEFAULT_BANDS;
-    return Math.max(1, Math.min(256, Math.round(n)));
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * 需要时产出一条 spectrum 增量，否则返回 null。
- * @param {number} at 当前时刻（now()）
- * @param {boolean} playing 是否正在播放
- */
-function spectrumPatch(at, playing) {
-  const bands = desktopWallpaperEnabled() && playing === true ? skinSpectrumBands() : 0;
-
-  if (!bands) {
-    lastSpectrumAt = 0;
-    if (!spectrumLive) return null;
-    spectrumLive = false;
-    return { type: "spectrum", bands: null };
-  }
-
-  if (lastSpectrumAt && at - lastSpectrumAt < SPECTRUM_INTERVAL) return null;
-
-  // 频谱在后端播放时由 Go 侧计算，需要先异步拉一次再读缓存。
-  // 拉取本身不阻塞（fire-and-forget）：本函数在 30Hz 的推送循环里被调，
-  // 等它会让整条推送链卡住。拿到的值下一轮才用得上，这是可以接受的 ——
-  // 频谱本来就是「稍微滞后一点也看不出」的数据。
-  void refreshSpectrum(bands);
-
-  const data = spectrum(bands);
-  if (!data) {
-    // 音频图还没建起来（还没真正播过第一首）：一直不推，等它可用
-    if (!spectrumLive) return null;
-    lastSpectrumAt = 0;
-    spectrumLive = false;
-    return { type: "spectrum", bands: null };
-  }
-
-  lastSpectrumAt = at;
-  spectrumLive = true;
-  // Float32Array 直接进 JSON 会变成 {"0":0.1,"1":…} 这种对象，必须转成普通数组；
-  // 两位小数够画电平柱，体积也小一个数量级。
-  return { type: "spectrum", bands: Array.from(data, (v) => Math.round(v * 100) / 100) };
-}
 
 /**
  * 主窗口每次 tick 调用：把当前画面推给背景歌词窗口。
