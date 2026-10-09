@@ -68,21 +68,20 @@ export function createCamera() {
    * 起飞。
    *
    * @param {{x:number,y:number,zoom:number}} to 目标机位
-   * @param {string} type pan | arc | zoomOut | rotate | pass
+   * @param {string} type pan | dash | arc | zoomOut | rotate | pass
    * @param {number} now 当前秒
+   * @param {number} [durOverride] 转场时长（秒）。**提前量落位时用它**：
+   *   飞行时间 = 歌词开口前提前量，于是唱到的时候镜头已经停稳。
    */
-  function flyTo(to, type, now) {
+  function flyTo(to, type, now, durOverride) {
     const kind = TRANSITIONS[type] ? type : "pan";
     const from = { x: cam.x, y: cam.y, z: cam.z };
     const target = { x: to.x, y: to.y, z: to.zoom };
     setTarget(target.x, target.y, target.z);
 
-    if (
-      kind === "pan" &&
-      Math.hypot(target.x - from.x, target.y - from.y) < 1 &&
-      Math.abs(target.z - from.z) < 0.01
-    ) {
-      cam.flight = null; // 本来就在目标上：不用演一遍
+    // 本来就在目标上：不用演一遍（任何运镜都一样）
+    if (Math.hypot(target.x - from.x, target.y - from.y) < 1 && Math.abs(target.z - from.z) < 0.01) {
+      cam.flight = null;
       return;
     }
 
@@ -94,7 +93,7 @@ export function createCamera() {
       to: target,
       ctrl,
       t0: now,
-      dur: TRANSITIONS[kind].dur,
+      dur: Number.isFinite(durOverride) && durOverride > 0 ? durOverride : TRANSITIONS[kind].dur,
       dir: target.x >= from.x ? 1 : -1,
     };
   }
@@ -131,6 +130,17 @@ export function createCamera() {
           y: pt.y,
           z: lerp(from.z, to.z, e) * (1 - 0.2 * Math.sin(Math.PI * p)),
           rot: 0,
+        };
+      }
+      case "dash": {
+        // 短间隔专用：**不拉远**，直着冲过去 —— 前 70% 加速、后 30% 刹住，
+        // 途中加一点点推镜 punch 与两度侧倾，快但不“平”。
+        const e = p < 0.7 ? lerp(0, 0.87, easeInCubic(p / 0.7)) : lerp(0.87, 1, easeOutCubic((p - 0.7) / 0.3));
+        return {
+          x: lerp(from.x, to.x, e),
+          y: lerp(from.y, to.y, e),
+          z: lerp(from.z, to.z, e) * (1 + 0.07 * Math.sin(Math.PI * p)),
+          rot: 0.035 * Math.sin(Math.PI * p) * f.dir,
         };
       }
       case "zoomOut": {
@@ -222,11 +232,11 @@ export function createCamera() {
     return { x, y, z, rot: cam.rot };
   }
 
-  /** 当前运镜进度（无运镜返回 null）；白闪 / 连接光路都读它 */
+  /** 当前运镜进度（无运镜返回 null）；白闪 / 连接光路 / 飞行特效都读它 */
   function progress(now) {
     const f = cam.flight;
     if (!f) return null;
-    return { type: f.type, p: clamp((now - f.t0) / f.dur, 0, 1), from: f.from, to: f.to };
+    return { type: f.type, p: clamp((now - f.t0) / f.dur, 0, 1), from: f.from, to: f.to, ctrl: f.ctrl };
   }
 
   /** 穿越式的白闪强度（0..1） */

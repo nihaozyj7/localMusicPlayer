@@ -36,7 +36,8 @@ const load = (file) => import(`./lib/${file}${Q}`);
 
 const { NODE, PERF, POOL, TRANSITIONS, WORLD } = await load("config.js");
 const { createAnalyser, beatFire } = await load("spectrum.js");
-const { ROLE_NAMES, buildWorld, pickTransition } = await load("layout.js");
+const { ROLE_NAMES, buildWorld, pickTransition, gapSecBetween, leadFor, indexOfTime, focusAt } =
+  await load("layout.js");
 const { createCamera } = await load("camera.js");
 const { KIND, createPool } = await load("particles.js");
 const { createRenderer } = await load("render.js");
@@ -106,6 +107,8 @@ export default {
       // —— 播放数据（只在宿主补丁里更新，帧循环里不查快照）——
       lyricIndex: -1,
       position: 0,
+      /** 最后一次 progress 补丁的时刻（秒）：位置要在本地按 playing 外推 */
+      posAt: 0,
       duration: 0,
       playing: false,
       emptyText: "暂无歌词",
@@ -126,13 +129,15 @@ export default {
       idleSince: 0,
       stopped: false,
 
-      // —— 世界状态 ——
-      activeIdx: -1,
-      /** 渲染用的高亮节点下标（没有歌词时恒为 0：阵心那颗待机节点） */
-      activeNode: -1,
+      // —— 世界状态（双索引，见 syncStage 的说明）——
+      /** 镜头要落的地方（比歌词开口**早一个提前量**就切过去） */
+      focusIdx: -1,
+      /** 宿主说正在唱的那一句 */
+      singIdx: -1,
       hoverIdx: -1,
       lyricsKey: "",
-      flightFor: -1,
+      /** 上一帧是否还在飞行（用来抓“刚落地”那一刻撒涟漪） */
+      hadFlight: false,
       windX: 0,
       shatterDriftX: 0,
       // 粒子生成的分数累加器（速率按“每秒几个”给，逐帧攒余数）
@@ -148,6 +153,7 @@ export default {
 
     // rAF 时间戳与 performance.now() 同源，机位/状态的时间轴从挂载那一刻起算
     S.now = performance.now() / 1000;
+    S.posAt = S.now; // 位置外推的时钟起点（首帧起就在同一条时间轴上）
     S.idleSince = S.now;
 
     paintBackground(ctx);
@@ -177,6 +183,8 @@ export default {
         break;
       case "progress":
         S.position = Number(patch.position) || 0;
+        // 补丁 250ms 才来一次：记下时刻，帧循环里按 playing 把位置外推
+        S.posAt = performance.now() / 1000;
         if (Number.isFinite(patch.duration)) S.duration = Number(patch.duration);
         if (typeof patch.playing === "boolean") S.playing = patch.playing;
         if (Number.isFinite(patch.lyricIndex)) S.lyricIndex = patch.lyricIndex;
@@ -184,6 +192,7 @@ export default {
         break;
       case "state":
         S.playing = Boolean(patch.playing);
+        S.posAt = performance.now() / 1000;
         noteActivity();
         break;
       case "options":
@@ -250,15 +259,20 @@ function syncLyrics(ctx) {
   S.lyricsKey = key;
 
   S.world = buildWorld(l.lines);
-  S.activeIdx = -1; // 强制下一次 syncIndex 重新落位
-  S.flightFor = -1;
+  // 没歌词：焦点恒为阵心那颗（syncLyrics 已把它点亮，别让 onFocus 又把它按回去）
+  S.focusIdx = hasLyricLines() ? -1 : 0;
+  S.singIdx = -1;
+  S.hadFlight = false;
   S.pools.world.clear();
   reflowText();
-  S.activeNode = resolveActiveNode(S.lyricIndex);
 
-  const node = S.world.nodes[S.activeNode >= 0 ? S.activeNode : 0];
+  // 机位直接落到「当前该在的那一句」上（重建世界不该看到镜头飞一遍）
+  const est = estimatePos(S.now);
+  const node = S.world.nodes[hasLyricLines() ? indexOfTime(S.world.nodes, est) : 0];
   if (node) {
-    S.camCtl.snapTo(node.x, node.y, S.renderer.nodeZoom(node, sizeOf().W || 1280));
+    const zoom = S.renderer.nodeZoom(node, sizeOf().W || 1280);
+    node.targetZoom = zoom;
+    S.camCtl.snapTo(node.x, node.y, zoom);
     // 没有歌词的世界：阵心那颗节点就是舞台本身，直接亮着
     // （按 idle 画的话整屏只剩一圈 0.15 亮度的淡环，像没加载出来）
     if (!hasLyricLines()) {
@@ -274,17 +288,6 @@ function syncLyrics(ctx) {
 /** 这个世界里有没有“带歌词的节点” */
 function hasLyricLines() {
   return S.world.nodes.some((n) => Boolean(n.line));
-}
-
-/**
- * 宿主给的歌词行号 → 渲染用的节点下标。
- *   · 有歌词：行号能对上节点就是它；还没唱到第一句 → -1（视野里没有高亮节点）
- *   · 没歌词：恒为 0 —— 阵心那颗待机节点就是全部舞台
- */
-function resolveActiveNode(idx) {
-  if (!S.world.nodes.length) return -1;
-  if (!hasLyricLines()) return 0;
-  return idx >= 0 && S.world.nodes[idx] ? idx : -1;
 }
 
 /** 显示设置 → 帧率档位 / 动效开关 / 文字字号 */
@@ -307,10 +310,13 @@ function syncOptions(ctx) {
   }
 }
 
-/** 换歌词 / 改字号之后，把节点上的文字布局全部作废 */
+/** 换歌词 / 改字号之后，把节点上的文字布局与预渲染位图全部作废 */
 function reflowText() {
   if (!S) return;
-  for (const n of S.world.nodes) n.layout = null;
+  for (const n of S.world.nodes) {
+    n.layout = null;
+    n.glyphs = null;
+  }
 }
 
 function setText(key, value) {
@@ -453,10 +459,10 @@ function frame(ts) {
   S.analyser.update(snap ? snap.bands : null, dt);
   const sp = S.analyser.out;
 
-  // —— 世界状态 ——
-  syncIndex(now);
+  // —— 世界状态：提前量落位（focus） + 演唱状态（sing）——
+  syncStage(now);
   S.camCtl.update(dt, now);
-  advanceStates(now);
+  syncArrival();
 
   // —— 粒子 ——
   spawnParticles(dt, now, sp);
@@ -470,7 +476,8 @@ function frame(ts) {
     view: S.camCtl.view(now, { anim: S.anim }),
     spec: sp,
     world: S.world,
-    activeIdx: S.activeNode,
+    focusIdx: S.focusIdx,
+    singIdx: S.singIdx,
     hoverIdx: S.hoverIdx,
     flight: S.camCtl.progress(now),
     flash: S.camCtl.flash(now),
@@ -494,79 +501,158 @@ function frame(ts) {
 }
 
 /* ==========================================================================
-   节点状态机：idle → approaching → active → passing → idle
+   节点状态机（**双索引**：focus 抢跑，sing 跟宿主）
+   --------------------------------------------------------------------------
+     focusIdx  镜头要落的地方 —— 比这一句开口**早一个提前量**就切过去：
+               节点 → approaching（外环加速、文字汇聚、位图这时就预渲染好）
+     singIdx   宿主说正在唱的那句 —— 它开口时节点 → active（全亮），
+               被下一句取代时 → passing（文字碎成粒子）
+
+   于是「唱到的时候镜头已经停稳、字也拼完了」。这正是这次改动的核心：
+   短间隔（2~3 秒一句）如果等开口才起飞，词都在飞了还没到，
+   动画就“跟不上速度”；把起飞时间提前到开口之前，矛盾就没有了。
    ========================================================================== */
 
-/**
- * 高亮行变化 → 起飞 + 状态切换（时序见设计稿第六节）：
- *   T=0    上一个节点 → passing（文字碎成粒子，沿镜头飞行方向飘散）
- *   T=0    镜头开始飞向下一节点；下一节点 → approaching（外环加速、文字汇聚）
- *   T=飞到  下一节点 → active（文字聚合完成）
- */
-function syncIndex(now) {
-  const idx = S.lyricIndex;
-  if (idx === S.activeIdx) return;
-  const prevIdx = S.activeIdx;
-  const prev = prevIdx >= 0 ? S.world.nodes[prevIdx] : null;
-  const next = idx >= 0 ? S.world.nodes[idx] : null;
-  S.activeIdx = idx;
-  S.activeNode = resolveActiveNode(idx);
+/** 本地估算播放位置（宿主补丁 250ms 才来一次，直接用会一顿一顿） */
+function estimatePos(now) {
+  if (!S.playing) return S.position;
+  const dt = now - S.posAt;
+  // 时钟没对齐（刚挂载 / 补丁断了）就不外推 —— 否则一个 0 时刻会让位置飞到天边
+  if (!(dt > 0) || dt > 4) return S.position;
+  return S.position + dt * 1000;
+}
 
-  if (prev && (prev.state === "active" || prev.state === "approaching")) {
-    const dir = next ? dirOf(prev, next) : { x: 1, y: 0 };
-    prev.state = "passing";
-    prev.stateAt = now;
-    S.windX = dir.x * NODE.shatterDrift;
-    S.shatterDriftX = dir.x * NODE.shatterDrift;
-    shatter(prev, dir);
-  }
-  // 视野里只留一个 passing 做景深；上一轮没唱到的归位
+/** 每帧跑一次：focus/sing 有变化就切换状态与运镜 */
+function syncStage(now) {
+  const est = estimatePos(now);
+  const focus = focusAt(S.world.nodes, est);
+  const sing = hasLyricLines() ? S.lyricIndex : -1;
+
+  if (focus !== S.focusIdx) onFocus(focus, now);
+  if (sing !== S.singIdx) onSing(sing, now);
+
+  // 兜底归位：既不在焦点、也不是正在唱的那句，就不该继续亮着（字形也一并释放）
+  const hasLyric = hasLyricLines();
   for (const n of S.world.nodes) {
-    if (n.state === "passing" && n !== prev) n.state = "idle";
-    if (n.state === "approaching" && n !== next) n.state = "idle";
+    if (n.state === "approaching" && n.i !== S.focusIdx) n.state = "idle";
+    if (n.state === "active" && hasLyric && n.i !== S.singIdx) n.state = "idle";
+    if (n.state === "idle" && n.glyphs && n.i !== S.focusIdx && n.i !== S.singIdx) n.glyphs = null;
   }
+  advanceStates(now);
+}
 
-  const target = next || S.world.nodes[0] || null;
-  if (!target) {
+/** 焦点变了 → 起飞 + 该节点开始拼字 */
+function onFocus(next, now) {
+  const nodes = S.world.nodes;
+  const prevIdx = S.focusIdx;
+  S.focusIdx = next;
+
+  const prevNode = prevIdx >= 0 ? nodes[prevIdx] : null;
+  if (prevNode && prevNode.state === "approaching") prevNode.state = "idle";
+
+  const node = next >= 0 ? nodes[next] : null;
+  if (!node) {
     S.camCtl.setTarget(0, 0, 0.62);
-    S.flightFor = -1;
     return;
   }
-  const zoom = S.renderer.nodeZoom(target, sizeOf().W || 1280);
-  let type = "pan";
+
+  const zoom = S.renderer.nodeZoom(node, sizeOf().W || 1280);
+  node.targetZoom = zoom;
+  // ★ 提前把这句排好版、渲染成位图：镜头还在路上，字已经准备好了
+  S.renderer.prewarm(node, zoom);
+
+  const type = prevIdx < 0 ? "pan" : pickTransition(nodes, prevIdx, next);
+  const adjacent = next === prevIdx + 1 && next > prevIdx;
+  const gap = gapSecBetween(nodes, prevIdx, next);
+  // 逐句推进：**转场时长 = 提前量**，飞完刚好是开口那一刻
+  const dur = prevIdx < 0 ? NODE.assembleSec : adjacent ? leadFor(gap) : TRANSITIONS[type].dur;
 
   if (prevIdx < 0) {
     // 第一次落位（挂载 / 歌词重建）：机位已经 snap 在这里，不再演一段
-    S.camCtl.setTarget(target.x, target.y, zoom);
+    S.camCtl.setTarget(node.x, node.y, zoom);
   } else {
-    type = pickTransition(S.world.nodes, prevIdx, idx);
-    S.camCtl.flyTo({ x: target.x, y: target.y, zoom }, type, now);
+    S.camCtl.flyTo({ x: node.x, y: node.y, zoom }, type, now, dur);
   }
 
-  if (next) {
-    const dur = prevIdx < 0 ? NODE.assembleSec : TRANSITIONS[type].dur;
-    next.state = "approaching";
-    next.stateAt = now;
-    // 文字汇聚时长跟着运镜走：远跳转时先看见字在远处聚，落地刚好成型
-    next.assembleDur = Math.max(NODE.assembleSec, dur * 0.9);
-    S.flightFor = idx;
-  } else {
-    S.flightFor = -1;
+  node.state = "approaching";
+  node.stateAt = now;
+  // 文字汇聚时长跟着提前量走：镜头落地那一刻字正好拼完
+  node.assembleDur = Math.max(0.25, adjacent ? dur : Math.min(dur, 1));
+}
+
+/** 宿主的高亮行变了 → 上一句碎裂、这一句全亮 */
+function onSing(sing, now) {
+  const nodes = S.world.nodes;
+  const prevIdx = S.singIdx;
+  S.singIdx = sing;
+  if (!hasLyricLines()) return;
+
+  const prevNode = prevIdx >= 0 ? nodes[prevIdx] : null;
+  const node = sing >= 0 ? nodes[sing] : null;
+
+  // 上一句唱完 → passing：文字碎成粒子，沿镜头飞行方向飘散
+  if (prevNode && prevIdx > sing && (prevNode.state === "active" || prevNode.state === "approaching")) {
+    const dir = node ? dirOf(prevNode, node) : { x: 1, y: 0 };
+    prevNode.state = "passing";
+    prevNode.stateAt = now;
+    S.windX = dir.x * NODE.shatterDrift;
+    S.shatterDriftX = S.windX;
+    shatter(prevNode, dir);
+  }
+
+  // 这一句开口 → active（seek 直接跳过来的节点 stateAt 可能是 0，
+  // 文字聚合按 since 算出来 >1，等于立刻成型 —— 正是想要的）
+  if (node) node.state = "active";
+}
+
+/** 推进状态：碎裂结束 → idle（顺带把预渲染的字形释放掉） */
+function advanceStates(now) {
+  for (const n of S.world.nodes) {
+    if (n.state === "passing" && now - n.stateAt > 1.6) {
+      n.state = "idle";
+      n.stateAt = now;
+      n.glyphs = null;
+    }
   }
 }
 
-/** 推进状态：到达 → active；碎裂结束 → idle */
-function advanceStates(now) {
+/** 刚刚落地 → 在目标节点上撒一圈涟漪与灵光（“聚焦”的落点反馈） */
+function syncArrival() {
   const flying = Boolean(S.camCtl.cam.flight);
-  for (const n of S.world.nodes) {
-    if (n.state === "approaching") {
-      const dur = n.assembleDur || NODE.assembleSec;
-      if (!flying && S.flightFor === n.i && now - n.stateAt >= dur) n.state = "active";
-    } else if (n.state === "passing" && now - n.stateAt > 1.6) {
-      n.state = "idle";
-      n.stateAt = now;
+  if (S.hadFlight && !flying && S.anim) {
+    const node = S.world.nodes[S.focusIdx];
+    if (node) {
+      const rnd = S.acc.rnd;
+      S.pools.world.spawn({
+        kind: KIND.RIPPLE,
+        x: node.x,
+        y: node.y,
+        life: 0.9,
+        size: NODE.radius * 0.9,
+        hue: 200 + S.analyser.out.centroid * 40,
+        sat: 88,
+        light: 76,
+      });
+      for (let i = 0; i < 14; i += 1) {
+        const a = rnd() * TAU;
+        const r = NODE.radius * (0.5 + rnd() * 0.6);
+        const speed = 60 + rnd() * 120;
+        S.pools.world.spawn({
+          kind: KIND.MOTE,
+          x: node.x + Math.cos(a) * r,
+          y: node.y + Math.sin(a) * r,
+          vx: Math.cos(a) * speed,
+          vy: Math.sin(a) * speed - 30,
+          life: 1.1 + rnd() * 1.2,
+          size: 3 + rnd() * 5,
+          hue: 198 + rnd() * 40,
+          sat: 82,
+          light: 76,
+        });
+      }
     }
   }
+  S.hadFlight = flying;
 }
 
 function dirOf(a, b) {
@@ -729,9 +815,15 @@ function spawnMote(pool, x, y, angle, sp, rnd, boost) {
   });
 }
 
+/** 舞台的“主角”下标：正在唱的那句优先；还没开口（抢跑期间）就用镜头对准的那句 */
+function heroIdx() {
+  if (!S) return -1;
+  return S.singIdx >= 0 ? S.singIdx : S.focusIdx;
+}
+
 function currentNode() {
-  if (!S) return null;
-  return S.activeNode >= 0 ? S.world.nodes[S.activeNode] || null : null;
+  const i = heroIdx();
+  return i >= 0 ? S.world.nodes[i] || null : null;
 }
 
 /* ==========================================================================
@@ -739,7 +831,8 @@ function currentNode() {
    ========================================================================== */
 
 function updateHud() {
-  const node = S.activeNode >= 0 ? S.world.nodes[S.activeNode] : null;
+  const i = heroIdx();
+  const node = i >= 0 ? S.world.nodes[i] : null;
   const section = node ? S.world.sections[node.section] : null;
   setText("section", section ? section.name : ROLE_NAMES.solo);
   setText("empty", S.emptyText);

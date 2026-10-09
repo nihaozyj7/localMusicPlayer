@@ -20,7 +20,7 @@ const Q = new URL(import.meta.url).search;
 const { INTERACT, NODE, PALETTE, PARALLAX, PERF, WORLD } = await import(`./config.js${Q}`);
 const { zoomForText } = await import(`./layout.js${Q}`);
 const { KIND } = await import(`./particles.js${Q}`);
-const { clamp, easeOutCubic, hsl, lerp, mulberry32, TAU } = await import(`./util.js${Q}`);
+const { clamp, easeOutCubic, hsl, lerp, mulberry32, quadAt, TAU } = await import(`./util.js${Q}`);
 
 const FONT_FAMILY = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const STAR_COUNT = 420;
@@ -123,31 +123,36 @@ export function createRenderer(canvas) {
     drawBase(st);
     drawPaths(st);
 
-    // 节点：非高亮的先画（在下），高亮的最后画（在上）
+    // —— 主角（正在唱的 / 镜头正在落的 / 正在碎的）画全细节，且永远不被剔掉 ——
+    const heroes = [];
+    for (const idx of [st.singIdx, st.focusIdx]) {
+      const n = idx >= 0 && idx != null ? st.world.nodes[idx] : null;
+      if (n && heroes.indexOf(n) < 0) heroes.push(n);
+    }
     const view = visible(st, PARALLAX.nodes, 900);
     let near = [];
     for (const n of st.world.nodes) {
       if (!inRect(view, n.x, n.y, NODE.radius * 2 + 400)) continue;
+      if (n.state === "passing" && heroes.indexOf(n) < 0) heroes.push(n);
       near.push(n);
     }
-    const active = st.activeIdx >= 0 ? st.world.nodes[st.activeIdx] : null;
     if (near.length > PERF.maxNodes) {
       near.sort((a, b) => dist2(st, a) - dist2(st, b));
       near = near.slice(0, PERF.maxNodes);
-      // 当前高亮的那颗永远不能被截掉（拉远俯瞰时它可能离镜头最远）
-      if (active && near.indexOf(active) < 0) {
-        near.pop();
-        near.push(active);
+      for (const h of heroes) {
+        if (near.indexOf(h) < 0) {
+          near.pop();
+          near.push(h);
+        }
       }
     }
-    for (const n of near) {
-      if (n === active) continue;
-      drawNode(st, n, false);
-    }
-    if (active && near.indexOf(active) >= 0) drawNode(st, active, true);
+    // 非主角先画（在下），主角最后画（在上）—— 文字不该被别的节点压住
+    for (const n of near) if (heroes.indexOf(n) < 0) drawNode(st, n, false);
+    for (const n of near) if (heroes.indexOf(n) >= 0) drawNode(st, n, true);
 
     drawWorldParticles(st);
     drawScreenParticles(st);
+    drawFlightFx(st);
 
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (st.flash > 0.001) {
@@ -355,14 +360,19 @@ export function createRenderer(canvas) {
     }
   }
 
-  function drawNode(st, n, isActive) {
+  /**
+   * @param {object} st
+   * @param {object} n
+   * @param {boolean} full 是否画全细节（主角 / 正在碎的那颗）
+   */
+  function drawNode(st, n, full) {
     const v = st.view;
     const sp = st.spec;
     const b = brightness(st, n);
     const swing = hueSwing(sp);
-    const detail = v.z >= PERF.detailZoom || isActive;
-    // bass → 整个节点的呼吸缩放
-    const breath = 1 + sp.bass * 0.12 * (isActive ? 1 : 0.4);
+    const detail = v.z >= PERF.detailZoom || full;
+    // bass → 整个节点的呼吸缩放（平滑缩放，不是抖动）
+    const breath = 1 + sp.bass * 0.12 * (full ? 1 : 0.4);
     const hover = n.hover || 0;
 
     g.save();
@@ -370,11 +380,11 @@ export function createRenderer(canvas) {
     g.scale(breath, breath);
 
     if (detail) drawGlow(st, b, swing);
-    if (detail) drawTicks(st, n, isActive, b, swing);
+    if (detail) drawTicks(st, n, full, b, swing);
     else drawSimpleRing(st, b, swing);
-    drawMidRing(st, b, swing, isActive);
+    drawMidRing(st, b, swing, full);
     if (detail) drawCore(st, b, swing);
-    if (isActive) drawText(st, n, b);
+    if (full) drawText(st, n, b);
 
     if (hover > 0.01) {
       g.strokeStyle = hsl(PALETTE.hueHigh + swing, 90, 72, hover * 0.5);
@@ -559,6 +569,8 @@ export function createRenderer(canvas) {
     return out;
   }
 
+  /* -------------------------------------------------------------------- 文字 */
+
   /** 按行长算出实际字号与布局（缓存在节点上，换文字才重算） */
   function layoutOf(n) {
     const text = String(n.line?.text ?? "").trim();
@@ -573,6 +585,64 @@ export function createRenderer(canvas) {
     }
     n.layout = { text, fs, width: m.width, chars: m.chars };
     return n.layout;
+  }
+
+  /**
+   * **预渲染**：把这一句的每个字先画成小位图（蓝光 + 本体一起烘进去）。
+   *
+   * 两个目的，都是这次按使用者反馈加的：
+   *   · 镜头还没到，字已经渲染好 —— 落地那一刻直接是成品，不会再看到
+   *     “字还在路上拼”糊掉的画面；
+   *   · 运行期每帧只剩 drawImage（比逐字 fillText + 晕影描边便宜得多）。
+   *
+   * 按需建：只有主角 / 正在碎的节点才会持有位图，闲置即弃（见 skin.js）。
+   *
+   * @returns {{text:string, scale:number, items:Array}|null}
+   */
+  function ensureGlyphs(n) {
+    const lay = layoutOf(n);
+    if (!lay) return null;
+    // 出图分辨率 = 这一轮镜头的目标缩放 × dpr（保证屏幕像素 1:1，缩放正好）
+    const scale = Math.max(0.25, (n.targetZoom || 1) * dpr);
+    if (n.glyphs && n.glyphs.text === lay.text && n.glyphs.scale === scale) return n.glyphs;
+
+    const pad = Math.ceil(lay.fs * 0.4 * scale);
+    const items = [];
+    try {
+      for (const c of lay.chars) {
+        const cv = document.createElement("canvas");
+        cv.width = Math.max(1, Math.ceil(c.w * scale));
+        cv.height = Math.max(1, Math.ceil(lay.fs * scale)) + pad * 2;
+        const cg = cv.getContext("2d");
+        if (!cg) return null;
+        cg.font = `600 ${lay.fs * scale}px ${FONT_FAMILY}`;
+        cg.textAlign = "center";
+        cg.textBaseline = "middle";
+        // 先一层蓝光，再本体（把运行期的两遍 fillText 合成一次）
+        cg.fillStyle = "rgba(150,190,255,0.42)";
+        cg.fillText(c.ch, cv.width / 2 - 3 * scale, cv.height / 2 + 2 * scale);
+        cg.fillStyle = "rgba(236,240,255,1)";
+        cg.fillText(c.ch, cv.width / 2, cv.height / 2);
+        items.push(cv);
+      }
+    } catch {
+      return null; // 画布建不动就退回矢量路径，不影响功能
+    }
+    n.glyphs = { text: lay.text, scale, items };
+    return n.glyphs;
+  }
+
+  /**
+   * 镜头出发时就调用：排版 + 位图一次做完（skin.js 在 onFocus 里调）。
+   * 位图的出图分辨率直接用渲染器自己的 dpr（draw() 每帧 setTransform 的那个）。
+   *
+   * @param {object} n 节点
+   * @param {number} zoom 这一轮的镜头目标缩放
+   */
+  function prewarm(n, zoom) {
+    n.targetZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : n.zoomHint;
+    layoutOf(n);
+    ensureGlyphs(n);
   }
 
   /** 设置里的歌词字号 → 世界字号缩放（改了要把节点上的布局作废，见 skin.js） */
@@ -598,11 +668,15 @@ export function createRenderer(canvas) {
   /**
    * 歌词：在阵心逐字聚合成型（approaching）→ 完全显示（active）
    * → 碎成粒子飘散（passing，粒子由 skin.js 负责撒）。
+   *
+   * 有预渲染位图就贴位图（相机缩放与出图缩放不一致时按世界尺寸缩放贴），
+   * 拿不到才退回逐字 fillText。
    */
   function drawText(st, n, b) {
     if (!st.showLyrics) return;
     const lay = layoutOf(n);
     if (!lay) return;
+    const glyphs = ensureGlyphs(n);
     const since = st.now - n.stateAt;
 
     let assemble = 1;
@@ -646,6 +720,16 @@ export function createRenderer(canvas) {
       if (alpha <= 0.02) continue;
 
       const alphaAll = alpha * b;
+      const cv = glyphs && glyphs.items[k];
+      if (cv) {
+        // 位图 → 世界尺寸（出图时按 targetZoom 放大过，这里换算回去）
+        const gw = cv.width / glyphs.scale;
+        const gh = cv.height / glyphs.scale;
+        g.globalAlpha = alphaAll;
+        g.drawImage(cv, x - gw / 2, y - gh / 2, gw, gh);
+        g.globalAlpha = 1;
+        continue;
+      }
       if (alphaAll > 0.25) {
         g.fillStyle = `rgba(150,190,255,${(alphaAll * 0.3).toFixed(3)})`;
         g.fillText(c.ch, x - c.w / 2 - 3, y + 2);
@@ -656,6 +740,68 @@ export function createRenderer(canvas) {
   }
 
   /* ---------------------------------------------------------------- Layer 4 */
+
+  /* ---------------------------------------------------- 转场笔触（飞行特效） */
+
+  /**
+   * 不同运镜给不同的笔触 —— 这是“转场要丰富一点”的落点：
+   *   · dash / pan / zoomOut：沿飞行方向的速度线（屏幕空间，中段最亮）；
+   *   · arc：弧线上跑一颗光包（世界空间，跟着贝塞尔走）。
+   * rotate / pass 本身就有画面语言（公转 / 白闪），这里不重复加。
+   */
+  function drawFlightFx(st) {
+    const pr = st.flight;
+    if (!pr || !st.anim) return;
+    const amp = Math.sin(Math.PI * pr.p);
+    if (amp <= 0.01) return;
+
+    if (pr.type === "arc" && pr.ctrl) {
+      layer(st, PARALLAX.nodes);
+      const e = pr.p * pr.p * (3 - 2 * pr.p); // 沿弧线平滑推进
+      const pt = quadAt(pr.from, pr.ctrl, pr.to, e);
+      const r = 44 + 34 * amp;
+      const grad = g.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, r);
+      grad.addColorStop(0, `rgba(240,247,255,${(0.85 * amp).toFixed(3)})`);
+      grad.addColorStop(0.4, `rgba(140,190,255,${(0.32 * amp).toFixed(3)})`);
+      grad.addColorStop(1, "rgba(140,190,255,0)");
+      g.fillStyle = grad;
+      g.beginPath();
+      g.arc(pt.x, pt.y, r, 0, TAU);
+      g.fill();
+    }
+
+    if (pr.type !== "dash" && pr.type !== "pan" && pr.type !== "zoomOut") return;
+    // 世界位移 → 屏幕位移（镜头反方向走），太小说明是纯纵深运动，不画速度线
+    const z = st.view.z;
+    const dx = -(pr.to.x - pr.from.x) * z;
+    const dy = -(pr.to.y - pr.from.y) * z;
+    const len = Math.hypot(dx, dy);
+    if (len < 30) return;
+    const ux = dx / len;
+    const uy = dy / len;
+    const nx = -uy;
+    const ny = ux;
+
+    g.save();
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.lineCap = "round";
+    for (let i = 0; i < 10; i += 1) {
+      const off = ((i % 5) - 2) * (44 + ((i * 37) % 70));
+      const jitter = 0.5 + ((i * 53) % 47) / 94;
+      const start = -160 - jitter * 300;
+      const l = 190 + ((i * 97) % 230);
+      const a = amp * (0.09 + ((i * 31) % 40) / 420);
+      const x0 = W / 2 + nx * off + ux * start;
+      const y0 = H / 2 + ny * off + uy * start;
+      g.strokeStyle = `rgba(196,218,255,${a.toFixed(3)})`;
+      g.lineWidth = 1 + ((i * 17) % 3);
+      g.beginPath();
+      g.moveTo(x0, y0);
+      g.lineTo(x0 + ux * l, y0 + uy * l);
+      g.stroke();
+    }
+    g.restore();
+  }
 
   function drawWorldParticles(st) {
     layer(st, PARALLAX.worldParticles);
@@ -746,7 +892,7 @@ export function createRenderer(canvas) {
     return best;
   }
 
-  return { resize, draw, hitTest, worldAt, nodeZoom, textPoints, setTextScale, size: () => ({ W, H, dpr }) };
+  return { resize, draw, hitTest, worldAt, nodeZoom, textPoints, setTextScale, prewarm, size: () => ({ W, H, dpr }) };
 }
 
 /* -------------------------------------------------------------------- 杂项 */
