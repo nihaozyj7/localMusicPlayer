@@ -7,8 +7,11 @@
      · 平时：向目标点做带惯性的 lerp（0.06/帧 → 约 0.7 秒到位）；
      · 换句：按距离与段角色选一条运镜（pan / arc / zoomOut / rotate / pass），
              转场时长 = 运镜时长，两者是同一件事；
-     · 常驻：极小幅度的呼吸（sin 微动）+ 低频驱动的微震，
-             消除“数字静止感”。
+     · 常驻：极小幅度的呼吸（sin 微动，15 秒一个来回），消除“数字静止感”。
+       ★ 曾经还有一层「低频驱动的微震」（bass 每帧随机抖），已按使用者要求
+         **整体移除**：它是每帧 ±几像素的随机跳，正在唱的那句歌词会跟着糊，
+         认字优先于氛围。想恢复的话，把设计稿第五节那三行（按 bass 算 amp、
+         对 x/y 各加一个 (Math.random()-0.5)*amp）放回 view() 即可。
    ========================================================================== */
 
 // 子模块依赖同样要透传 token（原因见 skin.js 顶部那段说明）
@@ -20,8 +23,6 @@ const { clamp, easeInCubic, easeInOutCubic, easeInOutQuint, easeOutBack, easeOut
 
 /** 镜头跟随的靠近系数（60fps 下每帧 0.06 ≈ 0.7 秒到位） */
 const FOLLOW_ALPHA = 0.06;
-/** 低频微震：按屏幕像素算（除以 zoom，保证拉远时震感一致） */
-const SHAKE_PX = 24;
 
 export function createCamera() {
   const cam = {
@@ -201,10 +202,13 @@ export function createCamera() {
   }
 
   /**
-   * 取**实际绘制**用的机位（在跟随结果上叠呼吸与微震）。
+   * 取**实际绘制**用的机位（在跟随结果上叠一层极慢的呼吸）。
+   *
+   * 只有平滑的 sin 位移，没有随机抖动 —— 随机抖会让 active 节点上的歌词
+   * 每帧挪位，字还没看清就糊了（低频微震已按使用者要求移除，见文件头）。
    *
    * @param {number} now 秒
-   * @param {{anim:boolean, bass:number}} o anim=false（关动效 / 减少动效）时完全静止
+   * @param {{anim:boolean}} o anim=false（关动效 / 减少动效）时完全静止
    */
   function view(now, o) {
     let x = cam.x;
@@ -214,11 +218,6 @@ export function createCamera() {
       x += Math.sin(now * 0.4) * 8;
       y += Math.cos(now * 0.3) * 6;
       z *= 1 + Math.sin(now * 0.5) * 0.004;
-      if (o.bass > 0.02) {
-        const amp = (o.bass * SHAKE_PX) / Math.max(z, 0.05);
-        x += (Math.random() - 0.5) * amp;
-        y += (Math.random() - 0.5) * amp;
-      }
     }
     return { x, y, z, rot: cam.rot };
   }

@@ -370,7 +370,7 @@ function bindPointer(ctx) {
 
 /** 命中测试只需要机位与世界，给它一份最小状态即可 */
 function hitState() {
-  return { view: S.camCtl.view(S.now, { anim: false, bass: 0 }), world: S.world };
+  return { view: S.camCtl.view(S.now, { anim: false }), world: S.world };
 }
 
 /* ==========================================================================
@@ -467,7 +467,7 @@ function frame(ts) {
   S.renderer.draw({
     now,
     dt,
-    view: S.camCtl.view(now, { anim: S.anim, bass: S.anim ? sp.bass : 0 }),
+    view: S.camCtl.view(now, { anim: S.anim }),
     spec: sp,
     world: S.world,
     activeIdx: S.activeNode,
@@ -655,7 +655,7 @@ function spawnParticles(dt, now, sp) {
 
   // 世界星尘：镜头附近常驻（视差 0.9，镜头飞远时跟着变小）
   S.acc.dust += 14 * sec;
-  const cam = S.camCtl.view(now, { anim: false, bass: 0 });
+  const cam = S.camCtl.view(now, { anim: false });
   while (S.acc.dust >= 1 && world.pool.live < POOL.world * 0.7) {
     S.acc.dust -= 1;
     const a = rnd() * TAU;
