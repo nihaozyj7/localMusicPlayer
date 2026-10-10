@@ -806,6 +806,10 @@
   background: var(--surface-1);
   color: var(--text-1);
   font-size: var(--fs-md);
+  /* 拟态：输入控件常态凹陷 */
+  box-shadow: var(--neu-inset);
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .input::placeholder {
@@ -815,7 +819,8 @@
 .input:focus {
   background: var(--surface-2);
   border-color: var(--border-2);
-  box-shadow: none;
+  /* 焦点指示仍由边框/底色承担（原设计），这里只保证凹陷材质不丢 */
+  box-shadow: var(--neu-inset);
 }
 
 .input--invalid {

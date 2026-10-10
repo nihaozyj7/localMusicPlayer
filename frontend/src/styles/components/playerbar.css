@@ -20,6 +20,9 @@
   padding: var(--sp-2) var(--sp-4) var(--sp-3);
   background: none;
   position: relative;
+  /* 拟态：底栏顶边一条内阴影 —— 底部控制条像「压在内容之上」的一层，
+     与标题栏的 --neu-edge-bottom 对称（光从上方来，上沿受光、根部积影） */
+  box-shadow: var(--neu-edge-top);
 }
 
 /* —— 上排：进度条 —— */
@@ -226,7 +229,7 @@
   border-radius: var(--btn-radius);
   color: var(--text-2);
   transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
-    transform var(--dur-fast) var(--ease);
+    transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
 .transport__btn svg {
@@ -237,10 +240,13 @@
 .transport__btn:hover {
   color: var(--text-1);
   background: var(--surface-hover);
+  /* 拟态：悬停时按钮从底栏浮起 */
+  box-shadow: var(--neu-raised-sm);
 }
 
 .transport__btn:active {
   transform: scale(0.94);
+  box-shadow: var(--neu-pressed);
 }
 
 .transport__btn[aria-pressed="true"] {
@@ -249,11 +255,13 @@
 
 /* 播放/暂停主按钮：不要实心底色（需求：移除背景色、保留 padding/尺寸）。
    它靠「更大的点击区 + accent 图标色」表达主操作，悬停时才浮出一层浅底，
-   这样底栏整体更安静、更沉浸。 */
+   这样底栏整体更安静、更沉浸。
+   拟态：主按钮常态就带一圈浮起投影 —— 没有底色也成立，阴影本身就是形态。 */
 .transport__btn--main {
   width: var(--btn-lg);
   height: var(--btn-lg);
   color: var(--accent);
+  box-shadow: var(--neu-raised);
 }
 
 .transport__btn--main svg {
@@ -264,6 +272,21 @@
 .transport__btn--main:hover {
   color: var(--accent);
   background: var(--surface-hover);
+  box-shadow: var(--neu-raised);
+}
+
+.transport__btn--main:active {
+  transform: scale(0.94);
+  box-shadow: var(--neu-pressed);
+}
+
+.transport__btn:focus-visible {
+  /* 常态阴影会盖掉全局焦点环（同特异性、组件后加载），这里显式合并两层 */
+  box-shadow: var(--neu-raised-sm), var(--focus-ring);
+}
+
+.transport__btn--main:focus-visible {
+  box-shadow: var(--neu-raised), var(--focus-ring);
 }
 
 /* —— 进度条：默认压暗，悬停/拖动时回到主题色 ——
@@ -417,7 +440,8 @@
   height: 30px;
   border-radius: var(--btn-radius);
   color: var(--text-2);
-  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .volume__btn svg {
@@ -428,6 +452,7 @@
 .volume__btn:hover {
   color: var(--text-1);
   background: var(--surface-hover);
+  box-shadow: var(--neu-raised-sm);
 }
 
 .volume__slider {
@@ -449,7 +474,8 @@
   flex: none;
   border-radius: var(--btn-radius);
   color: var(--text-2);
-  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .mode-btn svg {
@@ -460,6 +486,8 @@
 .mode-btn:hover {
   color: var(--text-1);
   background: var(--surface-hover);
+  /* 拟态：悬停时图标按钮从底栏浮起 */
+  box-shadow: var(--neu-raised-sm);
 }
 
 .mode-btn[data-mode="sequence"] {
@@ -547,6 +575,8 @@
   border-radius: var(--panel-radius);
   background: var(--surface-1);
   border: var(--hairline);
+  /* 拟态：承载槽凹陷，选中项浮起（与设置页分段控件同一套） */
+  box-shadow: var(--neu-inset);
 }
 
 .viewmode__btn {
@@ -556,7 +586,8 @@
   height: 26px;
   border-radius: var(--btn-radius);
   color: var(--text-3);
-  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .viewmode__btn svg {
@@ -567,11 +598,17 @@
 .viewmode__btn:hover {
   color: var(--text-1);
   background: var(--surface-hover);
+  box-shadow: var(--neu-raised-sm);
 }
 
 .viewmode__btn[aria-pressed="true"] {
   background: var(--accent);
   color: var(--accent-text);
+  box-shadow: var(--neu-accent);
+}
+
+.viewmode__btn[aria-pressed="true"]:focus-visible {
+  box-shadow: var(--neu-accent), var(--focus-ring);
 }
 
 /* 按钮组里可能有「当前不可用」的项：封面相关按钮对在线试听曲目没有意义，

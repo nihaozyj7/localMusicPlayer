@@ -80,47 +80,36 @@ import { LYRIC_SIZE_MAX, LYRIC_SIZE_MIN } from "./lyric-size.js";
    大类只用于导航条；每个大类下面是一张或多张卡片，卡片就是「小组」。
 
    分类原则是**按「用户想干的事」切**，而不是按「数据存在哪儿」切。
-   原来的 7 个分类里，「关于」一个就挂了 6 张卡片（版本更新、技术栈、
-   开源依赖、开源协议、参考与致谢），而「数据」「AI」「其他」各自只有
-   1 张 —— 导航条上占着位置却解决不了任何问题，点「关于」还得自己往下翻。
 
-   拆细后一个分类最多挂 4 张卡片。要再往里加卡片时，先想想是不是该
-   再拆一个分类出来（frontend/tests/settings-sections.test.js 会把
-   单分类超过 4 张卡片判为失败，提醒你别让导航重新变得难找）。
+   这里曾经拆到 11 个分类（外观 / 歌曲列表 / 系统、播放 / 歌词 / 音质、
+   关于 / 许可与致谢各自独立）。拆得过细的代价是导航条上挤满近义标签：
+   「列表密度」到底在「外观」还是「歌曲列表」，「窗口圆角」算不算「系统」，
+   用户只能一个个点开试。现在按用户真正会说的那几件事收成 6 类：
 
-   归类原则：
-     · 曲库      —— 管「有哪些歌」：音乐文件夹 + 过滤规则；
-     · 播放      —— 管「怎么播」：播放模式、单击行为、静音跳过、切歌间隔；
-     · 歌词      —— 管「歌词怎么显示」：来源优先级、字号与行数
-                    （「显示歌词」与「桌面歌词」在底栏「选项」面板里）；
-     · 音质      —— 管「听起来怎么样」：响度均衡；
-     · 外观      —— 管「长什么样」：主题、毛玻璃、动画、播放界面样式（皮肤）；
-     · 歌曲列表  —— 管「列表长什么样」：专辑列与列表密度。
-                    刻意与「外观」分开：它们只影响列表，跟主题/皮肤无关，
-                    混在外观里用户翻不到；
-     · 下载与缓存 —— 联网取歌与本地数据：下载位置、封面来源、缓存与写标签；
-     · AI        —— 所有 AI 能力；
-     · 系统      —— 窗口与系统集成：圆角、关闭行为、窗口位置记忆；
-     · 关于      —— 常看的应用信息：版本与更新；
-     · 许可与致谢 —— 资料性内容：技术栈、开源依赖、开源协议、参考与致谢。
-                    与「关于」分开：这些是查得到就好的资料，不该跟
-                    「有没有新版本」抢同一个入口。
+     · 曲库        —— 管「有哪些歌」：音乐文件夹 + 过滤规则；
+     · 播放器      —— 管「歌怎么播、听着怎么样」：播放模式与单击行为、
+                      歌词显示、响度均衡（音质）；
+     · 用户界面    —— 管「界面长什么样」：主题、毛玻璃、动画、播放界面样式
+                      （皮肤）、歌曲列表的列与密度、窗口圆角与关闭行为；
+     · 下载与缓存  —— 联网取歌与本地数据：下载位置、封面来源、缓存与写标签；
+     · AI          —— 所有 AI 能力；
+     · 关于        —— 应用信息与资料：版本更新、应用信息、技术栈、开源依赖、
+                      开源协议、参考与致谢。
+
+   上限：单分类不超过 6 张卡片（frontend/tests/settings-sections.test.js
+   兜住这条）。再往里加卡片时先想想是不是该重新拆一类出来 —— 别让导航
+   重新变成一串需要逐个点开试的标签。
 
    顺序即导航条顺序，也是设置页里卡片从上到下的顺序（卡片顺序由
    render() 里的调用顺序决定 —— 那才是真正的排版顺序）。
    -------------------------------------------------------------------------- */
 export const SECTIONS = [
   { id: "library", label: "曲库" },
-  { id: "playback", label: "播放" },
-  { id: "lyrics", label: "歌词" },
-  { id: "audio", label: "音质" },
-  { id: "appearance", label: "外观" },
-  { id: "list", label: "歌曲列表" },
+  { id: "player", label: "播放器" },
+  { id: "ui", label: "用户界面" },
   { id: "data", label: "下载与缓存" },
   { id: "ai", label: "AI" },
-  { id: "system", label: "系统" },
   { id: "about", label: "关于" },
-  { id: "legal", label: "许可与致谢" },
 ];
 
 /**
@@ -137,21 +126,21 @@ export const SECTIONS = [
 export const CARD_SECTIONS = {
   "sec-folders": "library",
   "sec-filters": "library",
-  "sec-playback": "playback",
-  "sec-lyrics": "lyrics",
-  "sec-loudness": "audio",
-  "sec-appearance": "appearance",
-  "sec-player": "appearance",
-  "sec-list": "list",
+  "sec-playback": "player",
+  "sec-lyrics": "player",
+  "sec-loudness": "player",
+  "sec-appearance": "ui",
+  "sec-player": "ui",
+  "sec-list": "ui",
+  "sec-system": "ui",
   "sec-online": "data",
   "sec-ai": "ai",
-  "sec-system": "system",
   "sec-update": "about",
   "sec-about": "about",
-  "sec-tech": "legal",
-  "sec-libs": "legal",
-  "sec-license": "legal",
-  "sec-credits": "legal",
+  "sec-tech": "about",
+  "sec-libs": "about",
+  "sec-license": "about",
+  "sec-credits": "about",
 };
 
 /** 响度均衡的目标响度档位 */
@@ -495,12 +484,13 @@ class MpSettingsLayer extends MpElement {
                 某个分类的卡片被别的分类夹断，滚到后一段时高亮就会跳回去。
 
                 分类内部按「常用的靠前」排：
-                  · 外观 —— 主题（常换）在前，播放界面样式（装完基本不动）在后；
-                  · 关于 —— 版本更新在前，应用信息（看过一次就够）在后。
+                  · 用户界面 —— 主题（常换）在最前，接着是播放界面样式（装完基本不动）、
+                                歌曲列表，最后是窗口与系统（一次设定基本不再动）；
+                  · 关于 —— 版本更新在前，应用信息与资料（看过一次就够）在后。
               -->
               ${this.foldersCard()} ${this.rulesCard()} ${this.playbackCard()} ${this.lyricsCard()}
               ${this.loudnessCard()} ${this.themeCard()} ${this.playerCard()} ${this.listCard()}
-              ${this.onlineCard()} ${this.aiCard()} ${this.systemCard()} ${this.updateCard()}
+              ${this.systemCard()} ${this.onlineCard()} ${this.aiCard()} ${this.updateCard()}
               ${this.aboutCard()} ${this.techCard()} ${this.libsCard()} ${this.licenseCard()}
               ${this.creditsCard()}
             </div>
@@ -802,13 +792,13 @@ class MpSettingsLayer extends MpElement {
   }
 
   /* ========================================================================
-     外观
+     用户界面 —— 主题
      ======================================================================== */
   themeCard() {
     const themes = listThemes();
     const swatchIndex = ensureSwatchStyles();
     const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    return html` <section class="card" id="sec-appearance" data-section="appearance">
+    return html` <section class="card" id="sec-appearance" data-section="ui">
       <div class="card__head">
         <div class="card__icon">${icon("palette")}</div>
         <div class="card__titles">
@@ -924,12 +914,12 @@ class MpSettingsLayer extends MpElement {
   /* ------------------------------------------------------------------------
      歌曲列表
      ------------------------------------------------------------------------
-     「显示专辑列」「列表密度」原来挂在外观卡片里。它们管的是「列表长什么样」，
-     跟主题、皮肤、毛玻璃没有关系 —— 想调列表的人不会去「外观」里找，
-     所以拆成独立卡片与独立分类。
+     管「列表长什么样」：显示专辑列、列表密度。跟主题、皮肤、毛玻璃是两回事，
+     但这张卡片和它们同属「用户界面」分类 —— 用户找列表设置时先想到的就是
+     「界面」，所以卡片标题保留「歌曲列表」，靠标题而不是靠分类名区分。
      ------------------------------------------------------------------------ */
   listCard() {
-    return html` <section class="card" id="sec-list" data-section="list">
+    return html` <section class="card" id="sec-list" data-section="ui">
       <div class="card__head">
         <div class="card__icon">${icon("density")}</div>
         <div class="card__titles">
@@ -953,13 +943,13 @@ class MpSettingsLayer extends MpElement {
   }
 
   /* ------------------------------------------------------------------------
-     其他 —— 窗口与系统集成
+     窗口与系统集成
      ------------------------------------------------------------------------
-     这里放的是「不属于主题外观、也不属于播放行为」的窗口级设置：圆角与
-     关闭行为，两者都由系统立刻生效，不需要重启。
+     圆角与关闭行为，两者都由系统立刻生效，不需要重启。放在「用户界面」的
+     最后一格：设定一次之后基本不再动。
      ------------------------------------------------------------------------ */
   systemCard() {
-    return html` <section class="card" id="sec-system" data-section="system">
+    return html` <section class="card" id="sec-system" data-section="ui">
       <div class="card__head">
         <div class="card__icon">${icon("options")}</div>
         <div class="card__titles">
@@ -995,16 +985,17 @@ class MpSettingsLayer extends MpElement {
   }
 
   /* ------------------------------------------------------------------------
-     播放界面样式（皮肤）
+     播放界面样式（皮肤）—— 同属「用户界面」
      ------------------------------------------------------------------------
      内置样式与用户样式走同一条加载路径（后端扫只读资源 + 数据目录两个根），
      卡片上的「内置」只是标记。样式包本身**不参与迁移**，
      这里只负责把「有哪些样式」画出来。
+     装完基本不动，所以排在主题卡片之后。
      ------------------------------------------------------------------------ */
   playerCard() {
     const skins = availableSkins();
     const failures = skinLoadFailures();
-    return html` <section class="card" id="sec-player" data-section="appearance">
+    return html` <section class="card" id="sec-player" data-section="ui">
       <div class="card__head">
         <div class="card__icon">${icon("disc")}</div>
         <div class="card__titles">
@@ -1125,10 +1116,16 @@ class MpSettingsLayer extends MpElement {
   }
 
   /* ========================================================================
-     播放
+     播放器
+     ========================================================================
+     三类卡片同属一个分类，因为用户说的是同一件事 ——「怎么放、放出来什么样」：
+       · 播放  —— 播放模式、随机方式、单击行为、静音跳过、切歌间隔；
+       · 歌词  —— 来源优先级、字号与行数；
+       · 音质  —— 响度均衡。
+     底下三张卡片的标题保留原样，分类名只在导航条上出现一次。
      ======================================================================== */
   playbackCard() {
-    return html` <section class="card" id="sec-playback" data-section="playback">
+    return html` <section class="card" id="sec-playback" data-section="player">
       <div class="card__head">
         <div class="card__icon">${icon("headphones")}</div>
         <div class="card__titles">
@@ -1203,7 +1200,7 @@ class MpSettingsLayer extends MpElement {
   }
 
   /* ========================================================================
-     歌词
+     歌词（属「播放器」）
      ========================================================================
      「显示歌词」搬到了播放选项面板（底栏「选项」），与「桌面歌词」一起 ——
      它们都是「边听边调」的显示开关，埋在设置页里要翻两层才找得到。
@@ -1213,7 +1210,7 @@ class MpSettingsLayer extends MpElement {
      设置页里再放两个开关，只会多出一套与三选一不一致的状态源。
      ======================================================================== */
   lyricsCard() {
-    return html` <section class="card" id="sec-lyrics" data-section="lyrics">
+    return html` <section class="card" id="sec-lyrics" data-section="player">
       <div class="card__head">
         <div class="card__icon">${icon("lyrics")}</div>
         <div class="card__titles">
@@ -1246,7 +1243,7 @@ class MpSettingsLayer extends MpElement {
   }
 
   /* ========================================================================
-     音质
+     音质（属「播放器」）
      ======================================================================== */
   loudnessCard() {
     const cfg = state.config;
@@ -1258,7 +1255,7 @@ class MpSettingsLayer extends MpElement {
     const tools = state.ffmpegState || {};
     const sourceText = tools.describe || ls.describe || "检测中…";
 
-    return html` <section class="card" id="sec-loudness" data-section="audio">
+    return html` <section class="card" id="sec-loudness" data-section="player">
       <div class="card__head">
         <div class="card__icon">${icon("scale")}</div>
         <div class="card__titles">
@@ -1532,14 +1529,14 @@ class MpSettingsLayer extends MpElement {
   }
 
   /* ========================================================================
-     关于 / 许可与致谢
+     关于
      ========================================================================
-     这两块原来是同一组（都挂在 about 分区），现在按「常不常看」拆开：
-       · about —— 应用信息（版本、协议、仓库入口 + 曲库统计）与版本更新。
-                  导航条「关于」一跳跳到这里，卡片顺序是「版本更新在前」——
-                  点「关于」的人多半是想知道有没有新版本；
-       · legal —— 技术栈、开源依赖、开源协议、参考与致谢。这些是查得到就好的
-                  资料，跟「有没有新版本」抢同一个入口只会让后者更难找。
+     一个分类，两层内容，卡片顺序按「常不常看」排：
+       · 版本更新、应用信息 —— 点「关于」的人多半想知道有没有新版本；
+       · 技术栈、开源依赖、开源协议、参考与致谢 —— 查得到就好的资料。
+     这四张资料卡片各自留着卡片壳（而不是并成一张），是因为它们是四张独立的
+     长表/折叠块，合并会让单张卡片长到没法用；分类名统一成「关于」之后导航条
+     上只剩一个入口，已经解决了原来「跟版本更新抢入口」的问题。
      资料本身在 about-info.js 里，这里只负责排版。
      ======================================================================== */
   aboutCard() {
@@ -1902,9 +1899,9 @@ class MpSettingsLayer extends MpElement {
     </details>`;
   }
 
-  /* —— 技术栈 —— */
+  /* —— 技术栈（属「关于」的资料部分）—— */
   techCard() {
-    return html` <section class="card" id="sec-tech" data-section="legal">
+    return html` <section class="card" id="sec-tech" data-section="about">
       <div class="card__head">
         <div class="card__icon">${icon("bolt")}</div>
         <div class="card__titles">
@@ -1939,7 +1936,7 @@ class MpSettingsLayer extends MpElement {
     const summary = licenseSummary(libs)
       .map((x) => `${x.license} × ${x.count}`)
       .join(" · ");
-    return html` <section class="card" id="sec-libs" data-section="legal">
+    return html` <section class="card" id="sec-libs" data-section="about">
       <div class="card__head">
         <div class="card__icon">${icon("options")}</div>
         <div class="card__titles">
@@ -1987,7 +1984,7 @@ class MpSettingsLayer extends MpElement {
 
   /* —— 开源协议 —— */
   licenseCard() {
-    return html` <section class="card" id="sec-license" data-section="legal">
+    return html` <section class="card" id="sec-license" data-section="about">
       <div class="card__head">
         <div class="card__icon">${icon("scale")}</div>
         <div class="card__titles">
@@ -2015,9 +2012,9 @@ class MpSettingsLayer extends MpElement {
     </section>`;
   }
 
-  /* —— 参考与致谢 —— */
+  /* —— 参考与致谢（属「关于」的资料部分）—— */
   creditsCard() {
-    return html` <section class="card" id="sec-credits" data-section="legal">
+    return html` <section class="card" id="sec-credits" data-section="about">
       <div class="card__head">
         <div class="card__icon">${icon("heart")}</div>
         <div class="card__titles">

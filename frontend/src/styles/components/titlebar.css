@@ -14,6 +14,9 @@
   height: var(--h-titlebar);
   padding: 0 0 0 var(--sp-4);
   background: none;
+  /* 拟态：标题栏底边一条内阴影 —— 让顶部区域像「压在主内容之上」的一层，
+     与底栏的 --neu-edge-top 对称呼应（光从上方来，上层的下沿必然是暗的） */
+  box-shadow: var(--neu-edge-bottom);
   /* Wails v3 的拖拽开关是 CSS 自定义属性 --wails-draggable。
      运行时会对鼠标事件的目标元素做：
        getComputedStyle(el).getPropertyValue("--wails-draggable").trim() === "drag"
@@ -90,7 +93,8 @@
   width: 44px;
   height: var(--h-titlebar);
   color: var(--text-2);
-  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .titlebar__btn svg {
@@ -101,6 +105,12 @@
 .titlebar__btn:hover {
   background: var(--surface-hover);
   color: var(--text-1);
+  /* 拟态：悬停时窗口按钮从标题栏浮起 */
+  box-shadow: var(--neu-raised-sm);
+}
+
+.titlebar__btn:active {
+  box-shadow: var(--neu-pressed);
 }
 
 .titlebar__btn--close:hover {

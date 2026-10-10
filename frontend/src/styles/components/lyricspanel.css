@@ -231,10 +231,13 @@
   background: var(--surface-1);
   color: var(--text-1);
   outline: none;
+  /* 拟态：常态凹陷 */
+  box-shadow: var(--neu-inset);
+  transition: box-shadow var(--dur-fast) var(--ease);
 }
 
 .lyricspanel__input:focus {
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--neu-inset), var(--focus-ring);
 }
 
 .lyricspanel__hint {
@@ -397,10 +400,13 @@
   font-size: var(--fs-sm);
   line-height: 1.7;
   outline: none;
+  /* 拟态：歌词编辑区是一块凹进去的书写面 */
+  box-shadow: var(--neu-inset);
+  transition: box-shadow var(--dur-fast) var(--ease);
 }
 
 .editor__text:focus {
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--neu-inset), var(--focus-ring);
 }
 
 .editor__transport {

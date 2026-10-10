@@ -40,7 +40,23 @@
   --glass-saturate: 1.6;
   --glass-border: rgba(255, 255, 255, 0.1);
   --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 42%);
-  --glass-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+  --glass-shadow:
+    0 16px 44px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+
+  /* —— 2b. 拟态（毛玻璃元素的内外阴影）——
+     凸起：外阴影 + 顶部 1px 内高光；凹陷（输入框 / 承载槽 / 滑道）：内阴影；
+     按下：由浮起翻转为凹陷。浅色主题把外阴影换成低透明度冷灰、高光换纯白。 */
+  --neu-raised: 0 8px 24px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --neu-raised-sm: 0 3px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --neu-inset: inset 0 2px 5px rgba(0, 0, 0, 0.35);
+  --neu-pressed: inset 0 2px 5px rgba(0, 0, 0, 0.5);
+  --neu-knob: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --neu-accent: 0 4px 14px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  --neu-under: 0 10px 22px -14px rgba(0, 0, 0, 0.6);
+  --neu-edge-bottom: inset 0 -12px 24px -18px rgba(0, 0, 0, 0.55), inset 0 -1px 0 rgba(255, 255, 255, 0.07);
+  --neu-edge-top: inset 0 12px 24px -18px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 
   /* —— 3. 文字 —— */
   --text-1: #f4f4f6;

@@ -183,19 +183,30 @@ test("设置分类：render() 里每张卡片都恰好被渲染一次", () => {
   );
 });
 
-test("设置分类：卡片数量与分区拆分的初衷一致（单分区不超过 4 张卡片）", () => {
-  // 这次重做的起因就是「一个分类塞太多卡片，导航不方便」。定一个上限兜住
-  // 回归：某个分类又涨到 5 张以上时，应当再拆一个分类出来。
+test("设置分类：卡片数量与分区规模约束（单分区不超过 6 张卡片）", () => {
+  // 上限的由来：分区从 11 个合并成 6 个之后，「关于」把应用信息与资料
+  // （版本更新 / 应用信息 / 技术栈 / 开源依赖 / 开源协议 / 参考与致谢）
+  // 收在同一个分类里，一共 6 张 —— 上限相应定到 6。
+  // 再涨就该重新拆一类出来，否则导航会重新变得难找。
+  const MAX_CARDS_PER_SECTION = 6;
   const count = new Map();
   for (const sec of Object.values(CARD_SECTIONS)) {
     count.set(sec, (count.get(sec) || 0) + 1);
   }
-  const heavy = [...count.entries()].filter(([, n]) => n > 4);
-  assert.deepEqual(heavy, [], `这些分类又塞了太多卡片，导航会重新变得不方便，考虑再拆：${JSON.stringify(heavy)}`);
+  const heavy = [...count.entries()].filter(([, n]) => n > MAX_CARDS_PER_SECTION);
+  assert.deepEqual(
+    heavy,
+    [],
+    `这些分类又塞了太多卡片（上限 ${MAX_CARDS_PER_SECTION}），导航会重新变得不方便，考虑再拆：${JSON.stringify(heavy)}`
+  );
 });
 
 test("设置分类：导航条相关常量没有被误删（组件渲染依赖它们）", () => {
   // SECTIONS 是导航条的数据源，改成空数组会让导航条消失而卡片还在。
-  assert.ok(SECTIONS.length >= 8, `SECTIONS 只有 ${SECTIONS.length} 项，分类又被合并回去了？`);
+  //
+  // 这里只兜「分类被误删/被并成一个」：当前约定是 6 类（曲库 / 播放器 /
+  // 用户界面 / 下载与缓存 / AI / 关于）。分类数由 SECTIONS 与 CARD_SECTIONS
+  // 双向对账（上面两条测试）完全确定，所以这里不必再列一份期望值。
+  assert.ok(SECTIONS.length >= 6, `SECTIONS 只有 ${SECTIONS.length} 项，分类又被合并回去了？`);
   assert.ok(_internals.settingRow, "settingRow 等小组件应当继续导出");
 });

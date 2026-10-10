@@ -4,7 +4,7 @@
 
    @theme-name 深色 · 黑白极简
    @theme-mode dark
-   @theme-builtin-rev 2
+   @theme-builtin-rev 3
    （内置主题修订号：本文件由程序维护，升级时会替换旧副本；要长期改请复制成新文件）
    @theme-swatch #08080a #1b1b1f #3a3a42 #f4f4f6 #ff4d6d
    ========================================================================== */
@@ -14,9 +14,14 @@
 
   /* 表面
      底色统一成「从上到下」的一条渐变（顶亮底暗）：内容区落在中段，
-     半透明磨砂面板压在哪儿都有层次，不需要再给面板单独配实色。 */
+     半透明磨砂面板压在哪儿都有层次，不需要再给面板单独配实色。
+     叠两团极淡的径向光晕（左上 / 右下）：背景有明暗起伏，拟态面板的
+     外阴影与顶部内高光才有「光从上方来」的落点，不再是平铺一张渐变纸。 */
   --bg-app: #0b0c12;
-  --bg-canvas: linear-gradient(180deg, #1d1f2c 0%, #12131b 46%, #07070c 100%);
+  --bg-canvas:
+    radial-gradient(1100px 720px at 12% -10%, rgba(255, 255, 255, 0.06), transparent 62%),
+    radial-gradient(900px 640px at 100% 0%, rgba(255, 255, 255, 0.035), transparent 58%),
+    linear-gradient(180deg, #1d1f2c 0%, #12131b 46%, #07070c 100%);
   --surface-1: rgba(255, 255, 255, 0.05);
   --surface-2: rgba(255, 255, 255, 0.085);
   --surface-3: rgba(255, 255, 255, 0.13);
@@ -31,7 +36,25 @@
   --glass-saturate: 1.5;
   --glass-border: rgba(255, 255, 255, 0.11);
   --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 42%);
-  --glass-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+  /* 面板浮起：外阴影抬离背景 + 顶部 1px 内高光 + 内侧暗环（拟态边缘厚度） */
+  --glass-shadow:
+    0 16px 44px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+
+  /* 拟态：凸起带外阴影 + 顶部内高光，凹陷（输入 / 滑道 / 承载槽）带内阴影，
+     按下瞬间从「浮起」翻转为「凹陷」 */
+  --neu-raised: 0 8px 24px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --neu-raised-sm: 0 3px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --neu-inset: inset 0 2px 5px rgba(0, 0, 0, 0.35);
+  --neu-pressed: inset 0 2px 5px rgba(0, 0, 0, 0.5);
+  --neu-knob: 0 1px 3px rgba(0, 0, 0, 0.4);
+  /* 仅外投影：吸顶头部上沿紧贴标题栏，不要顶部高光，只要向下投影 */
+  --neu-under: 0 10px 22px -14px rgba(0, 0, 0, 0.6);
+  /* 强调色实底按钮：彩色投影把主操作从玻璃面上再抬一层 */
+  --neu-accent: 0 4px 14px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  --neu-edge-bottom: inset 0 -12px 24px -18px rgba(0, 0, 0, 0.55), inset 0 -1px 0 rgba(255, 255, 255, 0.07);
+  --neu-edge-top: inset 0 12px 24px -18px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 
   /* 文字 */
   --text-1: #f4f4f6;

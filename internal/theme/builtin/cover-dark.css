@@ -7,7 +7,7 @@
 
    @theme-name 封面取色 · 深色
    @theme-mode dark
-   @theme-builtin-rev 2
+   @theme-builtin-rev 3
    （内置主题修订号：本文件由程序维护，升级时会替换旧副本；要长期改请复制成新文件）
    @theme-swatch #0b0b12 #2a2a31 #6b6b76 #f7f7fa #ff4d6d
    ========================================================================== */
@@ -44,7 +44,11 @@
   --glass-saturate: 1.6;
   --glass-border: color-mix(in srgb, var(--seed) 28%, rgba(255, 255, 255, 0.08));
   --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 42%);
-  --glass-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  /* 面板浮起：外阴影 + 顶部内高光 + 内侧暗环（拟态边缘厚度，随封面色调走） */
+  --glass-shadow:
+    0 16px 44px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.2);
 
   /* 文字始终保证高对比 */
   --text-1: #f7f7fa;

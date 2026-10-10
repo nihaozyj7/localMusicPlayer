@@ -88,14 +88,20 @@
   border: var(--hairline-strong);
   border-radius: var(--r-sm);
   background: var(--surface-1);
+  /* 拟态：搜索框整体凹陷，浮在玻璃面板之上 */
+  box-shadow: var(--neu-inset);
   transition:
     border-color 120ms var(--ease-out),
-    background 120ms var(--ease-out);
+    background 120ms var(--ease-out),
+    box-shadow 120ms var(--ease-out);
 }
 
 .search-overlay__field:focus-within {
   border-color: var(--accent);
   background: var(--surface-2);
+  /* 内层输入框显式去环（见下方注释），焦点指示靠这条 accent 边框；
+     这里保持凹陷材质即可，不叠第二圈环 */
+  box-shadow: var(--neu-inset);
 }
 
 .search-overlay__search-icon {

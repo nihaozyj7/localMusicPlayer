@@ -455,6 +455,7 @@ function themeAiPrompt(ref = null) {
 【四、可声明的令牌（参考清单，按需覆盖）】
 - 表面：--bg-app（窗口底色）、--bg-canvas（背景渐变 / 纹理）、--surface-1 / --surface-2 / --surface-3 / --surface-hover / --surface-active
 - 毛玻璃：--glass-bg / --glass-bg-strong / --glass-bg-weak / --glass-blur（0 表示关闭毛玻璃）/ --glass-saturate / --glass-border / --glass-highlight / --glass-shadow
+- 拟态阴影：--neu-raised（浮起）/ --neu-raised-sm（小浮起）/ --neu-inset（凹陷）/ --neu-pressed（按下）/ --neu-knob（滑块）/ --neu-accent（强调色实底按钮）/ --neu-under（仅外投影）/ --neu-edge-bottom / --neu-edge-top（区域边缘分层）
 - 文字：--text-1 / --text-2 / --text-3 / --text-inverse
 - 描边：--border-1 / --border-2 / --divider / --focus-ring
 - 强调色：--accent / --accent-weak / --accent-weak-hover / --accent-text / --accent-contrast

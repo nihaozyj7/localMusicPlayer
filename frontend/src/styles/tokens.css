@@ -52,7 +52,32 @@
   --glass-saturate: 1.6;
   --glass-border: rgba(255, 255, 255, 0.1);
   --glass-highlight: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 42%);
-  --glass-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+  /* 面板阴影 = 拟态「浮起」三件套：外阴影抬离背景 + 顶部 1px 内高光 + 内侧暗环
+     （暗环贴在半透明白边内侧，面板边缘才有一圈真实的厚度）。
+     所有 box-shadow: var(--panel-shadow) 的面板自动获得这套材质。 */
+  --glass-shadow:
+    0 16px 44px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+
+  /* —— 拟态（neumorphism over glass）——
+     毛玻璃元素的内外阴影：凸起的元素（按钮 / 分段选中态 / 悬停的行）带外阴影
+     与顶部内高光；凹陷的元素（输入框 / 开关滑道 / 分段承载槽）带内阴影；
+     按下瞬间由「浮起」翻转为「凹陷」——亮暗方向与光从上方来一致。
+     主题按深浅整套覆盖（浅色的阴影是深灰、高光是纯白）。 */
+  --neu-raised: 0 8px 24px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --neu-raised-sm: 0 3px 8px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --neu-inset: inset 0 2px 5px rgba(0, 0, 0, 0.35);
+  --neu-pressed: inset 0 2px 5px rgba(0, 0, 0, 0.5);
+  --neu-knob: 0 1px 3px rgba(0, 0, 0, 0.4);
+  /* 仅外投影：吸顶头部这类「上沿紧贴另一层」的元素，
+     不要顶部内高光（会和上一层的边缘线叠成双线），只要往下投影 */
+  --neu-under: 0 10px 22px -14px rgba(0, 0, 0, 0.6);
+  /* 强调色实底按钮（primary / 分段选中）：彩色投影把主操作从玻璃面上再抬一层 */
+  --neu-accent: 0 4px 14px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  /* 区域边缘分层：标题栏底边 / 播放条顶边的内阴影（光从上来，凹下去的一侧压暗） */
+  --neu-edge-bottom: inset 0 -12px 24px -18px rgba(0, 0, 0, 0.55), inset 0 -1px 0 rgba(255, 255, 255, 0.07);
+  --neu-edge-top: inset 0 12px 24px -18px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 
   /* —— 浮动面板（播放队列 / 播放选项 / 定时停止 / 歌词工作台…）——
      这些面板是 #app 之外的 fixed 浮层，但语义上属于**当前界面**而不是窗口：

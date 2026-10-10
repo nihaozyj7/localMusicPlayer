@@ -74,7 +74,8 @@
   border-radius: var(--r-sm);
   color: var(--text-2);
   text-align: left;
-  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .navitem:hover {
@@ -86,6 +87,12 @@
   background: var(--surface-2);
   color: var(--text-1);
   font-weight: var(--fw-medium);
+  /* 拟态：选中的导航项从侧栏表面浮起 */
+  box-shadow: var(--neu-raised-sm);
+}
+
+.navitem[aria-selected="true"]:focus-visible {
+  box-shadow: var(--neu-raised-sm), var(--focus-ring);
 }
 
 .navitem[aria-selected="true"]::before {

@@ -1,15 +1,16 @@
 /* ==========================================================================
    check-settings-nav.mjs — 设置导航条在各窗口宽度下的布局自检
    --------------------------------------------------------------------------
-   分类从 7 个拆到 11 个之后，导航条是这次改动里唯一有布局风险的地方：
+   分类几经拆分合并（现在是 6 个：曲库 / 播放器 / 用户界面 / 下载与缓存 /
+   AI / 关于），导航条始终是布局风险最高的地方：
      · 换行 → 导航条变成两三行，把卡片整体挤下去（所以改成了横向滚动）；
      · 溢出 → 横向滚动容器里 justify-content:center 会把两端推到可视区外
-              且滚不到，最后几个分类（「关于」「许可与致谢」）点不到。
+              且滚不到，最后几个分类（「关于」）点不到。
 
    这个脚本在若干个窗口宽度下打开设置层，量四件事：
      1. 导航条高度是否恒定一行（不超过单行高度 + 余量）；
      2. 每个导航按钮是否都能滚进可视区（scrollLeft 能覆盖它的位置）；
-     3. 点最后一个分类（许可与致谢）能否真的跳过去并高亮；
+     3. 点最后一个分类（关于）能否真的跳过去并高亮；
      4. 卡片宽度有没有被导航条的滚动区域带歪。
 
    用与 shot-lit.mjs 相同的「静态服务 + headless Edge + CDP」方式起环境，
@@ -207,7 +208,8 @@ for (const width of [1440, 1280, 1120, 1040, 1000]) {
   console.log(`        ${r.labels.join(" / ")}`);
   check(`${width}px 导航条保持单行`, r.navH <= r.singleLine, `高度 ${r.navH}px`);
   check(`${width}px 最后一个分类能滚进可视区`, r.lastVisible, `最后一项「${r.lastLabel}」`);
-  check(`${width}px 11 个分类全部渲染`, r.count === 11, `实际 ${r.count}`);
+  // 6 类 = 曲库 / 播放器 / 用户界面 / 下载与缓存 / AI / 关于（见 settings-view.js 的 SECTIONS）
+  check(`${width}px 6 个分类全部渲染`, r.count === 6, `实际 ${r.count}`);
   check(`${width}px 卡片宽度没有被导航条带歪`, r.cardW > 0 && r.cardW <= r.bodyW, `${r.cardW}/${r.bodyW}`);
 }
 
@@ -223,26 +225,31 @@ await sleep(1400);
 const jump = await evaluate(`(async () => {
   const layer = document.querySelector("#settings-layer");
   if (layer.hidden) { document.querySelector("#btn-settings").click(); await new Promise(r => setTimeout(r, 500)); }
-  const btn = [...layer.querySelectorAll(".settings__nav-item")].find(b => b.dataset.goto === "legal");
-  if (!btn) return { __error: "找不到「许可与致谢」按钮" };
+  // ★ 取导航条上的**最后一项**而不是写死分区 id：分类几经合并，id 会变，
+  //   但「最后一个分类能不能点得到」这条检查的意图不变。
+  const items = [...layer.querySelectorAll(".settings__nav-item")];
+  const btn = items[items.length - 1];
+  if (!btn) return { __error: "导航条上一个分类都没有" };
+  const lastName = btn.dataset.goto;
+  const lastLabel = btn.textContent.trim();
   btn.click();
-  // ★ 等到高亮真的落在 legal 为止，而不是睡一个固定时长：平滑滚动的时长
+  // ★ 等到高亮真的落在最后一个分类为止，而不是睡一个固定时长：平滑滚动的时长
   //   取决于距离（这个分类在最底下，距离最长），写死 1.3s 会读到中间态
   //   （实测约 1.4s 才到位），于是把正常行为误判成失败。
   const comp = document.querySelector("mp-settings-layer");
-  for (let i = 0; i < 40 && comp._activeSection !== "legal"; i += 1) {
+  for (let i = 0; i < 40 && comp._activeSection !== lastName; i += 1) {
     await new Promise(r => setTimeout(r, 100));
   }
   await new Promise(r => setTimeout(r, 150));
   const active = layer.querySelector('.settings__nav-item[aria-selected="true"]')?.dataset.goto;
   const body = layer.querySelector(".settings-layer__body");
-  const target = layer.querySelector('[data-section="legal"]');
+  const target = layer.querySelector('[data-section="' + lastName + '"]');
   const navH = layer.querySelector(".settings__nav").offsetHeight;
   const topGap = target.getBoundingClientRect().top - body.getBoundingClientRect().top;
-  return { active, topGap: Math.round(topGap), navH, scrollTop: Math.round(body.scrollTop) };
+  return { lastName, lastLabel, active, topGap: Math.round(topGap), navH, scrollTop: Math.round(body.scrollTop) };
 })()`);
-console.log(`\n[跳转] 点「许可与致谢」→ 高亮 ${jump.active}，目标卡片顶距 ${jump.topGap}px（导航高 ${jump.navH}px）`);
-check("点最后一个分类能正确高亮", jump.active === "legal", `实际 ${jump.active}`);
+console.log(`\n[跳转] 点「${jump.lastLabel}」→ 高亮 ${jump.active}，目标卡片顶距 ${jump.topGap}px（导航高 ${jump.navH}px）`);
+check("点最后一个分类能正确高亮", jump.active === jump.lastName, `实际 ${jump.active}`);
 check("跳转后目标卡片没被导航条挡住", jump.topGap >= jump.navH - 1, `顶距 ${jump.topGap}px vs 导航 ${jump.navH}px`);
 
 /* 最小窗口宽度（主窗口允许缩到 1000×680）下导航条一定会溢出 —— 单独确认

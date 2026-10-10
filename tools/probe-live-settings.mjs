@@ -283,9 +283,11 @@ check(
 
 /* ---- 2. 点导航项 → 点开关，选中态不能跳回第一个 ---- */
 // ★ 这里点的是「曲库」（library）：下面紧接着要点 watchFolders 开关与
-//   listDensity 分段控件，两者都不属于「播放」分类。原先写的是
-//   data-goto="playback"，而播放分类的 id 其实是 "player" —— 选择器匹配
-//   不到任何元素，.click() 抛错让整段静默失败。
+//   listDensity 分段控件，两者都不属于「播放器」分类。这里曾经写的是
+//   data-goto="playback" —— 那是更早一版的分类 id；分类几经合并（现在
+//   播放/歌词/音质合并成「播放器」，id 为 "player"）之后，那个选择器匹配
+//   不到任何元素，.click() 抛错让整段静默失败。用 id 选择时请对着
+//   settings-view.js 的 SECTIONS 核一遍。
 const navPersist = await evalJs(`(() => {
   const sel = () => [...document.querySelectorAll(".settings__nav-item")].filter(b => b.getAttribute("aria-selected") === "true").map(b => b.textContent.trim());
   document.querySelector('.settings__nav-item[data-goto="library"]').click();

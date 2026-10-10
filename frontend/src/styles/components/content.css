@@ -14,6 +14,9 @@
   backdrop-filter: var(--panel-blur);
   -webkit-backdrop-filter: var(--panel-blur);
   border-bottom: var(--hairline);
+  /* 拟态：吸顶头部是「压在滚动内容之上」的一层 —— 只向下投影。
+     不用 --neu-raised-sm：它带顶部内高光，会和标题栏底边线叠成双线。 */
+  box-shadow: var(--neu-under);
 }
 
 .content-header__titles {
@@ -75,8 +78,11 @@
   font-size: var(--fs-md);
   font-weight: var(--fw-medium);
   white-space: nowrap;
+  /* 拟态：常态浮起（外阴影 + 顶部内高光），按下翻转为内阴影凹陷 */
+  box-shadow: var(--neu-raised-sm);
   transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
-    transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
+    transform var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .btn svg {
@@ -91,6 +97,14 @@
 
 .btn:active {
   transform: translateY(1px);
+  box-shadow: var(--neu-pressed);
+}
+
+/* 键盘焦点环与拟态阴影是两层 box-shadow，必须显式合并 ——
+   单写哪一条都会把另一条顶掉（本规则与全局 :focus-visible 特异性不同，
+   这里抬了一级，保证焦点环不会被常态浮起阴影吃掉）。 */
+.btn:focus-visible {
+  box-shadow: var(--neu-raised-sm), var(--focus-ring);
 }
 
 .btn[disabled] {
@@ -102,6 +116,11 @@
   background: var(--accent);
   border-color: transparent;
   color: var(--accent-text);
+  box-shadow: var(--neu-accent);
+}
+
+.btn--primary:focus-visible {
+  box-shadow: var(--neu-accent), var(--focus-ring);
 }
 
 .btn--primary:hover {
@@ -113,6 +132,17 @@
   background: transparent;
   border-color: transparent;
   color: var(--text-2);
+  box-shadow: none;
+}
+
+/* 幽灵按钮按下只位移，不投影（没有底色，内阴影会显脏） */
+.btn--ghost:active {
+  box-shadow: none;
+}
+
+/* 幽灵按钮焦点时也不该带浮起投影（透明底上外阴影像一团脏雾），只留焦点环 */
+.btn--ghost:focus-visible {
+  box-shadow: var(--focus-ring);
 }
 
 .btn--ghost:hover {
@@ -184,8 +214,10 @@
   background: var(--surface-1);
   color: var(--text-1);
   font-size: var(--fs-md);
+  /* 拟态：输入框永远凹陷（内阴影），与浮起的按钮形成凹凸对比 */
+  box-shadow: var(--neu-inset);
   transition: width var(--dur) var(--ease), background-color var(--dur-fast) var(--ease),
-    border-color var(--dur-fast) var(--ease);
+    border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
 .search__input::placeholder {
@@ -196,7 +228,8 @@
   width: 260px;
   background: var(--surface-2);
   border-color: var(--border-2);
-  box-shadow: none;
+  /* 焦点指示仍由边框/底色承担（原设计），这里只保证凹陷材质不丢 */
+  box-shadow: var(--neu-inset);
 }
 
 /* —— 排序按钮 ——
@@ -259,11 +292,18 @@
   font-size: var(--fs-md);
   appearance: none;
   cursor: pointer;
+  box-shadow: var(--neu-inset);
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .select__field:hover {
   background: var(--surface-2);
   color: var(--text-1);
+}
+
+.select__field:focus-visible {
+  box-shadow: var(--neu-inset), var(--focus-ring);
 }
 
 .select__field option {
@@ -402,12 +442,16 @@
   border-radius: var(--r-sm);
   background: var(--surface-1);
   border: var(--hairline);
-  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+  box-shadow: var(--neu-inset);
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .content-filter__field:focus-within {
   border-color: var(--accent);
   background: var(--surface-2);
+  /* 焦点环在内层 input 上（全局 :focus-visible），外层只保留凹陷材质 */
+  box-shadow: var(--neu-inset);
 }
 
 .content-filter__icon {
