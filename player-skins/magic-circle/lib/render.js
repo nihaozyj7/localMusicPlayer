@@ -17,16 +17,56 @@
 
 // 子模块依赖同样要透传 token（原因见 skin.js 顶部那段说明）
 const Q = new URL(import.meta.url).search;
-const { INTERACT, NODE, PALETTE, PARALLAX, PERF, WORLD } = await import(`./config.js${Q}`);
+const { INTERACT, NODE, PALETTE, PARALLAX, PERF, WORD, WORLD } = await import(`./config.js${Q}`);
 const { zoomForText } = await import(`./layout.js${Q}`);
 const { KIND } = await import(`./particles.js${Q}`);
-const { clamp, easeOutCubic, hsl, lerp, mulberry32, quadAt, TAU } = await import(`./util.js${Q}`);
+const { clamp, easeOutCubic, hsl, lerp, mulberry32, quadAt, TAU, withAlpha } = await import(`./util.js${Q}`);
 
 const FONT_FAMILY = '"Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 const STAR_COUNT = 420;
 const MEASURE_CACHE_MAX = 240;
 
-export function createRenderer(canvas) {
+/* ==========================================================================
+   字级（逐字）歌词：这一行当前该点亮到第几个字素
+   --------------------------------------------------------------------------
+   独立成**纯函数并导出**，是为了让自检能在 Node 里直接打它
+   （画布上的字没法从 DOM 查，见 tools/check-word-lyrics.mjs）——
+   与 magic-circle/skin.js#withDisplayText 同样的理由。
+
+   返回 -1 表示「这一行不做逐字」，也就是**回退为逐行歌词**，三种情况：
+     · 行上没有 `words`（行级 LRC；或宿主 / 老版本没给字级时间轴）；
+     · `words` 个数与排版出来的字素数对不上 —— 典型是多语言行：
+       skin.js#withDisplayText 把译文拼进了正文（`原文 · 译文`），
+       而 `words` 只对应原文，下标一律错位，宁可不点亮也不能点错字；
+     · 进度不是有限数（宿主还没推过 progress 补丁）。
+
+   @param {{words?: number[]}|null|undefined} line LRC 行（契约 SkinLyricsLine）
+   @param {number} graphemeCount 这一行排版出来的字素数
+   @param {number} positionMs 当前播放位置（毫秒，可外推）
+   @returns {number} -1 = 不做逐字；否则「已经唱到的字素数」（0..graphemeCount）
+   ========================================================================== */
+export function wordLitCount(line, graphemeCount, positionMs) {
+  const words = line && line.words;
+  if (!Array.isArray(words) || !words.length) return -1;
+  if (words.length !== graphemeCount) return -1;
+  if (!Number.isFinite(positionMs)) return -1;
+  // 逐字时间轴是升序的（见包里的 lrc.js#parseLrc）→ 线性推进即可，
+  // 一行最多几十个字素，且只有「正在唱的那一句」会走这里
+  let k = 0;
+  while (k < words.length && positionMs >= words[k]) k += 1;
+  return k;
+}
+
+/**
+ * @param {HTMLCanvasElement} canvas
+ * @param {object} [opts]
+ * @param {(text: string) => string[]} [opts.split] 字素切分函数。
+ *        必须与宿主 lrc.js#parseLrc 生成 `words` 时用的是**同一套切法**
+ *        （否则下标错位、逐字会点错字）—— 宿主通过 ctx.sdk.splitGraphemes 传进来，
+ *        拿不到时退回 Array.from（与老宿主的切法一致）。
+ */
+export function createRenderer(canvas, opts = {}) {
+  const split = typeof opts.split === "function" ? opts.split : (s) => Array.from(String(s ?? ""));
   const g = canvas.getContext("2d", { alpha: false });
 
   let W = 0;
@@ -655,7 +695,9 @@ export function createRenderer(canvas) {
     g.font = `600 ${fs}px ${FONT_FAMILY}`;
     const chars = [];
     let x = 0;
-    for (const ch of text) {
+    // 切法必须与 `words` 的下标口径一致（见 createRenderer 的 opts.split）：
+    // 用 Array.from 的话 emoji / 组合字符会被劈成两半，逐字就会错位。
+    for (const ch of split(text)) {
       const w = g.measureText(ch).width;
       chars.push({ ch, x, w });
       x += w;
@@ -727,6 +769,10 @@ export function createRenderer(canvas) {
    *
    * 按需建：只有主角 / 正在碎的节点才会持有位图，闲置即弃（见 skin.js）。
    *
+   * 字级（逐字）歌词另有一份「已唱」位图（见 litItem）：它是**照需**烘的，
+   * 一个字点亮才烘一个字，且只有正在唱的那一句会烘 —— 整篇都烘两份的话，
+   * 每颗字几百 KB 的位图会把内存翻倍。
+   *
    * @returns {{text:string, scale:number, items:Array}|null}
    */
   function ensureGlyphs(n) {
@@ -742,28 +788,77 @@ export function createRenderer(canvas) {
     // 又不至于把每颗字撑成 1.8 倍高 —— 这一格直接决定字形位图的内存。
     const pad = Math.ceil(lay.fs * 0.3 * scale);
     const items = [];
-    try {
-      for (const c of lay.chars) {
-        const cv = document.createElement("canvas");
-        cv.width = Math.max(1, Math.ceil(c.w * scale));
-        cv.height = Math.max(1, Math.ceil(lay.fs * scale)) + pad * 2;
-        const cg = cv.getContext("2d");
-        if (!cg) return null;
-        cg.font = `600 ${lay.fs * scale}px ${FONT_FAMILY}`;
-        cg.textAlign = "center";
-        cg.textBaseline = "middle";
-        // 先一层蓝光，再本体（把运行期的两遍 fillText 合成一次）
-        cg.fillStyle = "rgba(150,190,255,0.42)";
-        cg.fillText(c.ch, cv.width / 2 - 3 * scale, cv.height / 2 + 2 * scale);
-        cg.fillStyle = "rgba(236,240,255,1)";
-        cg.fillText(c.ch, cv.width / 2, cv.height / 2);
-        items.push(cv);
-      }
-    } catch {
-      return null; // 画布建不动就退回矢量路径，不影响功能
+    for (const c of lay.chars) {
+      const cv = bake(
+        Math.max(1, Math.ceil(c.w * scale)),
+        Math.max(1, Math.ceil(lay.fs * scale)) + pad * 2,
+        (cg, w, h) => paintGlyph(cg, c.ch, lay.fs * scale, w, h, WORD.glow, WORD.body, scale)
+      );
+      if (!cv) return null; // 画布建不动就退回矢量路径，不影响功能
+      items.push(cv);
     }
     n.glyphs = { text: lay.text, scale, items };
+    n.litGlyphs = null; // 位图换了口径，已唱那一份跟着作废（防串味）
     return n.glyphs;
+  }
+
+  /**
+   * 把一颗字画进位图：先一层偏移辉光，再本体（原来运行期的两遍 fillText 合成一次）。
+   *
+   * 未唱 / 已唱只差两个颜色，所以两处共用这一个函数 —— 否则「已唱」那份
+   * 迟早会和「未唱」的长得不一样（同一个字形两套摆放代码，改一处漏一处）。
+   */
+  function paintGlyph(cg, ch, fsPx, w, h, glow, body, scale) {
+    cg.font = `600 ${fsPx}px ${FONT_FAMILY}`;
+    cg.textAlign = "center";
+    cg.textBaseline = "middle";
+    cg.fillStyle = glow;
+    cg.fillText(ch, w / 2 - 3 * scale, h / 2 + 2 * scale);
+    cg.fillStyle = body;
+    cg.fillText(ch, w / 2, h / 2);
+  }
+
+  /**
+   * 「已唱」那一份位图（照需烘，一个字符一次）。
+   *
+   * 与 n.glyphs 的绑定用**引用比较**：skin.js 释放字形时把 n.glyphs 置 null /
+   * 换新（dropGlyphs / ensureGlyphs 重建），这里就会自动重建，不会拿旧位图去贴。
+   *
+   * @returns {HTMLCanvasElement|null} null = 烘不出来（画布受限）→ 调用方退回 fillText
+   */
+  function litItem(n, k) {
+    const gs = n.glyphs;
+    if (!gs) return null;
+    let set = n.litGlyphs;
+    if (!set || set.src !== gs || set.scale !== gs.scale) {
+      set = { src: gs, scale: gs.scale, items: [] };
+      n.litGlyphs = set;
+    }
+    if (set.items[k] !== undefined) return set.items[k];
+    const lay = n.layout;
+    const c = lay && lay.chars[k];
+    const src = gs.items[k];
+    if (!c || !src) {
+      set.items[k] = null;
+      return null;
+    }
+    const cv = bake(src.width, src.height, (cg, w, h) => {
+      paintGlyph(cg, c.ch, lay.fs * gs.scale, w, h, WORD.litGlow, WORD.litBody, gs.scale);
+    });
+    set.items[k] = cv;
+    return cv;
+  }
+
+  /**
+   * 释放一个节点持有的字形位图（未唱 + 已唱两份一起）。
+   *
+   * 收在渲染器里而不是让 skin.js 直接 `n.glyphs = null`：多了一份已唱位图之后，
+   * 「只清一半」就是实打实的内存泄漏（那几百 KB 一颗的位图会跟着节点一直挂着）。
+   */
+  function dropGlyphs(n) {
+    if (!n) return;
+    n.glyphs = null;
+    n.litGlyphs = null;
   }
 
   /**
@@ -826,8 +921,16 @@ export function createRenderer(canvas) {
     g.textBaseline = "middle";
 
     const total = lay.chars.length;
+    /* 字级（逐字）点亮：**只给正在唱的那一句**算，其余节点（抢跑中的、待命的）
+       保持原来的样子 —— 与包里的 lyrics-view.js 同一口径（整篇都点亮的只有
+       当前行才有意义）。碎裂中的那一句仍然算：它本来就唱完了，整行已点亮，
+       这时候退回未唱色反而会「啪」地闪一下。
+       litCount < 0 → 这一行没有字级时间轴，整行按未唱色画：**回退为逐行歌词**。 */
+    const singing = n.state === "active" || n.state === "passing";
+    const litCount = singing ? wordLitCount(n.line, total, st.position) : -1;
     for (let k = 0; k < total; k += 1) {
       const c = lay.chars[k];
+      const lit = litCount >= 0 && k < litCount;
       // 逐字错峰：后一个字晚 0.4 个周期起步
       const stagger = total > 1 ? (k / (total - 1)) * 0.4 : 0;
       const t = assemble >= 1 ? 1 : easeOutCubic(clamp((assemble - stagger) / 0.6, 0, 1));
@@ -855,16 +958,23 @@ export function createRenderer(canvas) {
 
       // —— 每个字自带一组姿态：大小 / 角度 / 高低，再各自慢慢摇曳（魔法味）——
       const twinkle = st.anim ? 0.92 + 0.08 * Math.sin(st.now * 1.25 + c.phase * 2.1) : 1;
-      const a = alpha * b * twinkle;
+      // 未唱的字压暗一档，让点亮的字跳出来（只在逐字模式下压：行级歌词观感不变）
+      const dim = litCount >= 0 && !lit ? WORD.dimUnlit : 1;
+      const a = alpha * b * twinkle * dim;
       if (a <= 0.02) continue;
       const sway = st.anim ? Math.sin(st.now * 0.85 + c.phase) * 0.045 : 0;
       const bob = st.anim ? Math.sin(st.now * 0.6 + c.phase * 1.7) * 0.04 : 0;
 
+      // 已唱的字用另一份（暖金）位图；它按需烘，烘不出来或本来就没位图时
+      // 统一落到下面的 fillText 兜底 —— 两条路都用同一组颜色常量。
+      // （两个色值直接选出来，不在每帧里 new 对象：见文件头的性能约定）
+      const cv = lit ? litItem(n, k) || (glyphs && glyphs.items[k]) : glyphs && glyphs.items[k];
+      const glyphGlow = lit ? WORD.litGlow : WORD.glow;
+      const glyphBody = lit ? WORD.litBody : WORD.body;
       g.save();
       g.translate(x, y + lay.fs * (c.dy + bob));
       g.rotate(c.tilt + sway);
       g.scale(c.scale, c.scale);
-      const cv = glyphs && glyphs.items[k];
       if (cv) {
         // 位图 → 世界尺寸（出图时按 targetZoom 放大过，这里换算回去）
         const gw = cv.width / glyphs.scale;
@@ -873,10 +983,10 @@ export function createRenderer(canvas) {
         g.drawImage(cv, -gw / 2, -gh / 2, gw, gh);
       } else {
         if (a > 0.25) {
-          g.fillStyle = `rgba(150,190,255,${(a * 0.3).toFixed(3)})`;
+          g.fillStyle = withAlpha(glyphGlow, a * 0.72);
           g.fillText(c.ch, -c.w / 2 - 3, 2);
         }
-        g.fillStyle = `rgba(236,240,255,${a.toFixed(3)})`;
+        g.fillStyle = withAlpha(glyphBody, a);
         g.fillText(c.ch, -c.w / 2, 0);
       }
       g.restore();
@@ -1093,7 +1203,18 @@ export function createRenderer(canvas) {
     return best;
   }
 
-  return { resize, draw, hitTest, worldAt, nodeZoom, textPoints, setTextScale, prewarm, size: () => ({ W, H, dpr }) };
+  return {
+    resize,
+    draw,
+    hitTest,
+    worldAt,
+    nodeZoom,
+    textPoints,
+    setTextScale,
+    prewarm,
+    dropGlyphs,
+    size: () => ({ W, H, dpr }),
+  };
 }
 
 /* -------------------------------------------------------------------- 杂项 */

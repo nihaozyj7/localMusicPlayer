@@ -82,7 +82,8 @@ export default {
     ctx.root.innerHTML = SHELL;
 
     const canvas = ctx.root.querySelector(".mc__canvas");
-    const renderer = createRenderer(canvas);
+    // 字素切分必须和宿主生成 `words` 时用的是同一套（否则逐字会点错字）
+    const renderer = createRenderer(canvas, { split: ctx.sdk && ctx.sdk.splitGraphemes });
     const camCtl = createCamera();
     const analyser = createAnalyser(128);
     const world = createPool(POOL.world, "world");
@@ -347,7 +348,7 @@ function reflowText() {
   if (!S) return;
   for (const n of S.world.nodes) {
     n.layout = null;
-    n.glyphs = null;
+    S.renderer.dropGlyphs(n); // 未唱 + 已唱两份位图一起放（只清一半会漏内存）
   }
 }
 
@@ -497,7 +498,9 @@ function frame(ts) {
   const sp = S.analyser.out;
 
   // —— 世界状态：提前量落位（focus） + 演唱状态（sing）——
-  syncStage(now);
+  // 位置只估一次，状态机与逐字点亮共用同一个时刻的值（否则两者会差一帧）
+  const est = estimatePos(now);
+  syncStage(now, est);
   S.camCtl.update(dt, now);
   syncArrival();
 
@@ -510,6 +513,8 @@ function frame(ts) {
   S.renderer.draw({
     now,
     dt,
+    /** 逐字歌词要用它决定「点亮到第几个字」（见 lib/render.js#wordLitCount） */
+    position: est,
     view: S.camCtl.view(now, { anim: S.anim }),
     spec: sp,
     world: S.world,
@@ -560,8 +565,7 @@ function estimatePos(now) {
 }
 
 /** 每帧跑一次：focus/sing 有变化就切换状态与运镜 */
-function syncStage(now) {
-  const est = estimatePos(now);
+function syncStage(now, est) {
   const focus = focusAt(S.world.nodes, est);
   const sing = hasLyricLines() ? S.lyricIndex : -1;
 
@@ -575,7 +579,7 @@ function syncStage(now) {
     //   表现就是“唱完字啪一下没掉”。passing 会先用 shatterSec 把字淡出飘散。
     if (n.state === "approaching" && n.i !== S.focusIdx) leaveNode(n, now, null, { burst: false });
     if (n.state === "active" && hasLyric && n.i !== S.singIdx) leaveNode(n, now, null, { burst: true });
-    if (n.state === "idle" && n.glyphs && n.i !== S.focusIdx && n.i !== S.singIdx) n.glyphs = null;
+    if (n.state === "idle" && n.glyphs && n.i !== S.focusIdx && n.i !== S.singIdx) S.renderer.dropGlyphs(n);
   }
   advanceStates(now);
 }
@@ -640,7 +644,10 @@ function onFocus(next, now) {
     S.camCtl.flyTo({ x: node.x, y: node.y, zoom }, type, now, dur);
   }
 
-  node.state = "approaching";
+  // ★ 宿主说这一句已经在唱（seek 落在一句中间，焦点这时才追上）时，不能再把它打回
+  //   approaching：singIdx 没变 → onSing 不会再发一次 → 这一行会一直卡在拼字态。
+  //   字拼完就看不出差别，但「正在唱」的身份丢了，逐字点亮整行都不会亮。
+  node.state = next === S.singIdx ? "active" : "approaching";
   node.stateAt = now;
   // 文字汇聚时长跟着提前量走：镜头落地那一刻字正好拼完
   node.assembleDur = Math.max(0.25, adjacent ? dur : Math.min(dur, 1));
@@ -697,7 +704,7 @@ function advanceStates(now) {
     if (n.state === "passing" && now - n.stateAt > 1.6) {
       n.state = "idle";
       n.stateAt = now;
-      n.glyphs = null;
+      S.renderer.dropGlyphs(n);
     }
   }
 }

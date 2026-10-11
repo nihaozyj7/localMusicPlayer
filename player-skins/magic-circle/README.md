@@ -95,6 +95,29 @@ export const LAYOUT = {
 成品，不会再看到“字还在路上拼”糊掉的画面；运行期每帧只剩 `drawImage`。
 位图只有主角 / 正在碎的节点才持有，碎完（`passing → idle`）立刻释放。
 
+## 逐字点亮（已唱的字变暖金）
+
+宿主的行带字级时间轴时（`line.words` = 每个字素的起始毫秒，见皮肤契约），
+**正在唱的那一句按字点亮**：唱到的字换暖金色，没唱到的压暗到 62%。
+
+- 两份位图：未唱（蓝白）在 `ensureGlyphs` 里预烘；已唱（暖金）由 `litItem`
+  **按需**烘 —— 唱到哪个字才烘哪个字，不给每个节点都常驻两份位图；
+- 字素切分必须和宿主生成 `words` 时用的是同一套，所以 `skin.js` 把
+  `ctx.sdk.splitGraphemes` 注进 `createRenderer({ split })`；
+- 判据收在纯函数 `wordLitCount(line, 字素数, 位置)`：返回 **-1 = 不做逐字** ——
+  没有 `words`（行级歌词）、`words` 个数与字素数对不上（多语言行 `原文 · 译文`
+  的 `words` 只对应原文，下标全错位）、位置不是有限数。这三种一律按老样子整行画，
+  也就是**回退为逐行歌词**；
+- 只有正在唱的那一句（`active` / `passing`）点亮：待命阵的大字还没开口，
+  不该有金色；唱完的那一句整行都是金的，随碎片一起淡出；
+- 「正在唱」比「镜头要落哪」优先：seek 落在一句中间时焦点才追上，这时不能再把
+  节点打回 `approaching`（`singIdx` 没变、`onSing` 不会再发一次），否则整行会卡在
+  拼字态、逐字点亮整句都不亮；
+- 释放走 `render.dropGlyphs(node)`：**一份清两份**（未唱 + 已唱），不然金字位图会漏在节点上。
+
+自检：`node tools/check-word-lyrics.mjs` 的 §[7] 直接数画布上的金色像素
+（逐字变多 + 行级歌词零金色）；纯逻辑在 `frontend/tests/magic-circle-word.test.js`。
+
 ## 沉浸式整窗渲染
 
 声明了 `capabilities.background` 的样式，宿主会把**舞台本身放大到整窗**

@@ -73,6 +73,29 @@ export function hsl(h, s, l, a) {
   return `hsla(${h.toFixed(1)},${s.toFixed(0)}%,${l.toFixed(0)}%,${(a ?? 1).toFixed(3)})`;
 }
 
+/**
+ * 给一个 `rgba(r,g,b,a)` 色值换一个整体 alpha（**乘**上去）。
+ *
+ * 为什么不是直接拼字符串：色值里那个 alpha 是**这个颜色固有的淡度**
+ * （辉光本来就该是半透明的），调用方想再叠一层整体压暗 / 淡出时必须乘。
+ * 直接覆盖的话，辉光会随着整体透明度一起变实，暗下去反而更糊。
+ *
+ * 认不出来（命名色、`#rgb`、`hsla()`）就原样返回 —— 这里只服务 config 里
+ * 那几个常量，不必做通用颜色解析。
+ *
+ * @param {string} color `rgba(...)` / `rgb(...)`
+ * @param {number} k 要乘的系数
+ */
+export function withAlpha(color, k) {
+  const m = /^rgba?\(([^)]+)\)$/.exec(String(color).trim());
+  if (!m) return color;
+  const parts = m[1].split(",");
+  if (parts.length < 3) return color;
+  const base = parts.length > 3 ? Number(parts[3]) : 1;
+  const out = clamp((Number.isFinite(base) ? base : 1) * (Number(k) || 0), 0, 1);
+  return `rgba(${parts[0].trim()},${parts[1].trim()},${parts[2].trim()},${out.toFixed(3)})`;
+}
+
 /** 数组分段均值（spec 的频段切片） */
 export function avgRange(arr, from, to) {
   const start = Math.max(0, from | 0);
