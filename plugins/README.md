@@ -6,14 +6,18 @@
 
 ```
 plugins/
+├── build-index.mjs            生成器：扫描下面两个目录，写出各自的 index.json
 ├── theme/                     主题（只声明设计令牌的 CSS）
 │   ├── README.md              主题开发说明 + 令牌契约
+│   ├── index.json             生成物：客户端「从仓库获取」读它
 │   ├── glass-dark.css         玻璃拟态 · 深色
 │   ├── glass-light.css        玻璃拟态 · 浅色
 │   ├── vibrant-dark.css       活力满满 · 深色
 │   └── vibrant-light.css      活力满满 · 浅色
 └── style/                     播放界面样式包（皮肤，契约 v3）
     ├── README.md              样式包开发说明
+    ├── pending-designs.md     待设计清单 + 签收台账（六款第三方样式）
+    ├── index.json             生成物：客户端「从仓库获取」读它
     └── magic-circle/          魔法阵歌词舞台
         ├── skin.json          清单（id / 版本 / 能力 / 配色声明）
         ├── skin.js            入口（零裸包名 import）
@@ -61,6 +65,46 @@ Copy-Item plugins\style\magic-circle "$env:APPDATA\LocalMusicPlayer\player-skins
 > 播放器**不会**读取 `plugins/` 这个目录本身，它只认上面两个数据目录。
 > `plugins/` 是**源码管理位置**：改这里 → 拷过去 → 重新扫描。
 
+### 在播放器里直接获取（推荐）
+
+设置里点「添加自定义主题」/「添加播放界面样式」会打开一个两页的弹层：
+
+| 页 | 做什么 |
+| :--- | :--- |
+| **从仓库获取** | 从 `plugins/` 的在线地址拉清单，列出全部主题 / 样式包，点一下就装好（已装的会标「已安装」，远端版本更高时按钮变成「更新」）。这一页左上角能看当前仓库地址，点「修改」可以改成自己的 fork、镜像或本地 HTTP 服务。 |
+| **从本地导入** | 原来的用法：复制 AI 提示词去生成，或者选一个本地目录导入。 |
+
+仓库地址默认是本项目的 `plugins/` 目录（`<repo>/main/plugins`），可以在设置里改；
+改完会落盘，重启仍然生效。清单和文件都走 https，装了哪些、装到哪由后端决定
+（主题 → `themes/`，样式包 → `player-skins/<id>/`）；覆盖已有文件前会先备份成 `.bak`。
+
+## `index.json` 与生成器
+
+客户端只读 `plugins/theme/index.json` 与 `plugins/style/index.json`，**不列举目录**
+（raw 静态托管没有目录列表接口）。所以每加 / 删 / 改一个插件，都要重新生成一次清单：
+
+```powershell
+node plugins/build-index.mjs           # 重新生成两份 index.json
+node plugins/build-index.mjs --check   # 只校验：和磁盘不一致就退出码 1（等价 npm run check:plugins）
+```
+
+生成器的行为：
+
+- **确定性**：按 id 排序、不写时间戳，同样的磁盘内容永远产出同样的字节（diff 才干净）；
+- **跳过**：`tests/ node_modules/ .git/ __pycache__/` 等目录，`index.json .DS_Store Thumbs.db desktop.ini`
+  等文件，以及 `.bak .log .tmp .orig .rej` 后缀 —— 别把临时文件传上去；
+- **条目字段**：`id` / `name` / `version` / `author` / `description`（主题另有 `mode` 与 `swatch`，
+  样式包另有 `dir` 与 `apiVersion`），`files[]` 里每个文件带 `path` + `size` + `sha256`；
+- `files[].path` 相对**该目录**写（`glass-dark.css`、`magic-circle/skin.js`），
+  所以下载地址只有一条规则：`<仓库地址>/<theme|style>/<path>`。
+
+> `sha256` **不是**安全边界（清单和文件来自同一个仓库）—— 它是防呆：清单过期了、
+> 或者传输被截断了，客户端会直接报错，而不是把半个文件装进去。真正的落盘是
+> 「全部校验通过 → 才写」，下载中途失败不会留下任何一个字节。
+
+版本号来自 `skin.json` 的 `version`（主题写在 `@theme-version` 头里）。
+`version` 变了，客户端才会把按钮显示成「更新」。
+
 ## 自检
 
 主题与样式包各自带自己的自检，**不需要**项目的测试框架：
@@ -79,3 +123,5 @@ node plugins/style/magic-circle/tests/canvas-word-check.mjs
    到 `plugins/theme/<新名字>.css`，把 `data-theme` 与 `@theme-name` 改成新名字即可。
 2. 样式包：复制 `internal/skins/template/`（示例包 + 《皮肤说明.md》）到
    `plugins/style/<新名字>/`。契约的唯一定义在 `frontend/packages/player-skins/contract.js`。
+3. **最后一定要跑一次 `node plugins/build-index.mjs`**，否则客户端「从仓库获取」里
+   看不到这个新插件（`--check` 会告诉你清单已经过期）。

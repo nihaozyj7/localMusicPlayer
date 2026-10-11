@@ -297,6 +297,9 @@ func main() {
 	// 主题 / 样式服务需要应用句柄来弹「导入文件夹」的选择器（见各自的 Import）。
 	themeSvc := NewThemeService(themeMgr)
 	skinSvc := NewSkinService(skinMgr)
+	// 插件仓库：从远端 plugins 目录读清单，把用户挑中的主题 / 样式包装到本机。
+	// 它依赖上面两个管理器，是为了装完能立刻重扫（装进来的东西与本地导入的完全同构）。
+	packSvc := NewPackService(store, themeMgr, skinMgr)
 
 	var browserArgs []string
 	if port := strings.TrimSpace(os.Getenv("LMPLAYER_DEBUG_PORT")); port != "" {
@@ -321,6 +324,8 @@ func main() {
 			application.NewService(state.lyricsSvc),
 			application.NewService(themeSvc),
 			application.NewService(skinSvc),
+			// 从仓库获取主题 / 样式包（设置 → 外观 → 添加自定义…）
+			application.NewService(packSvc),
 			application.NewService(NewConfigService(store)),
 			application.NewService(state.appSvc),
 			application.NewService(NewMediaService(mediaSrv, songs)),

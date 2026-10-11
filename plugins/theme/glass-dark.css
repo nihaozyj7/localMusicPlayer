@@ -20,6 +20,9 @@
    @theme-name 玻璃拟态 · 深色
    @theme-mode dark
    @theme-swatch #070a14 #121a2b #8ab4ff #eaf0ff #22d3ee
+   @theme-version 1.0.0
+   @theme-author LMPlayer 插件包
+   @theme-desc 午夜极光打底 + 34px 磨砂玻璃面板，冷调紫青配色，圆角与阴影整体大一档
    ========================================================================== */
 
 :root[data-theme="glass-dark"] {

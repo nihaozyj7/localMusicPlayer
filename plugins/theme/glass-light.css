@@ -18,6 +18,9 @@
    @theme-name 玻璃拟态 · 浅色
    @theme-mode light
    @theme-swatch #eef2fb #ffffff #cfd8ee #131a2b #4f5bd5
+   @theme-version 1.0.0
+   @theme-author LMPlayer 插件包
+   @theme-desc 晨雾粉彩打底 + 半透明白玻璃面板，靠亮白高光与冷灰投影写出玻璃厚度
    ========================================================================== */
 
 :root[data-theme="glass-light"] {

@@ -1,0 +1,364 @@
+/* ==========================================================================
+   darkroom/skin.css — 「暗房」的视觉
+   --------------------------------------------------------------------------
+   宿主会把这一份整体包进：
+
+     @layer skin { @scope (.playerview[data-skin="darkroom"], .skin-bg[data-skin="darkroom"]) { … } }
+
+   于是这里的规矩是：
+     · 选择器**相对舞台根**写（舞台自身用 ::scope），不要写 .playerview[data-skin="…"] 前缀；
+     · 不许写 :root / html / body / * / 裸标签 / !important；
+     · 想影响宿主壳（标题栏 / 底栏 / 浮层）的颜色，只有一条合法通道 ——
+       清单 colors（静态兜底）+ ctx.actions.reportBackdrop()（随封面动态上报）。
+
+   画面配色集中在下面这一段，运行期 JS 只会改这三个数字与强调色：
+     --dr-bloom（低频 → 光晕呼吸）/ --dr-grain（高频 → 颗粒浓度）/ --dr-hal（打击 → halation）
+   以及 --dr-shift（当前行的居中位移）、每个字素的 --g（0..1 点亮进度）。
+
+   ★ 性能纪律：filter 只在这里设一次（背景大图、bloom 层），运行期**只动
+     opacity / transform**。绝不逐帧改 blur —— docs/36 实测全屏大半径模糊是
+     每帧最贵的操作之一。
+   ========================================================================== */
+
+.dr {
+  /* —— 配色（缺省值 = 清单 colors；封面取到后会改 --dr-accent） —— */
+  --dr-base: #12100e;
+  --dr-warm: #f0e6d8;
+  --dr-dim: rgba(240, 230, 216, 0.34);
+  --dr-lit: #ffd9a0;
+  --dr-accent: #c8a165;
+
+  /* —— 每帧由 JS 写入的三个量（初值 = 静音时的样子） —— */
+  --dr-bloom: 0.16;
+  --dr-grain: 0.18;
+  --dr-hal: 0;
+  --dr-shift: 0px;
+  --dr-fs: 18px;
+
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: var(--dr-warm);
+  font-family: inherit;
+  /* 底色是半透明的：整窗背景层（封面虚化）要透上来，否则就成了"中间一块画 + 周围死黑" */
+  background:
+    radial-gradient(120% 80% at 50% 42%, rgba(58, 42, 26, 0.42), rgba(0, 0, 0, 0) 62%),
+    linear-gradient(180deg, rgba(18, 16, 14, 0.88), rgba(10, 9, 8, 0.94));
+}
+
+/* --------------------------------------------------------------------------
+   光晕溢出（halation 的底子）：封面第二份，重度模糊 + screen 混合。
+   运行期只动 opacity / transform，两者都走合成器，不重新跑模糊。
+   -------------------------------------------------------------------------- */
+.dr__bloom {
+  position: absolute;
+  inset: -8%;
+  background-image: none;
+  background-size: cover;
+  background-position: center;
+  filter: blur(38px) saturate(1.15) brightness(0.92);
+  mix-blend-mode: screen;
+  opacity: calc(0.14 + 0.52 * var(--dr-bloom));
+  transform: scale(calc(1.03 + 0.05 * var(--dr-bloom)));
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   歌词
+   -------------------------------------------------------------------------- */
+.dr__ly {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* 上方让开标题栏 + 头部行 + HUD，下方让开底栏（宿主用 --skin-inset-* 给） */
+  top: calc(var(--skin-inset-top, 0px) + 58px);
+  bottom: calc(var(--skin-inset-bottom, 0px) + 10px);
+  overflow: hidden;
+}
+.dr__ly[hidden] {
+  display: none;
+}
+
+.dr__list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  transform: translate3d(0, var(--dr-shift), 0);
+  transition: transform 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.dr__line {
+  display: block;
+  padding: 9px 8%;
+  text-align: center;
+  font-size: var(--dr-fs);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--dr-dim);
+  opacity: 0.32;
+  transform: scale(0.985);
+  transition: opacity 420ms ease, transform 420ms ease;
+}
+.dr__line[data-state="past"] {
+  opacity: 0.44;
+}
+.dr__line[data-state="active"] {
+  opacity: 1;
+  transform: scale(1.04);
+}
+.dr[data-interactive="1"] .dr__line {
+  cursor: pointer;
+}
+.dr[data-interactive="1"] .dr__line:focus-visible {
+  outline: 1px solid var(--dr-accent);
+  outline-offset: 2px;
+}
+
+.dr__text {
+  display: inline;
+}
+
+/* 译文：小一号、更淡，跟在正文后面 */
+.dr__trans {
+  display: block;
+  margin-top: 2px;
+  font-size: calc(var(--dr-fs) * 0.72);
+  color: rgba(240, 230, 216, 0.28);
+}
+
+/* --------------------------------------------------------------------------
+   逐字点亮：每个字素一个 --g（0..1）。
+   - 颜色：从"未唱的冷灰"混到"已唱的暖金"（color-mix 与 tokens.css 用的是同一族能力）；
+   - 色差：偏移量 = --g × 1.4px（没唱到的字没有色差）；
+   - halation：随 --dr-hal 脉冲的暖色辉光，打击一下整行都会"溢出"一次；
+   - 只在 --g 变化时重算，平滑交给 transition（JS 侧按 1/8 档量化）。
+   -------------------------------------------------------------------------- */
+.dr__g {
+  --g: 0;
+  display: inline;
+  color: color-mix(in oklab, var(--dr-dim), var(--dr-lit) calc(var(--g) * 100%));
+  text-shadow:
+    calc(-1.4px * var(--g)) 0 rgba(255, 72, 72, 0.5),
+    calc(1.4px * var(--g)) 0 rgba(72, 200, 255, 0.42),
+    0 0 calc(6px + 20px * var(--dr-hal)) rgba(255, 190, 120, calc(0.1 + 0.5 * var(--dr-hal)));
+  transition: color 140ms linear, text-shadow 140ms linear;
+}
+
+/* --------------------------------------------------------------------------
+   HUD：片号 / 曲名 / 时间码
+   -------------------------------------------------------------------------- */
+.dr__hud {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  padding: calc(var(--skin-inset-top, 0px) + 12px) 26px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  pointer-events: none;
+}
+.dr__title {
+  max-width: 62%;
+  font-size: 14px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(240, 230, 216, 0.86);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dr__sub {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--dr-dim);
+}
+.dr__tc {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: var(--dr-accent);
+}
+.dr__roll {
+  margin-left: 12px;
+}
+
+/* --------------------------------------------------------------------------
+   空态
+   -------------------------------------------------------------------------- */
+.dr__empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  color: var(--dr-dim);
+  pointer-events: none;
+}
+.dr__empty[hidden] {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   片框与后期叠层
+   -------------------------------------------------------------------------- */
+.dr__frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 222, 180, 0.06),
+    inset 0 0 160px rgba(0, 0, 0, 0.7),
+    inset 0 0 42px rgba(0, 0, 0, 0.4);
+}
+/* 边角磨损：两团极淡的脏（伪元素，省两个 DOM 节点） */
+.dr__frame::before,
+.dr__frame::after {
+  content: "";
+  position: absolute;
+  width: 26%;
+  height: 16%;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0) 72%);
+}
+.dr__frame::before {
+  left: -5%;
+  top: -4%;
+}
+.dr__frame::after {
+  right: -5%;
+  bottom: -4%;
+}
+
+.dr__scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.05) 0 1px,
+    rgba(0, 0, 0, 0) 1px 3px
+  );
+  mix-blend-mode: overlay;
+  opacity: 0.55;
+}
+
+/* 颗粒：两层重复点阵 + steps 位移。performance 档与静止形态下都停下（见文件末尾） */
+.dr__grain {
+  position: absolute;
+  inset: -20%;
+  pointer-events: none;
+  background-image:
+    repeating-radial-gradient(circle at 18% 32%, rgba(255, 255, 255, 0.16) 0 1px, rgba(0, 0, 0, 0) 1px 3px),
+    repeating-radial-gradient(circle at 72% 61%, rgba(0, 0, 0, 0.2) 0 1px, rgba(0, 0, 0, 0) 1px 4px);
+  background-size: 140px 140px, 190px 190px;
+  mix-blend-mode: overlay;
+  opacity: calc(0.05 + 0.16 * var(--dr-grain));
+  animation: dr-grain 1.1s steps(5) infinite;
+}
+@keyframes dr-grain {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  20% {
+    transform: translate3d(-3%, 2%, 0);
+  }
+  40% {
+    transform: translate3d(2%, -3%, 0);
+  }
+  60% {
+    transform: translate3d(-2%, -1%, 0);
+  }
+  80% {
+    transform: translate3d(3%, 3%, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.dr__vig {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(115% 85% at 50% 45%, rgba(0, 0, 0, 0) 42%, rgba(0, 0, 0, 0.58) 100%);
+}
+
+/* 快门：两片黑幕，换歌时开合一次（转场只有这一处） */
+.dr__gate {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 52%;
+  background: linear-gradient(180deg, #0a0908, #15120f);
+  pointer-events: none;
+  transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.dr__gate--top {
+  top: 0;
+  transform: translateY(-101%);
+}
+.dr__gate--bottom {
+  bottom: 0;
+  transform: translateY(101%);
+}
+.dr[data-shutter="shut"] .dr__gate--top,
+.dr[data-shutter="shut"] .dr__gate--bottom {
+  transform: translateY(0);
+}
+
+/* --------------------------------------------------------------------------
+   整窗背景层的内容（容器是宿主的 .skin-bg，位置与进出场也由宿主管；
+   这里只管"这张虚化封面长什么样"）
+   -------------------------------------------------------------------------- */
+.drbg {
+  position: absolute;
+  inset: 0;
+}
+.drbg__img {
+  position: absolute;
+  left: -6%;
+  top: -6%;
+  width: 112%;
+  height: 112%;
+  object-fit: cover;
+  /* 只在这里设一次 filter（图不变就不用重算）；运行期不动它 */
+  filter: blur(40px) saturate(1.12) brightness(0.62);
+  opacity: 0;
+  transition: opacity 620ms ease;
+}
+/* 图解码完才淡入：避免"整块背景淡入完成 → 图突然砸上来"（宿主也在修同一个问题） */
+.drbg__img[data-ready="1"] {
+  opacity: 1;
+}
+.drbg__veil {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 90% at 50% 40%, rgba(62, 44, 26, 0.26), rgba(0, 0, 0, 0) 60%),
+    linear-gradient(180deg, rgba(16, 14, 12, 0.6), rgba(10, 9, 8, 0.78));
+}
+
+/* --------------------------------------------------------------------------
+   降级：静止形态 / 性能档 / 暂停停帧
+   -------------------------------------------------------------------------- */
+
+/* 静止（animations:false 或系统 prefers-reduced-motion）：画面完整，只是不动 */
+.dr[data-static="1"] .dr__grain,
+.dr[data-static="1"] .dr__line,
+.dr[data-static="1"] .dr__list,
+.dr[data-static="1"] .dr__gate,
+.dr[data-static="1"] .dr__g,
+.dr[data-static="1"] .drbg__img {
+  animation: none;
+  transition: none;
+}
+
+/* 性能优先：颗粒层停下（改成静态图），把每帧的合成开销让出来 */
+.dr[data-perf="1"] .dr__grain {
+  animation: none;
+}
+
+/* 暂停 6 秒后停帧：连 CSS 动画一起停，静止画面不该继续转风扇（docs/37） */
+.dr[data-idle="1"] .dr__grain {
+  animation-play-state: paused;
+}

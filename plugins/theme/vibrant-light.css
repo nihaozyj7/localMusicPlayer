@@ -17,6 +17,9 @@
    @theme-name 活力满满 · 浅色
    @theme-mode light
    @theme-swatch #fff6f0 #ffffff #ffd9c9 #2a1418 #c9247a
+   @theme-version 1.0.0
+   @theme-author LMPlayer 插件包
+   @theme-desc 暖奶油底 + 品红主色，哑光白面板配更大圆角，明快但不刺眼
    ========================================================================== */
 
 :root[data-theme="vibrant-light"] {

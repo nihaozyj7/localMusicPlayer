@@ -1,0 +1,183 @@
+/* ==========================================================================
+   components/packstore.css — 「添加自定义主题 / 样式包」分页弹层
+   --------------------------------------------------------------------------
+   只写布局与「用哪个令牌」；所有视觉值一律走 var(--token)（见 AGENTS §6.4）。
+   弹层本体（.modal / .modal--wide / .modal--scroll）沿用 overlay.css，
+   这里只补 tab 头、来源行、列表项这三块新结构。
+
+   尺寸约定：列表项高度不写死，靠 padding 与内容撑开 —— 主题名的长度、
+   描述有没有写、色板有几个都由远端清单决定，写死高度会在某些条目上截断。
+   ========================================================================== */
+
+.packdlg {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+/* —— 分页头 —— */
+.packtabs {
+  display: flex;
+  gap: var(--sp-4);
+  border-bottom: var(--hairline);
+}
+
+.packtab {
+  padding: var(--sp-2) 0;
+  border: 0;
+  /* 选中态靠下沿这条线表达，未选中时用同宽透明线占位，切换时不跳 */
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-3);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.packtab:hover {
+  color: var(--text-1);
+}
+
+.packtab[data-active="true"] {
+  color: var(--text-1);
+  border-bottom-color: var(--accent);
+}
+
+/* —— 来源行 —— */
+.packsrc {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.packsrc__label {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.packsrc__url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.packsrc__input {
+  flex: 1;
+  min-width: 0;
+  height: var(--btn-sm);
+  font-size: var(--fs-xs);
+}
+
+/* —— 状态提示（缓存 / 出错 / 空）—— */
+.packnote {
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.packnote[data-tone="warn"] {
+  color: var(--warning);
+}
+
+.packnote[data-tone="error"] {
+  color: var(--danger);
+}
+
+/* —— 条目列表 —— */
+.packlist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.packitem {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: var(--hairline);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+}
+
+.packitem__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  /* flex 子项默认 min-width:auto：不加这条，长描述会把右侧按钮挤出弹窗 */
+  flex: 1;
+  min-width: 0;
+}
+
+.packitem__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+
+.packitem__ver {
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-normal);
+  color: var(--text-3);
+}
+
+.packitem__badge {
+  padding: 0 var(--sp-2);
+  border: var(--hairline);
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-normal);
+  color: var(--success);
+}
+
+.packitem__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.packitem__desc {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.packitem__swatch {
+  display: flex;
+  gap: var(--sp-1);
+}
+
+.packitem__swatch i {
+  display: block;
+  width: var(--sp-4);
+  height: var(--sp-4);
+  border-radius: var(--r-xs);
+  /* 颜色由 runtime-tokens.replaceStyleRules 生成的
+     [data-packswatch="i"]{background:…} 提供（见 ui/packstore.js） */
+}
+
+.packitem__side {
+  display: flex;
+  align-items: center;
+  flex: none;
+}

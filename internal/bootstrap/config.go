@@ -204,6 +204,21 @@ type Config struct {
 	// 就是关掉自动检查 —— 那会让他连以后的版本也一起错过。
 	SkippedVersion string `json:"skippedVersion"`
 
+	// —— 插件仓库（主题 / 样式包，见 services_packs.go）——
+	//
+	// PackSource 是仓库里 plugins 目录的基地址：程序从这里读
+	// <PackSource>/theme/index.json 与 <PackSource>/style/index.json，
+	// 再把用户挑中的条目装到本机。
+	//
+	// 为什么可配置而不是写死常量：它天然会变 —— 仓库改名、换分支、用户想自建
+	// 一个只放插件的仓库、开发时指向本地目录，写死的话每种都要改代码重编译。
+	// 默认值是项目仓库 main 分支的 plugins 目录。
+	//
+	// 它不进 applyPatch / SYNCED_KEYS，而是由 PackService.SetSource 单独管
+	// （与 UpdateChannel 同一套做法）：这类「渠道地址」是一次性动作的入参，
+	// 走前端 400ms 防抖同步的话，「刚改完立刻点获取」很可能拿到旧值。
+	PackSource string `json:"packSource"`
+
 	// —— 封面取色（cover-dark 主题）——
 	// CoverSeed / CoverSeed2 是上一次从封面里提取得出的主色（十六进制）。
 	//
@@ -522,6 +537,9 @@ func DefaultConfig() *Config {
 		UpdateChannel:      "auto",
 		SkippedVersion:     "",
 
+		// 插件仓库默认指向项目仓库的 plugins 目录（见 DefaultPackSource）
+		PackSource: DefaultPackSource,
+
 		// 封面轮播默认关闭：多封面时才会有意义，用户明确打开才动
 		CoverCarousel:         false,
 		CoverCarouselInterval: 10,
@@ -731,6 +749,34 @@ func NormalizeUpdateChannel(v string) string {
 		}
 	}
 	return "auto"
+}
+
+// DefaultPackSource 是「从仓库获取主题 / 样式包」的默认插件目录地址。
+//
+// 与 services_update.go 的 repoSlug 指的是同一个仓库（本项目的 GitHub 仓库），
+// 但两处不能合并成一个常量：repoSlug 是 "owner/name" 给 Release API 用的，
+// 这里是**静态文件**的基地址，走的域名、分支、路径都不一样。仓库改名时两处都要改。
+const DefaultPackSource = "https://raw.githubusercontent.com/nihaozyj7/localMusicPlayer/main/plugins"
+
+// NormalizePackSource 规范化插件仓库地址。
+//
+// 这里刻意做了一点「猜测」而不是直接拒绝非法值：用户手敲地址时最常见的两个错
+// 是漏了协议（github.com/x/y）和末尾多一条斜杠，两种都直接修好。
+// 真正修不了的（空、非 http 协议）落回默认值 —— 让整个功能因为一个手滑的
+// 地址而静默失效，显然比用回默认值更糟。
+func NormalizePackSource(v string) string {
+	clean := strings.TrimSpace(v)
+	if clean == "" {
+		return DefaultPackSource
+	}
+	if !strings.Contains(clean, "://") {
+		clean = "https://" + clean
+	}
+	clean = strings.TrimRight(clean, "/")
+	if !strings.HasPrefix(clean, "https://") && !strings.HasPrefix(clean, "http://") {
+		return DefaultPackSource
+	}
+	return clean
 }
 
 // DefaultDownloadDir 在线歌曲的默认下载目录：系统「音乐」目录下的 downloads。
@@ -1126,6 +1172,8 @@ func normalize(cfg *Config) {
 	// 这里不导入 internal/update 来复用它的校验：bootstrap 是最底层的包，
 	// 让配置层依赖一个业务包会把依赖方向弄反。
 	cfg.UpdateChannel = NormalizeUpdateChannel(cfg.UpdateChannel)
+	// 插件仓库地址：手改配置写坏了也不该让「从仓库获取」整块失效
+	cfg.PackSource = NormalizePackSource(cfg.PackSource)
 	if cfg.ShuffleMode != "once" {
 		cfg.ShuffleMode = "reshuffle"
 	}

@@ -28,6 +28,7 @@ npm run dev                 # 只改界面：Vite HMR，http://127.0.0.1:5173/�
 npm run dev:static          # 零构建静态预览 —— 无头自检脚本请用这个
 
 npm run check               # lint + typecheck + test（提交前必跑）
+npm run check:plugins       # 校验 plugins/*/index.json 与磁盘一致（改了 plugins/ 才需要，见 §4.3b）
 npm run lint / typecheck / test / format:check
 npm run build               # = node tools/build-frontend.mjs
 
@@ -189,7 +190,16 @@ src/styles/index.css      唯一样式入口（@import 顺序固定）
   **不要**为了某个第三方样式去改 `tools/check-*.mjs` 或往 `frontend/tests/` 加用例；
 - 插件零项目 import：主题只声明令牌；样式包只走契约（见 §6 第 10 条）。
 
-目录约定、令牌契约、安装与自检命令见 `plugins/README.md` 与各自的 `README.md`。
+**但「与源码解耦」不等于「播放器感知不到它」**：`plugins/{theme,style}/index.json` 是给**客户端**
+读的清单（`node plugins/build-index.mjs` 生成，`--check` / `npm run check:plugins` 校验是否过期），
+播放器的「添加自定义主题 / 添加播放界面样式」弹层里那页「从仓库获取」就是拉它 + 逐文件下载安装的
+（Go 侧 `internal/packstore` + `services_packs.go`，仓库地址是配置键 `packSource`）。
+改了 `plugins/` 里的文件却忘了重新生成清单，表现是「客户端里那个插件看不到 / 装不动」。
+
+这条依赖是**单向**的：`plugins/` 的内容不参与项目的 lint / typecheck / test 门禁
+（`npm run check` 不跑 `check:plugins`），所以插件的质量问题不会让项目 CI 变红。
+
+目录约定、令牌契约、`index.json` 的格式、安装与自检命令见 `plugins/README.md` 与各自的 `README.md`。
 
 ### 4.4 生成物与构建
 

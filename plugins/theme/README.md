@@ -68,3 +68,8 @@ Copy-Item plugins\theme\*.css "$env:APPDATA\LocalMusicPlayer\themes\" -Force
 ```
 
 然后设置 → 外观 → 「重新扫描主题」。主题目录是**平铺**的，不支持子目录。
+
+也可以不用命令行：设置 → 外观 → 「添加自定义主题」里有「从仓库获取」这一页，
+装上就是最新版，已装的会标「已安装」，远端版本更高时按钮变成「更新」。
+（那一页读的是本目录的 `index.json` —— 改完这里的 CSS 记得跑一次
+`node plugins/build-index.mjs`，否则客户端看到的还是旧版本，详见 `plugins/README.md`。）

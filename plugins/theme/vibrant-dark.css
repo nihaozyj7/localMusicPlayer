@@ -20,6 +20,9 @@
    @theme-name 活力满满 · 深色
    @theme-mode dark
    @theme-swatch #140a1e #2a1330 #ff7a59 #fff3ec #ffc93c
+   @theme-version 1.0.0
+   @theme-author LMPlayer 插件包
+   @theme-desc 深夜霓虹：珊瑚 / 品红 / 琥珀高饱和光带，实心硬壳面板，190ms 带回弹的动效
    ========================================================================== */
 
 :root[data-theme="vibrant-dark"] {

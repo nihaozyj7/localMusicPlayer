@@ -42,6 +42,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node tools/run-frontend-tests.mjs",
+    "check:plugins": "node plugins/build-index.mjs --check",
     "verify:lit": "node tools/verify-lit.mjs",
     "verify:skip-silence": "node tools/verify-skip-silence.mjs",
     "shot:lit": "node tools/shot-lit.mjs",

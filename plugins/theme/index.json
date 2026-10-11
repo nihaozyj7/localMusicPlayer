@@ -1,0 +1,94 @@
+{
+  "spec": 1,
+  "kind": "theme",
+  "items": [
+    {
+      "id": "glass-dark",
+      "name": "玻璃拟态 · 深色",
+      "version": "1.0.0",
+      "author": "LMPlayer 插件包",
+      "description": "午夜极光打底 + 34px 磨砂玻璃面板，冷调紫青配色，圆角与阴影整体大一档",
+      "mode": "dark",
+      "swatch": [
+        "#070a14",
+        "#121a2b",
+        "#8ab4ff",
+        "#eaf0ff",
+        "#22d3ee"
+      ],
+      "files": [
+        {
+          "path": "glass-dark.css",
+          "size": 8798,
+          "sha256": "14efcdbf6077257f2cba9e7157274f391432f1629f4de6848cce817447c13014"
+        }
+      ]
+    },
+    {
+      "id": "glass-light",
+      "name": "玻璃拟态 · 浅色",
+      "version": "1.0.0",
+      "author": "LMPlayer 插件包",
+      "description": "晨雾粉彩打底 + 半透明白玻璃面板，靠亮白高光与冷灰投影写出玻璃厚度",
+      "mode": "light",
+      "swatch": [
+        "#eef2fb",
+        "#ffffff",
+        "#cfd8ee",
+        "#131a2b",
+        "#4f5bd5"
+      ],
+      "files": [
+        {
+          "path": "glass-light.css",
+          "size": 7243,
+          "sha256": "91624fb91b5b8407ca4f06dd78bb81dc1c93f9597def1a4752a64f9bbbd77195"
+        }
+      ]
+    },
+    {
+      "id": "vibrant-dark",
+      "name": "活力满满 · 深色",
+      "version": "1.0.0",
+      "author": "LMPlayer 插件包",
+      "description": "深夜霓虹：珊瑚 / 品红 / 琥珀高饱和光带，实心硬壳面板，190ms 带回弹的动效",
+      "mode": "dark",
+      "swatch": [
+        "#140a1e",
+        "#2a1330",
+        "#ff7a59",
+        "#fff3ec",
+        "#ffc93c"
+      ],
+      "files": [
+        {
+          "path": "vibrant-dark.css",
+          "size": 7606,
+          "sha256": "0428a74a166325efd8d19c3d5222021c98f2391f06f16660896df34ec65d3d48"
+        }
+      ]
+    },
+    {
+      "id": "vibrant-light",
+      "name": "活力满满 · 浅色",
+      "version": "1.0.0",
+      "author": "LMPlayer 插件包",
+      "description": "暖奶油底 + 品红主色，哑光白面板配更大圆角，明快但不刺眼",
+      "mode": "light",
+      "swatch": [
+        "#fff6f0",
+        "#ffffff",
+        "#ffd9c9",
+        "#2a1418",
+        "#c9247a"
+      ],
+      "files": [
+        {
+          "path": "vibrant-light.css",
+          "size": 6719,
+          "sha256": "a2a7768e2b9052ae044a543213f805a03f0e579568a959f5d837cf0f057f88c2"
+        }
+      ]
+    }
+  ]
+}

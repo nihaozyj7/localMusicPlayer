@@ -1,0 +1,25 @@
+{
+  "id": "darkroom",
+  "name": "暗房",
+  "version": "1.0.0",
+  "apiVersion": "3.0",
+  "author": "第三方样式（按 plugins/style/pending-designs.md 01 实现）",
+  "description": "整块舞台是一张正在显影的胶片：halation 高光溢出、色差、颗粒、扫描线、快门开合全部由 CSS 叠层完成；封面主色实时上报给宿主壳",
+  "entry": "skin.js",
+  "styles": ["skin.css"],
+  "icon": { "file": "assets/icon.svg" },
+  "order": 210,
+  "capabilities": {
+    "spectrum": true,
+    "background": true,
+    "interactive": true
+  },
+  "colors": {
+    "bg": "#12100e",
+    "fg": "#f0e6d8",
+    "accent": "#c8a165"
+  },
+  "performance": {
+    "budgetFps": 30
+  }
+}

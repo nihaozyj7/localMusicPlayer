@@ -32,6 +32,10 @@ import { animationDurationValue, setRuntimeToken, replaceStyleRules } from "./ru
 // 那组三选一（见 desktop-mode.js 与 ui/panels.js），所以这里不引 desktop-mode。
 
 import { availableSkins, reloadSkins, removeSkin, setPlayerViewMode, skinLoadFailures } from "./playerhost.js";
+// 「添加自定义主题 / 样式包」的分页弹层（从仓库获取 / 从本地导入）。
+// 单个方向的依赖：ui/packstore.js 不反向引 settings.js ——
+// 「从本地导入」那一页的按钮动作仍由下面的 bindPromptActions 处理。
+import { openPackDialog } from "./ui/packstore.js";
 
 /* --------------------------------------------------------------------------
    各分区
@@ -633,9 +637,15 @@ function bindPromptActions(root, ctx = {}) {
   });
 }
 
-/** 打开「用 AI 创建播放界面样式（皮肤）」的引导弹层 */
+/**
+ * 打开「用 AI 创建播放界面样式（皮肤）」的引导弹层。
+ *
+ * 弹层现在是两个 tab（从仓库获取 / 从本地导入），本函数负责**「从本地导入」那一页**：
+ * 引导文字 + 复制提示词 + 导入样式包两个按钮。装完之后要让设置卡片重画，
+ * 所以把 ctx 的 commit / render 通过 onChanged 传进组件。
+ */
 export function openSkinHelp(ctx = {}) {
-  const body = html` <div class="setting__hint setting__hint--steps">
+  const localBody = html` <div class="setting__hint setting__hint--steps">
       · 点「复制提示词」把它粘贴给
       AI：提示词里只有产物的目录结构、接口契约与硬性规则，不含任何风格建议，风格请在末尾那条「风格要求」里自己补一句，它会直接产出一个样式包目录；<br />
       · 提示词里的「参考资料」会自动带上本机的真实路径（样式目录、示例包 _template、当前样式包），AI
@@ -649,19 +659,21 @@ export function openSkinHelp(ctx = {}) {
       示例可以直接复制改名。
     </div>`;
 
-  const { root } = openModal({
-    title: "用 AI 创建播放界面样式",
-    body,
-    okText: "知道了",
-    cancelText: "关闭",
-    onOk: () => true,
+  const { root } = openPackDialog({
+    kind: "style",
+    title: "添加播放界面样式",
+    localBody,
+    onChanged: () => {
+      ctx.commit?.();
+      ctx.render?.();
+    },
   });
   bindPromptActions(root, ctx);
 }
 
-/** 打开「添加自定义主题」的引导弹层 */
+/** 打开「添加自定义主题」的引导弹层（同样是两个 tab，本函数给的是「从本地导入」那页） */
 export function openThemeHelp(ctx = {}) {
-  const body = html` <div class="setting__hint setting__hint--steps">
+  const localBody = html` <div class="setting__hint setting__hint--steps">
       · 点「复制提示词」把它粘贴给
       AI：提示词里只有文件格式、令牌清单与校验规则，不含任何配色建议，风格请在末尾那条「风格要求」里自己补一句，它会产出一个主题
       CSS；<br />
@@ -678,12 +690,14 @@ export function openThemeHelp(ctx = {}) {
       · 没写到的颜色会自动沿用默认主题，缺失也不会弄坏布局。
     </div>`;
 
-  const { root } = openModal({
+  const { root } = openPackDialog({
+    kind: "theme",
     title: "添加自定义主题",
-    body,
-    okText: "知道了",
-    cancelText: "关闭",
-    onOk: () => true,
+    localBody,
+    onChanged: () => {
+      ctx.commit?.();
+      ctx.render?.();
+    },
   });
   bindPromptActions(root, ctx);
 }
@@ -1744,7 +1758,9 @@ async function confirmAIFirstUse() {
       desc: `歌曲信息会发往你填写的接口地址，而不是本机：${String(state.config?.aiBaseUrl || "").trim()}`,
       body: html`
         <div class="about-note">
-          <div class="about-note__body">· 发送的内容：歌曲标题、歌手、专辑、时长，以及文件名（只有文件名，不含完整路径）。</div>
+          <div class="about-note__body">
+            · 发送的内容：歌曲标题、歌手、专辑、时长，以及文件名（只有文件名，不含完整路径）。
+          </div>
           <div class="about-note__body">· 不发：曲库列表、播放记录、文件路径、任何设备标识。</div>
           <div class="about-note__body">· 接口地址通常在境外：请自行确认该服务的隐私政策与数据处理方式。</div>
           <div class="about-note__body">· 随时可关：清空 Base URL / API Key，或关掉 AI 的两个开关。</div>

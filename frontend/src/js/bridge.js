@@ -15,6 +15,8 @@
                Reorder / ReorderPlaylists / Export
      Lyrics    Load
      Themes    List / Load / Reload / Dir / RevealDir
+     Skins     List / Reload / Dir / RevealDir / Token / Import / Delete
+     Packs     Catalog / Install / Source / SetSource
      Config    Get / Set / Path / Reset
      Media     URL / State
      Window    Minimize / ToggleMaximize / Close / SetFullscreen / ToggleFullscreen
@@ -81,6 +83,10 @@ export async function connect() {
       Download: mod.DownloadService,
       Cover: mod.CoverService,
       Skins: mod.SkinService,
+      // 从仓库获取主题 / 样式包（见 services_packs.go）。
+      // 同样按 index.js 的导出名（PackService）而不是简称 Packs ——
+      // 拼错只会让「从仓库获取」永远报「未接线」，构建不会拦。
+      Packs: mod.PackService,
       // 「放不出来」清单（见 services_unplayable.go）。
       // 与上面的说明同理：键名必须是 index.js 的导出名（UnplayableService），
       // 而调用处用的是简称 Unplayable —— 漏了这一行不会有构建错误，
@@ -245,6 +251,15 @@ const backendImpl = {
   importTheme: () => call(bindings?.Themes?.Import),
   // 移除主题：后端删掉主题目录里的那个 CSS 文件（内置主题会被拒绝并给出原因）
   deleteTheme: (id) => call(bindings?.Themes?.Delete, id),
+
+  /* ---- 插件仓库（主题 / 样式包）----
+     kind 是 "theme" | "style"，对应仓库里的 plugins/<kind>/index.json。
+     Catalog 的第二个参数是 refresh：true 表示「用户点了刷新」，绕过内存缓存。
+     联网失败但本机有缓存时后端**不报错**，而是返回 cached=true + staleReason。 */
+  packCatalog: (kind, refresh) => call(bindings?.Packs?.Catalog, kind, refresh === true),
+  packInstall: (kind, id) => call(bindings?.Packs?.Install, kind, id),
+  packSource: () => call(bindings?.Packs?.Source),
+  packSetSource: (url) => call(bindings?.Packs?.SetSource, url),
 
   /* ---- 配置 ---- */
   getConfig: () => call(bindings?.Config?.Get),

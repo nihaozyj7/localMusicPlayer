@@ -31,6 +31,7 @@
  * @property {boolean} loudnessLimit - 真峰值保护
  * @property {string} downloadDir - —— 在线功能 —— DownloadDir 在线歌曲下载的保存目录。默认是系统「音乐」目录下的 downloads。
  * @property {boolean} onlineCover - OnlineCover 是否联网为在线歌曲抓取封面（多来源，见 internal/coverfetch）。
+ * @property {boolean} onlineWordLyrics - OnlineWordLyrics 在线歌词是否优先使用「字级（逐字）」来源。 字级歌词只有 QQ 音乐（QRC）与酷狗（KRC）能给，而这两家用的是**第三方私有 编码**：本程序只做兼容性解析以便显示逐字时间轴（见 internal/lyricsfetch）。 关掉后不再请求/解析这两种编码，只用行级来源 —— 歌词照常可用，只是没有逐字高亮。 这是给「不希望涉及私有格式解析」的用户留的开关，默认开启（与加入它之前行为一致）。
  * @property {boolean} embedMeta - EmbedMeta 是否把抓到的封面/歌词写回歌曲文件自身的标签。 默认关闭：写标签会改写用户的音乐文件，必须是用户明确开启的行为。 关闭时封面与歌词仍然可用，只是放在缓存目录里（见 internal/metacache）。
  * @property {string} rowClickAction - —— 交互 —— RowClickAction 单击歌曲行的行为（与前端 settings.js 的 ROW_CLICK_ACTIONS 一一对应）： play      —— 播放：播这一首，并把它加进播放列表（不动现有列表） play-list —— 播放当前列表：播这一首，并用当前整个列表替换播放队列 next      —— 下一首播放：插到当前歌曲后面（默认，不打断当前播放）
  * @property {boolean} resumeProgress - ResumeProgress 是否保留歌曲播放进度：打开后退出应用会记住每首歌播到哪儿， 下次打开回到那个位置（只恢复进度条，不会自动播放）。 每首歌的具体位置由前端随快照存在本地（localStorage），后端只保存这个开关。
@@ -40,6 +41,7 @@
  * @property {boolean} updateCheckOnStart - —— 版本更新（见 services_update.go）—— UpdateCheckOnStart 启动后在后台静默检查一次有没有新版本。 为什么默认开启：更新检查唯一的价值就是「用户不知道有新版本时也能拿到」。 默认关闭的话，只有主动进设置点「检查更新」的人才会发现 —— 而那批人本来 就会自己去 GitHub 看。检查只是一次几 KB 的请求，且失败完全静默。
  * @property {string} updateChannel - UpdateChannel 是下载更新时优先使用的通道：auto（默认）或某个代理 id。 用户显式选过之后要记住：他之所以去选，通常是因为自动模式在他的网络下 成功过某条代理，下次不该让他重新试一遍。
  * @property {string} skippedVersion - SkippedVersion 是用户点了「跳过此版本」的那个版本号。 存在的原因：更新提示会反复出现（每次启动都检查），而「我知道有新版本、 但现在不想升」是完全合理的选择。没有这个字段的话，用户唯一的办法 就是关掉自动检查 —— 那会让他连以后的版本也一起错过。
+ * @property {string} packSource - —— 插件仓库（主题 / 样式包，见 services_packs.go）—— PackSource 是仓库里 plugins 目录的基地址：程序从这里读 <PackSource>/theme/index.json 与 <PackSource>/style/index.json， 再把用户挑中的条目装到本机。 为什么可配置而不是写死常量：它天然会变 —— 仓库改名、换分支、用户想自建 一个只放插件的仓库、开发时指向本地目录，写死的话每种都要改代码重编译。 默认值是项目仓库 main 分支的 plugins 目录。 它不进 applyPatch / SYNCED_KEYS，而是由 PackService.SetSource 单独管 （与 UpdateChannel 同一套做法）：这类「渠道地址」是一次性动作的入参， 走前端 400ms 防抖同步的话，「刚改完立刻点获取」很可能拿到旧值。
  * @property {string} coverSeed - —— 封面取色（cover-dark 主题）—— CoverSeed / CoverSeed2 是上一次从封面里提取得出的主色（十六进制）。 为什么要落盘：主题是在页面脚本跑起来之后才套用的，而取色还要等封面 图片解码完 —— 于是「启动 → 先用主题里写死的占位灰 → 取完色再整体重绘」， 肉眼看就是先黑一下、颜色还偏灰。把上次的取色结果记下来，Go 侧就能在 页面首屏之前把它写进 <html>，首帧直接就是对的颜色（见 early_theme.go）。
  * @property {string} coverSeed2
  * @property {boolean} showDesktopLyrics - ShowDesktopLyrics 是否显示桌面歌词（独立透明置顶窗口）。

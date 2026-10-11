@@ -38,6 +38,8 @@
 /* 定位落点提示（描边呼吸）：曲目表格与播放列表面板共用的那份样式 */
 @import "./components/locate.css";
 @import "./components/downloadpanel.css";
+/* 「添加自定义主题 / 样式包」分页弹层（从仓库获取 / 从本地导入） */
+@import "./components/packstore.css";
 @import "./components/layers.css";
 
 @import "./utilities.css";
