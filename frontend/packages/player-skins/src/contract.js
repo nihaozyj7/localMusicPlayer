@@ -230,6 +230,9 @@ export const PATCH_TYPES = [
  *   同样认 `setPosition(pos, { playing })` / `setPlaying`）
  * @property {Function} createCamera 运镜（分层视差 + 机位切换 + 手持微动）
  * @property {Function} createBackgroundLayer 整窗背景层
+ * @property {(el: HTMLElement, text: string) => void} marqueeText 标题单行显示，
+ *   放不下时横向来回滚动（元素上会被加上宿主零件类 `.mp-marquee`，
+ *   布局在骨架样式表 marquee.css 里；幂等，可在每次 update 里直接调）
  * @property {Function} applyFit 把「舞台短边 / 基准短边」写进自定义属性
  * @property {Function} fitScale
  * @property {Function} fitScaleOf

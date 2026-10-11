@@ -347,7 +347,7 @@ ctx 是插件唯一的入口（只读，直接改它不会生效）：
 - ctx.env()           返回 { themeId, mode, width, height, dpr, reducedMotion, foreground }
 - ctx.spectrum()      实时频谱（**拉取式**）：返回 { bands: Float32Array(128 段对数全谱, 0..1), at: 采样时刻 } 或 null；
                       调用本身就是采样门控（不调就不采，节流 ~30Hz）；null = 没在播放 / 刚开播 / 没声明 capabilities.spectrum
-- ctx.sdk             复用零件：createLyricsView / createFxLyrics / createCamera / createBackgroundLayer / applyFit / fitScale / parseLrc / splitGraphemes / findLyricIndex / formatLrcTime / lyricDisplayText / html / util
+- ctx.sdk             复用零件：createLyricsView / createFxLyrics / createCamera / createBackgroundLayer / applyFit / fitScale / marqueeText / parseLrc / splitGraphemes / findLyricIndex / formatLrcTime / lyricDisplayText / html / util
 - ctx.actions         受控动作：seek(ms) / seekBy(ms) / seekRatio(0~1) / togglePlay / next / prev / toggleLike / like / unlike / openFolder / openCoverPanel / openLyricsPanel / reportBackdrop({bg,fg})
 - ctx.on(type, fn)    订阅宿主推送，返回取消订阅的函数
 - ctx.defaultCover    封面兜底图（内联 SVG data URL），封面加载失败时用它

@@ -119,28 +119,15 @@
   letter-spacing: -0.02em;
   line-height: 1.25;
   color: var(--text-1);
-  /* 宽度最多与歌词区同宽：.classic__info 和 .lyrics 同处一列、同为 624px 那一列。
-     这里原来是 nowrap + 省略号，但 nowrap 会把 min-content 抬成整段文字的宽度，
-     .classic__info 又是 align-items:center（子项按 fit-content 排），于是
-     min(max(min-content, 列宽), max-content) 永远取到 max-content —— 盒子被撑到
-     几千像素、贯穿整个窗口，overflow:hidden 根本无从截起。
-     改成折行后 min-content 退回到单个词/字，盒子自然收回到列宽之内。 */
+  /* 单行显示，放不下时横向跑马灯（滚动由 ctx.sdk.marqueeText 驱动，
+     布局在宿主骨架样式表 marquee.css 的 .mp-marquee 里）。
+     这里只需要一件事：**把宽度定死在列宽上**。以前是折行（最多 3 行 + 纵向
+     滚动），改单行后 nowrap 会把 min-content 抬成整段文字的宽度，而
+     .classic__info 是 align-items:center（子项按 fit-content 排），
+     盒子会被撑到几千像素、贯穿整个窗口 —— align-self:stretch 让宽度取交叉轴
+     尺寸（= 那一列的列宽，确定值），不再由内容决定。 */
+  align-self: stretch;
   max-width: 100%;
-  /* 超长标题不截断：在歌词区宽度内折行，最多 3 行，其余纵向滚动着看 */
-  overflow-wrap: anywhere;
-  max-height: calc(1.25em * 3);
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-/* 标题自己的滚动条再细一点：全局 10px 的滚动条压在三行标题上太抢眼 */
-.classic__title::-webkit-scrollbar {
-  width: 6px;
-}
-
-.classic__title::-webkit-scrollbar-thumb {
-  border-width: 2px;
 }
 
 .classic__artist {

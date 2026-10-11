@@ -1,0 +1,56 @@
+/* ==========================================================================
+   marquee.css — 标题「单行 + 溢出跑马灯」的骨架样式（宿主零件，见 marquee.js）
+   --------------------------------------------------------------------------
+   这是**宿主零件**样式表，所以刻意不写 @layer：插件 CSS 一律被宿主包进
+   `@layer skin`，而未分层的规则永远压得住分层里的规则。皮肤原来给标题写的
+   `overflow-y: auto` / `max-height: 3 行` / `text-align: center` 都在这之下，
+   于是「单行 + 溢出裁剪」的意图不依赖插件自己记得改。
+
+   只做布局（裁剪 / 对齐 / 一条关键帧），颜色字号仍然归皮肤自己的类名 ——
+   地图上的视觉值都在皮肤 CSS 里，这里一个都没有。
+   ========================================================================== */
+
+.mp-marquee {
+  display: flex;
+  align-items: center;
+  /* 放得下时保持皮肤原本的居中观感 */
+  justify-content: center;
+  /* 放不下时裁掉溢出部分，剩下的交给下面那条动画 */
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* 溢出意味着开头已经被裁掉了：这时必须左对齐，否则开头永远露不出来 */
+.mp-marquee[data-marquee="on"] {
+  justify-content: flex-start;
+}
+
+.mp-marquee__text {
+  flex: none;
+  white-space: nowrap;
+}
+
+.mp-marquee[data-marquee="on"] > .mp-marquee__text {
+  animation: mp-marquee-x var(--mp-marquee-dur, 6s) ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+/* 0~10% 与 90~100% 是两端的停顿（对应 marquee.js 的 HOLD_RATIO），
+   来回滚而不是「滚出去再跳回来」，标题不会有空窗期 */
+@keyframes mp-marquee-x {
+  0%,
+  10% {
+    transform: translateX(0);
+  }
+  90%,
+  100% {
+    transform: translateX(var(--mp-marquee-shift, 0px));
+  }
+}
+
+/* 系统开了「减少动态效果」就不滚：单行 + 裁掉的静态表现，至少不会换行 */
+@media (prefers-reduced-motion: reduce) {
+  .mp-marquee[data-marquee="on"] > .mp-marquee__text {
+    animation: none;
+  }
+}

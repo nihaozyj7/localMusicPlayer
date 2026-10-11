@@ -36,6 +36,7 @@ import { createSdk } from "./sdk.js";
 import "./lyrics.css";
 import "./fx-lyrics.css";
 import "./background-layer.css";
+import "./marquee.css";
 
 /* --------------------------------------------------------------------------
    公开的零件（宿主内部用 / 测试用；插件通过 ctx.sdk 拿，不要从包里 import）

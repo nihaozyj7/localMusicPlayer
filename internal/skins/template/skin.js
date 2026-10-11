@@ -25,7 +25,7 @@
      ctx.playback()      { position, duration, playing, volume, muted }
      ctx.options()       { showLyrics, lyricsFontSize, animations, coverCarousel, …, interactive }
      ctx.env()           { themeId, mode, width, height, dpr, reducedMotion, foreground }
-     ctx.sdk             可复用零件：createLyricsView / createBackgroundLayer / parseLrc / html / util …
+     ctx.sdk             可复用零件：createLyricsView / createBackgroundLayer / marqueeText / parseLrc / html / util …
      ctx.actions         受控动作：seek / seekBy / seekRatio / togglePlay / next / prev /
                          toggleLike / openFolder / openCoverPanel / openLyricsPanel / reportBackdrop
      ctx.on(type, fn)    订阅某类更新（返回退订函数）

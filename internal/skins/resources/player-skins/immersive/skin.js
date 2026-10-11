@@ -17,7 +17,7 @@ export default {
   name: "沉浸",
 
   mount(ctx) {
-    const { createLyricsView, createBackgroundLayer, html } = ctx.sdk;
+    const { createLyricsView, createBackgroundLayer, html, marqueeText } = ctx.sdk;
 
     ctx.root.innerHTML = `
       <div class="immersive__card">
@@ -44,13 +44,15 @@ export default {
       html,
       lyrics,
       background,
+      marqueeText,
       title: ctx.root.querySelector("#pv-title"),
       artist: ctx.root.querySelector("#pv-artist"),
 
       paintSong() {
         const m = ctx.media();
         const s = m.song || html.EMPTY_TRACK;
-        this.title.textContent = s.title || "未在播放";
+        // 标题单行显示，放不下就横向跑马灯（量宽 / 动画都在宿主零件里）
+        this.marqueeText(this.title, s.title || "未在播放");
         this.artist.textContent = html.subtitleOf(s.artist, s.album);
         // 用当前生效封面当整窗背景；轮播切图时也会走到这里
         this.background.setImage(m.cover);

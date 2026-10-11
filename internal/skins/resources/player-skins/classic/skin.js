@@ -15,7 +15,7 @@ export default {
   name: "经典",
 
   mount(ctx) {
-    const { createLyricsView, html } = ctx.sdk;
+    const { createLyricsView, html, marqueeText } = ctx.sdk;
 
     ctx.root.innerHTML = `
       <div class="disc" id="pv-disc" data-spinning="${ctx.playback().playing ? "true" : "false"}">
@@ -48,6 +48,7 @@ export default {
       ctx,
       html,
       lyrics,
+      marqueeText,
       disc: ctx.root.querySelector("#pv-disc"),
       cover: ctx.root.querySelector("#pv-disc-cover"),
       title: ctx.root.querySelector("#pv-title"),
@@ -57,7 +58,8 @@ export default {
       paintSong() {
         const m = ctx.media();
         const s = m.song || html.EMPTY_TRACK;
-        this.title.textContent = s.title || "未在播放";
+        // 标题单行显示，放不下就横向跑马灯（量宽 / 动画都在宿主零件里）
+        this.marqueeText(this.title, s.title || "未在播放");
         this.artist.textContent = html.subtitleOf(s.artist, "");
         // 专辑单独一行：为空时整行隐藏，避免留下一行空白
         this.album.textContent = s.album || "";

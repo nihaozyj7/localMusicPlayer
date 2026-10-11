@@ -438,8 +438,164 @@ async function main() {
     JSON.stringify(hiddenFlush)
   );
 
-  /* 9. 设置里的主题 / 样式卡片：选中热区是卡片内部的按钮，且内置项不出现「移除」
-        （删除按钮只能放在按钮外面 —— 嵌套 button 会被解析器拆开，卡片结构会散） */
+  /* 9. 歌词区标题：单行 + 放不下时横向跑马灯（ctx.sdk.marqueeText）
+        两件事缺一不可：① 长标题只占**一行**、盒子不超出歌词那一列；
+        ② 真的在横向滚（隔一段时间采两次 transform，必须不同 —— 只挂个 class 不算数）。
+        顺带验短标题不受影响：不滚、居中、同样一行。
+        重点看的是高度：折行时代码里写的是「最多 3 行 + 纵向滚动」，高度会是 1.x 行的 2~3 倍。 */
+  const marquee = await evaluate(`(async () => {
+    const app = window.__app;
+    const mk = (i, title) => ({
+      id: "mq-" + i, path: "D:/Music/mq-" + i + ".mp3", title, artist: "跑马灯歌手",
+      album: "测试专辑", ext: "mp3", duration: 300000, size: 1000000,
+      sampleRate: 44100, bitrate: 320, addedAt: 1000 + i, playCount: 0, cover: "", coverUrl: "",
+    });
+    // 够长才行：沉浸样式的标题框是整张卡片（1280 窗口下 1109px），
+    // 字号又比经典小一档 —— 标题长度得让两款样式都溢出
+    const LONG = "这是一个特别特别长的歌曲标题" + "很长".repeat(40) + "结尾";
+    app.state.allSongsRaw = [mk(1, "短标题"), mk(2, LONG)];
+    app.state.songs = app.state.allSongsRaw.slice();
+    app.state.queue = app.state.songs.map((s) => s.id);
+    app.state.filterRules = [];
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const probe = async (id, wantScroll) => {
+      app.state.currentId = id;
+      app.commit();
+      await wait(600);
+      const el = document.querySelector("#pv-title");
+      const box = el.querySelector(".mp-marquee__text");
+      const cs = getComputedStyle(el);
+      // 「在滚」的判据不是「有没有挂类」，而是**位置真的在变**：
+      // 关键帧两端各留了停顿，所以期望滚动时要给它一段时间去动起来。
+      const anim = box.getAnimations ? box.getAnimations()[0] : null;
+      const t0 = anim ? anim.currentTime : null;
+      const before = getComputedStyle(box).transform;
+      let after = before;
+      for (let i = 0; i < (wantScroll ? 30 : 1) && after === before; i += 1) {
+        await wait(200);
+        after = getComputedStyle(box).transform;
+      }
+      const t1 = anim ? anim.currentTime : null;
+      return {
+        text: box.textContent,
+        cls: el.classList.contains("mp-marquee"),
+        height: Math.round(el.getBoundingClientRect().height),
+        line: parseFloat(cs.lineHeight) || 0,
+        boxW: el.clientWidth,
+        textW: box.offsetWidth,
+        colW: Math.round(el.parentElement.getBoundingClientRect().width),
+        marquee: el.getAttribute("data-marquee") || "",
+        shift: el.style.getPropertyValue("--mp-marquee-shift"),
+        dur: el.style.getPropertyValue("--mp-marquee-dur"),
+        scrollable: el.scrollHeight > el.clientHeight + 1,
+        just: cs.justifyContent,
+        anim: box.getAnimations ? box.getAnimations().length : -1,
+        animName: getComputedStyle(box).animationName,
+        advanced: t0 !== null && t1 !== null && t1 > t0,
+        moved: after !== before,
+        overflowX: cs.overflowX,
+        // 单行的标题会把 min-content 抬成整段文字宽度 —— 只要外层哪一环是
+        // fit-content / auto 列，它会连窗口一起撑出去（沉浸样式就踩过：
+        // stage 的隐式 auto 列被撑到 1900px，卡片按那个列居中，整块偏到右边）
+        viewport: window.innerWidth,
+        docScrollW: document.documentElement.scrollWidth,
+        boxCenter: Math.round(el.getBoundingClientRect().left + el.getBoundingClientRect().width / 2),
+      };
+    };
+    const long = await probe("mq-2", true);
+    const short = await probe("mq-1", false);
+    // 沉浸样式是同一个零件的另一种排版（标题在卡片里），一并验一遍
+    document.querySelector('[data-pv-skin="immersive"]')?.click();
+    await wait(800);
+    const imm = await probe("mq-2", true);
+    document.querySelector('[data-pv-skin="classic"]')?.click();
+    await wait(600);
+    return { long, short, imm, longWanted: LONG };
+  })()`);
+  const mqLong = marquee?.long || {};
+  const mqShort = marquee?.short || {};
+  check(
+    "长标题单行显示：高度只有一行、盒子没超出歌词那一列（不再折成多行）",
+    mqLong.text === marquee?.longWanted &&
+      mqLong.height > 0 &&
+      mqLong.height < mqLong.line * 1.6 &&
+      mqLong.scrollable === false &&
+      mqLong.boxW <= mqLong.colW + 1 &&
+      mqLong.overflowX === "hidden" &&
+      // 再长的标题也不许把窗口撑出横向滚动
+      mqLong.docScrollW <= mqLong.viewport + 1,
+    JSON.stringify({
+      height: mqLong.height,
+      line: mqLong.line,
+      boxW: mqLong.boxW,
+      colW: mqLong.colW,
+      docScrollW: mqLong.docScrollW,
+      viewport: mqLong.viewport,
+    })
+  );
+  check(
+    "长标题溢出：挂上跑马灯并且在真的横向滚动（transform 前后不同）",
+    mqLong.cls === true &&
+      mqLong.marquee === "on" &&
+      mqLong.textW > mqLong.boxW &&
+      /^-\d+px$/.test(mqLong.shift) &&
+      /s$/.test(mqLong.dur) &&
+      mqLong.anim === 1 &&
+      mqLong.moved === true &&
+      mqLong.just === "flex-start",
+    JSON.stringify({
+      shift: mqLong.shift,
+      dur: mqLong.dur,
+      moved: mqLong.moved,
+      animName: mqLong.animName,
+      textW: mqLong.textW,
+      boxW: mqLong.boxW,
+    })
+  );
+  check(
+    "短标题不受影响：不滚、居中、同样只有一行",
+    mqShort.text === "短标题" &&
+      mqShort.marquee === "" &&
+      mqShort.moved === false &&
+      mqShort.anim === 0 &&
+      mqShort.height < mqShort.line * 1.6 &&
+      (mqShort.just === "center" || mqShort.textW <= mqShort.boxW),
+    JSON.stringify({
+      marquee: mqShort.marquee,
+      moved: mqShort.moved,
+      anim: mqShort.anim,
+      just: mqShort.just,
+      height: mqShort.height,
+    })
+  );
+  const mqImm = marquee?.imm || {};
+  check(
+    "沉浸样式同样单行 + 跑马灯（且卡片仍在窗口正中、没有破窗）",
+    mqImm.text === marquee?.longWanted &&
+      mqImm.marquee === "on" &&
+      mqImm.moved === true &&
+      mqImm.height > 0 &&
+      mqImm.height < mqImm.line * 1.6 &&
+      mqImm.boxW <= mqImm.colW + 1 &&
+      mqImm.docScrollW <= mqImm.viewport + 1 &&
+      Math.abs(mqImm.boxCenter - mqImm.viewport / 2) <= 2,
+    JSON.stringify({
+      height: mqImm.height,
+      line: mqImm.line,
+      boxW: mqImm.boxW,
+      colW: mqImm.colW,
+      textW: mqImm.textW,
+      shift: mqImm.shift,
+      moved: mqImm.moved,
+      boxCenter: mqImm.boxCenter,
+      viewport: mqImm.viewport,
+      docScrollW: mqImm.docScrollW,
+    })
+  );
+
+  /* 10. 设置里的主题 / 样式卡片：选中热区是卡片内部的按钮，且内置项不出现「移除」
+         （删除按钮只能放在按钮外面 —— 嵌套 button 会被解析器拆开，卡片结构会散） */
   const cards = await evaluate(`(async () => {
     const shell = await import("/js/shell.js");
     shell.openSettings();

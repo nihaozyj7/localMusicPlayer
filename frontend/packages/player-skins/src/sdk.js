@@ -11,11 +11,13 @@
      ctx.sdk.createCamera(target, opts)     运镜（分层视差 / 机位 / 手持微动）
      ctx.sdk.createBackgroundLayer(root)    整窗背景层（铺图 + 模糊 + 亮度 + 缩放）
      ctx.sdk.applyFit(el, "--xxx-fit")      窗口适配比例（桌面背景投屏时等比放大）
+     ctx.sdk.marqueeText(el, text)          标题单行 + 放不下时横向跑马灯
      ctx.sdk.parseLrc / findLyricIndex / formatLrcTime / lyricDisplayText / splitGraphemes
      ctx.sdk.html.{EMPTY_TRACK,escapeHtml,setCoverImage,subtitleOf,lyricsEmptyText}
      ctx.sdk.util.{clamp,esc,debounce}
 
-   这些零件对应三张「骨架样式表」（lyrics.css / fx-lyrics.css / background-layer.css），
+   这些零件对应三张「骨架样式表」（lyrics.css / fx-lyrics.css / background-layer.css /
+   marquee.css），
    它们随宿主一起加载、**不在 skin 层**里 —— 也就是说插件 CSS 改不动它们：
      · 想定制视觉：给零件传选项，或设置它读的 CSS 变量（例如 --lyric-size）；
      · 想完全自己来：不用这些零件，自己建 DOM + 自己的类名（那些类名归插件自己管）。
@@ -25,6 +27,7 @@ import { createLyricsView } from "./lyrics-view.js";
 import { createFxLyrics } from "./fx-lyrics.js";
 import { createCamera, prefersReducedMotion } from "./fx-camera.js";
 import { createBackgroundLayer } from "./background-layer.js";
+import { marqueeText } from "./marquee.js";
 import { applyFit, fitScale, fitScaleOf } from "./fit.js";
 import { parseLrc, findLyricIndex, formatLrcTime, lyricDisplayText, splitGraphemes } from "./lrc.js";
 import { EMPTY_TRACK, escapeHtml, setCoverImage, subtitleOf, lyricsEmptyText } from "./html.js";
@@ -64,6 +67,7 @@ export function createSdk() {
     createFxLyrics,
     createCamera,
     createBackgroundLayer,
+    marqueeText,
     applyFit,
     fitScale,
     fitScaleOf,
