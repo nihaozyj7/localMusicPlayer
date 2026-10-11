@@ -471,6 +471,15 @@
   font-size: var(--fs-sm);
 }
 
+/* 焦点指示只由外层 .content-filter__field:focus-within 的强调色边框表达。
+   全局 :focus-visible 会在内层 input 上再画一圈 box-shadow，与外框叠成
+   「两个焦点边框」——这里把内侧那圈明确去掉（与搜索框同一处理）。 */
+.content-filter__input:focus,
+.content-filter__input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 .content-filter__input::placeholder {
   color: var(--text-3);
 }
@@ -483,6 +492,8 @@
   flex: none;
   border-radius: var(--r-full);
   color: var(--text-3);
+  /* 它被夹在输入框右侧：外扩不能超过两者之间 8px 的间距，否则会抢走输入框的点击 */
+  --hit-pad: 4px;
   transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
 }
 

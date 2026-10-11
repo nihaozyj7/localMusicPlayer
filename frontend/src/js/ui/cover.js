@@ -58,7 +58,7 @@ class MpCoverLayer extends MpPanel {
             <span class="cover-layer__title">封面管理</span>
             <span class="u-spacer"></span>
             <button
-              class="cover-layer__close"
+              class="cover-layer__close u-hit"
               type="button"
               data-cover-close
               aria-label="关闭封面管理"

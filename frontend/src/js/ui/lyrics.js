@@ -204,7 +204,7 @@ class MpLyricsPanel extends MpElement {
             </div>
           </div>
           <button
-            class="lyricspanel__close"
+            class="lyricspanel__close u-hit"
             type="button"
             data-act="close"
             aria-label="关闭"

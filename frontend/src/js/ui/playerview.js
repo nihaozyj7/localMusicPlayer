@@ -124,7 +124,7 @@ class MpPlayerview extends MpElement {
                   aria-label=${skin.name || skin.id}
                   @click=${() => setPlayerViewMode(skin.id)}
                 >
-                  ${icon(skin.icon || "disc")}
+                  ${this.skinIcon(skin)}
                 </button>
               `
             )}
@@ -141,6 +141,22 @@ class MpPlayerview extends MpElement {
         ></div>
       </section>
     `;
+  }
+
+  /**
+   * 样式按钮的图标。
+   *
+   * 优先用样式包自带的 icon.svg（skin.json 的 icon.file）：内置的两款样式
+   * （classic / immersive）都没有声明 sprite，只声明了图标文件，若只看 sprite
+   * 就都退化成同一个 "disc"，两个按钮长得一模一样、完全分不出来。
+   * 图标文件是单色线稿，用 .skin-icon（mask + currentColor）上色，
+   * 才能跟着按钮的常态色 / 选中态反色一起变。
+   */
+  skinIcon(skin) {
+    if (skin.iconUrl) {
+      return html`<i class="skin-icon" style=${`--skin-icon:url("${skin.iconUrl}")`}></i>`;
+    }
+    return icon(skin.icon || "disc");
   }
 
   coverList(song) {

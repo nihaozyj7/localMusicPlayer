@@ -112,6 +112,8 @@
   height: 26px;
   border-radius: var(--r-xs);
   color: var(--text-3);
+  /* 标题栏里两个按钮并排（间距 8px）：外扩 4px 正好挨着，不互相抢点击 */
+  --hit-pad: 4px;
   transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
 }
 

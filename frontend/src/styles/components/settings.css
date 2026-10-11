@@ -837,6 +837,13 @@
   height: 18px;
 }
 
+/* 样式自带的 icon.svg 走 mask 上色（见 utilities.css#.skin-icon）。
+   显式给尺寸：mask 元素没有内容，不给宽高就是 0×0。 */
+.skincard__icon .skin-icon {
+  width: 18px;
+  height: 18px;
+}
+
 .skincard__name {
   font-size: var(--fs-md);
   font-weight: var(--fw-medium);

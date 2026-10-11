@@ -237,16 +237,17 @@
   height: 17px;
 }
 
+/* 传输控制按钮常态下只有一颗图标，**没有任何内外阴影**：
+   底栏在播放详情页里会叠在样式包渲染出的画面上（那层是透明的），
+   固定写死的拟态投影/内凹在这种背景上会显出一块突兀的暗斑。
+   反馈改由「颜色 + 悬停底色 + 按下缩小」表达。 */
 .transport__btn:hover {
   color: var(--text-1);
   background: var(--surface-hover);
-  /* 拟态：悬停时按钮从底栏浮起 */
-  box-shadow: var(--neu-raised-sm);
 }
 
 .transport__btn:active {
   transform: scale(0.94);
-  box-shadow: var(--neu-pressed);
 }
 
 .transport__btn[aria-pressed="true"] {
@@ -256,12 +257,11 @@
 /* 播放/暂停主按钮：不要实心底色（需求：移除背景色、保留 padding/尺寸）。
    它靠「更大的点击区 + accent 图标色」表达主操作，悬停时才浮出一层浅底，
    这样底栏整体更安静、更沉浸。
-   拟态：主按钮常态就带一圈浮起投影 —— 没有底色也成立，阴影本身就是形态。 */
+   同样不带常态阴影：理由见上面的 .transport__btn。 */
 .transport__btn--main {
   width: var(--btn-lg);
   height: var(--btn-lg);
   color: var(--accent);
-  box-shadow: var(--neu-raised);
 }
 
 .transport__btn--main svg {
@@ -272,21 +272,10 @@
 .transport__btn--main:hover {
   color: var(--accent);
   background: var(--surface-hover);
-  box-shadow: var(--neu-raised);
 }
 
 .transport__btn--main:active {
   transform: scale(0.94);
-  box-shadow: var(--neu-pressed);
-}
-
-.transport__btn:focus-visible {
-  /* 常态阴影会盖掉全局焦点环（同特异性、组件后加载），这里显式合并两层 */
-  box-shadow: var(--neu-raised-sm), var(--focus-ring);
-}
-
-.transport__btn--main:focus-visible {
-  box-shadow: var(--neu-raised), var(--focus-ring);
 }
 
 /* —— 进度条：默认压暗，悬停/拖动时回到主题色 ——
@@ -577,6 +566,13 @@
 }
 
 .viewmode__btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* 样式自带的 icon.svg 走 mask 上色（见 utilities.css#.skin-icon）：
+   它没有内容，必须显式给尺寸，否则是 0×0 */
+.viewmode__btn .skin-icon {
   width: 15px;
   height: 15px;
 }

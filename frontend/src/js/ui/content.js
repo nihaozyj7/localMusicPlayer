@@ -166,7 +166,7 @@ class MpContent extends MpElement {
                   }}
                 />
                 <button
-                  class="content-filter__clear"
+                  class="content-filter__clear u-hit"
                   id="content-filter-clear"
                   type="button"
                   aria-label="清空筛选"

@@ -67,6 +67,9 @@
   height: 26px;
   border-radius: var(--r-xs);
   color: var(--text-3);
+  /* 标题栏里三个按钮等距排开（间距 8px）：命中区域外扩 4px 后两块正好挨着，
+     不会互相抢点击（默认的 6px 会重叠 4px） */
+  --hit-pad: 4px;
   transition: color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
 }
 
@@ -180,6 +183,8 @@
   border-radius: var(--r-xs);
   color: var(--text-3);
   opacity: 0;
+  /* 刻意**不**做命中区域外扩（不加 .u-hit）：它是悬停才显形的「从列表移除」，
+     外扩会让「点这一行切歌」的误触变成删歌。 */
   transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
@@ -282,6 +287,8 @@
   height: 26px;
   border-radius: var(--r-xs);
   color: var(--text-3);
+  /* 与播放列表 / 下载面板的标题栏按钮同一处理（见 .queue-panel__btn） */
+  --hit-pad: 4px;
 }
 
 .options-panel__btn svg {

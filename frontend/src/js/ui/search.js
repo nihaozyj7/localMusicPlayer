@@ -115,6 +115,9 @@ class MpSearchOverlay extends MpElement {
     const s = searchState;
     const history = loadHistory();
     const hasText = Boolean(s.keyword.trim());
+    // 状态行只有在真的有事可说时才画：空闲时它是空的，
+    // 留着只会让搜索框下面凭空多出一条分割线（见 searchpanel.css 的说明）
+    const headline = this.headline();
     return html`
       <section
         class="search-overlay"
@@ -125,7 +128,22 @@ class MpSearchOverlay extends MpElement {
         @click=${(e) => this.onClick(e)}
         @keydown=${(e) => this.onKey(e)}
       >
-        <div class="search-overlay__panel" role="dialog" aria-modal="true" aria-label="搜索">
+        <div class="search-overlay__panel" role="dialog" aria-modal="true" aria-label="在线搜索">
+          <div class="search-overlay__head">
+            <span class="search-overlay__title">在线搜索</span>
+            <span class="u-spacer"></span>
+            <button
+              class="search-overlay__close u-hit"
+              type="button"
+              data-search-close
+              data-tip="关闭（结果会保留）"
+              aria-label="关闭搜索"
+              @click=${() => closeOverlay()}
+            >
+              ${icon("close")}
+            </button>
+          </div>
+
           <div class="search-overlay__search">
             <div class="search-overlay__field">
               ${icon("search", "search-overlay__search-icon")}
@@ -156,7 +174,7 @@ class MpSearchOverlay extends MpElement {
                 }}
               />
               <button
-                class="search-overlay__clear"
+                class="search-overlay__clear u-hit"
                 id="search-clear"
                 type="button"
                 data-tip="清空搜索"
@@ -167,16 +185,6 @@ class MpSearchOverlay extends MpElement {
                 ${icon("close")}
               </button>
             </div>
-            <button
-              class="search-overlay__close"
-              type="button"
-              data-search-close
-              data-tip="关闭（结果会保留）"
-              aria-label="关闭搜索"
-              @click=${() => closeOverlay()}
-            >
-              ${icon("close")}
-            </button>
           </div>
 
           <div class="search-overlay__history" id="search-history" ?hidden=${hasText || !history.length}>
@@ -224,8 +232,8 @@ class MpSearchOverlay extends MpElement {
             }
           </div>
 
-          <div class="search-overlay__head">
-            <span class="search-overlay__headline" id="search-headline">${this.headline()}</span>
+          <div class="search-overlay__status" ?hidden=${!headline}>
+            <span class="search-overlay__headline" id="search-headline">${headline}</span>
           </div>
           <div class="search-overlay__body" id="search-body">${this.bodyContent()}</div>
         </div>

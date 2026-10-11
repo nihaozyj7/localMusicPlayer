@@ -1,5 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-  <circle cx="12" cy="12" r="9" />
-  <circle cx="12" cy="12" r="3.2" />
-  <path d="M12 3v2.6M12 18.4V21M3 12h2.6M18.4 12H21" />
+  <!-- 经典：左边一张唱片，右边跟着歌词。用它最显著的特征（左唱片右歌词）
+       表达「信息最完整」，与沉浸式的「整窗封面」一眼分得开。 -->
+  <circle cx="7.2" cy="12" r="4.6" />
+  <circle cx="7.2" cy="12" r="1.1" fill="currentColor" stroke="none" />
+  <path d="M14.8 7.6h6.2M14.8 12h6.2M14.8 16.4h3.4" />
 </svg>

@@ -453,7 +453,7 @@ class MpSettingsLayer extends MpElement {
             <span class="settings-layer__title">设置</span>
             <span class="u-spacer"></span>
             <button
-              class="settings-layer__close"
+              class="settings-layer__close u-hit"
               type="button"
               data-settings-close
               aria-label="关闭设置"
@@ -1042,7 +1042,7 @@ class MpSettingsLayer extends MpElement {
               aria-pressed=${String(active)}
               aria-label=${`使用样式 ${s.name}`}
             >
-              <span class="skincard__icon">${icon(s.icon || "disc")}</span>
+              <span class="skincard__icon">${this.skinIcon(s)}</span>
               <span class="skincard__name">${s.name}</span>
               <span class="skincard__id">${s.id}</span>
               <span class="skincard__colors" data-tip=${colorsTip} aria-label=${colorsTip}>
@@ -1113,6 +1113,21 @@ class MpSettingsLayer extends MpElement {
         })}
       </div>
     </section>`;
+  }
+
+  /**
+   * 样式卡片上的图标。
+   *
+   * 优先用样式包自带的 icon.svg（skin.json 的 icon.file）：内置的两款样式
+   * 只声明了图标文件、没有 sprite，只看 sprite 的话两张卡片会退化成同一个
+   * "disc"（一模一样、分不出是哪款）。图标文件是单色线稿，用 .skin-icon
+   * （mask + currentColor）上色才能跟着主题走。
+   */
+  skinIcon(s) {
+    if (s.iconUrl) {
+      return html`<i class="skin-icon" style=${`--skin-icon:url("${s.iconUrl}")`}></i>`;
+    }
+    return icon(s.icon || "disc");
   }
 
   /* ========================================================================

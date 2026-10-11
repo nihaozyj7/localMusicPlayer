@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="2.5" y="5" width="19" height="14" rx="2.5" />
-  <path d="M6 14.5 10 10l4 4 2-2 2 2.5" />
-  <circle cx="8.5" cy="9" r="1.2" fill="currentColor" stroke="none" />
+  <!-- 沉浸：整窗就是封面（画框铺满），歌词浮在画面正中。
+       与经典式的「左唱片右歌词」形成对照。 -->
+  <rect x="2.4" y="4.4" width="19.2" height="15.2" rx="2.6" />
+  <path d="M7.8 14.8h8.4M9.8 10h4.4" />
 </svg>

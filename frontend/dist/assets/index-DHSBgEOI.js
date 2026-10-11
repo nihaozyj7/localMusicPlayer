@@ -1,15 +1,30 @@
 const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/base-DNsQpjBW.js","assets/bridge-D1JdJUg2.js"])))=>i.map(i=>d[i]);
-import{i as k,b as v,d as Jo,f as E,g as Dt,o as U,h as _t,D as va,j as ct,u as Pn,k as Aa,l as Zo,r as el,n as tn,p as tl}from"./bridge-D1JdJUg2.js";import{j as nl,E as xt,s as i,c as $,t as u,a as Cn,e as vs,r as Ys,f as Tr,g as ve,d as ie,M as ge,A as D,h as f,b as d,k as al,p as bt,l as Ue,o as Bt,m as X,n as sl,q as il,u as rl,v as ol,w as ll,L as jn,x as qe,y as Tt,z as Ve,B as He,C as Ut,D as Er,F as Ir,G as cl,H as dl,I as ul,J as ba,K as Kt,$ as $i,N as Xs,O as pl,P as fl,Q as et,R as ht,S as Qs,T as hl,U as ml,V as vl,W as Dr,X as bl,Y as bs,Z as gl,_ as yl,a0 as _l,a1 as At,a2 as wl,a3 as $l,a4 as kl,a5 as $n,a6 as gs,a7 as Ar,a8 as ys,a9 as Mr,aa as Sl,ab as ki,ac as xl,ad as Cl,ae as Tl,af as El,ag as Si,ah as Il,ai as Pr,aj as Tn,ak as Or,al as Dl,am as Al,an as Ml,ao as Pl,ap as Ol,aq as _s,ar as Ll,as as ws,at as Lr,au as Rl,av as xi,aw as Ci,ax as Nl,ay as ql,az as Fl,aA as Bl,aB as Ul,aC as Hl,aD as zl,aE as Ma,aF as jl,aG as Vl,aH as Wl,aI as Gl,aJ as Kl,aK as Yl,aL as Xl,aM as Ql,aN as Jl,aO as Zl,aP as dn,aQ as ec,aR as tc,aS as nc,aT as ac,aU as sc,aV as Rr,aW as ic,aX as rc}from"./base-DNsQpjBW.js";import{s as oc,S as lc,f as Vn,a as un,b as cc,p as $s,m as dc,d as Ti,e as ks,r as ga,g as kn,h as uc,l as pc,n as fc,i as hc,u as mc,c as vc,j as ya,k as bc}from"./skinhost-DQk_e0Y_.js";const gc="modulepreload",yc=function(t){return"/"+t},Ei={},gt=function(e,n,a){let s=Promise.resolve();if(n&&n.length>0){let c=function(p){return Promise.all(p.map(m=>Promise.resolve(m).then(h=>({status:"fulfilled",value:h}),h=>({status:"rejected",reason:h}))))};document.getElementsByTagName("link");const o=document.querySelector("meta[property=csp-nonce]"),l=o?.nonce||o?.getAttribute("nonce");s=c(n.map(p=>{if(p=yc(p),p in Ei)return;Ei[p]=!0;const m=p.endsWith(".css"),h=m?'[rel="stylesheet"]':"";if(document.querySelector(`link[href="${p}"]${h}`))return;const _=document.createElement("link");if(_.rel=m?"stylesheet":gc,m||(_.as="script"),_.crossOrigin="",_.href=p,l&&_.setAttribute("nonce",l),document.head.appendChild(_),m)return new Promise((S,b)=>{_.addEventListener("load",S),_.addEventListener("error",()=>b(new Error(`Unable to preload CSS for ${p}`)))})}))}function r(o){const l=new Event("vite:preloadError",{cancelable:!0});if(l.payload=o,window.dispatchEvent(l),!l.defaultPrevented)throw o}return s.then(o=>{for(const l of o||[])l.status==="rejected"&&r(l.reason);return e().catch(r)})};const _c={CHILD:2},Js=t=>(...e)=>({_$litDirective$:t,values:e});let Zs=class{constructor(e){}get _$AU(){return this._$AM._$AU}_$AT(e,n,a){this._$Ct=e,this._$AM=n,this._$Ci=a}_$AS(e,n){return this.update(e,n)}update(e,n){return this.render(...n)}};const{I:wc}=nl,Ii=t=>t,Di=()=>document.createComment(""),nn=(t,e,n)=>{const a=t._$AA.parentNode,s=e===void 0?t._$AB:e._$AA;if(n===void 0){const r=a.insertBefore(Di(),s),o=a.insertBefore(Di(),s);n=new wc(r,o,t,t.options)}else{const r=n._$AB.nextSibling,o=n._$AM,l=o!==t;if(l){let c;n._$AQ?.(t),n._$AM=t,n._$AP!==void 0&&(c=t._$AU)!==o._$AU&&n._$AP(c)}if(r!==s||l){let c=n._$AA;for(;c!==r;){const p=Ii(c).nextSibling;Ii(a).insertBefore(c,s),c=p}}}return n},it=(t,e,n=t)=>(t._$AI(e,n),t),$c={},Nr=(t,e=$c)=>t._$AH=e,kc=t=>t._$AH,Pa=t=>{t._$AR(),t._$AA.remove()};const Ai=(t,e,n)=>{const a=new Map;for(let s=e;s<=n;s++)a.set(t[s],s);return a},Me=Js(class extends Zs{constructor(t){if(super(t),t.type!==_c.CHILD)throw Error("repeat() can only be used in text expressions")}dt(t,e,n){let a;n===void 0?n=e:e!==void 0&&(a=e);const s=[],r=[];let o=0;for(const l of t)s[o]=a?a(l,o):o,r[o]=n(l,o),o++;return{values:r,keys:s}}render(t,e,n){return this.dt(t,e,n).values}update(t,[e,n,a]){const s=kc(t),{values:r,keys:o}=this.dt(e,n,a);if(!Array.isArray(s))return this.ut=o,r;const l=this.ut??=[],c=[];let p,m,h=0,_=s.length-1,S=0,b=r.length-1;for(;h<=_&&S<=b;)if(s[h]===null)h++;else if(s[_]===null)_--;else if(l[h]===o[S])c[S]=it(s[h],r[S]),h++,S++;else if(l[_]===o[b])c[b]=it(s[_],r[b]),_--,b--;else if(l[h]===o[b])c[b]=it(s[h],r[b]),nn(t,c[b+1],s[h]),h++,b--;else if(l[_]===o[S])c[S]=it(s[_],r[S]),nn(t,s[h],s[_]),_--,S++;else if(p===void 0&&(p=Ai(o,S,b),m=Ai(l,h,_)),p.has(l[h]))if(p.has(l[_])){const x=m.get(o[S]),N=x!==void 0?s[x]:null;if(N===null){const B=nn(t,s[h]);it(B,r[S]),c[S]=B}else c[S]=it(N,r[S]),nn(t,s[h],N),s[x]=null;S++}else Pa(s[_]),_--;else Pa(s[h]),h++;for(;S<=b;){const x=nn(t,c[b+1]);it(x,r[S]),c[S++]=x}for(;h<=_;){const x=s[h++];x!==null&&Pa(x)}return this.ut=o,Nr(t,c),xt}}),Sc=[{id:"dark-minimal",name:"深色 · 黑白极简",mode:"dark",builtin:!0,swatch:["#08080a","#1b1b1f","#3a3a42","#f4f4f6","#ff4d6d"]},{id:"light-minimal",name:"浅色 · 黑白极简",mode:"light",builtin:!0,swatch:["#f2f2f4","#ffffff","#d8d8dd","#14141a","#e8384f"]},{id:"cover-dark",name:"封面取色 · 深色",mode:"dark",builtin:!0,swatch:["#0b0b12","#2a2a31","#6b6b76","#f7f7fa","#ff4d6d"]}],ae=Sc.slice();let qr=0;function xc(){return qr}function _a(){return ae}function aa(t){return ae.find(e=>e.id===t)||ae[0]}async function wa(){if(!k())return ae;try{const t=await v.listThemes();if(!Array.isArray(t)||!t.length)return ae;for(const e of t){if(!e?.id)continue;const n=await v.loadTheme(e.id);typeof n=="string"&&n.trim()&&Ec(e.id,n)}Cc(t)}catch(t){console.warn("[theme] 主题目录扫描失败",t)}return ae}function Cc(t){const e=[],n=new Set;for(const a of t){if(!a?.id||n.has(a.id))continue;n.add(a.id);const s={id:a.id,name:a.name||a.id,mode:a.mode||"dark",swatch:Array.isArray(a.swatch)?a.swatch:[],builtin:!!a.builtin},r=ae.find(o=>o.id===a.id);r?(Object.assign(r,s),e.push(r)):e.push(s)}for(const a of ae)e.includes(a)||Ys(`theme-file-${a.id}`,"");return ae.length=0,ae.push(...e),qr+=1,ae}async function Tc(t){return await v.deleteTheme(t),await wa(),{removed:!ae.some(n=>n.id===t),themeIds:ae.map(n=>n.id)}}function Ec(t,e){Ys(`theme-file-${t}`,e)}const Ic=["--seed","--seed-2","--bg-app","--bg-window"],Dc=["--seed","--seed-2"];function Ac(t){return document.documentElement.style.getPropertyValue(t).trim()?String(document.documentElement.style.getPropertyValue(t)):null}function Mc(){const t=document.documentElement,e={};for(const n of Dc){const a=Ac(n);a&&(e[n]=a)}for(const n of Ic)t.style.removeProperty(n);return e}const Wn="cover-dark";function Sn(t){return!!t&&!Jo(t)}let Mi=null,Oa=null,La=null;async function Pe(t){const e=document.documentElement,n=window.matchMedia("(prefers-color-scheme: dark)").matches,a=Mc();a["--seed"]&&(Oa=a["--seed"]),a["--seed-2"]&&(La=a["--seed-2"]);let s=t.theme||"dark-minimal";if(t.themeMode==="system"){const h=n?"dark":"light",_=ae.find(S=>S.mode===h&&S.id!=="cover-dark");_&&(s=_.id)}else if(ae.find(h=>h.id===s)?.mode!==t.themeMode){const h=ae.find(_=>_.mode===t.themeMode&&_.id!=="cover-dark");h&&(s=h.id)}e.dataset.theme=s,e.dataset.mode=ae.find(h=>h.id===s)?.mode||t.themeMode||"dark",t.theme=s;const r=Pi(t,s),o=Pi(t,s,!0),l=t.accentFromCover!==!1;(t.accentFromCover===!1||Mi!==null&&s!==Wn)&&(Oa=null,La=null);const p=r??(l?Oa:null),m=o??La??p;return Cn({"--glass-blur":t.glassBlurCustom?`${t.glassBlur}px`:null,"--dur":vs(t),"--seed":p,"--seed-2":m}),Mi=p&&s===Wn?Wn:null,Rc(),Oc(),t.glassAlphaCustom&&ei(t.glassAlpha),s}function Pi(t,e,n=!1){return!t||t.accentFromCover!==!0||e!=="cover-dark"?null:Ht(n?t.coverSeed2:t.coverSeed)||null}async function Pc(){const e=aa(i.config.theme)?.mode==="light"?"dark":"light";i.config.themeMode=e,await Pe(i.config),$(),u(e==="dark"?"已切换到深色主题":"已切换到浅色主题",{duration:1500})}let wt=null;function Gn(t){return wt||(wt=document.createElement("div"),wt.style.cssText="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;pointer-events:none;",document.body.appendChild(wt)),wt.style.backgroundColor=t,getComputedStyle(wt).backgroundColor}function Ra(t,e){const n=Math.max(0,Math.min(1,e)),a=String(t),s=a.match(/rgba?\(([^)]+)\)/);if(s){const o=s[1].split(/[,/]/).map(m=>parseFloat(m.trim())),[l,c,p]=o;if([l,c,p].every(m=>Number.isFinite(m)))return`rgba(${Math.round(l)}, ${Math.round(c)}, ${Math.round(p)}, ${n})`}const r=a.match(/color\(\s*srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/i);if(r){const[o,l,c]=r.slice(1,4).map(p=>Math.round(parseFloat(p)*255));if([o,l,c].every(p=>Number.isFinite(p)))return`rgba(${o}, ${l}, ${c}, ${n})`}return null}function Ss(){const t=String(Gn("var(--glass-bg)")),e=t.match(/rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)\s*\)/),n=t.match(/\/\s*([\d.]+)\s*\)/),a=parseFloat(e&&e[1]||n&&n[1]||"");return Number.isFinite(a)?Math.round(a*100):62}let sn=null;function Oc(){sn=null}function Lc(){return sn||(Cn({"--glass-bg":null,"--glass-bg-strong":null,"--glass-bg-weak":null}),sn={bg:Gn("var(--glass-bg)"),strong:Gn("var(--glass-bg-strong)"),weak:Gn("var(--glass-bg-weak)")},sn)}function ei(t){const e=Math.max(0,Math.min(1,(Number(t)||0)/100)),n=Lc();Cn({"--glass-bg":Ra(n.bg,e),"--glass-bg-strong":Ra(n.strong,Math.min(1,e+.18)),"--glass-bg-weak":Ra(n.weak,Math.max(0,e-.22))})}function Rc(){const t=document.body;t&&(t.dataset.styleEpoch=String((Number(t.dataset.styleEpoch)||0)+1))}function Nc(){const t=getComputedStyle(document.documentElement).getPropertyValue("--glass-blur"),e=parseFloat(t);return Number.isFinite(e)?e:22}function Ht(t){const e=String(t??"").trim();if(!e)return"";const n=e.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);if(n){let s=n[1].toLowerCase();return s.length===3&&(s=s[0]+s[0]+s[1]+s[1]+s[2]+s[2]),`#${s}`}const a=e.match(/rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i);if(a){const s=r=>Math.max(0,Math.min(255,Math.round(Number(r)))).toString(16).padStart(2,"0");return`#${s(a[1])}${s(a[2])}${s(a[3])}`}return""}let Oi="";function qc(t){const e=document.documentElement.dataset.theme||"",n=typeof t=="string"?t.trim():"",a=e===Wn?n:"";a!==Oi&&(Oi=a,Cn({"--cover-bg":a?`url("${a.replace(/["\\]/g,"\\$&")}")`:null}))}function Fc(t,e){const n=Ht(t),a=Ht(e)||n;return n?(Cn({"--seed":n,"--seed-2":a}),i.config.coverSeed!==n||i.config.coverSeed2!==a?(i.config.coverSeed=n,i.config.coverSeed2=a,Uc(),!0):!1):!1}const Bc="music-player.cover-seed.v1";function Uc(){try{localStorage.setItem(Bc,JSON.stringify({seed:i.config.coverSeed||"",seed2:i.config.coverSeed2||"",theme:i.config.theme||""}))}catch{}}function Li(t){try{const e=document.createElement("canvas"),n=32;e.width=n,e.height=n;const a=e.getContext("2d",{willReadFrequently:!0});a.drawImage(t,0,0,n,n);const{data:s}=a.getImageData(0,0,n,n);let r=0,o=0,l=0,c=0,p=0,m=0,h=0,_=0;for(let b=0;b<s.length;b+=4){if(s[b+3]<8)continue;const x=s[b],N=s[b+1],B=s[b+2];p+=x,m+=N,h+=B,_+=1;const z=Math.max(x,N,B),ue=Math.min(x,N,B);if(z<26)continue;const Z=z===0?0:(z-ue)/z;if(Z<.12)continue;const ye=Z*Z*(.35+z/255);r+=x*ye,o+=N*ye,l+=B*ye,c+=ye}const S=c>0?[r/c,o/c,l/c]:_>0?[p/_,m/_,h/_]:null;return S?`rgb(${S.map(b=>Math.round(Math.max(0,Math.min(255,b)))).join(", ")})`:null}catch{return null}}function Na(){i.query="",$()}function Mt(t,e=null){if(i.settingsOpen&&sa(),t==="settings"){Fr();return}i.view=t,i.playlistId=t==="playlist"?e:null,i.playerOpen=!1,i.query="",i.playlistSelecting=!1,i.selectedIds=new Set,i.queueOpen=!1,$()}function Fr(t=null){i.settingsOpen=!0,t&&(i.settingsSection=t),$()}function sa(){i.settingsOpen=!1,$()}function Hc(t=null){i.settingsOpen?sa():Fr(t)}function Br(){return i.settingsOpen===!0}function zc(){i.settingsOpen&&(i.settingsRev=(i.settingsRev||0)+1,$(),ve())}async function xn({manual:t=!1}={}){if(!i.scanning){i.scanText="正在扫描音乐文件夹…",$();try{const e=await Tr({silent:!t});e&&u(`扫描完成：保留 ${E(e.kept)} 首${e.excluded?`，过滤 ${E(e.excluded)} 个`:""}${e.added?`，新增 ${E(e.added)}`:""}${e.removed?`，移除 ${E(e.removed)}`:""}`,{tone:"success",duration:3600})}finally{i.scanning=!1,$()}}}const Ur="music-player.search.history.v1",jc=20;function qa(){try{const t=localStorage.getItem(Ur),e=t?JSON.parse(t):[];return Array.isArray(e)?e.filter(n=>typeof n=="string"&&n.trim()):[]}catch{return[]}}function Fa(t){try{localStorage.setItem(Ur,JSON.stringify(t.slice(0,jc)))}catch{}}const R={keyword:"",seq:0,results:[],query:"",loading:!1,message:"",rev:0};function Ee(){R.rev+=1,ve()}class Vc extends ge{static deps=e=>[e.searchOpen,R.rev];get panelEl(){return this.querySelector("#search-overlay")}updated(){const e=this.panelEl;if(e){if(i.searchOpen){this._closeTimer&&(clearTimeout(this._closeTimer),this._closeTimer=null),e.hidden&&(e.hidden=!1,e.dataset.state="",requestAnimationFrame(()=>{i.searchOpen&&(e.dataset.state="opened")}),requestAnimationFrame(()=>{const n=this.querySelector("#search-input");n?.focus(),n?.select()}));return}e.hidden||(e.dataset.state="closed",this._closeTimer||(this._closeTimer=setTimeout(()=>{this._closeTimer=null,!i.searchOpen&&e&&(e.hidden=!0)},260)))}}disconnectedCallback(){this._closeTimer&&clearTimeout(this._closeTimer),super.disconnectedCallback()}render(){const e=R,n=qa(),a=!!e.keyword.trim();return d`
+import{i as k,b as v,d as Jo,f as E,g as Dt,o as U,h as _t,D as va,j as ct,u as Pn,k as Aa,l as Zo,r as el,n as tn,p as tl}from"./bridge-D1JdJUg2.js";import{j as nl,E as xt,s as i,c as $,t as u,a as Cn,e as vs,r as Ys,f as Tr,g as ve,d as ie,M as ge,A as D,h as f,b as d,k as al,p as bt,l as Ue,o as Bt,m as X,n as sl,q as il,u as rl,v as ol,w as ll,L as jn,x as qe,y as Tt,z as Ve,B as He,C as Ut,D as Er,F as Ir,G as cl,H as dl,I as ul,J as ba,K as Kt,$ as $i,N as Xs,O as pl,P as fl,Q as et,R as ht,S as Qs,T as hl,U as ml,V as vl,W as Dr,X as bl,Y as bs,Z as gl,_ as yl,a0 as _l,a1 as At,a2 as wl,a3 as $l,a4 as kl,a5 as $n,a6 as gs,a7 as Ar,a8 as ys,a9 as Mr,aa as Sl,ab as ki,ac as xl,ad as Cl,ae as Tl,af as El,ag as Si,ah as Il,ai as Pr,aj as Tn,ak as Or,al as Dl,am as Al,an as Ml,ao as Pl,ap as Ol,aq as _s,ar as Ll,as as ws,at as Lr,au as Rl,av as xi,aw as Ci,ax as Nl,ay as ql,az as Fl,aA as Bl,aB as Ul,aC as Hl,aD as zl,aE as Ma,aF as jl,aG as Vl,aH as Wl,aI as Gl,aJ as Kl,aK as Yl,aL as Xl,aM as Ql,aN as Jl,aO as Zl,aP as dn,aQ as ec,aR as tc,aS as nc,aT as ac,aU as sc,aV as Rr,aW as ic,aX as rc}from"./base-DNsQpjBW.js";import{s as oc,S as lc,f as Vn,a as un,b as cc,p as $s,m as dc,d as Ti,e as ks,r as ga,g as kn,h as uc,l as pc,n as fc,i as hc,u as mc,c as vc,j as ya,k as bc}from"./skinhost-DQk_e0Y_.js";const gc="modulepreload",yc=function(t){return"/"+t},Ei={},gt=function(e,n,a){let s=Promise.resolve();if(n&&n.length>0){let c=function(p){return Promise.all(p.map(m=>Promise.resolve(m).then(h=>({status:"fulfilled",value:h}),h=>({status:"rejected",reason:h}))))};document.getElementsByTagName("link");const o=document.querySelector("meta[property=csp-nonce]"),l=o?.nonce||o?.getAttribute("nonce");s=c(n.map(p=>{if(p=yc(p),p in Ei)return;Ei[p]=!0;const m=p.endsWith(".css"),h=m?'[rel="stylesheet"]':"";if(document.querySelector(`link[href="${p}"]${h}`))return;const _=document.createElement("link");if(_.rel=m?"stylesheet":gc,m||(_.as="script"),_.crossOrigin="",_.href=p,l&&_.setAttribute("nonce",l),document.head.appendChild(_),m)return new Promise((S,b)=>{_.addEventListener("load",S),_.addEventListener("error",()=>b(new Error(`Unable to preload CSS for ${p}`)))})}))}function r(o){const l=new Event("vite:preloadError",{cancelable:!0});if(l.payload=o,window.dispatchEvent(l),!l.defaultPrevented)throw o}return s.then(o=>{for(const l of o||[])l.status==="rejected"&&r(l.reason);return e().catch(r)})};const _c={CHILD:2},Js=t=>(...e)=>({_$litDirective$:t,values:e});let Zs=class{constructor(e){}get _$AU(){return this._$AM._$AU}_$AT(e,n,a){this._$Ct=e,this._$AM=n,this._$Ci=a}_$AS(e,n){return this.update(e,n)}update(e,n){return this.render(...n)}};const{I:wc}=nl,Ii=t=>t,Di=()=>document.createComment(""),nn=(t,e,n)=>{const a=t._$AA.parentNode,s=e===void 0?t._$AB:e._$AA;if(n===void 0){const r=a.insertBefore(Di(),s),o=a.insertBefore(Di(),s);n=new wc(r,o,t,t.options)}else{const r=n._$AB.nextSibling,o=n._$AM,l=o!==t;if(l){let c;n._$AQ?.(t),n._$AM=t,n._$AP!==void 0&&(c=t._$AU)!==o._$AU&&n._$AP(c)}if(r!==s||l){let c=n._$AA;for(;c!==r;){const p=Ii(c).nextSibling;Ii(a).insertBefore(c,s),c=p}}}return n},it=(t,e,n=t)=>(t._$AI(e,n),t),$c={},Nr=(t,e=$c)=>t._$AH=e,kc=t=>t._$AH,Pa=t=>{t._$AR(),t._$AA.remove()};const Ai=(t,e,n)=>{const a=new Map;for(let s=e;s<=n;s++)a.set(t[s],s);return a},Me=Js(class extends Zs{constructor(t){if(super(t),t.type!==_c.CHILD)throw Error("repeat() can only be used in text expressions")}dt(t,e,n){let a;n===void 0?n=e:e!==void 0&&(a=e);const s=[],r=[];let o=0;for(const l of t)s[o]=a?a(l,o):o,r[o]=n(l,o),o++;return{values:r,keys:s}}render(t,e,n){return this.dt(t,e,n).values}update(t,[e,n,a]){const s=kc(t),{values:r,keys:o}=this.dt(e,n,a);if(!Array.isArray(s))return this.ut=o,r;const l=this.ut??=[],c=[];let p,m,h=0,_=s.length-1,S=0,b=r.length-1;for(;h<=_&&S<=b;)if(s[h]===null)h++;else if(s[_]===null)_--;else if(l[h]===o[S])c[S]=it(s[h],r[S]),h++,S++;else if(l[_]===o[b])c[b]=it(s[_],r[b]),_--,b--;else if(l[h]===o[b])c[b]=it(s[h],r[b]),nn(t,c[b+1],s[h]),h++,b--;else if(l[_]===o[S])c[S]=it(s[_],r[S]),nn(t,s[h],s[_]),_--,S++;else if(p===void 0&&(p=Ai(o,S,b),m=Ai(l,h,_)),p.has(l[h]))if(p.has(l[_])){const x=m.get(o[S]),N=x!==void 0?s[x]:null;if(N===null){const B=nn(t,s[h]);it(B,r[S]),c[S]=B}else c[S]=it(N,r[S]),nn(t,s[h],N),s[x]=null;S++}else Pa(s[_]),_--;else Pa(s[h]),h++;for(;S<=b;){const x=nn(t,c[b+1]);it(x,r[S]),c[S++]=x}for(;h<=_;){const x=s[h++];x!==null&&Pa(x)}return this.ut=o,Nr(t,c),xt}}),Sc=[{id:"dark-minimal",name:"深色 · 黑白极简",mode:"dark",builtin:!0,swatch:["#08080a","#1b1b1f","#3a3a42","#f4f4f6","#ff4d6d"]},{id:"light-minimal",name:"浅色 · 黑白极简",mode:"light",builtin:!0,swatch:["#f2f2f4","#ffffff","#d8d8dd","#14141a","#e8384f"]},{id:"cover-dark",name:"封面取色 · 深色",mode:"dark",builtin:!0,swatch:["#0b0b12","#2a2a31","#6b6b76","#f7f7fa","#ff4d6d"]}],ae=Sc.slice();let qr=0;function xc(){return qr}function _a(){return ae}function aa(t){return ae.find(e=>e.id===t)||ae[0]}async function wa(){if(!k())return ae;try{const t=await v.listThemes();if(!Array.isArray(t)||!t.length)return ae;for(const e of t){if(!e?.id)continue;const n=await v.loadTheme(e.id);typeof n=="string"&&n.trim()&&Ec(e.id,n)}Cc(t)}catch(t){console.warn("[theme] 主题目录扫描失败",t)}return ae}function Cc(t){const e=[],n=new Set;for(const a of t){if(!a?.id||n.has(a.id))continue;n.add(a.id);const s={id:a.id,name:a.name||a.id,mode:a.mode||"dark",swatch:Array.isArray(a.swatch)?a.swatch:[],builtin:!!a.builtin},r=ae.find(o=>o.id===a.id);r?(Object.assign(r,s),e.push(r)):e.push(s)}for(const a of ae)e.includes(a)||Ys(`theme-file-${a.id}`,"");return ae.length=0,ae.push(...e),qr+=1,ae}async function Tc(t){return await v.deleteTheme(t),await wa(),{removed:!ae.some(n=>n.id===t),themeIds:ae.map(n=>n.id)}}function Ec(t,e){Ys(`theme-file-${t}`,e)}const Ic=["--seed","--seed-2","--bg-app","--bg-window"],Dc=["--seed","--seed-2"];function Ac(t){return document.documentElement.style.getPropertyValue(t).trim()?String(document.documentElement.style.getPropertyValue(t)):null}function Mc(){const t=document.documentElement,e={};for(const n of Dc){const a=Ac(n);a&&(e[n]=a)}for(const n of Ic)t.style.removeProperty(n);return e}const Wn="cover-dark";function Sn(t){return!!t&&!Jo(t)}let Mi=null,Oa=null,La=null;async function Pe(t){const e=document.documentElement,n=window.matchMedia("(prefers-color-scheme: dark)").matches,a=Mc();a["--seed"]&&(Oa=a["--seed"]),a["--seed-2"]&&(La=a["--seed-2"]);let s=t.theme||"dark-minimal";if(t.themeMode==="system"){const h=n?"dark":"light",_=ae.find(S=>S.mode===h&&S.id!=="cover-dark");_&&(s=_.id)}else if(ae.find(h=>h.id===s)?.mode!==t.themeMode){const h=ae.find(_=>_.mode===t.themeMode&&_.id!=="cover-dark");h&&(s=h.id)}e.dataset.theme=s,e.dataset.mode=ae.find(h=>h.id===s)?.mode||t.themeMode||"dark",t.theme=s;const r=Pi(t,s),o=Pi(t,s,!0),l=t.accentFromCover!==!1;(t.accentFromCover===!1||Mi!==null&&s!==Wn)&&(Oa=null,La=null);const p=r??(l?Oa:null),m=o??La??p;return Cn({"--glass-blur":t.glassBlurCustom?`${t.glassBlur}px`:null,"--dur":vs(t),"--seed":p,"--seed-2":m}),Mi=p&&s===Wn?Wn:null,Rc(),Oc(),t.glassAlphaCustom&&ei(t.glassAlpha),s}function Pi(t,e,n=!1){return!t||t.accentFromCover!==!0||e!=="cover-dark"?null:Ht(n?t.coverSeed2:t.coverSeed)||null}async function Pc(){const e=aa(i.config.theme)?.mode==="light"?"dark":"light";i.config.themeMode=e,await Pe(i.config),$(),u(e==="dark"?"已切换到深色主题":"已切换到浅色主题",{duration:1500})}let wt=null;function Gn(t){return wt||(wt=document.createElement("div"),wt.style.cssText="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;pointer-events:none;",document.body.appendChild(wt)),wt.style.backgroundColor=t,getComputedStyle(wt).backgroundColor}function Ra(t,e){const n=Math.max(0,Math.min(1,e)),a=String(t),s=a.match(/rgba?\(([^)]+)\)/);if(s){const o=s[1].split(/[,/]/).map(m=>parseFloat(m.trim())),[l,c,p]=o;if([l,c,p].every(m=>Number.isFinite(m)))return`rgba(${Math.round(l)}, ${Math.round(c)}, ${Math.round(p)}, ${n})`}const r=a.match(/color\(\s*srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/i);if(r){const[o,l,c]=r.slice(1,4).map(p=>Math.round(parseFloat(p)*255));if([o,l,c].every(p=>Number.isFinite(p)))return`rgba(${o}, ${l}, ${c}, ${n})`}return null}function Ss(){const t=String(Gn("var(--glass-bg)")),e=t.match(/rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)\s*\)/),n=t.match(/\/\s*([\d.]+)\s*\)/),a=parseFloat(e&&e[1]||n&&n[1]||"");return Number.isFinite(a)?Math.round(a*100):62}let sn=null;function Oc(){sn=null}function Lc(){return sn||(Cn({"--glass-bg":null,"--glass-bg-strong":null,"--glass-bg-weak":null}),sn={bg:Gn("var(--glass-bg)"),strong:Gn("var(--glass-bg-strong)"),weak:Gn("var(--glass-bg-weak)")},sn)}function ei(t){const e=Math.max(0,Math.min(1,(Number(t)||0)/100)),n=Lc();Cn({"--glass-bg":Ra(n.bg,e),"--glass-bg-strong":Ra(n.strong,Math.min(1,e+.18)),"--glass-bg-weak":Ra(n.weak,Math.max(0,e-.22))})}function Rc(){const t=document.body;t&&(t.dataset.styleEpoch=String((Number(t.dataset.styleEpoch)||0)+1))}function Nc(){const t=getComputedStyle(document.documentElement).getPropertyValue("--glass-blur"),e=parseFloat(t);return Number.isFinite(e)?e:22}function Ht(t){const e=String(t??"").trim();if(!e)return"";const n=e.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);if(n){let s=n[1].toLowerCase();return s.length===3&&(s=s[0]+s[0]+s[1]+s[1]+s[2]+s[2]),`#${s}`}const a=e.match(/rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i);if(a){const s=r=>Math.max(0,Math.min(255,Math.round(Number(r)))).toString(16).padStart(2,"0");return`#${s(a[1])}${s(a[2])}${s(a[3])}`}return""}let Oi="";function qc(t){const e=document.documentElement.dataset.theme||"",n=typeof t=="string"?t.trim():"",a=e===Wn?n:"";a!==Oi&&(Oi=a,Cn({"--cover-bg":a?`url("${a.replace(/["\\]/g,"\\$&")}")`:null}))}function Fc(t,e){const n=Ht(t),a=Ht(e)||n;return n?(Cn({"--seed":n,"--seed-2":a}),i.config.coverSeed!==n||i.config.coverSeed2!==a?(i.config.coverSeed=n,i.config.coverSeed2=a,Uc(),!0):!1):!1}const Bc="music-player.cover-seed.v1";function Uc(){try{localStorage.setItem(Bc,JSON.stringify({seed:i.config.coverSeed||"",seed2:i.config.coverSeed2||"",theme:i.config.theme||""}))}catch{}}function Li(t){try{const e=document.createElement("canvas"),n=32;e.width=n,e.height=n;const a=e.getContext("2d",{willReadFrequently:!0});a.drawImage(t,0,0,n,n);const{data:s}=a.getImageData(0,0,n,n);let r=0,o=0,l=0,c=0,p=0,m=0,h=0,_=0;for(let b=0;b<s.length;b+=4){if(s[b+3]<8)continue;const x=s[b],N=s[b+1],B=s[b+2];p+=x,m+=N,h+=B,_+=1;const z=Math.max(x,N,B),ue=Math.min(x,N,B);if(z<26)continue;const Z=z===0?0:(z-ue)/z;if(Z<.12)continue;const ye=Z*Z*(.35+z/255);r+=x*ye,o+=N*ye,l+=B*ye,c+=ye}const S=c>0?[r/c,o/c,l/c]:_>0?[p/_,m/_,h/_]:null;return S?`rgb(${S.map(b=>Math.round(Math.max(0,Math.min(255,b)))).join(", ")})`:null}catch{return null}}function Na(){i.query="",$()}function Mt(t,e=null){if(i.settingsOpen&&sa(),t==="settings"){Fr();return}i.view=t,i.playlistId=t==="playlist"?e:null,i.playerOpen=!1,i.query="",i.playlistSelecting=!1,i.selectedIds=new Set,i.queueOpen=!1,$()}function Fr(t=null){i.settingsOpen=!0,t&&(i.settingsSection=t),$()}function sa(){i.settingsOpen=!1,$()}function Hc(t=null){i.settingsOpen?sa():Fr(t)}function Br(){return i.settingsOpen===!0}function zc(){i.settingsOpen&&(i.settingsRev=(i.settingsRev||0)+1,$(),ve())}async function xn({manual:t=!1}={}){if(!i.scanning){i.scanText="正在扫描音乐文件夹…",$();try{const e=await Tr({silent:!t});e&&u(`扫描完成：保留 ${E(e.kept)} 首${e.excluded?`，过滤 ${E(e.excluded)} 个`:""}${e.added?`，新增 ${E(e.added)}`:""}${e.removed?`，移除 ${E(e.removed)}`:""}`,{tone:"success",duration:3600})}finally{i.scanning=!1,$()}}}const Ur="music-player.search.history.v1",jc=20;function qa(){try{const t=localStorage.getItem(Ur),e=t?JSON.parse(t):[];return Array.isArray(e)?e.filter(n=>typeof n=="string"&&n.trim()):[]}catch{return[]}}function Fa(t){try{localStorage.setItem(Ur,JSON.stringify(t.slice(0,jc)))}catch{}}const R={keyword:"",seq:0,results:[],query:"",loading:!1,message:"",rev:0};function Ee(){R.rev+=1,ve()}class Vc extends ge{static deps=e=>[e.searchOpen,R.rev];get panelEl(){return this.querySelector("#search-overlay")}updated(){const e=this.panelEl;if(e){if(i.searchOpen){this._closeTimer&&(clearTimeout(this._closeTimer),this._closeTimer=null),e.hidden&&(e.hidden=!1,e.dataset.state="",requestAnimationFrame(()=>{i.searchOpen&&(e.dataset.state="opened")}),requestAnimationFrame(()=>{const n=this.querySelector("#search-input");n?.focus(),n?.select()}));return}e.hidden||(e.dataset.state="closed",this._closeTimer||(this._closeTimer=setTimeout(()=>{this._closeTimer=null,!i.searchOpen&&e&&(e.hidden=!0)},260)))}}disconnectedCallback(){this._closeTimer&&clearTimeout(this._closeTimer),super.disconnectedCallback()}render(){const e=R,n=qa(),a=!!e.keyword.trim(),s=this.headline();return d`
       <section
         class="search-overlay"
         id="search-overlay"
         data-state="closed"
         hidden
         aria-label="搜索"
-        @click=${s=>this.onClick(s)}
-        @keydown=${s=>this.onKey(s)}
+        @click=${r=>this.onClick(r)}
+        @keydown=${r=>this.onKey(r)}
       >
-        <div class="search-overlay__panel" role="dialog" aria-modal="true" aria-label="搜索">
+        <div class="search-overlay__panel" role="dialog" aria-modal="true" aria-label="在线搜索">
+          <div class="search-overlay__head">
+            <span class="search-overlay__title">在线搜索</span>
+            <span class="u-spacer"></span>
+            <button
+              class="search-overlay__close u-hit"
+              type="button"
+              data-search-close
+              data-tip="关闭（结果会保留）"
+              aria-label="关闭搜索"
+              @click=${()=>Kn()}
+            >
+              ${f("close")}
+            </button>
+          </div>
+
           <div class="search-overlay__search">
             <div class="search-overlay__field">
               ${f("search","search-overlay__search-icon")}
@@ -22,11 +37,11 @@ import{i as k,b as v,d as Jo,f as E,g as Dt,o as U,h as _t,D as va,j as ct,u as 
                 spellcheck="false"
                 aria-label="搜索关键词"
                 .value=${e.keyword}
-                @input=${s=>{R.keyword=s.target.value,Ee()}}
-                @keydown=${s=>{s.key==="Enter"&&(s.preventDefault(),this.submitSearch()),s.key==="Escape"&&(s.preventDefault(),R.keyword.trim()?this.clearSearch({focus:!0}):Kn())}}
+                @input=${r=>{R.keyword=r.target.value,Ee()}}
+                @keydown=${r=>{r.key==="Enter"&&(r.preventDefault(),this.submitSearch()),r.key==="Escape"&&(r.preventDefault(),R.keyword.trim()?this.clearSearch({focus:!0}):Kn())}}
               />
               <button
-                class="search-overlay__clear"
+                class="search-overlay__clear u-hit"
                 id="search-clear"
                 type="button"
                 data-tip="清空搜索"
@@ -37,16 +52,6 @@ import{i as k,b as v,d as Jo,f as E,g as Dt,o as U,h as _t,D as va,j as ct,u as 
                 ${f("close")}
               </button>
             </div>
-            <button
-              class="search-overlay__close"
-              type="button"
-              data-search-close
-              data-tip="关闭（结果会保留）"
-              aria-label="关闭搜索"
-              @click=${()=>Kn()}
-            >
-              ${f("close")}
-            </button>
           </div>
 
           <div class="search-overlay__history" id="search-history" ?hidden=${a||!n.length}>
@@ -63,22 +68,22 @@ import{i as k,b as v,d as Jo,f as E,g as Dt,o as U,h as _t,D as va,j as ct,u as 
                       </button>
                     </div>
                     <div class="search-overlay__history-list">
-                      ${n.map(s=>d`
-                          <span class="search-overlay__history-chip" data-history-keyword=${s}>
+                      ${n.map(r=>d`
+                          <span class="search-overlay__history-chip" data-history-keyword=${r}>
                             <button
                               type="button"
                               class="search-overlay__history-key"
                               data-history-act="use"
-                              @click=${()=>this.useHistory(s)}
+                              @click=${()=>this.useHistory(r)}
                             >
-                              ${s}
+                              ${r}
                             </button>
                             <button
                               type="button"
                               class="search-overlay__history-del"
                               data-history-act="del"
-                              aria-label="删除「${s}」"
-                              @click=${()=>this.removeHistory(s)}
+                              aria-label="删除「${r}」"
+                              @click=${()=>this.removeHistory(r)}
                             >
                               ${f("close")}
                             </button>
@@ -88,8 +93,8 @@ import{i as k,b as v,d as Jo,f as E,g as Dt,o as U,h as _t,D as va,j as ct,u as 
                   `:D}
           </div>
 
-          <div class="search-overlay__head">
-            <span class="search-overlay__headline" id="search-headline">${this.headline()}</span>
+          <div class="search-overlay__status" ?hidden=${!s}>
+            <span class="search-overlay__headline" id="search-headline">${s}</span>
           </div>
           <div class="search-overlay__body" id="search-body">${this.bodyContent()}</div>
         </div>
@@ -349,7 +354,7 @@ import{i as k,b as v,d as Jo,f as E,g as Dt,o as U,h as _t,D as va,j as ct,u as 
             </div>
           </div>
           <button
-            class="lyricspanel__close"
+            class="lyricspanel__close u-hit"
             type="button"
             data-act="close"
             aria-label="关闭"
@@ -935,7 +940,7 @@ ${rp(t)}
                   @keydown=${a=>{a.key==="Escape"&&(a.preventDefault(),Na(),a.target.blur())}}
                 />
                 <button
-                  class="content-filter__clear"
+                  class="content-filter__clear u-hit"
                   id="content-filter-clear"
                   type="button"
                   aria-label="清空筛选"
@@ -1140,7 +1145,7 @@ ${rp(t)}
                   aria-label=${l.name||l.id}
                   @click=${()=>Wt(l.id)}
                 >
-                  ${f(l.icon||"disc")}
+                  ${this.skinIcon(l)}
                 </button>
               `)}
           </div>
@@ -1151,7 +1156,7 @@ ${rp(t)}
           @click=${l=>{l.target.closest(".disc__label, .disc__platter")&&Ku()}}
         ></div>
       </section>
-    `}coverList(e){if(!e)return[];const n=i.coverSets.get(e.id)?.items;return Array.isArray(n)?n.filter(a=>a?.preview):[]}carouselTip(e,n){if(!e)return"这首歌只有一张封面";const a=Number(i.config.coverCarouselInterval)||10;return n?"关闭封面轮播":`开启封面轮播（每 ${a} 秒换一张）`}openCoverPanel(e){!e||e.online||gt(()=>Promise.resolve().then(()=>_i),void 0).then(n=>n.openCoverPanel(e.id))}toggleCarousel(){i.config.coverCarousel=!i.config.coverCarousel,$(),u(i.config.coverCarousel?`已开启封面轮播（每 ${Number(i.config.coverCarouselInterval)||10} 秒换一张）`:"已关闭封面轮播",{duration:1600})}}ie("mp-playerview",zp);function Gt(t,e={}){const n=e.min??0,a=e.max??1,s=e.step??.001;let r=ct(e.value??n,n,a),o=!1;const l=t.querySelector(".slider__fill"),c=t.querySelector(".slider__thumb"),p=t.querySelector(".slider__bubble");t.setAttribute("aria-valuemin",String(n)),t.setAttribute("aria-valuemax",String(a));function m(){const b=a===n?0:(r-n)/(a-n)*100;l&&(l.style.transform=`scaleX(${b/100})`),c&&(c.style.left=`${b}%`),p&&e.format&&(p.textContent=e.format(r)),t.setAttribute("aria-valuenow",String(Math.round(b)))}function h(b){const x=t.getBoundingClientRect();if(x.width<=0)return r;const N=ct((b.clientX-x.left)/x.width,0,1),B=n+N*(a-n),z=Math.round(B/s)*s;return ct(Number(z.toFixed(6)),n,a)}function _(b){if(!p)return;const x=t.getBoundingClientRect(),N=ct(b.clientX-x.left,0,x.width);p.style.left=`${N}px`}t.addEventListener("pointerdown",b=>{t.dataset.disabled!=="true"&&(b.preventDefault(),o=!0,t.dataset.dragging="true",t.setPointerCapture?.(b.pointerId),r=h(b),m(),_(b),e.onChange?.(r))}),t.addEventListener("pointermove",b=>{_(b),o&&(r=h(b),m(),e.onChange?.(r))});const S=b=>{o&&(o=!1,t.dataset.dragging="false",t.releasePointerCapture?.(b.pointerId),e.onCommit?.(r))};return t.addEventListener("pointerup",S),t.addEventListener("pointercancel",S),t.addEventListener("keydown",b=>{if(t.dataset.disabled==="true")return;const x=(a-n)/10,N=s*10;let B=r;switch(b.key){case"ArrowRight":case"ArrowUp":B=r+N;break;case"ArrowLeft":case"ArrowDown":B=r-N;break;case"PageUp":B=r+x;break;case"PageDown":B=r-x;break;case"Home":B=n;break;case"End":B=a;break;default:return}b.preventDefault(),r=ct(Number(B.toFixed(6)),n,a),m(),e.onChange?.(r),e.onCommit?.(r)}),m(),{get value(){return r},set(b,{silent:x=!1}={}){const N=ct(b,n,a);N===r&&!x||(r=N,m(),x||e.onChange?.(r))},setDisabled(b){t.dataset.disabled=b?"true":"false"},text(b=r){return e.format?e.format(b):String(b)},paint:m}}const fs={sequence:{icon:"repeat",label:"列表循环"},"loop-all":{icon:"repeat",label:"列表循环"},"loop-one":{icon:"repeat-one",label:"单曲循环"},shuffle:{icon:"shuffle",label:"随机播放"}};function Uo(t){const e=typeof t=="boolean"?t:!i.queueOpen;i.queueOpen=e,e&&(i.optionsOpen=!1),$()}function Ho(t){const e=typeof t=="boolean"?t:!i.optionsOpen;i.optionsOpen=e,e&&(i.queueOpen=!1),$()}function zo(t){const e=typeof t=="boolean"?t:!i.sleepOpen;i.sleepOpen=e,$()}function jp(t){const e=Math.round(Number(t)||0);if(e<=0){jo("已取消定时停止");return}i.sleepTimer={type:"duration",until:Date.now()+e*6e4,minutes:e},$(),u(`${e} 分钟后停止播放`,{duration:1800})}function jo(t){i.sleepTimer=null,$(),u(t,{duration:1400})}function Vp(t){i.config.sleepAfterSong=!!t,$(),u(i.config.sleepAfterSong?"已开启：倒计时结束后等当前歌曲播完再停":"已关闭：倒计时结束后立即停止",{duration:2200})}function Wp(){const t=i.sleepTimer;if(!(t?.type!=="duration"||Date.now()<t.until)){if(i.config.sleepAfterSong===!0&&i.playing&&i.currentId){i.sleepTimer={type:"after-song"},$(),u("定时到点：等这首播完就停",{duration:2400});return}i.sleepTimer=null,i.playing?Kt():$(),u("已按定时停止播放",{duration:1800})}}class Gp extends ge{static deps=e=>[e.currentId,e.playing,e.duration,e.volume,e.muted,e.playMode,e.likedIds,e.queue.length,e.queueOpen,e.optionsOpen,e.sleepOpen,e.sleepTimer,e.lyricsOpen,Tn()];constructor(){super(),this._progress=null,this._volume=null,this._tick=null}onConnected(){this._tick=setInterval(()=>{i.sleepTimer&&this.requestUpdate()},1e3),this._unsubscribers.push(ba(()=>{this.isConnected&&this.paintProgress()}))}onDisconnected(){this._tick&&clearInterval(this._tick),this._tick=null}paintProgress(){if(Kd()){const r=this.querySelector("#time-current");r&&r.textContent!=="--:--"&&(r.textContent="--:--"),this._progress?.set(0,{silent:!0}),this._progress?.setDisabled(!0);return}const e=Math.round(i.position),n=Math.round(i.duration||0),a=this.querySelector("#time-current");if(a){const r=Dt(i.position);a.textContent!==r&&(a.textContent=r)}const s=this.querySelector("#progress");s&&s.dataset.dragging!=="true"&&n>0&&this._progress?.set(e/n*1e3,{silent:!0}),this._progress?.setDisabled(n<=0)}firstUpdated(){const e=this.querySelector("#progress");this._progress=Gt(e,{min:0,max:1e3,step:1,value:0,format:n=>Dt(n/1e3*(i.duration||0)),onChange:n=>{i.duration&&(i.position=n/1e3*i.duration,this.requestUpdate())},onCommit:n=>{i.duration&&qt(n/1e3*i.duration)}}),this._volume=Gt(this.querySelector("#volume"),{min:0,max:1,step:.01,value:i.volume,format:n=>`${Math.round(n*100)}`,onChange:n=>{_s(n),Ps(),this.requestUpdate()}})}updated(){this.paintProgress();const e=i.muted?0:i.volume,n=this.querySelector("#volume");n&&n.dataset.dragging!=="true"&&this._volume?.set(e,{silent:!0}),Wp()}render(){const e=He(),n=i.currentId?et(i.currentId):!1,a=fs[i.playMode]||fs.sequence,s=i.muted?0:i.volume,r=s===0?"volume-mute":s<.5?"volume-low":"volume-high",o=e?_t(e):"",l=i.sleepTimer,c=l?.type==="duration"?Math.max(1,Math.ceil((l.until-Date.now())/6e4)):0;return d`
+    `}skinIcon(e){return e.iconUrl?d`<i class="skin-icon" style=${`--skin-icon:url("${e.iconUrl}")`}></i>`:f(e.icon||"disc")}coverList(e){if(!e)return[];const n=i.coverSets.get(e.id)?.items;return Array.isArray(n)?n.filter(a=>a?.preview):[]}carouselTip(e,n){if(!e)return"这首歌只有一张封面";const a=Number(i.config.coverCarouselInterval)||10;return n?"关闭封面轮播":`开启封面轮播（每 ${a} 秒换一张）`}openCoverPanel(e){!e||e.online||gt(()=>Promise.resolve().then(()=>_i),void 0).then(n=>n.openCoverPanel(e.id))}toggleCarousel(){i.config.coverCarousel=!i.config.coverCarousel,$(),u(i.config.coverCarousel?`已开启封面轮播（每 ${Number(i.config.coverCarouselInterval)||10} 秒换一张）`:"已关闭封面轮播",{duration:1600})}}ie("mp-playerview",zp);function Gt(t,e={}){const n=e.min??0,a=e.max??1,s=e.step??.001;let r=ct(e.value??n,n,a),o=!1;const l=t.querySelector(".slider__fill"),c=t.querySelector(".slider__thumb"),p=t.querySelector(".slider__bubble");t.setAttribute("aria-valuemin",String(n)),t.setAttribute("aria-valuemax",String(a));function m(){const b=a===n?0:(r-n)/(a-n)*100;l&&(l.style.transform=`scaleX(${b/100})`),c&&(c.style.left=`${b}%`),p&&e.format&&(p.textContent=e.format(r)),t.setAttribute("aria-valuenow",String(Math.round(b)))}function h(b){const x=t.getBoundingClientRect();if(x.width<=0)return r;const N=ct((b.clientX-x.left)/x.width,0,1),B=n+N*(a-n),z=Math.round(B/s)*s;return ct(Number(z.toFixed(6)),n,a)}function _(b){if(!p)return;const x=t.getBoundingClientRect(),N=ct(b.clientX-x.left,0,x.width);p.style.left=`${N}px`}t.addEventListener("pointerdown",b=>{t.dataset.disabled!=="true"&&(b.preventDefault(),o=!0,t.dataset.dragging="true",t.setPointerCapture?.(b.pointerId),r=h(b),m(),_(b),e.onChange?.(r))}),t.addEventListener("pointermove",b=>{_(b),o&&(r=h(b),m(),e.onChange?.(r))});const S=b=>{o&&(o=!1,t.dataset.dragging="false",t.releasePointerCapture?.(b.pointerId),e.onCommit?.(r))};return t.addEventListener("pointerup",S),t.addEventListener("pointercancel",S),t.addEventListener("keydown",b=>{if(t.dataset.disabled==="true")return;const x=(a-n)/10,N=s*10;let B=r;switch(b.key){case"ArrowRight":case"ArrowUp":B=r+N;break;case"ArrowLeft":case"ArrowDown":B=r-N;break;case"PageUp":B=r+x;break;case"PageDown":B=r-x;break;case"Home":B=n;break;case"End":B=a;break;default:return}b.preventDefault(),r=ct(Number(B.toFixed(6)),n,a),m(),e.onChange?.(r),e.onCommit?.(r)}),m(),{get value(){return r},set(b,{silent:x=!1}={}){const N=ct(b,n,a);N===r&&!x||(r=N,m(),x||e.onChange?.(r))},setDisabled(b){t.dataset.disabled=b?"true":"false"},text(b=r){return e.format?e.format(b):String(b)},paint:m}}const fs={sequence:{icon:"repeat",label:"列表循环"},"loop-all":{icon:"repeat",label:"列表循环"},"loop-one":{icon:"repeat-one",label:"单曲循环"},shuffle:{icon:"shuffle",label:"随机播放"}};function Uo(t){const e=typeof t=="boolean"?t:!i.queueOpen;i.queueOpen=e,e&&(i.optionsOpen=!1),$()}function Ho(t){const e=typeof t=="boolean"?t:!i.optionsOpen;i.optionsOpen=e,e&&(i.queueOpen=!1),$()}function zo(t){const e=typeof t=="boolean"?t:!i.sleepOpen;i.sleepOpen=e,$()}function jp(t){const e=Math.round(Number(t)||0);if(e<=0){jo("已取消定时停止");return}i.sleepTimer={type:"duration",until:Date.now()+e*6e4,minutes:e},$(),u(`${e} 分钟后停止播放`,{duration:1800})}function jo(t){i.sleepTimer=null,$(),u(t,{duration:1400})}function Vp(t){i.config.sleepAfterSong=!!t,$(),u(i.config.sleepAfterSong?"已开启：倒计时结束后等当前歌曲播完再停":"已关闭：倒计时结束后立即停止",{duration:2200})}function Wp(){const t=i.sleepTimer;if(!(t?.type!=="duration"||Date.now()<t.until)){if(i.config.sleepAfterSong===!0&&i.playing&&i.currentId){i.sleepTimer={type:"after-song"},$(),u("定时到点：等这首播完就停",{duration:2400});return}i.sleepTimer=null,i.playing?Kt():$(),u("已按定时停止播放",{duration:1800})}}class Gp extends ge{static deps=e=>[e.currentId,e.playing,e.duration,e.volume,e.muted,e.playMode,e.likedIds,e.queue.length,e.queueOpen,e.optionsOpen,e.sleepOpen,e.sleepTimer,e.lyricsOpen,Tn()];constructor(){super(),this._progress=null,this._volume=null,this._tick=null}onConnected(){this._tick=setInterval(()=>{i.sleepTimer&&this.requestUpdate()},1e3),this._unsubscribers.push(ba(()=>{this.isConnected&&this.paintProgress()}))}onDisconnected(){this._tick&&clearInterval(this._tick),this._tick=null}paintProgress(){if(Kd()){const r=this.querySelector("#time-current");r&&r.textContent!=="--:--"&&(r.textContent="--:--"),this._progress?.set(0,{silent:!0}),this._progress?.setDisabled(!0);return}const e=Math.round(i.position),n=Math.round(i.duration||0),a=this.querySelector("#time-current");if(a){const r=Dt(i.position);a.textContent!==r&&(a.textContent=r)}const s=this.querySelector("#progress");s&&s.dataset.dragging!=="true"&&n>0&&this._progress?.set(e/n*1e3,{silent:!0}),this._progress?.setDisabled(n<=0)}firstUpdated(){const e=this.querySelector("#progress");this._progress=Gt(e,{min:0,max:1e3,step:1,value:0,format:n=>Dt(n/1e3*(i.duration||0)),onChange:n=>{i.duration&&(i.position=n/1e3*i.duration,this.requestUpdate())},onCommit:n=>{i.duration&&qt(n/1e3*i.duration)}}),this._volume=Gt(this.querySelector("#volume"),{min:0,max:1,step:.01,value:i.volume,format:n=>`${Math.round(n*100)}`,onChange:n=>{_s(n),Ps(),this.requestUpdate()}})}updated(){this.paintProgress();const e=i.muted?0:i.volume,n=this.querySelector("#volume");n&&n.dataset.dragging!=="true"&&this._volume?.set(e,{silent:!0}),Wp()}render(){const e=He(),n=i.currentId?et(i.currentId):!1,a=fs[i.playMode]||fs.sequence,s=i.muted?0:i.volume,r=s===0?"volume-mute":s<.5?"volume-low":"volume-high",o=e?_t(e):"",l=i.sleepTimer,c=l?.type==="duration"?Math.max(1,Math.ceil((l.until-Date.now())/6e4)):0;return d`
       <footer class="playerbar" id="playerbar">
         <div class="playerbar__progress">
           <!-- #time-current 的文本由 updated() 直接写入，这里刻意不绑定（见那里的说明） -->
@@ -1363,7 +1368,7 @@ ${rp(t)}
           <span class="u-spacer"></span>
           <span class="queue-panel__count" id="queue-panel-count">${e.length} 首</span>
           <button
-            class="queue-panel__btn"
+            class="queue-panel__btn u-hit"
             id="queue-locate"
             type="button"
             data-tip="定位到当前播放"
@@ -1373,7 +1378,7 @@ ${rp(t)}
             ${f("disc")}
           </button>
           <button
-            class="queue-panel__btn"
+            class="queue-panel__btn u-hit"
             id="queue-clear"
             type="button"
             data-tip="清空列表"
@@ -1383,7 +1388,7 @@ ${rp(t)}
             ${f("trash")}
           </button>
           <button
-            class="queue-panel__btn"
+            class="queue-panel__btn u-hit"
             id="queue-close"
             type="button"
             data-tip="关闭"
@@ -1440,7 +1445,7 @@ ${rp(t)}
           <span class="options-panel__title">播放选项</span>
           <span class="u-spacer"></span>
           <button
-            class="options-panel__btn"
+            class="options-panel__btn u-hit"
             id="options-close"
             type="button"
             data-tip="关闭"
@@ -1556,7 +1561,7 @@ ${rp(t)}
           <span class="sleep-panel__title">定时停止</span>
           <span class="u-spacer"></span>
           <button
-            class="options-panel__btn"
+            class="options-panel__btn u-hit"
             id="sleep-close"
             type="button"
             data-tip="关闭"
@@ -1638,7 +1643,7 @@ ${rp(t)}
             ${f("folder")}
           </button>
           <button
-            class="download-panel__btn"
+            class="download-panel__btn u-hit"
             id="download-clear"
             type="button"
             data-tip="清除已完成"
@@ -1649,7 +1654,7 @@ ${rp(t)}
             ${f("trash")}
           </button>
           <button
-            class="download-panel__btn"
+            class="download-panel__btn u-hit"
             id="download-close"
             type="button"
             data-tip="关闭"
@@ -1696,7 +1701,7 @@ ${rp(t)}
             <span class="cover-layer__title">封面管理</span>
             <span class="u-spacer"></span>
             <button
-              class="cover-layer__close"
+              class="cover-layer__close u-hit"
               type="button"
               data-cover-close
               aria-label="关闭封面管理"
@@ -1911,7 +1916,7 @@ ${rp(t)}
             <span class="settings-layer__title">设置</span>
             <span class="u-spacer"></span>
             <button
-              class="settings-layer__close"
+              class="settings-layer__close u-hit"
               type="button"
               data-settings-close
               aria-label="关闭设置"
@@ -2271,7 +2276,7 @@ ${rp(t)}
               aria-pressed=${String(s)}
               aria-label=${`使用样式 ${a.name}`}
             >
-              <span class="skincard__icon">${f(a.icon||"disc")}</span>
+              <span class="skincard__icon">${this.skinIcon(a)}</span>
               <span class="skincard__name">${a.name}</span>
               <span class="skincard__id">${a.id}</span>
               <span class="skincard__colors" data-tip=${p} aria-label=${p}>
@@ -2319,7 +2324,7 @@ ${rp(t)}
         ${L({label:"封面轮播",hint:"一首歌有多张封面时，播放详情页按下面的间隔轮换显示（不影响列表缩略图）",control:te("coverCarousel",i.config.coverCarousel===!0,"封面轮播")})}
         ${L({label:"轮播间隔",hint:"每隔多少秒切换一张",control:an("set-carousel","coverCarouselInterval","轮播间隔")})}
       </div>
-    </section>`}playbackCard(){return d` <section class="card" id="sec-playback" data-section="player">
+    </section>`}skinIcon(e){return e.iconUrl?d`<i class="skin-icon" style=${`--skin-icon:url("${e.iconUrl}")`}></i>`:f(e.icon||"disc")}playbackCard(){return d` <section class="card" id="sec-playback" data-section="player">
       <div class="card__head">
         <div class="card__icon">${f("headphones")}</div>
         <div class="card__titles">

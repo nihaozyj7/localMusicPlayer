@@ -258,7 +258,7 @@ class MpQueuePanel extends MpPanel {
           <span class="u-spacer"></span>
           <span class="queue-panel__count" id="queue-panel-count">${list.length} 首</span>
           <button
-            class="queue-panel__btn"
+            class="queue-panel__btn u-hit"
             id="queue-locate"
             type="button"
             data-tip="定位到当前播放"
@@ -268,7 +268,7 @@ class MpQueuePanel extends MpPanel {
             ${icon("disc")}
           </button>
           <button
-            class="queue-panel__btn"
+            class="queue-panel__btn u-hit"
             id="queue-clear"
             type="button"
             data-tip="清空列表"
@@ -281,7 +281,7 @@ class MpQueuePanel extends MpPanel {
             ${icon("trash")}
           </button>
           <button
-            class="queue-panel__btn"
+            class="queue-panel__btn u-hit"
             id="queue-close"
             type="button"
             data-tip="关闭"
@@ -477,7 +477,7 @@ class MpOptionsPanel extends MpPanel {
           <span class="options-panel__title">播放选项</span>
           <span class="u-spacer"></span>
           <button
-            class="options-panel__btn"
+            class="options-panel__btn u-hit"
             id="options-close"
             type="button"
             data-tip="关闭"
@@ -734,7 +734,7 @@ class MpSleepPanel extends MpPanel {
           <span class="sleep-panel__title">定时停止</span>
           <span class="u-spacer"></span>
           <button
-            class="options-panel__btn"
+            class="options-panel__btn u-hit"
             id="sleep-close"
             type="button"
             data-tip="关闭"
@@ -879,7 +879,7 @@ class MpDownloadPanel extends MpPanel {
             ${icon("folder")}
           </button>
           <button
-            class="download-panel__btn"
+            class="download-panel__btn u-hit"
             id="download-clear"
             type="button"
             data-tip="清除已完成"
@@ -890,7 +890,7 @@ class MpDownloadPanel extends MpPanel {
             ${icon("trash")}
           </button>
           <button
-            class="download-panel__btn"
+            class="download-panel__btn u-hit"
             id="download-close"
             type="button"
             data-tip="关闭"

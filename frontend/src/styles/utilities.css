@@ -86,6 +86,53 @@
   flex: 1 1 auto;
 }
 
+/* --------------------------------------------------------------------------
+   命中区域外扩：视觉尺寸不动，只把「能点到的范围」往外扩一圈
+   --------------------------------------------------------------------------
+   关闭 / 清空 / 删除这类图标按钮的可见尺寸只有 22~28px（图标 12~15px），
+   鼠标很难精准落到上面。缩小图标会牺牲可读性，加大按钮又会顶动布局，
+   所以用一层伪元素向外扩：伪元素是按钮的一部分，点它等于点按钮，
+   视觉与排版完全不变。
+
+   --hit-pad 默认 6px。**密集排列的按钮组必须调小**（相邻两块一旦重叠，
+   后一个会抢走前一个的点击），例如 26px 按钮 + 8px 间距的标题栏按钮组
+   用 4px —— 两块正好挨着，不重叠。
+   需要「纵向多给、横向少给」时用 --hit-pad-y / --hit-pad-x 单独覆盖。
+   -------------------------------------------------------------------------- */
+.u-hit {
+  position: relative;
+}
+
+.u-hit::after {
+  content: "";
+  position: absolute;
+  inset: calc(var(--hit-pad-y, var(--hit-pad, 6px)) * -1)
+    calc(var(--hit-pad-x, var(--hit-pad, 6px)) * -1);
+  border-radius: inherit;
+}
+
+/* --------------------------------------------------------------------------
+   样式包自带图标（skin.json 的 icon.file）
+   --------------------------------------------------------------------------
+   为什么用 mask 而不是 <img>：SVG 里的 stroke="currentColor" 在 <img> 里
+   继承不到页面的 color（它是一个独立文档，默认取黑色），深色主题下发白、
+   浅色主题下就是一团黑。mask 把图标当成「形状」，颜色由 background-color
+   提供，于是它能跟着按钮的 color 一起变。
+   具体 URL 由组件用 --skin-icon 传进来（每个样式的图标文件不同）。
+   -------------------------------------------------------------------------- */
+.skin-icon {
+  display: block;
+  background-color: currentColor;
+  -webkit-mask-image: var(--skin-icon);
+  mask-image: var(--skin-icon);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
 .u-selectable {
   user-select: text;
 }
