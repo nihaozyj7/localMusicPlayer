@@ -572,6 +572,7 @@ await send("Page.navigate", { url: `http://127.0.0.1:${PORT}/lyrics.html` });
 await sleep(1500);
 const dlWindow = await evaluate(`(() => {
   const host = document.querySelector("mp-desktop-lyrics");
+  const size = document.querySelector("#dl-size");
   return {
     host: !!host,
     root: !!document.querySelector("#dl"),
@@ -580,9 +581,84 @@ const dlWindow = await evaluate(`(() => {
     styleAttr: document.querySelector("#dl")?.dataset.style,
     tip: document.querySelector("#dl-tip")?.textContent.trim(),
     hostDisplay: host ? getComputedStyle(host).display : null,
+    size: size ? { min: size.min, max: size.max, step: size.step, value: size.value } : null,
+    sizeReadout: document.querySelector("#dl-size-val")?.textContent.trim(),
+    sizeReset: !!document.querySelector("#dl-size-reset"),
   };
 })()`);
 check("desktop-lyrics-window", dlWindow);
+
+/* ---- 14b. 桌面歌词：字号滑块（本地覆盖 / ↺ 跟随） ---- */
+const dlSize = await evaluate(`(async () => {
+  const host = document.querySelector("mp-desktop-lyrics");
+  const dl = document.querySelector("#dl");
+  const frame = () => new Promise((r) => requestAnimationFrame(r));
+  const sizeVar = () => getComputedStyle(dl).getPropertyValue("--dl-size").trim();
+  const q = (s) => document.querySelector(s);
+  try { localStorage.removeItem("music-player.desktop-lyrics.size.v1"); } catch {}
+  // 预览下没有后端推送，直接喂一帧（等价于主窗口推来的状态）
+  host.render2({ text: "第二句开唱", chars: [..."第二句开唱"], words: [6000, 6100, 6200, 6300, 6400],
+    wordEnds: [6100, 6200, 6300, 6400, 6800], posMs: 6150, atMs: Date.now(), playing: true, fontSize: 45 });
+  await frame();
+  const follow = { size: sizeVar(), value: q("#dl-size").value, readout: q("#dl-size-val").textContent.trim(), reset: !!q("#dl-size-reset") };
+  // 拖滑块（真实交互就是 input 事件流）
+  q("#dl-size").value = "58";
+  q("#dl-size").dispatchEvent(new Event("input", { bubbles: true }));
+  await frame();
+  const dragged = { size: sizeVar(), value: q("#dl-size").value, readout: q("#dl-size-val").textContent.trim(),
+    reset: !!q("#dl-size-reset"), saved: localStorage.getItem("music-player.desktop-lyrics.size.v1") };
+  // 主窗口再推一个新字号：本地覆盖要顶住
+  host.render2({ text: "第二句开唱", chars: [..."第二句开唱"], words: [6000, 6100, 6200, 6300, 6400],
+    wordEnds: [6100, 6200, 6300, 6400, 6800], posMs: 6150, atMs: Date.now(), playing: true, fontSize: 30 });
+  await frame();
+  const pushed = { size: sizeVar() };
+  q("#dl-size-reset").click();
+  await frame();
+  const reset = { size: sizeVar(), reset: !!q("#dl-size-reset"), saved: localStorage.getItem("music-player.desktop-lyrics.size.v1") };
+  return { follow, dragged, pushed, reset };
+})()`);
+check("desktop-lyrics-size", dlSize);
+
+/* ---- 14c. 桌面歌词：整块区域可拖（Wails 的 drag 判定只看最里层元素） ----
+   复刻 wails/v3 runtime 的 isDraggableEvent：--wails-draggable === "drag"
+   且 offsetX/Y 落在该元素 clientWidth/clientHeight 内。inline 元素的
+   clientWidth/clientHeight 恒为 0 —— 字素 span 就是 inline，所以文本层必须
+   pointer-events:none，让命中落到 #dl 上。 */
+const dlBoxes = await evaluate(`(() => {
+  const box = (s) => { const r = document.querySelector(s).getBoundingClientRect();
+    return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
+  return { line: box("#dl-line"), bar: box("#dl-bar"), sep: box(".dl__bar-sep"),
+    size: box("#dl-size"), select: box("#dl-style") };
+})()`);
+// 悬停到控制栏，让 .dl__bar 从 pointer-events:none 切到可交互
+await send("Input.dispatchMouseEvent", {
+  type: "mouseMoved",
+  x: dlBoxes.bar[0] + Math.round(dlBoxes.bar[2] / 2),
+  y: dlBoxes.bar[1] + Math.round(dlBoxes.bar[3] / 2),
+});
+await sleep(400);
+const dlDrag = await evaluate(`(() => {
+  const hit = (x, y) => {
+    const el = document.elementFromPoint(x, y);
+    if (!el) return { node: null, canDrag: false };
+    const drag = getComputedStyle(el).getPropertyValue("--wails-draggable").trim();
+    return { node: el.id ? "#" + el.id : "." + String(el.className), drag,
+      box: [el.clientWidth, el.clientHeight],
+      // 复刻 wails isDraggableEvent
+      canDrag: drag === "drag" && el.clientWidth > 0 && el.clientHeight > 0 };
+  };
+  const B = ${JSON.stringify(dlBoxes)};
+  const mid = (b) => [b[0] + Math.round(b[2] / 2), b[1] + Math.round(b[3] / 2)];
+  const onWord = hit(B.line[0] + 24, B.line[1] + Math.round(B.line[3] / 2));
+  const besideText = hit(B.line[0] + B.line[2] + 16, B.line[1] + Math.round(B.line[3] / 2));
+  const barGap = hit(...mid(B.sep));
+  const barPad = hit(B.bar[0] + 5, B.bar[1] + Math.round(B.bar[3] / 2));
+  const onSlider = hit(...mid(B.size));
+  const onSelect = hit(B.select[0] + 10, B.select[1] + 8);
+  const words = document.querySelectorAll(".dl__word").length;
+  return { words, onWord, besideText, barGap, barPad, onSlider, onSelect };
+})()`);
+check("desktop-lyrics-drag", dlDrag);
 
 /* ---- 15. 下载面板（预览假数据） ---- */
 await send("Page.navigate", { url: `http://127.0.0.1:${PORT}/index.html?downloads=1` });

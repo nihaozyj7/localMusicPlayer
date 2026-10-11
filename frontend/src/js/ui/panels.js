@@ -61,7 +61,7 @@ const DESKTOP_MODE_OPTIONS = [
     id: "opt-desktop-lyrics",
     value: DESKTOP_MODE.lyrics,
     label: "悬浮",
-    tip: "在桌面上显示一行置顶歌词（独立透明窗口，可拖动）",
+    tip: "在桌面上显示一行置顶歌词（独立透明窗口，整块都能拖动；鼠标移入可调样式与字号）",
   },
   {
     id: "opt-desktop-wallpaper",

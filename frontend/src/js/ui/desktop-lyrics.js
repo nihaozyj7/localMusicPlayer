@@ -79,6 +79,39 @@ function loadStyle() {
   }
 }
 
+/* --------------------------------------------------------------------------
+   桌面歌词字号（悬浮控制栏里的滑块）
+   --------------------------------------------------------------------------
+   为什么不写回主窗口的 config.lyricsFontSize：两者量程不一样。
+   这个窗口是 1000×132 的**固定长条**（见 desktop_lyrics.go），字号再大就会把
+   整行挤出条外；而主窗口那档「歌词字号」要管到 72px（播放详情页能用满）。
+   硬写回去会出现「设置里拖到 72、桌面歌词早就不变了」的假象，所以字号和样式
+   一样归这个窗口自己（localStorage）。
+
+   主窗口推过来的字号仍然有效 —— 它是**默认值**：用户没在这里调过就跟着走
+   （从前的行为不变），调过之后以这里存的为准，控制栏上的 ↺ 恢复成跟随。
+   -------------------------------------------------------------------------- */
+const SIZE_KEY = "music-player.desktop-lyrics.size.v1";
+const SIZE_MIN = 18;
+const SIZE_MAX = 64;
+const SIZE_FALLBACK = 26;
+
+function clampSize(px) {
+  const n = Math.round(Number(px));
+  if (!Number.isFinite(n)) return SIZE_FALLBACK;
+  return Math.min(SIZE_MAX, Math.max(SIZE_MIN, n));
+}
+
+/** 用户自己调过的字号；没调过返回 null（= 跟随主窗口） */
+function loadSize() {
+  try {
+    const saved = localStorage.getItem(SIZE_KEY);
+    return saved === null || saved === "" ? null : clampSize(saved);
+  } catch {
+    return null;
+  }
+}
+
 class MpDesktopLyrics extends LitElement {
   // light DOM：desktoplyrics.css 按 #dl / .dl__line 这类全局选择器写
   createRenderRoot() {
@@ -89,9 +122,13 @@ class MpDesktopLyrics extends LitElement {
     super();
     this.text = "";
     this.playing = false;
-    this.fontSize = 26;
+    /** 主窗口推过来的字号（config.lyricsFontSize × 1.5），只在没本地覆盖时生效 */
+    this.remoteSize = SIZE_FALLBACK;
+    /** 本地调过的字号；null = 跟随主窗口 */
+    this.sizeOverride = loadSize();
+    this.fontSize = this.sizeOverride ?? SIZE_FALLBACK;
     this.styleId = loadStyle();
-    this.tip = "桌面歌词 · 播放歌曲后逐行显示（鼠标移入可选择样式，拖动可移动）";
+    this.tip = "桌面歌词 · 播放歌曲后逐行显示（鼠标移入可调样式与字号，拖动可移动）";
     this.tipHidden = false;
     this._lastText = null;
 
@@ -215,7 +252,7 @@ class MpDesktopLyrics extends LitElement {
   /** 应用一次推送（方法与组件渲染同名会打架，所以叫 render2） */
   render2(state) {
     if (!state || typeof state !== "object") return;
-    const px = Math.max(12, Math.min(64, Number(state.fontSize) || 26));
+    const pushed = clampSize(state.fontSize);
     const text = String(state.text || "").trim();
     const words = Array.isArray(state.words) ? state.words.map(Number) : [];
     const wordEnds = Array.isArray(state.wordEnds) ? state.wordEnds.map(Number) : [];
@@ -224,7 +261,9 @@ class MpDesktopLyrics extends LitElement {
     // 判据与播放详情页一致（见 player-skins/lyrics-view.js#enterWords）。
     this._wordsOn = words.length > 1 && words.length === chars.length && wordEnds.length === words.length;
 
-    this.fontSize = px;
+    this.remoteSize = pushed;
+    // 用户在这里调过字号就按本地存的值走（见文件里 SIZE_KEY 那段说明）
+    this.fontSize = this.sizeOverride ?? pushed;
     this.text = text;
     this.playing = Boolean(state.playing);
     this.chars = this._wordsOn ? chars : [];
@@ -235,8 +274,38 @@ class MpDesktopLyrics extends LitElement {
     this.atMs = Math.round(Number(state.atMs) || 0);
     if (text) this.tipHidden = true;
     this.requestUpdate();
-    // 字号是给整窗用的（提示语也一起缩放），挂在渲染根上
-    this.style.setProperty("--dl-size", px + "px");
+    this._applySize();
+  }
+
+  /** 字号是给整窗用的（提示语也一起缩放），挂在渲染根上 */
+  _applySize() {
+    this.style.setProperty("--dl-size", `${this.fontSize}px`);
+  }
+
+  /** 滑块拖动中不断触发：立即改显示并记住，不等主窗口回话 */
+  setSize(px) {
+    this.sizeOverride = clampSize(px);
+    try {
+      localStorage.setItem(SIZE_KEY, String(this.sizeOverride));
+    } catch {
+      /* 隐私模式等写不进去时忽略：只影响持久化，不影响本次显示 */
+    }
+    this.fontSize = this.sizeOverride;
+    this._applySize();
+    this.requestUpdate();
+  }
+
+  /** ↺：忘掉本地覆盖，重新跟随主窗口的「歌词字号」 */
+  followRemoteSize() {
+    this.sizeOverride = null;
+    try {
+      localStorage.removeItem(SIZE_KEY);
+    } catch {
+      /* 同上 */
+    }
+    this.fontSize = this.remoteSize;
+    this._applySize();
+    this.requestUpdate();
   }
 
   setStyle(id) {
@@ -279,6 +348,34 @@ class MpDesktopLyrics extends LitElement {
               ${LYRIC_STYLES.map((s) => html`<option value=${s.id} ?selected=${s.id === this.styleId}>${s.label}</option>`)}
             </select>
           </div>
+          <span class="dl__bar-sep" aria-hidden="true"></span>
+          <label class="dl__bar-label" for="dl-size">字号</label>
+          <div class="dl__size-wrap">
+            <input
+              class="dl__size"
+              id="dl-size"
+              type="range"
+              min=${SIZE_MIN}
+              max=${SIZE_MAX}
+              step="1"
+              aria-label="桌面歌词字号"
+              .value=${String(this.fontSize)}
+              @input=${(e) => this.setSize(e.target.value)}
+            />
+            <span class="dl__size-val" id="dl-size-val">${this.fontSize}</span>
+            ${this.sizeOverride === null
+              ? nothing
+              : html`<button
+                  class="dl__size-reset"
+                  id="dl-size-reset"
+                  type="button"
+                  title="恢复为跟随设置里的歌词字号"
+                  aria-label="恢复为跟随设置里的歌词字号"
+                  @click=${() => this.followRemoteSize()}
+                >
+                  ↺
+                </button>`}
+          </div>
         </div>
         <p class="dl__line" id="dl-line">${line}</p>
         ${this.trans.length ? html`<p class="dl__trans" id="dl-trans">${this.trans.join(" · ")}</p>` : nothing}
@@ -289,4 +386,4 @@ class MpDesktopLyrics extends LitElement {
 }
 
 define("mp-desktop-lyrics", MpDesktopLyrics);
-export const _internals = { LYRIC_STYLES, nothing };
+export const _internals = { LYRIC_STYLES, SIZE_MIN, SIZE_MAX, nothing };

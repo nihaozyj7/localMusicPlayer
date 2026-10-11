@@ -23,8 +23,10 @@
 
    交互（需求）：
      · 鼠标移入窗口 → 变成「常规窗口」：出现底色、圆角、边框与悬浮控制栏
-       （里面的下拉框用于设置桌面歌词样式）；
-     · 鼠标移出 → 背景立刻回到完全透明。
+       （下拉框选样式，滑块调字号）；
+     · 鼠标移出 → 背景立刻回到完全透明；
+     · **整块区域都能拖窗口**：歌词文字、控制栏的空白处都能拖，只有下拉框 /
+       滑块这类真控件是 no-drag（判定细节见下面「拖动与命中」那一段）。
    注意以前窗口是半透明的一层，会让桌面看起来蒙了灰；现在默认不铺任何底色。
    ========================================================================== */
 
@@ -61,6 +63,11 @@
   --dl-arrow: rgba(255, 255, 255, 0.7);
   /* <option> 的展开面板由系统绘制：必须给不透明底色，否则文字和桌面混在一起 */
   --dl-menu-bg: #1b1b21;
+  /* 控制栏里的字号滑块 */
+  --dl-bar-sep: rgba(255, 255, 255, 0.16);
+  --dl-slider-track: rgba(255, 255, 255, 0.2);
+  --dl-slider-thumb: #ffffff;
+  --dl-slider-thumb-ring: rgba(0, 0, 0, 0.5);
 
   /* 歌词文字的 5 种样式 —— 桌面壁纸什么颜色都可能有，
      每一种的目标都是「在任何背景上都读得清」，所以白色字 + 深色描边/投影。 */
@@ -118,8 +125,7 @@ html.dl-window body::before {
 
 /* 整窗可拖动：Wails v3 通过这个自定义属性识别拖动区域（不是 -webkit-app-region）。
    窗口没开点击穿透（开了会破坏透明），所以拖动是可行的，也顺便给了用户
-   「把歌词挪到顺手的位置」的能力。
-   控制栏内部的控件要设成 no-drag，否则下拉框点不动（拖动区会吞掉鼠标事件）。 */
+   「把歌词挪到顺手的位置」的能力。 */
 .dl {
   --wails-draggable: drag;
   box-sizing: border-box;
@@ -149,7 +155,10 @@ html.dl-window body::before {
   -webkit-backdrop-filter: blur(var(--dl-blur));
 }
 
-/* —— 悬浮控制栏（不悬浮时不占交互、完全不可见）—— */
+/* —— 悬浮控制栏（不悬浮时不占交互、完全不可见）——
+   栏本身**留在拖动区里**：空白处（圆角内、控件之间）也能拖着窗口走，
+   只有真正的控件标成 no-drag（见下面 --wails-draggable 那几条）。
+   整栏 no-drag 的写法会让「按在工具栏上」变成死区。 */
 .dl__bar {
   position: absolute;
   top: 8px;
@@ -166,7 +175,6 @@ html.dl-window body::before {
   transform: translate(-50%, -8px);
   pointer-events: none;
   transition: opacity 160ms ease, transform 160ms ease;
-  --wails-draggable: no-drag;
   z-index: 2;
 }
 
@@ -224,6 +232,98 @@ html.dl-window body::before {
   border-bottom: 1.5px solid var(--dl-arrow);
   transform: translateY(-70%) rotate(45deg);
   pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   拖动与命中：整块区域都能拖窗口
+   --------------------------------------------------------------------------
+   Wails v3 判定「能不能拖」只看鼠标下**最里层那个元素**自身（wails/v3 的
+   isDraggableEvent）：`--wails-draggable` 算出 drag，且 offsetX/Y 落在它的
+   clientWidth/clientHeight 之内。而 clientWidth / clientHeight 对 **inline
+   元素恒为 0** —— 字素 span（.dl__word）正是 inline，于是光标压在歌词文字上时
+   判定必然失败，表现就是「只有空白处能拖、拖字拖不动」。
+
+   让文本层整层不吃鼠标事件，事件就落到 .dl（block，尺寸正常）上：字上、字缝里、
+   控制栏的空白处都能拖。⚠ 不要改成给 .dl__word 加 display:inline-block ——
+   那会改变字与字之间的断行与字距，而逐字排版正是靠这些 span 贴着排的。
+   -------------------------------------------------------------------------- */
+.dl__line,
+.dl__word,
+.dl__trans,
+.dl__tip {
+  pointer-events: none;
+}
+
+/* 真正的控件要标 no-drag：否则鼠标一按下就被当成拖窗口，控件点不动 */
+.dl__bar-label,
+.dl__select-wrap,
+.dl__size-wrap {
+  --wails-draggable: no-drag;
+}
+
+/* —— 控制栏里的字号滑块 —— */
+.dl__bar-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--dl-bar-sep);
+}
+
+.dl__size-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dl__size {
+  appearance: none;
+  width: 96px;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+}
+
+.dl__size::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--dl-pill-radius);
+  background: var(--dl-slider-track);
+}
+
+.dl__size::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--dl-slider-thumb);
+  box-shadow: 0 0 0 1px var(--dl-slider-thumb-ring);
+}
+
+.dl__size-val {
+  min-width: 22px;
+  font-size: 12px;
+  color: var(--dl-fg);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.dl__size-reset {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--dl-border-control);
+  border-radius: 50%;
+  background: var(--dl-control-bg);
+  color: var(--dl-fg);
+  font-size: 12px;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.dl__size-reset:hover {
+  background: var(--dl-control-bg-hover);
 }
 
 .dl__line {
