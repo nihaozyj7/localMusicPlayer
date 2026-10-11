@@ -1,6 +1,7 @@
 package lyricsfetch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -36,6 +37,46 @@ func fetchJSON(ctx context.Context, endpoint string, headers map[string]string, 
 	body, err := fetchBytes(ctx, endpoint, headers)
 	if err != nil {
 		return err
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("lyricsfetch: 解析 JSON 失败: %w", err)
+	}
+	return nil
+}
+
+// postJSON 以 JSON 体发一个 POST 并解析响应。
+//
+// 单独有它的原因：QQ 的 musicu.fcg 只收 POST（GET 那套 c.y.qq.com 接口在部分
+// 网络/机房下会整站 500，见 qq.go）。其余来源都是 GET，所以之前没有这个需求。
+func postJSON(ctx context.Context, endpoint string, headers map[string]string, payload, out any) error {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("lyricsfetch: 序列化请求失败: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", sourceUA)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	for k, v := range headers {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		req.Header.Set(k, v)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 12*1024*1024))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("lyricsfetch: HTTP %d: %s", resp.StatusCode, truncateBody(body))
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("lyricsfetch: 解析 JSON 失败: %w", err)

@@ -147,17 +147,19 @@ func TestMatchWithoutWordProviderSpendsOneFetch(t *testing.T) {
 	}
 }
 
-// 内置来源清单里必须有酷狗（它是唯一能给字级的那个）。
+// 内置来源清单里必须有能给字级的两个来源（QQ 的 QRC 与酷狗的 KRC）。
 func TestDefaultAggregatorIncludesKugou(t *testing.T) {
 	agg := NewAggregator()
-	found := false
+	want := map[string]bool{"kugou": false, "qq": false}
 	for _, name := range agg.Providers() {
-		if name == "kugou" {
-			found = true
+		if _, ok := want[name]; ok {
+			want[name] = true
 		}
 	}
-	if !found {
-		t.Fatalf("内置来源里没有酷狗: %v", agg.Providers())
+	for name, found := range want {
+		if !found {
+			t.Fatalf("内置来源里没有 %s: %v", name, agg.Providers())
+		}
 	}
 }
 

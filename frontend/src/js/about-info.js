@@ -194,7 +194,7 @@ export const LICENSE_NOTES = [
 export const DATA_SOURCES = [
   { name: "LRCLIB", role: "歌词（无需鉴权的开放歌词库）", url: "https://lrclib.net/" },
   { name: "网易云音乐", role: "歌词 / 封面备选来源", url: "https://music.163.com/" },
-  { name: "QQ 音乐", role: "歌词 / 封面备选来源", url: "https://y.qq.com/" },
+  { name: "QQ 音乐", role: "歌词（逐字 / 逐行）/ 封面备选来源", url: "https://y.qq.com/" },
   { name: "酷狗音乐", role: "歌词（逐字 / 逐行）来源", url: "https://www.kugou.com/" },
   { name: "iTunes Search API", role: "封面（Apple 官方公开接口）", url: "https://performance-partners.apple.com/search-api" },
   { name: "Deezer", role: "封面备选来源", url: "https://developers.deezer.com/api" },
