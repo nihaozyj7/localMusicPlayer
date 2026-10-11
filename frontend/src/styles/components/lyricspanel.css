@@ -154,13 +154,17 @@
   border-bottom-color: var(--accent);
 }
 
-/* —— 来源优先级提示 —— */
+/* —— 来源优先级提示 ——
+   提示条只有**一个内容块**（不再固定是「说明 + 选项」两段）：
+     · 能写进歌曲文件的格式：内容块是那个勾选项，解释挂在它的 data-tip 上；
+     · 不能写的格式：内容块就是一行说明文字，前面用同样的感叹号标记开头。
+   所以容器按「标记 + 内容」排一行，纵向间距交给 gap。 */
 .lyricspanel__notice {
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
   gap: var(--sp-2);
   margin: var(--sp-3) var(--sp-4) 0;
-  padding: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-sm);
   border: 1px solid var(--warning);
   background: var(--surface-1);
@@ -170,6 +174,38 @@
 
 .lyricspanel__notice[hidden] {
   display: none;
+}
+
+/* 感叹号标记：两种形态共用同一个视觉，只差在「跟在动作名后面」还是「排在行首」 */
+.lyricspanel__notice-opt-badge,
+.lyricspanel__notice-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border: 1px solid var(--warning);
+  border-radius: var(--r-full);
+  color: var(--warning);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+}
+
+/* 行首的标记要和第一行文字对齐（说明可能是两行） */
+.lyricspanel__notice-badge {
+  margin-top: 2px;
+}
+
+.lyricspanel__notice-text {
+  min-width: 0;
+  line-height: 1.6;
+}
+
+.lyricspanel__notice-text b {
+  color: var(--text-1);
+  font-weight: var(--fw-semibold);
 }
 
 .lyricspanel__notice-opt {
@@ -184,27 +220,11 @@
   display: none;
 }
 
-/* 标题 + 感叹号角标：说明文字全部搬到 data-tip 里（悬浮标题或角标都会显示），
-   标题本身只留动作名，读起来不再被一长串括号打断。 */
+/* 动作名 + 跟在它后面的感叹号角标（悬浮动作名或角标都会出 data-tip） */
 .lyricspanel__notice-opt-text {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-1);
-}
-
-.lyricspanel__notice-opt-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 13px;
-  height: 13px;
-  flex: none;
-  border: 1px solid var(--warning);
-  border-radius: var(--r-full);
-  color: var(--warning);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  line-height: 1;
 }
 
 /* —— 主体 —— */

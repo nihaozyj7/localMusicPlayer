@@ -386,21 +386,19 @@ import{i as $,b as m,d as nl,f as E,g as At,o as U,h as wt,D as ya,j as dt,u as 
       </section>
     `}noticeTemplate(e){const n=G==="nudge"||G==="edit",a=e.source==="embedded"||e.source==="lrc-file";if(!n||!a)return A;const s=rr(e.source),r=gu(e.song),o=mu.has(r);return d`
       <div class="lyricspanel__notice" data-notice>
-        <div class="lyricspanel__notice-text" data-notice-text>
-          ${o?d`这首歌的歌词来自「${s}」，它的优先级高于歌词缓存：只保存到缓存的话，下次打开仍会显示旧歌词。建议同时写入歌曲文件。`:d`这首歌的歌词来自「${s}」，它的优先级高于歌词缓存；而 ${r?"."+r:"该格式"}
-                不支持写入歌词标签，所以本次改动只在<b>本次运行内</b>生效（重启后会变回旧歌词）。`}
-        </div>
         ${o?d`<label class="lyricspanel__notice-opt" data-notice-opt>
                 <input type="checkbox" data-embed-toggle checked />
-                <!-- 说明不再挤在标题里：标题只留「同时写入歌曲文件」+ 感叹号角标，
-                     悬浮（角标也算，角标在标题内部）时由全局 tooltip 显示 data-tip。 -->
                 <span
                   class="lyricspanel__notice-opt-text"
                   data-tip="这首歌的歌词来自「${s}」，优先级高于歌词缓存：只存缓存的话，下次打开会显示回旧歌词。勾上则同时写进歌曲文件本身（会改动音乐文件）。"
                 >
                   同时写入歌曲文件<span class="lyricspanel__notice-opt-badge" aria-hidden="true">!</span>
                 </span>
-              </label>`:A}
+              </label>`:d`<span class="lyricspanel__notice-badge" aria-hidden="true">!</span>
+                <div class="lyricspanel__notice-text" data-notice-text>
+                  这首歌的歌词来自「${s}」，优先级高于歌词缓存；${r?"."+r:"该格式"}
+                  不能写入歌词标签，所以本次改动<b>只在本次运行内</b>生效，重启后会变回旧歌词。
+                </div>`}
       </div>
     `}onlinePane(){return d`
       <section class="lyricspanel__pane" data-pane="online" ?hidden=${G!=="online"}>

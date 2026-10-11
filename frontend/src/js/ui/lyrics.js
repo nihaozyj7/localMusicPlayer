@@ -265,7 +265,12 @@ class MpLyricsPanel extends MpElement {
    本程序的歌词读取顺序是：内嵌歌词 → 同目录 .lrc → 歌词缓存 → 在线自动匹配。
    微调 / 手动编辑的结果只能写进**缓存**（第三位），所以对「带内嵌歌词」或
    「有同名 .lrc」的歌，只写缓存会导致下次打开又变回旧歌词。
-   这里选择**明说 + 给出口**，而不是假装没问题。
+   这里选择**明说 + 给出口**，而不是假装没问题。两种形态：
+   · 能写进歌曲文件（m4a / flac…）—— 提示条里只放一个勾选项，整段解释挂在它的
+     data-tip 上（悬浮动作名或它后面的感叹号就读得到）。面板头部本来就在显示
+     「内嵌歌词」，再把同一句话平铺一遍只会把这一行挤成两行小字。
+   · 不能写（mp3 / wav…）—— 没有开关可以挂 tooltip，只能把话留在提示条里，
+     用同一个感叹号标记开头，免得用户以为改动已经写进了文件。
    */
   noticeTemplate(info) {
     const relevant = activeTab === "nudge" || activeTab === "edit";
@@ -276,20 +281,10 @@ class MpLyricsPanel extends MpElement {
     const canEmbed = EMBED_EXTS.has(ext);
     return html`
       <div class="lyricspanel__notice" data-notice>
-        <div class="lyricspanel__notice-text" data-notice-text>
-          ${
-            canEmbed
-              ? html`这首歌的歌词来自「${label}」，它的优先级高于歌词缓存：只保存到缓存的话，下次打开仍会显示旧歌词。建议同时写入歌曲文件。`
-              : html`这首歌的歌词来自「${label}」，它的优先级高于歌词缓存；而 ${ext ? "." + ext : "该格式"}
-                不支持写入歌词标签，所以本次改动只在<b>本次运行内</b>生效（重启后会变回旧歌词）。`
-          }
-        </div>
         ${
           canEmbed
             ? html`<label class="lyricspanel__notice-opt" data-notice-opt>
                 <input type="checkbox" data-embed-toggle checked />
-                <!-- 说明不再挤在标题里：标题只留「同时写入歌曲文件」+ 感叹号角标，
-                     悬浮（角标也算，角标在标题内部）时由全局 tooltip 显示 data-tip。 -->
                 <span
                   class="lyricspanel__notice-opt-text"
                   data-tip="这首歌的歌词来自「${label}」，优先级高于歌词缓存：只存缓存的话，下次打开会显示回旧歌词。勾上则同时写进歌曲文件本身（会改动音乐文件）。"
@@ -297,7 +292,11 @@ class MpLyricsPanel extends MpElement {
                   同时写入歌曲文件<span class="lyricspanel__notice-opt-badge" aria-hidden="true">!</span>
                 </span>
               </label>`
-            : nothing
+            : html`<span class="lyricspanel__notice-badge" aria-hidden="true">!</span>
+                <div class="lyricspanel__notice-text" data-notice-text>
+                  这首歌的歌词来自「${label}」，优先级高于歌词缓存；${ext ? "." + ext : "该格式"}
+                  不能写入歌词标签，所以本次改动<b>只在本次运行内</b>生效，重启后会变回旧歌词。
+                </div>`
         }
       </div>
     `;
