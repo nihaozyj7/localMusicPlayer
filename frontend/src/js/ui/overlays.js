@@ -74,8 +74,18 @@ export function openMenu({ x, y, items, anchor, onPick, align = "left" }) {
     onPick?.(id);
   };
 
+  // 菜单首尾的分隔线是「没画完的菜单」：一条线画在最上面或最下面时，它后面
+  // 没有内容可分隔，看着就是一条莫名其妙的横线（歌单菜单尾部曾经就这样）。
+  // 连续的 `sep` 同理，会变成一条加粗的线。这里统一收口，调用方不用再小心
+  // 自己拼菜单时别把 sep 拼错位置。
+  const shown = items.filter((it, i) => {
+    if (it.kind !== "sep") return true;
+    if (i === 0 || i === items.length - 1) return false;
+    return items[i - 1].kind !== "sep";
+  });
+
   render(
-    items.map((it) => {
+    shown.map((it) => {
       if (it.kind === "sep") return html`<div class="menu__sep"></div>`;
       if (it.kind === "label") return html`<div class="menu__label">${it.label}</div>`;
       const check = it.checked !== undefined ? icon("check", "menu__check") : null;

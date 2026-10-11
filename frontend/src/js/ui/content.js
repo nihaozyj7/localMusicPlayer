@@ -31,7 +31,7 @@ import { LIKED_ID, currentContext, playlistById as playlistOf } from "../store.j
 import { clearLocalFilter, doRescan, navigate } from "../shell.js";
 import { handleSettingsAction } from "../settings.js";
 import { locateCurrentSong, playAllVisible } from "../tracks.js";
-import { openPlaylistMenu, promptAddSongs } from "../playlists.js";
+import { promptAddSongs } from "../playlists.js";
 import { fmtCount, fmtDurationCn } from "../utils.js";
 
 export const VIEW_TITLES = {
@@ -284,12 +284,14 @@ class MpContent extends MpElement {
           </button>
         `;
       }
+      // 歌单工具栏**没有**「更多 / 歌单操作」按钮：右侧定位之后原本还挂过一个，
+      // 但它和侧边栏里的入口完全重复 —— 歌单上右键、或悬停时浮出的「更多」按钮
+      // 都能弹出同一份菜单（openPlaylistMenu）。重复入口只是让人多按一次。
       return html`
         ${sortBtn}${playAll}
         <button class="btn" type="button" data-tool="pl-select">${icon("check")}<span>多选</span></button>
         <button class="btn" type="button" data-tool="pl-add">${icon("plus")}<span>添加</span></button>
         ${locate}
-        <button class="btn btn--icon" type="button" data-tool="pl-more" data-tip="歌单操作">${icon("more")}</button>
       `;
     }
 
@@ -479,9 +481,6 @@ class MpContent extends MpElement {
         toast(`已从「${pl?.name ?? "歌单"}」移除 ${fmtCount(removed)} 首`, { tone: "success" });
         break;
       }
-      case "pl-more":
-        openPlaylistMenu(state.playlistId, this.querySelector('#content-header [data-tool="pl-more"]'));
-        break;
       default:
         break;
     }

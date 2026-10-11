@@ -21,7 +21,17 @@ import { Directive, directive } from "lit/directive.js";
 import { MpElement, define, html, nothing, repeat, icon } from "./base.js";
 import { toast } from "./overlays.js";
 import { bindCoverFallback } from "./overlays.js";
-import { coverVersion, commit, isLiked, reorderQueue, state, toggleSelectedSong, toggleSort } from "../store.js";
+import {
+  coverVersion,
+  commit,
+  freshDownloadsKey,
+  isFreshDownload,
+  isLiked,
+  reorderQueue,
+  state,
+  toggleSelectedSong,
+  toggleSort,
+} from "../store.js";
 import { activateRow, markDragEnd, openColumnMenu, openTrackMenu, shouldIgnoreRowClick } from "../tracks.js";
 import { currentContext, playContext, toggleLike } from "../store.js";
 import { DEFAULT_COVER, coverOf, fmtTime } from "../utils.js";
@@ -86,6 +96,9 @@ export class MpTrackTable extends MpElement {
     s.likedIds,
     coverVersion(),
     s.visibleSongs.length,
+    // 「刚下载」的「新」角标：置顶会改 visibleVersion，但角标本身可能在顺序上
+    // 看不出来（那首歌本来就排第一），所以签名也要进依赖
+    freshDownloadsKey(),
   ];
 
   /** 表格模式：队列视图要拖拽手柄 */
@@ -232,7 +245,7 @@ export class MpTrackTable extends MpElement {
           <img src=${coverSrc(coverOf(song))} alt="" loading="lazy" draggable="false" />
         </div>
         <div class="track__main">
-          <div class="track__title">${song.title}</div>
+          <div class="track__title" data-new=${isFreshDownload(song.id) ? "1" : nothing}>${song.title}</div>
           <div class="track__sub">
             <span class="track__artist">${song.artist}</span>
             <span class="track__tag">${song.ext}</span>

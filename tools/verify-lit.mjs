@@ -676,7 +676,106 @@ const downloads = await evaluate(`(async () => {
 })()`);
 check("downloads", downloads);
 
-/* ---- 16. 皮肤切换（插件域不被破坏） ---- */
+/* ---- 16. 刚下载：置顶 + 「新」角标，主动排序 / 重启后失效 ---- */
+await send("Page.navigate", { url: `http://127.0.0.1:${PORT}/index.html` });
+await sleep(2000);
+const fresh = await evaluate(`(async () => {
+  const app = window.__app; // 调试入口（main.js 暴露），读曲库与触发副作用都走它
+  // 产物的静态服务没有预置曲库（假数据是 Vite 编译期常量控制的），自己造一批
+  // —— 与上面几节的写法一致（verify-sort.mjs 也这么做）。
+  const mk = (i) => ({ id: "fresh_s" + i, path: "D:\\\\Music\\\\fresh" + i + ".mp3", title: "刚下载曲目 " + i, artist: "歌手 " + i, album: "专辑", ext: "mp3", duration: 200000, size: 5000000, addedAt: Date.now() - i * 86400000, playCount: i });
+  const reseed = () => {
+    app.state.allSongsRaw = [1, 2, 3, 4, 5, 6, 7, 8].map(mk);
+    app.state.songs = app.state.allSongsRaw.slice();
+    app.state.view = "library";
+    app.state.query = "";
+    app.commit();
+  };
+  reseed();
+  await new Promise((r) => setTimeout(r, 520));
+
+  const rowIds = () => [...document.querySelectorAll(".tracks__body .track")].map((n) => n.dataset.id);
+  const titleOf = (id) => document.querySelector('.track[data-id="' + id + '"] .track__title');
+  // 挑一首**本来不在最前面**的歌（默认按添加时间降序 → 最后一行最旧），当作它刚下载完
+  const list = app.state.visibleSongs;
+  const target = list[list.length - 1];
+  const beforeRows = rowIds();
+  const before = { first: list[0].id, target: target.id, at: list.findIndex((s) => s.id === target.id) };
+
+  // 走真实的 download:done 事件链路（bridge.on 在预览模式下监听 dsh:*），
+  // 路径故意换成「大写 + 正斜杠」的写法，顺带验证路径归一化
+  const weirdPath = String(target.path || "").replace(/\\\\/g, "/").toUpperCase();
+  window.dispatchEvent(new CustomEvent("dsh:download:done", { detail: { path: weirdPath, title: target.title } }));
+  await new Promise((r) => setTimeout(r, 460));
+  const el = titleOf(target.id);
+  const after = {
+    first: app.state.visibleSongs[0].id,
+    sameId: app.state.visibleSongs[0].id === target.id,
+    badge: el ? el.dataset.new : null,
+    badgeText: el ? getComputedStyle(el, "::before").content : null,
+    rows: rowIds(),
+    // 其余歌曲必须保持原来的排序顺序，只把新下载的插到最前面
+    restOrderKept:
+      JSON.stringify(rowIds().slice(1)) ===
+      JSON.stringify(beforeRows.filter((id) => id !== target.id)),
+    titleText: el ? el.textContent.trim() : null,
+  };
+
+  // 用户点表头排序（真实交互，走 toggleSort）→ 置顶与角标失效
+  const head = document.querySelector(".tracks__sort:not([data-static])");
+  head?.click();
+  await new Promise((r) => setTimeout(r, 420));
+  const cleared = {
+    badge: titleOf(target.id)?.dataset.new ?? null,
+    stillFirst: app.state.visibleSongs[0].id === target.id,
+  };
+
+  // 真实时序：download:done 先到（此刻文件还没进曲库，认领不到任何东西），
+  // 紧接着 Go 侧 onFileAdded / 扫描才把歌交给前端 —— 这条路径也必须置顶。
+  const late = mk(9);
+  window.dispatchEvent(new CustomEvent("dsh:download:done", { detail: { path: late.path } }));
+  await new Promise((r) => setTimeout(r, 360));
+  const beforeArrive = { badges: document.querySelectorAll('.track__title[data-new="1"]').length, rows: rowIds().length };
+  app.state.allSongsRaw = [...app.state.allSongsRaw, late];
+  app.state.songs = app.state.allSongsRaw.slice();
+  app.commit();
+  await new Promise((r) => setTimeout(r, 460));
+  const afterArrive = {
+    first: app.state.visibleSongs[0]?.id,
+    badge: titleOf(late.id)?.dataset.new ?? null,
+    badgeText: titleOf(late.id) ? getComputedStyle(titleOf(late.id), "::before").content : null,
+  };
+  return {
+    before,
+    after,
+    cleared,
+    lateArrival: { beforeArrive, afterArrive },
+    targetTitle: target.title,
+    hasSortHead: !!head,
+  };
+})()`);
+
+// 「重启」语义：刷新页面后标记不该留下（模块级状态，不落盘）。
+// 重新铺一遍同一批歌 —— 如果标记被持久化了，它们会立刻又带上角标。
+await send("Page.reload");
+await sleep(2000);
+const freshAfterReload = await evaluate(`(async () => {
+  const app = window.__app;
+  const mk = (i) => ({ id: "fresh_s" + i, path: "D:\\\\Music\\\\fresh" + i + ".mp3", title: "刚下载曲目 " + i, artist: "歌手 " + i, album: "专辑", ext: "mp3", duration: 200000, size: 5000000, addedAt: Date.now() - i * 86400000, playCount: i });
+  app.state.allSongsRaw = [1, 2, 3, 4, 5, 6, 7, 8].map(mk);
+  app.state.songs = app.state.allSongsRaw.slice();
+  app.state.view = "library";
+  app.commit();
+  await new Promise((r) => setTimeout(r, 520));
+  return {
+    badges: document.querySelectorAll('.track__title[data-new="1"]').length,
+    first: app.state.visibleSongs[0]?.id,
+    sorted: !!document.querySelector(".tracks__sort:not([data-static])"),
+  };
+})()`);
+check("fresh-download", { ...fresh, restarted: freshAfterReload });
+
+/* ---- 17. 皮肤切换（插件域不被破坏） ---- */
 const skin = await evaluate(`(async () => {
   document.querySelector("#bar-cover").click();
   await new Promise(r => setTimeout(r, 900));

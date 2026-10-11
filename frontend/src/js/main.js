@@ -25,6 +25,7 @@ import {
   isLiked,
   loadUnplayableFiles,
   loadUpdateState,
+  markDownloaded,
   nextIndex,
   playNext,
   playPrev,
@@ -405,6 +406,9 @@ function bindBackendEvents() {
     if (item) item.update(text, "success");
     else toast(text, { tone: "success", duration: 5000 });
     setTimeout(() => item?.close(), 4000);
+    // 刚下载的歌置顶显示并带「新」角标；用户下次主动排序（或重启）后失效。
+    // 按 download:done 给的最终落盘路径认领（见 store.js#markDownloaded）。
+    markDownloaded(payload?.path);
   });
 
   on("download:failed", (payload) => {

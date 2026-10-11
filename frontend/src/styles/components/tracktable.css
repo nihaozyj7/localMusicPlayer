@@ -431,6 +431,31 @@
   text-overflow: ellipsis;
 }
 
+/* 「刚下载」的角标。
+   ----------------------------------------------------------------------------
+   画成伪元素而不是真的塞一个 <span>：`.track__title` 的 textContent 是十几处
+   自检脚本与排序断言的**依据**（tools/verify-sort.mjs 就在比标题），往里加一个
+   「新」字会让所有标题比较突然差一个字符。
+
+   位置放在标题**前面**：这一行是 nowrap + ellipsis，长标题会把尾部裁掉 ——
+   角标跟在文字后面时，歌名一长角标就看不见了，而「刚下载」恰恰是用户最想
+   一眼认出来的。 */
+.track__title[data-new="1"]::before {
+  content: "新";
+  display: inline-grid;
+  place-items: center;
+  height: 15px;
+  padding: 0 5px;
+  margin-right: 6px;
+  vertical-align: 1px;
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: var(--fw-normal);
+  letter-spacing: 0.04em;
+}
+
 .track__sub {
   display: flex;
   align-items: center;

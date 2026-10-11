@@ -132,7 +132,9 @@ export function openPlaylistMenu(id, anchor) {
   if (!pl.locked) {
     items.push({ id: "rename", label: "重命名", icon: "edit" });
     items.push({ id: "delete", label: "删除歌单", icon: "trash", danger: true });
-    items.push({ id: "sep2", kind: "sep" });
+    // 这里原本还 push 了一个分隔线收尾（给「以后再加一组」留位置），但菜单里
+    // 没有任何东西跟在它后面 —— 界面上就是最后多出一条孤零零的竖线。
+    // openMenu 现在也会把首尾多余的分隔线丢掉（见 ui/overlays.js）。
   }
   const rect = anchor.getBoundingClientRect();
   openMenu({

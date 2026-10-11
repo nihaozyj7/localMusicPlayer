@@ -361,6 +361,80 @@ try {
   check("底栏外观脚本执行", false, err?.message || String(err));
 }
 
+/* ==========================================================================
+   8. 歌单操作入口不重复 + 菜单尾部没有多余的分隔线
+   --------------------------------------------------------------------------
+   需求（用户原话）：「移除歌单界面右上角那个更多选项的按钮，因为这个操作右键
+   或者在歌单右侧的更多按钮都能实现」；
+   「歌单右键或者点击更多按钮弹出的下拉选项框，最下方有一个多余的线条，把他移除掉」。
+   ========================================================================== */
+try {
+  // 预览的 state 跨次运行持久化（localStorage），而静态预览服务器没有 Vite 注入的
+  // __LM_PREVIEW__（mock.js 的假数据是空的）—— 这里**自己造**几首歌与一个歌单，
+  // 免得这一段依赖上次运行留下的曲库。
+  await go(
+    `const store = await import("/js/store.js");
+     const mk = (i) => ({ id: "pl_probe_" + i, path: "D:\\\\Music\\\\探针" + i + ".mp3", title: "探针曲目 " + i, artist: "歌手 " + i, album: "专辑", ext: "mp3", duration: 200000, size: 5000000, addedAt: Date.now() - i * 86400000, playCount: i });
+     store.state.allSongsRaw = [1, 2, 3, 4, 5, 6].map(mk);
+     store.state.songs = store.state.allSongsRaw.slice();
+     const pl = { id: "pl_probe", name: "探针歌单", locked: false, songIds: store.state.songs.slice(0, 3).map((s) => s.id), createdAt: Date.now() };
+     store.state.playlists = [...store.state.playlists.filter((p) => p.id !== pl.id), pl];
+     store.state.view = "playlist"; store.state.playlistId = pl.id; store.state.playlistSelecting = false; store.state.query = "";
+     store.commit(); await new Promise((r) => setTimeout(r, 360)); return store.state.songs.length;`
+  );
+  const entry = await go(
+    `return { headerMore: document.querySelectorAll('#content-header [data-tool="pl-more"]').length, sidebarMore: document.querySelectorAll('.sidebar [data-act="pl-more"]').length, add: Boolean(document.querySelector('[data-tool="pl-add"]')), multiselect: Boolean(document.querySelector('[data-tool="pl-select"]')), locate: Boolean(document.querySelector('[data-tool="locate"]')) };`
+  );
+  check(
+    "歌单内容区不再有重复的「更多」按钮（侧边栏的歌单入口保留，添加/多选/定位都在）",
+    entry.headerMore === 0 &&
+      entry.sidebarMore > 0 &&
+      entry.add &&
+      entry.multiselect &&
+      entry.locate,
+    JSON.stringify(entry)
+  );
+
+  const menu = await go(`
+    const more = document.querySelector('.sidebar [data-act="pl-more"]');
+    if (!more) return { error: "侧边栏找不到歌单「更多」按钮" };
+    more.click();
+    await new Promise((r) => setTimeout(r, 320));
+    const items = Array.from(document.querySelectorAll("#menu > *"));
+    const kinds = items.map((n) => (n.classList.contains("menu__sep") ? "sep" : n.className.includes("menu__label") ? "label" : "item"));
+    const labels = items.filter((n) => n.tagName === "BUTTON").map((n) => n.textContent.trim());
+    const seps = kinds.filter((k) => k === "sep").length;
+    const consecutive = kinds.some((k, i) => k === "sep" && kinds[i - 1] === "sep");
+    const out = {
+      kinds,
+      labels,
+      seps,
+      consecutive,
+      leadingSep: kinds[0] === "sep",
+      trailingSep: kinds[kinds.length - 1] === "sep",
+    };
+    const overlays = await import("/js/ui/overlays.js");
+    overlays.closeMenu();
+    await new Promise((r) => setTimeout(r, 200));
+    return out;
+  `);
+  check(
+    "歌单菜单：尾部分隔线已去掉（首尾都不该有，也不该连着两条）",
+    !menu?.leadingSep && !menu?.trailingSep && !menu?.consecutive,
+    JSON.stringify(menu)
+  );
+  check(
+    "歌单菜单项仍然齐全（播放 / 加入播放列表 / 重命名 / 删除）",
+    Array.isArray(menu?.labels) &&
+      menu.labels.length >= 4 &&
+      menu.labels.includes("删除歌单") &&
+      menu.seps === 1,
+    JSON.stringify(menu?.labels)
+  );
+} catch (err) {
+  check("歌单入口与菜单脚本执行", false, err?.message || String(err));
+}
+
 check("主界面全程无 console 报错", consoleErrors.length === 0, consoleErrors.slice(0, 3).join(" | "));
 
 /* ==========================================================================

@@ -544,6 +544,120 @@ export function applyRules(songs, rules) {
 }
 
 /* --------------------------------------------------------------------------
+   「刚下载」置顶 + 「新」角标
+   --------------------------------------------------------------------------
+   需求：下载完的歌排到列表最前面，并带一个「新」角标；但这两件事都是**临时**的
+   —— 用户下一次主动排序（点表头 / 排序面板 / 换方向）或重启应用后就失效，
+   回到正常排序。
+
+   「刚下载」怎么认出来：认**文件路径**。download:done 带的 path 就是最终落盘路径
+   （Go 侧先发事件、再 onFileAdded 把文件塞进曲库，AI 整理标签是**原地写回**、
+   不改名），所以路径能一一对上；只有路径对得上才认领，不会把「刚导入的一堆歌」
+   误标成刚下载。
+
+   这些都是模块级状态、不落盘：重启后自然没有角标，正是需求要的「重启失效」。
+   -------------------------------------------------------------------------- */
+/** 刚下载完的文件路径（已归一化）与对应曲目 id，**新的在前**（置顶顺序按它来） */
+let freshPaths = [];
+let freshIds = [];
+let freshSet = new Set();
+/** 给渲染层做依赖比较用的签名（见 ui/track-table.js 的 deps） */
+let freshKeyCache = "";
+
+function refreshFreshKey() {
+  freshKeyCache = freshIds.join(",");
+}
+
+/**
+ * 路径比较用的归一化：Windows 不区分大小写，分隔符也可能混着来。
+ *
+ * 导出是为了能单独测（见 frontend/tests/fresh-download.test.js）。
+ */
+export function normDownloadPath(p) {
+  return String(p || "")
+    .trim()
+    .replace(/\//g, "\\")
+    .toLowerCase();
+}
+
+/**
+ * 把已经进库的「刚下载」认领成置顶项。
+ *
+ * 两个时机都要调：① download:done 到达时；② 曲库被整体替换（增量入库/扫描）时
+ * —— 事件与入库谁先到都有可能，两处都跑一遍最稳（freshSet 保证不重复认领）。
+ */
+function adoptDownloaded() {
+  if (!freshPaths.length || !state.songs.length) return false;
+  const order = new Map(freshPaths.map((p, i) => [p, i]));
+  const found = [];
+  for (const s of state.songs) {
+    if (freshSet.has(s.id)) continue;
+    const at = order.get(normDownloadPath(s.path));
+    if (at !== undefined) found.push([at, s.id]);
+  }
+  if (!found.length) return false;
+  found.sort((a, b) => a[0] - b[0]); // 后下载的排前面
+  freshIds = [...found.map(([, id]) => id), ...freshIds];
+  freshSet = new Set(freshIds);
+  refreshFreshKey();
+  return true;
+}
+
+/**
+ * 下载完成时调用（main.js 的 download:done，参数就是事件里的 path）。
+ *
+ * 此刻文件通常还没进曲库（Go 侧紧接着才 onFileAdded），所以这里先记下路径，
+ * 等曲库变化时由 adoptDownloaded() 认领。
+ */
+export function markDownloaded(path) {
+  const key = normDownloadPath(path);
+  if (key && !freshPaths.includes(key)) freshPaths.unshift(key);
+  adoptDownloaded();
+  commit();
+}
+
+/** 用户主动排序了 → 置顶与角标失效（连路径一起清掉，避免之后再被认领回来） */
+function dropFreshDownloads() {
+  if (!freshPaths.length && !freshIds.length) return;
+  freshPaths = [];
+  freshIds = [];
+  freshSet = new Set();
+  refreshFreshKey();
+}
+
+/** 「刚下载」的签名；变了说明角标该重画（供渲染依赖用，见 ui/track-table.js） */
+export function freshDownloadsKey() {
+  return freshKeyCache;
+}
+
+/** 这首歌是不是刚下载（决定要不要画「新」角标） */
+export function isFreshDownload(id) {
+  return freshSet.has(id);
+}
+
+/**
+ * 把「刚下载」的几首挪到最前面，其余保持排序结果不变。
+ *
+ * 只动顺序、不改数组元素，也不改**入参**数组（返回新数组）；队列视图不参与
+ * （队列顺序本身就是数据，见 computeVisible 里的说明）。
+ *
+ * 导出是为了能单独测（见 frontend/tests/fresh-download.test.js）。
+ */
+export function hoistFreshDownloads(list, ids = freshIds) {
+  if (!ids.length || !list.length) return list;
+  const rank = new Map(ids.map((id, i) => [id, i]));
+  const fresh = [];
+  const rest = [];
+  for (const s of list) {
+    if (rank.has(s.id)) fresh.push(s);
+    else rest.push(s);
+  }
+  if (!fresh.length) return list;
+  fresh.sort((a, b) => rank.get(a.id) - rank.get(b.id));
+  return [...fresh, ...rest];
+}
+
+/* --------------------------------------------------------------------------
    排序 / 过滤 / 派生
    -------------------------------------------------------------------------- */
 /**
@@ -692,6 +806,9 @@ function visibleInputs() {
     pl ? pl.songIds.length : 0,
     state.playlistVersion,
     state.onlineSongs.size,
+    // 「刚下载」置顶/角标：签名变了必须重算，否则复用上一次的排序结果，
+    // 表现就是「下载完没置顶、角标也不出现」
+    freshKeyCache,
   ];
 }
 
@@ -808,7 +925,8 @@ function computeVisible() {
   // 再按 sortKey 排一次会把拖拽效果整个抹掉 —— 这正是「拖拽后提示成功、
   // 界面却没变化」的原因。队列的排序由用户拖拽决定。
   if (state.view === "queue") return out;
-  return computeSorted(out);
+  // 「刚下载」的那几首插到最前面（用户下次主动排序时失效，见 dropFreshDownloads）
+  return hoistFreshDownloads(computeSorted(out));
 }
 
 /**
@@ -859,6 +977,8 @@ function recalcVisible() {
   if (songIndexSource !== state.songs) {
     songIndex = new Map(state.songs.map((s) => [s.id, s]));
     songIndexSource = state.songs;
+    // 扫描可能把刚下载的歌带了进来（download:done 与扫描谁先到不一定）
+    adoptDownloaded();
   }
 
   const inputs = visibleInputs();
@@ -1738,12 +1858,15 @@ export function setSort(key, dir) {
     // 意外地翻转方向 —— 比如从面板里再点一次当前字段，本该无变化。
     state.sortDir = defaultSortDir(key);
   }
+  // 用户主动排序 = 接受正常排序：「刚下载」的置顶与角标到此为止
+  dropFreshDownloads();
   commit();
 }
 
 /** 设置排序方向（升序 / 降序）。 */
 export function setSortDir(dir) {
   state.sortDir = normalizeSortDir(dir);
+  dropFreshDownloads();
   commit();
 }
 
@@ -1760,6 +1883,7 @@ export function toggleSort(key) {
     state.sortKey = key;
     state.sortDir = defaultSortDir(key);
   }
+  dropFreshDownloads();
   commit();
 }
 
