@@ -64,7 +64,7 @@ export const PATCH_TYPES = [
   "song", // 换歌：{ song, cover, covers, coverIndex, lyrics }
   "media", // 封面变化 / 轮播切图：{ cover, covers, coverIndex }
   "lyrics", // 歌词装载完成或更新：{ lyrics }
-  "progress", // 播放进度（宿主已按帧节流）：{ position, duration, playing, lyricIndex }
+  "progress", // 播放进度（宿主约 4Hz 推送；位置按 250ms 一档量化，插件需自行插值）：{ position, duration, playing, lyricIndex }
   "state", // 播放状态变化（播放/暂停/音量/静音）：{ playing, volume, muted }
   // ★「spectrum」补丁已移除：契约 v3 的频谱是**拉取式** —— 插件调
   //   ctx.spectrum() 主动取全谱，读到才采样（30Hz 节流，固定 128 段）。

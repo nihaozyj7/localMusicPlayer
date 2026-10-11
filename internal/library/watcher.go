@@ -137,6 +137,16 @@ func (w *Watcher) Stop() {
 	done := w.done
 	w.done = nil
 	w.started = false
+	// ★ 防抖定时器也要停、待处理集合也要清：
+	// 它可能正好在 Stop 之后触发一次 flush，而那时 ctx 已经换成新一代的了 ——
+	// 一次属于上一代的增量扫描会莫名其妙地落到新循环上。
+	// （定时器已经触发时不保证能拦住正在跑的 flush，但那条路径已经不再有
+	//   数据竞争：ctx 是在锁内取的。）
+	if w.timer != nil {
+		w.timer.Stop()
+		w.timer = nil
+	}
+	w.pending = map[string]bool{}
 	// 重建 ctx：让后续 EnsureStarted 能起一个可用的新循环
 	w.ctx, w.cancel = context.WithCancel(context.Background())
 	// 登记表属于旧实例，一并清掉
@@ -231,6 +241,9 @@ func (w *Watcher) remove(dir string) {
 //
 // done 在退出时关闭，供 Stop() 等待「这一代确实结束了」。
 func (w *Watcher) loop(done chan struct{}) {
+	// 注意 defer 的顺序（LIFO）：先关 done 让 Stop() 立刻解除等待，
+	// 再归位状态。反过来做的话 Stop() 会多等一会儿「状态归位」这件事。
+	defer w.markLoopExited(done)
 	if done != nil {
 		defer close(done)
 	}
@@ -261,6 +274,41 @@ func (w *Watcher) loop(done chan struct{}) {
 			}
 		}
 	}
+}
+
+// markLoopExited 在事件循环退出时把「这一代」标记成已结束。
+//
+// ★ 为什么必须做：started 曾经只在 Stop() 里归位，而循环还有另一条退出路径 ——
+// fsnotify 的 Events/Errors 通道被关闭（实例被外部关掉、底层出错）时
+// loop 会直接 return。此时 started 仍是 true，于是之后每次
+// EnsureStarted / Start 都会因为 `already == true` 而**不启动新循环**：
+// 界面显示「实时监听已开启」，而新落盘的文件一个事件都收不到，
+// 直到用户手动关掉再打开（甚至要重启）。这与 Stop() 注释里那个
+// 「僵尸监听」是同一种故障，只是触发点不同。
+//
+// 只在「这一代仍是当前代」时归位：Stop() 可能已经换了一代并把
+// started 交给了新循环，此时清零会把新循环标记成没启动。
+func (w *Watcher) markLoopExited(done chan struct{}) {
+	if done == nil {
+		return
+	}
+	w.mu.Lock()
+	if w.done != done {
+		w.mu.Unlock()
+		return // 已经不是当前代：Stop() 或新循环接管了，什么都别动
+	}
+	w.started = false
+	w.done = nil
+	if w.timer != nil {
+		w.timer.Stop()
+		w.timer = nil
+	}
+	w.pending = map[string]bool{}
+	w.mu.Unlock()
+	// 注意：这里**不**重建 fsnotify 实例（登记表与实例的交接由 Stop 负责）。
+	// 本函数只保证「状态如实反映循环已停」，下一次 EnsureStarted 会尝试重新
+	// 起循环：若实例仍然可用就能恢复监听，若不可用则由上层的开关切换
+	// （走 Stop → 新实例）来彻底修好。
 }
 
 func (w *Watcher) handle(event fsnotify.Event) {
@@ -309,12 +357,18 @@ func (w *Watcher) flush() {
 		paths = append(paths, p)
 	}
 	w.pending = map[string]bool{}
+	// ★ ctx 必须在锁内取出。
+	//
+	// Stop() 会在持锁时**替换** w.ctx（见那里的说明），而 context.Context 是
+	// 一个接口值（两个机器字）。裸读它可能拿到「前半截是旧指针、后半截是新类型」
+	// 的组合 —— 那是数据竞争，也可能直接变成一个非法接口而崩溃。
+	ctx := w.ctx
 	w.mu.Unlock()
 
 	if len(paths) == 0 {
 		return
 	}
-	if _, err := w.lib.RescanPaths(w.ctx, paths); err != nil {
+	if _, err := w.lib.RescanPaths(ctx, paths); err != nil {
 		log.Printf("[watcher] 增量扫描失败: %v", err)
 	}
 }

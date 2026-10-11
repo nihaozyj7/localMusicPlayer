@@ -18,8 +18,9 @@ var modKernel32 = syscall.NewLazyDLL("kernel32.dll")
    --------------------------------------------------------------------------
    问题：窗口是隐藏创建的（main.go 的 winOpts.Hidden，为的是躲开 Wails issue
    #4611 那个「WebView2 出首帧前先亮一块白底」）。但 WebView2 在
-   controller.IsVisible == false 时**不再出帧** —— 前端 main.js 里那句
-   「隐藏时 rAF 永远不派发」说的就是这件事。
+   controller.IsVisible == false 时**不再出帧** —— 前端
+   desktop-wallpaper-window.js 里那句「隐藏窗口根本不派发 BeginFrame ——
+   rAF 永远不会来」说的就是这件事。
 
    于是现在的时间线是：
      · 页面在隐藏状态下加载、JS 跑完、DOM 装配好；

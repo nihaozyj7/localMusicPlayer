@@ -277,6 +277,28 @@ func (g *gainState) currentValue() float64 {
 	return g.current
 }
 
+// applyGain 就地把「本缓冲的增益斜坡」套用到 s16 数据上：从当前增益
+// 线性过渡到本缓冲结束时该有的增益。
+//
+// ★ 这个方法存在的唯一理由，就是让「先取起点、再推进斜坡」这个顺序
+// 无法被写反 —— 它以前是回调里的三行裸代码：
+//
+//	applyGainRampS16(buf, e.gain.currentValue(), e.gain.valueFor(n))
+//
+// Go 的实参求值顺序是从左到右，看起来没问题；但 valueFor **会推进并返回**
+// current，而 currentValue 读的也是同一个 current。一旦哪个环节把顺序调一下
+// （或者有人「顺手」把 currentValue() 挪到后面做日志/调试），两个实参就是
+// 同一个数，斜坡退化成阶跃 —— 而单元测试全绿，因为
+// applyGainRampS16 本身是对的，valueFor 也是对的，错的是**组装**。
+//
+// 收进这里之后，「块内必须是插值而不是阶跃」这条性质可以直接被测
+// （见 TestGainApplyGainInterpolatesWithinBuffer）。
+func (g *gainState) applyGain(buf []byte, stepFrames int) {
+	from := g.currentValue() // 必须先取起点：valueFor 会把它推进到终点
+	to := g.valueFor(stepFrames)
+	applyGainRampS16(buf, from, to)
+}
+
 // targetValue 只读增益**目标值**（不推进斜坡）。
 //
 // 存在的意义是「可观测性」：合成后的增益是「用户音量 × 响度补偿」的结果，
@@ -522,8 +544,14 @@ func (e *Engine) PrepareSwitch() {
 	//   closed=false → 直接 return（输出静音，什么都不做）
 	//
 	// 这里**必须**让它走 closed=false 那一支：我们只是想安静一下，不想
-	// 让引擎报「这首歌播完了」。Ring.reset() 把 closed 清成 false（见它的实现），
-	// 这里再显式置一次，免得以后 reset 的语义变了而没人发现。
+	// 让引擎报「这首歌播完了」。
+	//
+	// ★ 注意：Ring.reset() **只清数据，不清 closed**（见它的实现）。所以下一行的
+	// setClosed(false) 不是「再显式置一次以防万一」，而是**必需**的：
+	// reset() 之后若 closed 仍是 true，回调会把「缓冲空 + 已结束」判成
+	// markEOF()（playing 置 false，上层据此自动跳歌）—— 用户看到的是
+	// 「切歌瞬间被自动跳过一首」。（曾经这里有句注释说 reset 会把 closed
+	// 清成 false，是错的；照着它删掉 setClosed 就会踩上面这个坑。）
 	e.ring.reset()
 	e.ring.setClosed(false)
 	e.mu.Unlock()
@@ -550,21 +578,28 @@ func (e *Engine) Open() error {
 	// 不绑定具体设备：用系统默认输出，跟随用户切换（插耳机自动切）
 	cfg.Alsa.NoMMap = 1
 
+	// 先把 ctx 挂到字段上：这样下面两条失败路径都能共用 releaseDeviceLocked
+	//（它负责「释放 + 清字段」），不必再手写 Uninit / Free。
+	e.ctx = ctx
 	device, err := malgo.InitDevice(ctx.Context, cfg, malgo.DeviceCallbacks{
 		Data: e.onData,
 	})
 	if err != nil {
-		_ = ctx.Uninit()
-		ctx.Free()
+		e.releaseDeviceLocked() // e.device 还是 nil，只回收 ctx
 		return fmt.Errorf("打开音频设备失败: %w", err)
 	}
 
-	e.ctx = ctx
 	e.device = device
 	if err := device.Start(); err != nil {
-		device.Uninit()
-		_ = ctx.Uninit()
-		ctx.Free()
+		// ★ 释放必须走 releaseDeviceLocked：它会**同时清空字段**。
+		//
+		// 这里曾经是手写三行（device.Uninit / ctx.Uninit / ctx.Free）而不清字段，
+		// 但 e.device / e.ctx 在上面两行就已经赋了值（就是为了让失败路径拿到它们），
+		// 于是退出时 Close() 会照着这两个字段**再释放一次**：
+		// 设备双重 Uninit、上下文被 Free 两次 —— use-after-free / 堆损坏。
+		// 触发条件是「声卡打不开」（设备被独占、没有输出设备、驱动刚被拔掉），
+		// 而在**退出路径**上崩溃，用户只会看到「关不掉 / 闪退」。
+		e.releaseDeviceLocked()
 		return fmt.Errorf("启动音频设备失败: %w", err)
 	}
 
@@ -596,7 +631,22 @@ func (e *Engine) Close() {
 		_ = e.file.Close()
 		e.file = nil
 	}
+	e.releaseDeviceLocked()
+	e.started = false
+}
+
+// releaseDeviceLocked 释放设备与上下文，并**把字段清空**（幂等）。
+//
+// ★ 「释放即清空字段」是这里的全部意义：任何一条释放路径忘了清字段，
+// 下一次释放（Close、关闭时的第二次调用、Open 失败后的收尾）就会对已经
+// 释放过的对象再动手 —— use-after-free / 双重释放，崩在退出路径上。
+// 所以释放动作只允许从这里走，不要在任何地方手写 Uninit / Free。
+//
+// 调用方必须持有 e.mu（名字里的 Locked 就是这个意思）。
+func (e *Engine) releaseDeviceLocked() {
 	if e.device != nil {
+		// miniaudio：InitDevice 成功但 Start 失败时也必须 Uninit，
+		// 所以这里不看 started，只看字段。
 		e.device.Uninit()
 		e.device = nil
 	}
@@ -605,7 +655,6 @@ func (e *Engine) Close() {
 		e.ctx.Free()
 		e.ctx = nil
 	}
-	e.started = false
 }
 
 // Started 报告声卡是否已经打开
@@ -716,9 +765,9 @@ func (e *Engine) onData(out, in []byte, frameCount uint32) {
 	e.effects.ProcessStereo(out[:frames*FrameSize])
 
 	// 应用增益（用户音量 × 响度补偿），并就地做 16bit 定点缩放。
-	// 用缓冲内插值：整块共用一个增益值的话，音量变化在波形上仍是阶跃。
-	gainTo := e.gain.valueFor(int(frames))
-	applyGainRampS16(out[:frames*FrameSize], e.gain.currentValue(), gainTo)
+	// 缓冲内插值的起点/终点由 gainState.applyGain 内部处理（顺序写反会让
+	// 斜坡退化成阶跃 —— 见那里的说明）。
+	e.gain.applyGain(out[:frames*FrameSize], int(frames))
 
 	// 频谱：把立体声降成单声道喂给分析器（AnalyserNode 也是这么做的）
 	e.feedAnalyzer(out[:frames*FrameSize])
@@ -910,7 +959,12 @@ func (e *Engine) Load(path string, startFrame, endFrame int64, gain float64) err
 	//
 	// ★ 清状态但**不**清档位：用户的音效选择是跨歌的偏好
 	//（"我要一直用 3D 环绕" 而不是"只给这一首"）。
-	e.effects.Reset()
+	//
+	// 用 RequestReset 而不是 Reset：这里跑在控制线程，而链里的滤波器历史
+	// 与延迟线是音频线程在读写的（ProcessStereo 不带锁）。直接清就是数据竞争，
+	// 且可能把音频线程刚装载好的系数一起清掉。请求会在下一批音频数据的
+	// 缓冲边界被落实 —— 对"新歌开头不留上一首的残响"这个目标完全够用。
+	e.effects.RequestReset()
 	// 换增益与换音频在同一个「装载」动作里完成，中间不留给音频回调任何窗口
 	e.gain.setHard(gain)
 	// 换歌作废上一首可能还挂着的切歌间隔：不等它走完，否则新歌会先静音 1.5 秒。
@@ -1128,7 +1182,8 @@ func (e *Engine) SeekToFrame(frame int64) error {
 	//
 	// 这里比换歌更明显：seek 是"用户想立刻听到那个位置的音乐"，
 	// 而一段残响拖在后面会让跳转听起来不够即时。
-	e.effects.Reset()
+	// 同样走 RequestReset（控制线程不直接碰音频线程的状态，见 Load 里的说明）。
+	e.effects.RequestReset()
 
 	e.posMu.Lock()
 	e.positionFrame = frame

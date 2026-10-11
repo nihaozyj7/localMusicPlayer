@@ -16,8 +16,8 @@
         的会话拿不到媒体键（见 w3c/audio-session 的讨论）。
      2. 更致命的是：本项目的播放已经**搬到 Go 进程**了（internal/audioplay +
         WASAPI，见 services_player.go 顶部说明）。后端接管播放时页面上压根
-        不存在 <audio>（audio.js#audioElement 明确返回 null），所以 MediaSession
-        连「注册」的前提都不成立。
+        不创建 <audio>（只有 legacy 回退路径 —— audio.js 里的 audioEl() —— 才会创建），
+        所以 MediaSession 连「注册」的前提都不成立。
 
    于是这里走 Go 侧的全局热键：RegisterHotKey 是系统级注册，**与窗口焦点、
    是否最小化、是否缩到托盘全部无关** —— 这正好就是「挂后台也要能响应」。

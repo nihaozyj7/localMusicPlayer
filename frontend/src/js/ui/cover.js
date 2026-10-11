@@ -13,7 +13,7 @@ import { define, html, nothing, repeat, requestAppUpdate, icon } from "./base.js
 import { toast } from "./overlays.js";
 import { backend, isWails } from "../bridge.js";
 import { coverOfRaw } from "../utils.js";
-import { providerListLabel } from "../provider-names.js";
+import { providerFallbackLabel, providerListLabel } from "../provider-names.js";
 import { commit, coverVersion, setCoverSet, state } from "../store.js";
 import { notifyCoverChanged } from "../playerhost.js";
 import { MpPanel } from "./panels.js";
@@ -180,7 +180,7 @@ class MpCoverLayer extends MpPanel {
             class="btn btn--sm"
             type="button"
             data-cover-act="open-cache"
-            @click=${() => backend.coverOpenCacheDir("covers")}
+            @click=${() => this.openCacheDir()}
           >
             ${icon("folder")}<span>打开缓存目录</span>
           </button>
@@ -446,6 +446,23 @@ class MpCoverLayer extends MpPanel {
   }
 
   /**
+   * 打开封面缓存目录。
+   *
+   * ★ 不能像原来那样直接在模板里 `@click=${() => this.openCacheDir()}`：
+   * 那是 fire-and-forget，后端 reject（缓存目录被删/无权限）时用户什么也看不到，
+   * 控制台里只有一条 `Uncaught (in promise)` —— 而设置页里**同一个动作**
+   * 是有 toast 的（settings.js 的 cache-open-covers 分支）。
+   * 同一个功能两处表现不一致，用户会以为是这个按钮坏了。
+   */
+  async openCacheDir() {
+    try {
+      await backend.coverOpenCacheDir("covers");
+    } catch (err) {
+      toast(`打开缓存目录失败：${err?.message ?? err}`, { tone: "error", duration: 5000 });
+    }
+  }
+
+  /**
    * 统一的「写封面」收口。
    *
    * 三个要点（都是踩过的坑）：
@@ -545,7 +562,11 @@ const component = () => document.querySelector("mp-cover-layer");
 
 /** 提示文案里的来源列表（后端给的是 id，这里换成用户看得懂的名字） */
 function providerLabel() {
-  return providerListLabel(state.coverProviders, "iTunes / 网易云 / QQ 音乐 / Deezer / MusicBrainz");
+  // 兜底文案从 provider-names.js 的表派生：这里曾经硬写一份
+  // "iTunes / 网易云 / QQ 音乐 / Deezer / MusicBrainz"，
+  // 是同一份枚举的第 4 份拷贝（后端加了来源它不会跟着变，
+  // 连「网易云音乐」都被简写成了「网易云」）。
+  return providerListLabel(state.coverProviders, providerFallbackLabel());
 }
 
 export function openCoverPanel(id) {

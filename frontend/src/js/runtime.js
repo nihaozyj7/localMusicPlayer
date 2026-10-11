@@ -5,7 +5,8 @@
    renderKey / renderShell / paintPlayerBar… 整条渲染链。
    现在渲染交给 Lit 组件，这里只留下**真的需要跟着播放进度跑**的副作用：
 
-     · <audio> 元素的换源与播放对齐（syncAudio）
+     · 播放引擎的换歌与播放状态对齐（syncAudio —— 正常路径下驱动的是 Go 侧
+       原生引擎；只有后端不可用时才落到 audio.js 里的 legacy <audio> 回退分支）
      · 响度补偿增益的落盘（applyGainForSong）
      · 桌面歌词 / 桌面背景歌词窗口的推送
      · 封面取色与取色主题的整窗底图
@@ -49,7 +50,13 @@ function run() {
   if (key === lastKey) return;
   lastKey = key;
 
-  // 真实播放：切歌 / 播放暂停状态变化时同步到 <audio>，并套用响度补偿
+  // 真实播放：切歌 / 播放暂停状态变化时同步给播放引擎，并套用响度补偿。
+  //
+  // ★ 「播放引擎」正常情况指的是**后端原生引擎**（Go 侧出声，前端没有 <audio>，
+  // 见 AGENTS.md 不变量 16）；只有后端不可用（声卡打不开 / 没有 ffmpeg）时
+  // 才回退到 audio.js 里的 legacy <audio> 路径。这里曾经写着「同步到 <audio>」，
+  // 是迁移前的说法，照着它去加 <audio> 专属逻辑就会加到一个平时根本不走的
+  // 回退分支上。
   syncAudio();
   applyGainForSong();
 

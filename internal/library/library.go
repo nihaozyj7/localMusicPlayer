@@ -693,19 +693,42 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 		}
 		m.folders[i].TrackCount = counts[i]
 	}
-	// 写回配置时**必须滤掉合成出来的下载目录**：它是从 DownloadDir 派生的，
-	// 一旦落进 config.Folders 就变成了「用户手动添加的文件夹」，改下载位置之后
-	// 旧目录会永远留在扫描根里，还会出现两条同 id 的记录。
-	foldersCopy := make([]bootstrap.Folder, 0, len(m.folders))
+	// ★ 只把「扫描得到的 status / trackCount」回填到配置里对应 id 的文件夹，
+	// **不要**整份覆盖 c.Folders。
+	//
+	// 为什么不能整份覆盖（以前正是 `c.Folders = foldersCopy`）：foldersCopy 是
+	// 扫描**开始时**的快照，而一次全量扫描可能跑几十秒到几分钟。这期间用户
+	// 新增或删除文件夹（AddFolder / RemoveFolder 会各自写一次配置）都会被这个
+	// 旧快照整体抹掉 —— 用户看到「刚加的文件夹自己消失了」，
+	// 而 m.folders 与 config.json 从此不一致（扫描根、界面列表各说各话）。
+	//
+	// 顺带解决「合成出来的下载目录」：它是从 DownloadDir 派生的，一旦落进
+	// config.Folders 就变成了"用户手动添加的文件夹"，改下载位置之后旧目录会
+	// 永远留在扫描根里，还会出现两条同 id 的记录。只回填已有条目的字段，
+	// 天然不会再把它写进配置。
+	type folderStat struct {
+		status string
+		count  int
+	}
+	stats := make(map[string]folderStat, len(m.folders))
 	for _, f := range m.folders {
 		if f.ID == bootstrap.DownloadFolderID {
 			continue
 		}
-		foldersCopy = append(foldersCopy, f)
+		stats[f.ID] = folderStat{status: f.Status, count: f.TrackCount}
 	}
 	m.mu.Unlock()
 
-	_ = m.store.Update(func(c *bootstrap.Config) { c.Folders = foldersCopy })
+	_ = m.store.Update(func(c *bootstrap.Config) {
+		for i := range c.Folders {
+			st, ok := stats[c.Folders[i].ID]
+			if !ok {
+				continue // 扫描快照里没有它（扫描期间新加的）→ 原样保留
+			}
+			c.Folders[i].Status = st.status
+			c.Folders[i].TrackCount = st.count
+		}
+	})
 	_ = m.SaveCache()
 
 	out := ScanResult{

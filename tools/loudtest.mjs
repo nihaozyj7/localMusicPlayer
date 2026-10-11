@@ -3,7 +3,7 @@
    --------------------------------------------------------------------------
    要验证的行为（用户明确要求）：
      1) 开启逐曲均衡后播放一首歌，不需要事先扫描，补偿会被自动算出来并套用
-     2) 补偿值进入 Web Audio 的 GainNode（真的作用到回放上）
+     2) 补偿值经后端引擎作用到回放上（前端只维护增益表，没有 GainNode 路径）
      3) 改了目标响度后，之前的补偿失效并按新标准重算
 
    用法：node tools/loudtest.mjs --exe bin/lmplayer.exe
@@ -136,6 +136,8 @@ const result = await evaluate(`(async () => {
     if (measured?.measured) { gain = measured.gainDB; break; }
   }
 
+  // ★ 后端出声时页面上**没有** <audio>（只有 legacy 回退路径才创建）。
+  //   所以播放状态与位置一律以 store 为准，另外单独报告是否存在 <audio>。
   const el = document.querySelector('audio');
   return {
     songId,
@@ -147,8 +149,9 @@ const result = await evaluate(`(async () => {
     gainDB: gain,
     frontendGain: store.state.loudnessGains?.[songId] ?? null,
     graph: audio.audioGraphState ? audio.audioGraphState() : null,
-    playing: el ? !el.paused : null,
-    currentTime: el ? Number(el.currentTime.toFixed(2)) : null,
+    playing: store.state.playing ?? null,
+    currentTime: Number.isFinite(store.state.position) ? Number((store.state.position / 1000).toFixed(2)) : null,
+    legacyAudio: Boolean(el),
   };
 })()`);
 console.log(JSON.stringify(result, null, 2));

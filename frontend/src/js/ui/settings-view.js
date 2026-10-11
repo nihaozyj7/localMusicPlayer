@@ -21,7 +21,7 @@ import { animationMs, setRuntimeToken } from "../runtime-tokens.js";
 import { toast } from "./overlays.js";
 import { applyRules, commit, compileRegex, flushConfigSync, state } from "../store.js";
 import { fmtCount, fmtSize, rafThrottle } from "../utils.js";
-import { providerName } from "../provider-names.js";
+import { providerFallbackLabel, providerName } from "../provider-names.js";
 import {
   APP_COPYRIGHT,
   APP_ID,
@@ -1440,7 +1440,7 @@ class MpSettingsLayer extends MpElement {
         </div>
       </div>
       <div class="card__foot">
-        <span>封面来自公开曲库（iTunes / 网易云 / Deezer / MusicBrainz），匹配结果不保证完全准确</span>
+        <span>封面来自公开曲库（${providerFallbackLabel()}），匹配结果不保证完全准确</span>
         <button class="btn btn--sm" type="button" data-act="cover-refresh">
           ${icon("refresh")}<span>清空封面与歌词缓存</span>
         </button>

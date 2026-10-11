@@ -25,12 +25,18 @@
         · 皮肤自己渲染的内容原样保留 —— 唱片、歌词、曲目信息都是皮肤画的
 
       ★ .app 这一层外壳**不能省**。
-      样式包约定「详情页内的元素以 .playerview[data-skin="<id>"] 开头，
-      需要影响详情页之外的外壳时另加 .app[data-mode="<id>"]」（见包里 README 与
-      设置界面的样式编写说明）。第三方样式的整窗背景层几乎都写在
-      .app[data-mode="<id>"] 下 —— 少了这一层，那批规则一条都不生效：
-      背景层退化成未样式化的纵向堆叠、画布停在 300×150 的默认尺寸。
+      它是**能力钩子**的落点：主界面的层叠上下文与
+      `.app[data-skin-background="yes"][data-view="player"]` 一族规则都挂在它上面
+      （见 styles/components/layout.css），整窗背景层正是靠它们让位/铺满的 ——
+      少了这一层，那批规则一条都不生效：背景层退化成未样式化的纵向堆叠、
+      画布停在 300×150 的默认尺寸。
       （这是实测出来的：探针读到的 .mg-bg 是 2560×4155、canvas 是 300×150。）
+
+      ⚠️ `.app[data-mode="<样式id>"]` 是 **v2 时代的写法，别再用它写插件样式** ——
+      v3 的插件 CSS 由宿主强制包进 `@layer skin { @scope(舞台) }`，插件够不到 .app；
+      插件能用的只有 `::scope` 相对选择器与 `ctx.backgroundRoot`（.skin-bg[data-skin=…]）。
+      data-mode 这里照旧打着，但它现在只是调试与历史钩子。
+
       所以这里的结构与主界面逐字一致：.app 带 data-mode="<样式id>" 和
       data-view="player"，宿主换样式时同步改它们。
 
@@ -41,7 +47,7 @@
     <script type="module" crossorigin src="/assets/wallpaper-BCXmBWVK.js"></script>
     <link rel="modulepreload" crossorigin href="/assets/bridge-D1JdJUg2.js">
     <link rel="modulepreload" crossorigin href="/assets/skinhost-DQk_e0Y_.js">
-    <link rel="stylesheet" crossorigin href="/assets/style-ASKoxhOj.css">
+    <link rel="stylesheet" crossorigin href="/assets/style-gL9KC9mr.css">
   </head>
   <body>
     <div class="app" id="wp-app" data-view="player" data-mode="">

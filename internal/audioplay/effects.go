@@ -61,7 +61,10 @@
 
 package audioplay
 
-import "math"
+import (
+	"math"
+	"sync/atomic"
+)
 
 /* --------------------------------------------------------------------------
    预设档位
@@ -569,19 +572,34 @@ type Chain struct {
 	fade    float64 // 0 = 全是淡出链，1 = 全是新链
 	fadeInc float64 // 每个样本的推进量；0 表示不需要淡化
 
-	// pendingPreset 是被推迟到下一个缓冲才生效的档位。
+	// pendingPresetCode 是被推迟到下一个缓冲才生效的档位，**整数编码**，
+	// -1 表示没有待生效的请求（见 presetCode）。
 	//
 	// 为什么不在 SetPreset 里立刻改：SetPreset 跑在控制线程，
 	// 它要改的是"已经在淡入的那条链"还是"刚空出来的那条链"，
 	// 取决于音频线程当前的 position —— 从控制线程猜这个状态就是在
 	// 制造竞态。改成"请求 + 音频线程在缓冲边界执行"，语义清晰得多。
-	pendingPreset EffectPreset
-	hasPending    bool
+	//
+	// ★ 为什么这里不能直接存 EffectPreset（string）：字符串是两个机器字。
+	// 控制线程写、音频线程读，读到的是**被撕开**的一对字（指针来自新值、
+	// 长度来自旧值，或反之），比较与分发都会落到一个不存在的档位上 ——
+	// 表现为「点了音效没反应」或偶发爆音，而 -race 只有在恰好并发命中的
+	// 那几次运行里才会报出来。整数用一次原子写完成交换，没有中间态。
+	pendingPresetCode atomic.Int32
+
+	// resetRequest 是「在下一个缓冲边界清空 DSP 历史状态」的请求。
+	//
+	// ★ 切歌 / seek 要清掉混响尾巴与滤波器历史，但那些数据结构是**音频线程**
+	// 在读写的（ProcessStereo 不带任何锁）。控制线程直接去清它们就是数据竞争：
+	// 轻则读到底噪、爆音，重则读到半更新的系数。所以与档位切换同一套办法 ——
+	// 控制线程只记一个"待清"，音频线程在缓冲边界执行（见 RequestReset / Reset）。
+	resetRequest atomic.Bool
 
 	// —— 以下两个只被音频线程使用 ——
 	// 当前档位（用于诊断 / 上报）。它是"音频线程实际在处理"的档位，
-	// 与 pendingPreset 不是一回事。
-	currentPreset EffectPreset
+	// 与 pendingPresetCode 不是一回事。同样用整数编码，因为
+	// CurrentPreset() 会被控制线程调用（诊断信息）。
+	currentPresetCode atomic.Int32
 
 	// orbit 是环绕档的运动调制源（LFO）。
 	//
@@ -694,9 +712,51 @@ func (c *Chain) prepare(sampleRate int) {
 	c.fadingOutIsA = false
 	c.fade = 1
 	c.fadeInc = 0
-	c.currentPreset = EffectOff
-	c.pendingPreset = EffectOff
-	c.hasPending = false
+	c.currentPresetCode.Store(presetCode(EffectOff))
+	c.pendingPresetCode.Store(-1)
+	c.resetRequest.Store(false)
+}
+
+/* --------------------------------------------------------------------------
+   档位的整数编码（跨线程交换用）
+   -------------------------------------------------------------------------- */
+
+// noPendingPreset 表示「没有待生效的档位请求」。
+const noPendingPreset int32 = -1
+
+// presetCode 把档位编码成一个小整数。
+//
+// ★ 存在的唯一理由是跨线程交换：EffectPreset 是 string，两个机器字，
+// 控制线程写、音频线程读会读到被撕开的值（见 Chain.pendingPresetCode 的说明）。
+// 编码必须是**双射**（presetCode / presetFromCode 互逆），
+// 由 TestPresetCodeRoundTrip 对 EffectPresets 里每个档位逐一验证。
+func presetCode(p EffectPreset) int32 {
+	switch p {
+	case EffectVocal:
+		return 1
+	case EffectBass:
+		return 2
+	case EffectSurround:
+		return 3
+	default:
+		// off 以及任何未知值都归 0：后者与 NormalizeEffectPreset 同一立场
+		//（非法档位落回 off），不会因为传进来一个陌生字符串就静默变成别的效果。
+		return 0
+	}
+}
+
+// presetFromCode 是 presetCode 的逆映射。
+func presetFromCode(code int32) EffectPreset {
+	switch code {
+	case 1:
+		return EffectVocal
+	case 2:
+		return EffectBass
+	case 3:
+		return EffectSurround
+	default:
+		return EffectOff
+	}
 }
 
 // snapCoeffs 把 EQ 的 current 系数直接吸附到 target（跳过 slew）。
@@ -726,6 +786,12 @@ func (c *Chain) Prepared() bool { return c.prepared }
 //
 // ★ 淡化中的两条链一起清。只清活动链的话，另一条链里残留的上一首的
 // 混响尾巴会在下一次切换时冒出来。
+//
+// ★★ 只能在**音频线程**里调用（ProcessStereo 的缓冲边界）。
+//
+// 它直接改滤波器历史与延迟线内容，而这些结构没有任何锁 —— 控制线程
+// （切歌 / seek 的调用方）直接调它就是在与音频线程竞争同一片内存。
+// 控制线程请用 RequestReset()。
 func (c *Chain) Reset() {
 	if !c.prepared {
 		return
@@ -740,7 +806,27 @@ func (c *Chain) Reset() {
 	c.chainB.rev.reset()
 }
 
-// RequestPreset 请求切换音效档位（从控制线程调用）。
+// RequestReset 请求在下一个缓冲边界清空音效链的历史状态（控制线程调用）。
+//
+// 与 RequestPreset 同一套办法：控制线程只记一个标志，音频线程在缓冲边界执行。
+// 一个缓冲（约 23ms）的延迟对"切歌后不留上一首的混响尾巴"这个目标毫无影响，
+// 换来的是 DSP 状态永远只被一个线程碰。
+func (c *Chain) RequestReset() {
+	if !c.prepared {
+		return
+	}
+	c.resetRequest.Store(true)
+}
+
+// applyResetLocked 在缓冲边界落实「清空历史」请求。只在音频线程调用。
+func (c *Chain) applyResetLocked() {
+	if !c.resetRequest.Swap(false) {
+		return
+	}
+	c.Reset()
+}
+
+// RequestPreset 请求切换音效档位（可从控制线程或音频线程调用）。
 //
 // 返回是否真的会发生变化（相同档位是 no-op）。
 //
@@ -751,19 +837,23 @@ func (c *Chain) Reset() {
 //	  从控制线程去读就是在读一个正在被音频线程修改的值；
 //	· 一个缓冲（23ms）的延迟对用户来说不可感知，但换来的是
 //	  参数永远在样本边界上原子地生效。
+//
+// 两个线程都会调到它（Engine.SetEffect 在控制线程、音频回调里也会同步一次
+// 引擎字段），所以待生效档位用整数编码原子交换，见 pendingPresetCode。
 func (c *Chain) RequestPreset(p EffectPreset) bool {
 	if !c.prepared {
 		return false
 	}
-	if p == c.currentPreset && !c.hasPending {
+	code := presetCode(p)
+	pending := c.pendingPresetCode.Load()
+	if code == c.currentPresetCode.Load() && pending == noPendingPreset {
 		return false
 	}
 	// 已经请求了同一个档位就不重复记（连续点同一个按钮）
-	if c.hasPending && c.pendingPreset == p {
+	if pending == code {
 		return false
 	}
-	c.pendingPreset = p
-	c.hasPending = true
+	c.pendingPresetCode.Store(code)
 	return true
 }
 
@@ -775,7 +865,7 @@ func (c *Chain) CurrentPreset() EffectPreset {
 	if !c.prepared {
 		return EffectOff
 	}
-	return c.currentPreset
+	return presetFromCode(c.currentPresetCode.Load())
 }
 
 // ProcessStereo 就地处理一整个缓冲（s16le 交错立体声）。
@@ -793,10 +883,16 @@ func (c *Chain) ProcessStereo(buf []byte) {
 		return
 	}
 
-	// —— 在缓冲边界执行 pending 切换 ——
+	// —— 在缓冲边界执行 pending 的「清历史」与「换档位」——
 	//
 	// 放在缓冲开头而不是结尾：这样本次缓冲就已经开始淡化，
 	// 用户感知到的延迟最短。
+	//
+	// 先清历史再换档位：清空的动作只碰两条链的**状态**（历史样本、延迟线），
+	// 不碰系数；换档位会写系数并把新链的计数器归零。顺序反过来的话，
+	// 刚装载好的档位（写好的系数）会被 Reset 一起清掉 —— 那正是
+	// 「切歌后没声音、进度条照走」那个 bug 的形态（见 Reset 的说明与测试）。
+	c.applyResetLocked()
 	c.applyPendingLocked()
 
 	// 快速路径：两条链都在 off 且淡化已完成 → 整块旁路。
@@ -824,13 +920,13 @@ func (c *Chain) ProcessStereo(buf []byte) {
 
 // applyPendingLocked 把 pending 切换落到实处。只在音频线程调用。
 func (c *Chain) applyPendingLocked() {
-	if !c.hasPending {
+	code := c.pendingPresetCode.Swap(noPendingPreset)
+	if code == noPendingPreset {
 		return
 	}
-	target := c.pendingPreset
-	c.hasPending = false
+	target := presetFromCode(code)
 
-	if target == c.currentPreset {
+	if code == c.currentPresetCode.Load() {
 		// 请求又变回了当前档位（用户在两次缓冲之间点了切换再点回来）——
 		// 什么都不做。若此时正在淡化，让它自然走完即可。
 		return
@@ -859,7 +955,7 @@ func (c *Chain) applyPendingLocked() {
 	// 的额外过程，与交叉淡化叠加后过渡会变得拖沓。
 	snapCoeffs(&incoming.eq)
 
-	c.currentPreset = target
+	c.currentPresetCode.Store(code)
 	c.fade = 0
 	c.fadeInc = 1.0 / float64(chainFadeFrames)
 }

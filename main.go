@@ -87,7 +87,8 @@ func main() {
 		state.themes = themeMgr
 	}
 
-	// 播放界面皮肤：只看用户数据目录里的样式包，内置皮肤由前端打包提供。
+	// 播放界面皮肤：**两个根都扫** —— 内置样式是 Go 侧只读 embed 资源
+	// （internal/skins/resources/player-skins/），第三方在用户数据目录。
 	// 目录建不出来也不致命 —— 前端拿到的空列表就等于「没有自定义皮肤」，
 	// 但同源托管的 handler 需要它非 nil 才有意义（见下面的 Middleware）。
 	skinMgr, err := skins.NewManager(store.DataDir())
@@ -418,7 +419,7 @@ func main() {
 			AdditionalBrowserArgs:         browserArgs,
 		},
 		// 单实例：第二次启动时 Wails 会把第二个进程的参数发给已经在跑的实例，
-		// 然后第二个进程自己退出（见 single_instance.go）。回调里要做的就是
+		// 然后第二个进程自己退出（由下面的 SingleInstanceOptions 处理）。回调里要做的就是
 		// 「把已有窗口显示出来并抢焦点」——这正是需求里要的行为。
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "com.localmusicplayer.app",
@@ -605,8 +606,9 @@ func main() {
 			go emit("player:ended", map[string]any{})
 		})
 		if !state.playerSvc.Start() {
-			// 启动失败不是致命错误：前端收到 player:ready{available:false}
-			// 之后会退回用 <audio> 播放（见 audio.js）。
+			// 启动失败不是致命错误：前端启动时会调 Player.Available()，拿到
+			// available=false 就退回 legacy <audio> 路径（见 audio.js）。
+			// 注意 player:ready 事件目前**没有订阅者**，别指望它触发回退。
 			log.Printf("[player] 后端音频未启动，前端将回退到 <audio>")
 		}
 		startPlayerTick()
@@ -614,7 +616,7 @@ func main() {
 		// 键盘媒体键（⏯）：注册成系统级全局热键，所以最小化/失焦/缩托盘都能响应。
 		//
 		// 放在这里而不是 main 的开头：热键回调会去调前端 togglePlay，
-		// 而前端要等界面装配完才挂得上监听（见 main.js#startMediaKeys）——
+		// 而前端要等界面装配完才挂得上监听（见 media-keys.js#startMediaKeys）——
 		// 注册得太早，早期那几次按键只会走「前端不在线」的退化分支。
 		startMediaKeys(state)
 	})

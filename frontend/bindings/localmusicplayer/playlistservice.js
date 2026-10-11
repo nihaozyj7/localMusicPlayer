@@ -17,6 +17,10 @@ import * as bootstrap$0 from "./internal/bootstrap/models.js";
 
 /**
  * AddSongs 批量加入歌单（去重）
+ * 
+ * 歌单 id 不存在时必须**报错**，不能返回 (0, nil)：调用方（前端）拿到
+ * added=0 会理解成「这些歌本来就在里面」，而真实原因是「后端根本没有这个歌单」，
+ * 于是内存里的歌单看着加进去了、config.json 里一首都没有。
  * @param {string} id
  * @param {string[] | null} songIDs
  * @returns {$CancellablePromise<number>}
@@ -82,6 +86,10 @@ export function Rename(id, name) {
 
 /**
  * Reorder 调整歌单内歌曲顺序（前端拖拽排序后调用，用于持久化）
+ * 
+ * 「我喜欢」的歌曲顺序存在 config.LikedIDs 而不是 Playlists 里，
+ * 这里必须单独处理：否则拖拽「我喜欢」的队列时后端静默什么都不做
+ * （队列里有歌单里没有的歌时，前端还会把这次拖拽写回歌单 —— 见 store#reorderQueue）。
  * @param {string} id
  * @param {number} $from
  * @param {number} to
@@ -92,7 +100,7 @@ export function Reorder(id, $from, to) {
 }
 
 /**
- * ReorderPlaylists 调整侧边栏歌单顺序
+ * ReorderPlaylists 调整侧边栏歌单顺序（from/to 为「不含我喜欢」的下标）
  * @param {number} $from
  * @param {number} to
  * @returns {$CancellablePromise<void>}

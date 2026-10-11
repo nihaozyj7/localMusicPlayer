@@ -632,7 +632,7 @@ async function main() {
   // 两边都发的话会重复请求 GitHub（匿名额度只有每小时 60 次）。
   loadUpdateState().catch(() => {});
 
-  // 预览模式下的进度模拟（真实播放时自动让位给 <audio> 事件）
+  // 预览模式下的进度模拟（真实播放时自动让位给后端锚点；legacy 回退时让位给 <audio> 事件）
   startMockTicker();
   startMockWatcher();
 

@@ -1,5 +1,11 @@
 # 09 · 前端 Lit 迁移方案
 
+> ⚠️ **这是迁移「之前」写的方案，迁移已完成。**
+> `§1 迁移前审查` 里描述的是**已不存在的旧实现**（`innerHTML` 拼接、`main.js#tick()`
+> 每帧跑 10 个 paint 函数、`backdrop.js` 等），**不要照着它去找文件或判断现状**；
+> 迁移结果与当前架构请看 `docs/10-Lit迁移报告.md` 与仓库根 `AGENTS.md` §4。
+> 本文保留的价值是「当时为什么这么设计」。
+
 > 目标：把主窗口前端（`frontend/src/js/**`）从「手写 innerHTML + 手工增量 diff」
 > 整体迁移到 **Lit 3**；主题（`styles/themes/*`）与播放界面样式插件
 > （`frontend/packages/player-skins`）**保持原样不重构**。
@@ -12,7 +18,7 @@
 
 | 层        | 文件                                                                                                                                                | 说明                                     |
 | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| 数据/服务 | `store.js`(1446) `bridge.js` `audio.js` `theme.js` `utils.js` `mock.js` `probe.js` `runtime-tokens.js` `backdrop.js` `desktop-*.js` `ai-vendors.js` | 与框架无关，**保留**                     |
+| 数据/服务 | `store.js`(1446) `bridge.js` `audio.js` `theme.js` `utils.js` `mock.js` `probe.js` `runtime-tokens.js` `desktop-*.js` `ai-vendors.js` | 与框架无关，**保留**（`backdrop.js` 后来被删除，不在此列） |
 | 皮肤宿主  | `playerhost.js`(1158)                                                                                                                               | 播放界面皮肤契约宿主，**保留**（插件域） |
 | 视图渲染  | `shell.js` `tracks.js` `playerbar.js` `settings.js` `lyrics-panel.js` `searchpanel.js` `coverpanel.js` `downloads.js` `playlists.js` `dom.js`       | HTML 字符串 + innerHTML 全量替换为主     |
 
@@ -63,6 +69,10 @@ syncPlaybackState / syncAudio / applyGainForSong`。
 ---
 
 ## 2. 目标架构
+
+> ⚠️ 下面这棵树里的 **`core/` / `host/` / `logic/` 只是当时规划的分组名，最终没有落成目录** ——
+> 迁移后的真实结构是「平铺模块 + 唯一子目录 `ui/`」，见 `docs/10-Lit迁移报告.md` §2。
+> `backdrop.js`、`slider.js` 等文件后来也有变动。这一段只作为「当时打算怎么分层」的记录。
 
 ```
 frontend/src/js/

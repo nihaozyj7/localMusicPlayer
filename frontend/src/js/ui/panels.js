@@ -76,8 +76,8 @@ const DESKTOP_MODE_OPTIONS = [
  *
  * 为什么等结果再提示、而不是点了就先说「已开启」：这两个模式都要真实创建
  * 窗口，而桌面背景歌词还依赖系统的桌面窗口结构 —— 它确实会失败。
- * 逻辑与 playerbar.js#toggleDesktopModeWithToast 相同，但那边绑死了
- * 「开关取反」的语义，三选一需要直接指定目标模式。
+ * 底栏那两个入口已经搬到这里（见 ui/panels.js 的桌面模式分段控件），所以现在
+ * 这是唯一实现；三选一需要直接指定目标模式，不是「开关取反」。
  */
 async function switchDesktopMode(mode) {
   const res = await applyDesktopMode(mode);

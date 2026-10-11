@@ -7,8 +7,9 @@
 
    渲染本身交给 Lit：菜单项、弹窗、Toast 列表全部是 lit-html 模板，
    增量更新（toast 文案刷新只改一个文本节点，不再重建节点）。
-   容器是三个常驻单例节点（#menu / #modal-backdrop / #toasts），
-   与迁移前 index.html 里的静态节点保持一致 —— 自检脚本按这些 id 查询。
+   容器是三个运行时创建的单例节点（#menu / #modal-backdrop / #toasts，见
+   ensureContainer）。它们的 **id 是稳定契约** —— 迁移前它们是 index.html 里的
+   静态节点，自检脚本按这些 id 查询，所以 id 一直没改（但节点本身早已不在 HTML 里）。
 
    注意：这里用 lit 的**同步 render()**（而不是 LitElement 的异步更新），
    因为调用方依赖「openModal 返回后 .modal 已经在 DOM 里」这个同步语义

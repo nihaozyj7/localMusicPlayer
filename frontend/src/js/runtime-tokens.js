@@ -2,13 +2,14 @@
    runtime-tokens.js — 运行时令牌覆盖
    --------------------------------------------------------------------------
    为什么需要它：
-     1. :root 上的行内自定义属性压不过 :root[data-theme] 里的主题令牌；
-     2. index.html 的 CSP 是 style-src 'self'，实测会拦截两类写法：
-          · 给 <style> 元素写 textContent / innerHTML
-          · <link rel=stylesheet href=blob:...>
-        但通过 CSSOM 的 sheet.insertRule() 写入规则是允许的。
+     1. 首帧主题是由 early_theme.go / index.html 的启动脚本**写成行内值**的，
+        行内声明的优先级高于任何普通样式表规则 —— 想要在运行时把它盖掉，
+        规则必须带 !important；
+     2. 运行时覆盖的入口收敛成一个（约定：改令牌一律走 setRuntimeToken，
+        不要散落地写 element.style），否则没有一处能统一回收所有覆盖项。
    做法：
-     创建一个空的 <style>，用 insertRule 往里面插 :root{--x:…!important} 规则。
+     创建一个空的 <style>，用 insertRule 往里面插 :root{--x:…!important} 规则；
+     已经有一条时**就地改属性**，不重建规则对象（原因见 flush 的注释）。
    ========================================================================== */
 
 const STYLE_ID = "runtime-tokens";
@@ -145,7 +146,7 @@ export function animationMs() {
 }
 
 /**
- * 通用：把一段 CSS 文本写进一个具名 <style>（用 insertRule，符合 CSP）
+ * 通用：把一段 CSS 文本写进一个具名 <style>（走 CSSOM 的 insertRule）
  * @param {string} id 样式元素 id
  * @param {string} css 规则文本，可含多条顶层规则
  */

@@ -178,7 +178,7 @@ function rootVar(name) {
      · --seed / --seed-2 会盖住主题自带的默认种子色。
 
    ★ 但**不能直接删掉就走人**。--seed 是封面取色主题的底色来源，而真正的种子色
-   要等封面解码完（primeCoverAccent / 主循环的 syncCoverAccent）才拿得到；直接
+   要等封面解码完（primeCoverAccent / runtime.js 调度下的 syncCoverAccent）才拿得到；直接
    删掉的话，中间这段空窗期主题会退回自己写死的占位灰，于是启动时又变成
    「上次保留的颜色 → 占位灰 → 真正的取色」三段 —— 就是修串味时引入的回退。
 
@@ -214,8 +214,8 @@ export const SEED_CONSUMER = "cover-dark";
    封面取色的「种子源」策略
    --------------------------------------------------------------------------
    取色是**主题能力**（只有声明了 --seed / --seed-2 的主题才消费它），所以
-   「拿哪个封面去取色、什么源不该取色」属于主题层，不属于主循环。主循环只负责
-   在合适的时机把封面地址交过来（见 main.js#syncCoverAccent）。
+   「拿哪个封面去取色、什么源不该取色」属于主题层，不属于渲染调度。调度交给
+   runtime.js 的依赖键，它负责在封面地址变化时调用 cover-accent.js#syncCoverAccent。
 
    唯一一条硬规则：**默认占位封面绝不取色**。那张内联 SVG 的主色是一个中性
    深灰（实测 #1d1d22），拿它写进 --seed 会同时造成两件坏事：
@@ -280,7 +280,7 @@ export async function applyResolvedTheme(config) {
 
   /* —— 种子色：粘住，而不是「先清空再等封面取色」 ——
      运行时令牌表一旦写进 --seed，就有 !important 优先级；而真正的取色结果要等
-     当前封面解码完（primeCoverAccent / 主循环的 syncCoverAccent）才写第二次。
+     当前封面解码完（primeCoverAccent / runtime.js 调度下的 syncCoverAccent）才写第二次。
      所以在它到来之前，种子里必须一直是「首帧脚本留下的那个上次取色结果」，
      中途清空就会闪回主题写死的占位灰（启动时闪一下就是这么来的）。
 

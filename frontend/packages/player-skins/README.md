@@ -97,7 +97,7 @@ ctx.defaultCover / ctx.themeId / ctx.mode
 | --- | --- | --- |
 | `mount` | 全量快照 | 挂载后立即一次 |
 | `song` / `media` / `lyrics` | 对应快照 | 换歌 / 封面轮播 / 歌词装载 |
-| `progress` | `{ position, duration, playing, lyricIndex }` | 已按帧节流 |
+| `progress` | `{ position, duration, playing, lyricIndex }` | 宿主约 4Hz 推一次（位置按 250ms 一档量化），插件需自行在两帧之间插值 |
 | `state` | `{ playing, volume, muted }` | 播放状态与音量 |
 | `options` / `theme` / `resize` / `visibility` / `chrome` | 对应对象 | 设置、主题、尺寸、前后台、壳层配色 |
 | `close` / `destroy` | — | 收起 / 即将卸载 |

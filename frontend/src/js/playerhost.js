@@ -762,7 +762,7 @@ function lyricsSnapshot(song) {
  * 变成了事实上的对外契约：以后想改内部字段都得先考虑皮肤。样式要用路径相关的
  * 能力就走 ctx.actions（openFolder 之类），不要把路径递出去。
  *
- * @param {{id?:string,title?:string,artist?:string,album?:string,duration?:number}|null} song
+ * @param {{id?:string,title?:string,artist?:string,album?:string,duration?:number,online?:boolean}|null} song
  */
 function trackView(song) {
   if (!song) return null;
@@ -772,6 +772,9 @@ function trackView(song) {
     artist: song.artist || "",
     album: song.album || "",
     duration: song.duration || 0,
+    // 契约 v3 的 SkinTrack.kind：插件据此给「在线试听」加标记，但拿不到 URL。
+    // store 给在线曲目打的是 online:true（见 store.js#registerOnlineSong）。
+    kind: song.online ? "online" : "local",
   };
 }
 
@@ -909,7 +912,19 @@ function ensureSkinHost() {
         },
         openFolder() {
           const song = currentSong();
-          if (song?.path) backend.revealInExplorer(song.path);
+          if (song?.path) {
+            // ★ 必须 catch。
+            //
+            // 这里原来是 fire-and-forget：文件已经被删掉（或盘符掉线）时，
+            // 后端 reject 就变成一条未处理的 promise 拒绝 —— 用户什么提示都没有，
+            // 控制台里只有 `Uncaught (in promise)`（而仓库的 cdp 自检脚本正是按
+            // 控制台报错判失败的）。曲目表的同名动作（tracks.js 的 reveal 分支）
+            // 是 await + 成功/失败提示。
+            //
+            // 这里不弹提示：playerhost 是**皮肤宿主契约**文件（见文件头的分层说明），
+            // 不引入 UI 提示通道，所以只把拒绝吃掉。
+            backend.revealInExplorer(song.path).catch(() => {});
+          }
         },
         openCoverPanel() {
           const song = currentSong();
@@ -1156,9 +1171,9 @@ function pushOptions() {
    v3 改成"插件声明、宿主决定"：
      · 插件在 skin.json 里给出 colors.bg / colors.fg（或声明 colors.theme）；
      · 宿主用 player-skins/colors.js 算出一小组 --chrome-*（对比度不足会纠正，
-       缺失就回落主题令牌），写在 #app 上；
+       缺失就回落主题令牌），写在 `<html>` 上；
      · 宿主壳（标题栏 / 底栏 / 浮层）只消费 --chrome-*，不读插件任何变量。
-   细节见 skinhost.applyChrome 与 doc/42 第 5 节。
+   细节见 skinhost.applyChrome 与 docs/42-播放器样式插件系统设计方案.md 第 5 节。
    ========================================================================== */
 
 /** 让宿主壳用/不用当前插件的配色（详情页开合时由 renderPlayerView 调用） */
@@ -1168,7 +1183,7 @@ export function syncChromeColors() {
 }
 
 /* ==========================================================================
-   渲染入口（由 main.js 每帧调用）
+   渲染入口（由 ui/playerview.js 在 store 广播与外壳重绘时调用）
    ========================================================================== */
 
 export async function renderPlayerView() {

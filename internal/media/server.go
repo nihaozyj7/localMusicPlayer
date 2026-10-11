@@ -176,10 +176,51 @@ func (s *Server) VirtualSong(id string) (bootstrap.Song, bool) {
 }
 
 // SetCacheDir 设置转码缓存目录（通常在数据目录下的 cache/transcode）
+//
+// ★ 顺带清掉上一次运行遗留的转码产物，理由有两层：
+//
+//  1. 缓存索引 s.cache 是**进程内**的，重启后为空，而磁盘上的 tc_*.wav 还在。
+//     LRU 只按内存里的记账淘汰，看不见这些文件 —— 于是磁盘占用会随每次运行
+//     累积（用户视角：「缓存占用」显示 0 字节，目录里却有几百 MB）。
+//  2. 这些产物本来也不会跨进程复用：ensureTranscoded 只查内存里的 map，
+//     重启后同一首歌照样重新转码（会覆盖同名文件）。所以删掉它们
+//     不损失任何功能，只是把「看不见的垃圾」清掉。
+//
+// 删除范围与 ClearCache 完全一致：只删 `tc_` 前缀的 .wav。cacheDir 是
+// 用户可配置的（设置界面里会展示它），指到音乐目录时绝不能碰别人的文件。
 func (s *Server) SetCacheDir(dir string) {
 	s.mu.Lock()
 	s.cacheDir = dir
 	s.mu.Unlock()
+	s.purgeStaleTranscodes()
+}
+
+// purgeStaleTranscodes 删除缓存目录里遗留的转码产物。
+//
+// 只在「本进程还没有任何转码」时执行：那时不可能有正在使用的产物，
+// 删除是安全的。SetCacheDir 在 main 里只于启动装配阶段调用一次。
+func (s *Server) purgeStaleTranscodes() {
+	dir := s.getCacheDir()
+	if dir == "" {
+		return
+	}
+	s.cacheMu.Lock()
+	empty := len(s.cache) == 0
+	s.cacheMu.Unlock()
+	if !empty {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return // 目录还不存在：没什么可清的
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".wav") || !strings.HasPrefix(name, "tc_") {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, name))
+	}
 }
 
 // SetLoudnessSink 注入「转码时顺手扫描」的接收者（main 装配时调用）。
@@ -633,8 +674,20 @@ func (s *Server) evictIfNeeded() {
 			}
 		}
 		list[i], list[oldest] = list[oldest], list[i]
+
+		// ★ 删成功之后才记账。
+		//
+		// 旧写法是 `total -= size; _ = os.Remove(path); delete(s.cache, key)` ——
+		// 删除错误被完全忽略，于是「文件被别的进程占着 / 权限不足 / 路径是个目录」
+		// 这类真实存在的失败会让服务**以为**它删掉了：磁盘上的文件还在占空间，
+		// 而记账已经减掉，预算从此永远算不够 —— 缓存目录会无声地涨到超预算，
+		// 且再也不会被淘汰（它已经不在 s.cache 里了）。
+		err := os.Remove(list[i].item.path)
+		if err != nil && !os.IsNotExist(err) {
+			// 删不掉：留着记账，下次再试（列表里后面的候选继续处理）
+			continue
+		}
 		total -= list[i].item.size
-		_ = os.Remove(list[i].item.path)
 		delete(s.cache, list[i].key)
 	}
 	s.cacheMu.Unlock()

@@ -43,7 +43,7 @@ class MpPlayerbar extends MpElement {
   //
   // 底栏模板里唯一的「位置相关」内容是 #time-current 的文本，而它已经在
   // updated() 里被直接写入（见那里）。把 position 放进 deps 的代价是：
-  // <audio>.timeupdate 约 4 次/秒 → notify → revalidate → 整个底栏模板重跑一遍
+  // 进度通知约每 500ms 一次（位置按 250ms 一档量化）→ notify → revalidate → 整个底栏模板重跑一遍
   // 并让 Lit 对全部 part 做一次 diff，而实际变化的只有那一个数字。
   // 这个文件开头就写过「迁移后 Lit 只更新变化的 part」，position 是唯一
   // 违反该设计的字段。移出之后进度刷新只剩「写一个文本节点 + 一次滑块样式」。

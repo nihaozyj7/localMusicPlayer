@@ -1,12 +1,13 @@
 // Package audioplay 提供原生播放链路里的实时频谱分析。
 //
-// 为什么要有这个包：前端用 Web Audio 的 AnalyserNode 做可视化（见
-// frontend/src/js/audio.js 的 spectrum()）。当播放走原生解码路径时，频谱就
-// 只能由 Go 侧算出来再推给前端。此时**输出的数值必须和浏览器里算出来的一致**，
-// 否则同一首歌在两条路径下会呈现出两种跳动幅度、两种分桶形状 —— 用户一眼就能
-// 看出来「切到原生播放画面就变了」。
+// 为什么要有这个包：可视化当初是前端用 Web Audio 的 AnalyserNode 算的
+// （那段现在只活在 legacy 回退路径里，见 frontend/src/js/audio.js 的
+// spectrumLegacy()）。主路径的音频由 Go 侧解码输出，频谱只能由 Go 侧算出来、
+// 由前端按需拉取（见 frontend/src/js/spectrum.js 与 PlayerService.Spectrum）。
+// 两条路径**输出的数值必须一致**，否则同一首歌会呈现出两种跳动幅度、两种分桶
+// 形状 —— 用户一眼就能看出来「切到原生播放画面就变了」。
 //
-// 所以本文件的唯一目标就是**逐语义复刻 audio.js#spectrum**，包括几个反直觉的
+// 所以本文件的唯一目标就是**逐语义复刻 audio.js#spectrumLegacy**，包括几个反直觉的
 // 细节（下面每处都单独说明）：
 //
 //   - fftSize = 512，可用幅度 bin 数 = frequencyBinCount = fftSize/2 = 256；
@@ -179,8 +180,8 @@ func toByte(db float64) uint8 {
    Analyzer
    -------------------------------------------------------------------------- */
 
-// Analyzer 保存频谱计算所需的滑动状态。**不保证并发安全**，锁由调用方持有
-// （典型用法：Write 在音频回调里、Spectrum 在 UI/推流线程里，外面套一把锁）。
+// Analyzer 保存频谱计算所需的滑动状态。**自带互斥锁**，Write / Spectrum
+// 可以并发调用（下面的 mu 字段说明了为什么必须这样）。
 type Analyzer struct {
 	// mu 保护全部字段。
 	//
@@ -421,7 +422,8 @@ func (a *Analyzer) smoothBytes() {
 //   - hi 的 max(lo+1, ...) 保证每个桶至少吃一个 bin。n 大于 bins 时（最多
 //     128 桶 vs 256 bin，暂时不会发生，但 fftSize 调小就会）后面的桶会重复
 //     取到同一个 bin，而不是出现空桶。
-//   - 指数是 1.7 而不是 2：这是前端的听感调参，改了两边的柱形就对不上。
+//   - 指数是 1.7 而不是 2：这是听感折中（权威定义见上面的 BucketExponent），
+//     legacy 回退路径沿用同一个数，改了两条路径的柱形就对不上。
 //   - 除以 (hi-lo)*255 得到 0..1，均值而不是和 —— 否则宽桶（高频）会因为
 //     累加的元素多而恒大于窄桶（低频），画面右半边永远满格。
 func (a *Analyzer) bucket(n int) {

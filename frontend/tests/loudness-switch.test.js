@@ -24,7 +24,7 @@
 
    本文件锁住这次修复的**核心不变量**（判定规则本身），不依赖浏览器环境：
    真实 audio.js 的端到端行为由无头浏览器自检负责
-   （node tools/check-audio.mjs / npm run verify:lit）。
+   （node tools/playtest.mjs / npm run verify:lit）。
    ========================================================================== */
 
 import test from "node:test";
@@ -143,7 +143,7 @@ test("播放中同一首歌的补偿从 0 变成 −8 时必须能推下去", ()
    的虚拟表兜底），而不是在前端把它挡在门外。
    -------------------------------------------------------------------------- */
 
-/** 与 audio.js#shouldRequestLoudness 同一判定（改源码时要同步这里） */
+/** 与 audio.js#requestLoudness 的入口判定一致（mode=off / 没有 songId 就直接返回；改源码时要同步这里） */
 function shouldRequestLoudness(song, mode = "track") {
   if (mode === "off" || !song?.id) return false;
   return true;

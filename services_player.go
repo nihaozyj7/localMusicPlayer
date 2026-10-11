@@ -67,7 +67,7 @@ const (
 const anchorIntervalMs = 500
 
 // spectrumMaxBands 是单次频谱请求允许的最大段数。
-// 与前端 audio.js#spectrum 的上限一致（那里是 1..128）。
+// 与前端 audio.js#spectrumLegacy 的上限一致（那里是 1..128）。
 const spectrumMaxBands = 128
 
 /* --------------------------------------------------------------------------
@@ -313,7 +313,7 @@ func (s *PlayerService) Load(songID string) (map[string]any, error) {
 	// 把它静音掉（丢缓冲 + 停 feeder，几微秒），用户在这一秒里听到的是
 	// **静音**，而不是上一首的尾巴。
 	//
-	// 实测（tools/probe-switch-cost.mjs，未命中转码缓存时 Load 的耗时）：
+	// 实测（未命中转码缓存时 Load 的耗时，本机曲库）：
 	//
 	//	踏浪                                    842ms
 	//	宅女disco                              1148ms
@@ -694,7 +694,7 @@ func (s *PlayerService) Spectrum(bands int) map[string]any {
 	// 而引擎返回的是内部复用的切片（下次调用会被覆盖），必须拷一份出去。
 	out := make([]float64, len(data))
 	for i, v := range data {
-		// 两位小数与前端一致（audio.js 推 spectrum 补丁时也是两位）
+		// 保留两位小数：池化后的浮点尾数对显示毫无意义，且省一半报文体积
 		out[i] = float64(int(v*100+0.5)) / 100
 	}
 	return map[string]any{"bands": out}
@@ -800,7 +800,7 @@ func (s *PlayerService) composeGainLocked() float64 {
 	if s.muted {
 		vol = 0
 	}
-	// 与前端 audio.js#targetGain 同一算法：线性 = 10^(dB/20)
+	// 与前端 audio.js#computeGain 同一算法：线性 = 10^(dB/20)
 	linear := math.Pow(10, s.loudnessGainDB/20)
 	return vol * linear
 }

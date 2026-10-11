@@ -145,7 +145,7 @@ func (m *Manager) Measure(ctx context.Context, song bootstrap.Song) (Measurement
 // Store 把一份已经算好的测量结果记进缓存（**不跑 ffmpeg**）。
 //
 // ★ 这是「零成本测量」的入口。转码播放链路在解码过程中顺手用纯 Go 的
-// BS.1770 实现算出了响度（见 internal/audioplay/pcm.go 与 media.Server），
+// BS.1770 实现算出了响度（见 internal/ffmpeg/loudnessscan.go 与 media.Server），
 // 算完把结果交到这里落库。相比「再起一个 ffmpeg 把整首歌解码一遍」，
 // 这条路径不额外读一次文件、不额外启一个进程、不额外占一个核。
 //
@@ -388,12 +388,20 @@ func (m *Manager) nextRequest() *Request {
 			r := q.urgent[0]
 			q.urgent = q.urgent[1:]
 			m.dropQueuedLocked(r)
+			// ★ 递减必须紧跟「出队」，不能放到 return 之前。
+			//
+			// q.inter 是「还有交互请求在排队」的计数，YieldIfPending() 靠它
+			// 让后台批量测量让路。旧写法只在真正返回这个请求时才递减，
+			// 于是**被取消的交互请求**会让计数永久留在 1 以上：
+			// YieldIfPending() 从此永远返回 true，MeasureAll（"测量整个曲库"）
+			// 会一直让路、一首都不再测 —— 用户看到的是「响度均衡点了一次
+			// 之后再也没有测过新歌」，而且重启才好。
+			if q.inter > 0 {
+				q.inter--
+			}
 			if r.cancelled {
 				close(r.Done)
 				continue
-			}
-			if q.inter > 0 {
-				q.inter--
 			}
 			return r
 		case len(q.queue) > 0:
@@ -416,9 +424,37 @@ func (m *Manager) dropQueuedLocked(r *Request) {
 	delete(m.q.queued, requestKey(r.Song))
 }
 
+// measureTimeout 是单次响度测量的上限。
+//
+// ★ 为什么必须有：runRequest 以前用的是 context.Background()，没有任何上限。
+// 一个让 ffmpeg 卡住的文件（损坏的容器、掉线的网络驱动器、被杀软锁住的文件）
+// 会**永久占住一个并发槽** —— 调度器从此凑不满并发，Submit 的调用方
+// （界面上的「测量中…」）永远等不到 Done，而且没有任何办法把它弄下来，
+// 只能重启进程。
+//
+// 上限取得很宽松：ebur128 实测约 20 倍实时（10 分钟的歌约 30 秒，
+// 2 小时的整轨有声书约 6 分钟）。10 分钟足够覆盖正常情况，又能在真卡死时
+// 把槽位收回来。
+//
+// 声明为变量而不是常量：测试要能在毫秒级验证「超时真的会释放槽位」。
+// 生产路径不会改它。
+var measureTimeout = 10 * time.Minute
+
+// measureContext 构造一次**排队测量**的上下文。
+//
+// 与调用方自己那个 ctx 的区别（见 Submit）：调用方的取消只作用于
+// 「还在排队」的请求；一旦真的跑起来，能把它停下来的只有这里的上限。
+func measureContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), measureTimeout)
+}
+
 // runRequest 真正执行一次测量并把结果落库。
 func (m *Manager) runRequest(r *Request) {
-	item, err := m.measureUncached(context.Background(), r.Song)
+	// ★ 必须用带上限的 ctx。写成 context.Background() 的话，
+	// 卡死的 ffmpeg 会把并发槽永久占住（见 measureTimeout 的说明）。
+	ctx, cancel := measureContext()
+	defer cancel()
+	item, err := m.measureUncached(ctx, r.Song)
 	r.Result, r.Err = item, err
 }
 

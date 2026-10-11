@@ -12,8 +12,8 @@
 
    这是业界事实标准（Web Audio 的 BiquadFilterNode、Equalizer APO、SoX、
    ffmpeg 的 equalizer 滤镜用的都是同一组公式）。用它的直接好处是：同一条
-   "清澈人声" 曲线在前端 Web Audio 路径与后端原生路径上算出来是**同一个
-   传递函数**，不会出现「切到原生播放声音就变了」。
+   "清澈人声" 曲线的系数与 Web Audio 的 BiquadFilterNode 同源，**可以对拍
+   验证**（音效本身由后端一路算到底，前端没有滤波器实现）。
 
    Q 与带宽的关系：peaking 用 Q 定义锐度，官方文档给的是
    Q = 1 / (2 * sinh(ln(2)/2 * BW * w0/sin(w0)))，本文件直接接受 Q ——

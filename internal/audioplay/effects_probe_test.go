@@ -26,7 +26,8 @@ func diagChain(p EffectPreset) *Chain {
 	// fadingOutIsA=false → activeChain == chainA
 	c.chainA.applyPreset(p)
 	snapCoeffs(&c.chainA.eq)
-	c.currentPreset = p
+	// 档位现在是整数编码的原子字段（跨线程交换用，见 presetCode）
+	c.currentPresetCode.Store(presetCode(p))
 	return c
 }
 

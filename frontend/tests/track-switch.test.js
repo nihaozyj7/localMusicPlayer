@@ -9,8 +9,8 @@
 
      t0  用户点下一首 → store 把 state.position 清零、currentId 换成新歌；
      t1  新歌的 playerLoad 还在跑（要等一次 IPC 往返与锁）；
-     t2  但 audio.js 里的 `anchor` 还是**旧歌**的 —— 后端的 tick 每 200ms
-         推一次锚点，外推也仍在按旧锚点算位置；
+     t2  但 audio.js 里的 `anchor` 还是**旧歌**的 —— 后端每 500ms
+         推一次锚点（anchorIntervalMs），外推也仍在按旧锚点算位置；
      t3  这些旧位置被写回 store，于是进度条的表现是
          「清零 → 跳回旧位置 → 再清零 → …」的横跳。
 

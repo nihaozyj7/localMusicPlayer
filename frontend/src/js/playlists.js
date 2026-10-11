@@ -30,11 +30,13 @@ export function promptNewPlaylist(onDone) {
     desc: "歌单名称可以随时修改。",
     body: html`<input class="input" data-field="name" type="text" placeholder="例如：深夜循环" maxlength="40" />`,
     okText: "创建",
-    onOk: (values) => {
+    // async：真实后端下 id 由后端生成，要等它回来才入库（见 store#createPlaylist）
+    onOk: async (values) => {
       const name = String(values.name || "").trim();
       if (!name) return "请输入歌单名称";
       if (state.playlists.some((p) => p.name === name)) return "已存在同名歌单";
-      const pl = createPlaylist(name);
+      const pl = await createPlaylist(name);
+      if (!pl) return "新建歌单失败，请查看提示";
       onDone?.(pl);
       toast(`已创建歌单「${name}」`, { tone: "success" });
       return true;

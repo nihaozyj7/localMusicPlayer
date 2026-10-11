@@ -40,6 +40,19 @@ var ErrUnsupported = errors.New("该格式暂不支持写入元数据")
 //     不动音频数据、不重新编码；
 //   - flac（PICTURE metadata block）：本包重写 metadata 区块。
 //
+// ★ 关于「不动偏移」这条约束（不变量 #12）在 m4a 上的准确含义：
+//
+//	音频数据与**绝对偏移的语义**都不改 —— 改的是偏移的数值。当 moov 位于
+//	mdat 之前（`-movflags +faststart`、iTunes「优化」过的 m4a）时，往 moov 里
+//	插入任何字节都会让后面的 mdat 整体后移，此时 stco/co64 里记录的绝对偏移
+//	**必须**加上同样的 delta，否则解码器会从错误位置取数据（实测：moov 增长
+//	4096 字节后，3 秒的 faststart m4a 一个字节都解不出来）。
+//	换句话说：不改偏移 = 写坏文件；改偏移才是「不改动任何偏移」本意里的
+//	「不改动音频数据在文件中的相对组织」。见 mp4Commit。
+//
+//	一旦遇到本包无法安全同步的布局（分片 fMP4 的 moof/mfra、iloc/saio 等
+//	别的绝对偏移载体、32 位偏移溢出），一律返回错误并**放弃写入**。
+//
 // 其他格式（mp3 / wav / ogg / ape / wma / dsf）返回 ErrUnsupported ——
 // 内置的精简 ffmpeg 只编进了 wav/flac/null 三个封装器，无法通用 remux，
 // 所以这里宁可明确说"不支持"，也不要写坏用户的文件。
@@ -48,6 +61,10 @@ func EmbedCover(path, mime string, data []byte) (EmbedResult, error) {
 }
 
 // EmbedLyrics 只把歌词写入音频文件自身的标签，不动封面。
+//
+// 「不动封面」是字面承诺：m4a 只在真要写封面时才把 covr 放进 drop 集合，
+// FLAC 也只在 covers 非空时才丢弃旧的 PICTURE（见 embedMetaFLAC）——
+// 之前 FLAC 那条路径是无条件丢弃，于是「只写歌词」会把内嵌封面全删掉。
 func EmbedLyrics(path, lyrics string) (EmbedResult, error) {
 	return EmbedMeta(path, "", nil, lyrics)
 }
@@ -238,18 +255,30 @@ func embedMetaMP4(path string, covers []CoverImage, lyrics string, tags TextTags
 	atoms = append(atoms, buildMP4TextAtoms(tags)...)
 	note := metaNote(covers, lyrics, tags)
 
-	// moov 的载荷：从 moovStart+8 到 moovEnd
-	moovPayload := raw[moovStart+8 : moovEnd]
-	udta := findChildAbs(raw, moovStart+8, moovEnd, "udta")
+	// moov 的载荷起点：必须由 boxSizeAt 给出，不能写死 moovStart+8 ——
+	// size==1 表示 64 位长度（头 16 字节），裸算会让后面所有偏移错 8 字节。
+	moovPayloadAt, _, ok := boxSizeAt(raw, moovStart, len(raw), "moov")
+	if !ok {
+		return EmbedResult{}, errors.New("moov box 长度非法，已放弃写入以免损坏文件")
+	}
+	// 头长（8 或 16）在重建时**原样保留**：把 64 位头改写成 8 字节头是合法的，
+	// 但会让"头是 16 字节"的既有假设在别处失效；反过来把短头硬写成 16 字节头
+	// 更没必要。保留原形是最不容易出错的做法。
+	moovHeaderLen := moovPayloadAt - moovStart
+	moovPayload := raw[moovPayloadAt:moovEnd]
+
+	// ★ 下面每一条分支都以「重建整个 moov」收尾，再交给 mp4Commit 落盘。
+	//
+	// 为什么不能只替换最内层那个 box（历史实现有两条分支是这么干的）：
+	// udta / meta / ilst 每一层的 size 字段都必须跟着改。只改最内层的话，
+	// 外层声明的长度比实际短，解析器走完声明长度后会把**多出来的字节当成
+	// 新的顶层 box** —— 结果是标签（含刚写进去的封面）整块读不出来。
+	udta := findChildAbs(raw, moovPayloadAt, moovEnd, "udta")
 	if udta < 0 {
 		// 没有 udta：整个 moov 载荷末尾追加 udta/meta/ilst
-		newUdta := box("udta", boxFull("meta", box("ilst", atoms)))
-		body := append(append([]byte{}, moovPayload...), newUdta...)
-		out := spliceBox(raw, moovStart, moovEnd, append(boxHeader("moov", len(body)+8), body...))
-		if err := writeFileAtomic(path, out); err != nil {
-			return EmbedResult{}, err
-		}
-		return EmbedResult{OK: true, Message: note, Bytes: len(out)}, nil
+		body := append(append([]byte{}, moovPayload...), box("udta", boxFull("meta", box("ilst", atoms)))...)
+		newMoov := append(mp4BoxHeader("moov", len(body)+moovHeaderLen, moovHeaderLen == 16), body...)
+		return mp4Commit(path, raw, moovStart, moovEnd, newMoov, note, moovEnd)
 	}
 
 	// ★ 这里必须用 boxSizeAt 而不是裸读 4 字节再加法。
@@ -260,19 +289,20 @@ func embedMetaMP4(path string, covers []CoverImage, lyrics string, tags TextTags
 	// 就会得到 `slice bounds out of range [:2147483632] with capacity N` —— panic。
 	// 而这条调用链（services_cover.go 的写回封面）全程没有 recover()，
 	// 于是一个坏标签就能让整个应用崩掉。boxSizeAt 内部已做全量边界校验。
-	_, udtaEnd, ok := boxSizeAt(raw, udta, moovEnd, "udta")
+	udtaPayloadAt, udtaEnd, ok := boxSizeAt(raw, udta, moovEnd, "udta")
 	if !ok {
 		return EmbedResult{}, errors.New("udta box 长度非法，已放弃写入以免损坏文件")
 	}
-	meta := findChildAbs(raw, udta+8, udtaEnd, "meta")
+	moovBox := raw[moovStart:moovEnd]
+	udtaBox := raw[udta:udtaEnd]
+	meta := findChildAbs(raw, udtaPayloadAt, udtaEnd, "meta")
 	if meta < 0 {
-		newMeta := boxFull("meta", box("ilst", atoms))
-		body := append(append([]byte{}, raw[udta+8:udtaEnd]...), newMeta...)
-		out := spliceBox(raw, udta, udtaEnd, append(boxHeader("udta", len(body)+8), body...))
-		if err := writeFileAtomic(path, out); err != nil {
-			return EmbedResult{}, err
-		}
-		return EmbedResult{OK: true, Message: note, Bytes: len(out)}, nil
+		// udta 里还没有 meta：在 udta 载荷末尾追加，然后自内向外重算 udta 与 moov
+		udtaHeaderLen := udtaPayloadAt - udta
+		udtaPayload := append(append([]byte{}, raw[udtaPayloadAt:udtaEnd]...), boxFull("meta", box("ilst", atoms))...)
+		newUdta := append(mp4BoxHeader("udta", len(udtaPayload)+udtaHeaderLen, udtaHeaderLen == 16), udtaPayload...)
+		newMoov := mp4ReplaceChild(moovBox, udta-moovStart, udtaEnd-moovStart, newUdta)
+		return mp4Commit(path, raw, moovStart, moovEnd, newMoov, note, udtaEnd)
 	}
 
 	// meta 是「完整 box」：4 字节版本/标志 + 子 box。
@@ -281,9 +311,8 @@ func embedMetaMP4(path string, covers []CoverImage, lyrics string, tags TextTags
 	if !ok {
 		return EmbedResult{}, errors.New("meta box 长度非法，已放弃写入以免损坏文件")
 	}
-	// meta 头是 12 字节（8 字节 box 头 + 4 字节版本/标志）。boxSizeAt 返回的
-	// metaBody 是按 8 字节头算的，且 size==1 时头是 16 —— 这里只接受 8/16 两种
-	// 形态，否则说明结构不是我们能安全改写的布局。
+	metaHeaderLen := metaBody - meta
+	// meta 头是 headerLen + 4 字节版本/标志
 	metaInner := metaBody + 4
 	if metaInner > metaEnd {
 		return EmbedResult{}, errors.New("meta box 结构异常，已放弃写入以免损坏文件")
@@ -291,13 +320,12 @@ func embedMetaMP4(path string, covers []CoverImage, lyrics string, tags TextTags
 	ilst := findChildAbs(raw, metaInner, metaEnd, "ilst")
 	if ilst < 0 {
 		inner := append(append([]byte{}, raw[metaInner:metaEnd]...), box("ilst", atoms)...)
-		newMeta := append(boxHeader("meta", len(inner)+12), 0, 0, 0, 0)
+		newMeta := mp4BoxHeader("meta", len(inner)+4+metaHeaderLen, metaHeaderLen == 16)
+		newMeta = append(newMeta, 0, 0, 0, 0)
 		newMeta = append(newMeta, inner...)
-		out := spliceBox(raw, meta, metaEnd, newMeta)
-		if err := writeFileAtomic(path, out); err != nil {
-			return EmbedResult{}, err
-		}
-		return EmbedResult{OK: true, Message: note, Bytes: len(out)}, nil
+		newUdta := mp4ReplaceChild(udtaBox, meta-udta, metaEnd-udta, newMeta)
+		newMoov := mp4ReplaceChild(moovBox, udta-moovStart, udtaEnd-moovStart, newUdta)
+		return mp4Commit(path, raw, moovStart, moovEnd, newMoov, note, metaEnd)
 	}
 
 	// ilst 已存在：只为「这次真的要写」的条目做替换，剩下的原样保留。
@@ -324,24 +352,198 @@ func embedMetaMP4(path string, covers []CoverImage, lyrics string, tags TextTags
 	newIlst := append(boxHeader("ilst", len(filtered)+8), filtered...)
 
 	// 自内向外重算：ilst → meta → udta → moov
-	newMetaPayload := append(append([]byte{}, raw[meta+12:ilst]...), newIlst...)
-	newMetaPayload = append(newMetaPayload, raw[ilstEnd:metaEnd]...)
-	newMeta := append(boxHeader("meta", len(newMetaPayload)+12), 0, 0, 0, 0)
-	newMeta = append(newMeta, newMetaPayload...)
+	newMeta := mp4ReplaceChild(raw[meta:metaEnd], ilst-meta, ilstEnd-meta, newIlst)
+	newUdta := mp4ReplaceChild(udtaBox, meta-udta, metaEnd-udta, newMeta)
+	newMoov := mp4ReplaceChild(moovBox, udta-moovStart, udtaEnd-moovStart, newUdta)
+	return mp4Commit(path, raw, moovStart, moovEnd, newMoov, note, ilst)
+}
 
-	newUdtaPayload := append(append([]byte{}, raw[udta+8:meta]...), newMeta...)
-	newUdtaPayload = append(newUdtaPayload, raw[metaEnd:udtaEnd]...)
-	newUdta := append(boxHeader("udta", len(newUdtaPayload)+8), newUdtaPayload...)
+// mp4BoxHeader 生成 box 头：wide 为 true 时写 16 字节（size==1 + 64 位长度）。
+func mp4BoxHeader(kind string, size int, wide bool) []byte {
+	if !wide {
+		return boxHeader(kind, size)
+	}
+	out := make([]byte, 16)
+	binary.BigEndian.PutUint32(out[0:4], 1)
+	copy(out[4:8], kind)
+	binary.BigEndian.PutUint64(out[8:16], uint64(size))
+	return out
+}
 
-	newMoovPayload := append(append([]byte{}, raw[moovStart+8:udta]...), newUdta...)
-	newMoovPayload = append(newMoovPayload, raw[udtaEnd:moovEnd]...)
-	newMoov := append(boxHeader("moov", len(newMoovPayload)+8), newMoovPayload...)
+// mp4ReplaceChild 把 parent（一个独立的 box 字节切片）里的 [childStart,childEnd)
+// 换成 replacement，返回**重算过长度头的 parent**。
+//
+// childStart/childEnd 是相对 parent 起点的下标。用它可以把
+// 「前缀 + 替换 + 后缀 + 重算长度」四步收在一处 —— 手写这四步时最容易漏掉
+// 某一层的长度字段（历史实现就是这么错的）。父 box 的 8/16 字节头形原样保留。
+func mp4ReplaceChild(parent []byte, childStart, childEnd int, replacement []byte) []byte {
+	headerLen := 8
+	if binary.BigEndian.Uint32(parent[0:4]) == 1 {
+		headerLen = 16
+	}
+	payload := append([]byte{}, parent[headerLen:childStart]...)
+	payload = append(payload, replacement...)
+	payload = append(payload, parent[childEnd:]...)
+	return append(mp4BoxHeader(string(parent[4:8]), len(payload)+headerLen, headerLen == 16), payload...)
+}
 
+// mp4Commit 把新的 moov 写进文件、修正受影响的 chunk 偏移，然后原子落盘。
+//
+// shiftFrom 是「新文件里第一个可能与原文件位置不同的字节」在原文件中的偏移：
+// 在它之前的字节逐字节保留，在它之后的字节整体平移 delta（delta 可正可负）。
+//
+// ★ 为什么必须修正 chunk 偏移（stco / co64）：
+//
+//	stco/co64 记录的是**相对文件起始的绝对偏移**。当 moov 位于 mdat 之前
+//	（`-movflags +faststart`、iTunes「优化」过的 m4a 都是这种布局）时，moov 一变长
+//	后面的 mdat 与所有 chunk 就整体后移，而偏移值不会自己跟着变 —— 解码器从错误
+//	位置取数据，用户的音乐文件被永久写坏。
+//
+//	实测（3 秒 440Hz 的 faststart m4a，只在 moov 末尾插入 4096 字节）：
+//	原文件解出 529200 字节 PCM，改动后的文件**一个字节都解不出来**，
+//	ffmpeg 报 `channel element 0.0 is not allocated` / `Decode error rate 1 …`。
+//
+// 任何修正不了的情况（分片文件、iloc/saio 等别的绝对偏移载体、32 位溢出）
+// 都在这里返回错误并**放弃写入** —— 宁可不写标签，也不能赌一把写坏用户的文件。
+func mp4Commit(path string, raw []byte, moovStart, moovEnd int, newMoov []byte, note string, shiftFrom int) (EmbedResult, error) {
+	delta := int64(len(newMoov) - (moovEnd - moovStart))
 	out := spliceBox(raw, moovStart, moovEnd, newMoov)
+	if delta != 0 {
+		// 顶层的 moof / mfra 里也存着绝对偏移（tfhd 的 base_data_offset、
+		// trun 的 data_offset、tfra 指向 moof 的位置），分片布局本包不处理。
+		if err := mp4RejectTopLevelRewriters(out); err != nil {
+			return EmbedResult{}, fmt.Errorf("写标签会让音频 chunk 偏移失效（%w），已放弃写入以免损坏文件", err)
+		}
+		if err := mp4ShiftChunkOffsets(out[moovStart:moovStart+len(newMoov)], shiftFrom, delta); err != nil {
+			return EmbedResult{}, fmt.Errorf("写标签会让音频 chunk 偏移失效（%w），已放弃写入以免损坏文件", err)
+		}
+	}
 	if err := writeFileAtomic(path, out); err != nil {
 		return EmbedResult{}, err
 	}
 	return EmbedResult{OK: true, Message: note, Bytes: len(out)}, nil
+}
+
+// mp4RejectTopLevelRewriters 在顶层找「带绝对偏移、但本包不同步」的 box。
+func mp4RejectTopLevelRewriters(raw []byte) error {
+	for off := 0; off+8 <= len(raw); {
+		_, end, ok := boxSizeAt(raw, off, len(raw), "")
+		if !ok || end <= off {
+			return errors.New("顶层 box 长度非法")
+		}
+		switch string(raw[off+4 : off+8]) {
+		case "moof", "mfra":
+			return fmt.Errorf("文件是分片（fMP4）布局，存在 %s", string(raw[off+4:off+8]))
+		}
+		off = end
+	}
+	return nil
+}
+
+// mp4ContainerBoxes 是「载荷里还是 box」的容器，mp4ShiftChunkOffsets 需要下探它们。
+//
+// 只列已知容器是**故意**的：把任意 box 都当容器去解析，会把叶子 box 的载荷
+// 误读成一串 box，从而在错误的偏移上"找到"stco 并改写无关字节。
+var mp4ContainerBoxes = map[string]bool{
+	"moov": true, "trak": true, "mdia": true, "minf": true, "stbl": true,
+	"udta": true, "meta": true, "dinf": true, "edts": true, "mvex": true,
+	"traf": true, "mfra": true, "tref": true, "gmhd": true,
+}
+
+// mp4ShiftChunkOffsets 在 moov 缓冲区里平移所有 >= threshold 的 chunk 绝对偏移。
+func mp4ShiftChunkOffsets(moov []byte, threshold int, delta int64) error {
+	body, end, ok := boxSizeAt(moov, 0, len(moov), "moov")
+	if !ok {
+		return errors.New("moov 结构异常")
+	}
+	return mp4ShiftBoxRegion(moov, body, end, threshold, delta)
+}
+
+// mp4ShiftBoxRegion 遍历 [from,to) 里的同级 box，处理 / 拒绝其中的绝对偏移。
+func mp4ShiftBoxRegion(buf []byte, from, to int, threshold int, delta int64) error {
+	for off := from; off+8 <= to; {
+		payloadAt, end, ok := boxSizeAt(buf, off, to, "")
+		if !ok || end <= off {
+			return errors.New("box 长度非法")
+		}
+		kind := string(buf[off+4 : off+8])
+		switch {
+		case kind == "stco":
+			if err := mp4ShiftStco(buf, payloadAt, end, threshold, delta); err != nil {
+				return err
+			}
+		case kind == "co64":
+			if err := mp4ShiftCo64(buf, payloadAt, end, threshold, delta); err != nil {
+				return err
+			}
+		case kind == "moof" || kind == "iloc" || kind == "saio" || kind == "stsh" ||
+			kind == "sidx" || kind == "tfhd":
+			// 这些结构里还有别的绝对偏移（或它们本身意味着分片布局），
+			// 本包不同步它们，所以放弃写入。
+			return fmt.Errorf("文件里存在 %s，其中还有需要同步的偏移，本包不处理", kind)
+		case mp4ContainerBoxes[kind]:
+			childFrom := payloadAt
+			if kind == "meta" {
+				childFrom += 4 // meta 载荷前有 4 字节版本 / 标志
+			}
+			if childFrom <= end {
+				if err := mp4ShiftBoxRegion(buf, childFrom, end, threshold, delta); err != nil {
+					return err
+				}
+			}
+		}
+		off = end
+	}
+	return nil
+}
+
+// mp4ShiftStco 就地平移 stco（32 位）里的 chunk 偏移。
+//
+// 布局：4 字节版本/标志 + 4 字节条目数 + N × 4 字节偏移。
+func mp4ShiftStco(buf []byte, payloadAt, end, threshold int, delta int64) error {
+	if payloadAt+8 > end {
+		return errors.New("stco 长度不足")
+	}
+	count := int(binary.BigEndian.Uint32(buf[payloadAt+4 : payloadAt+8]))
+	pos := payloadAt + 8
+	if count < 0 || pos+count*4 > end {
+		return errors.New("stco 条目数越界")
+	}
+	for i := 0; i < count; i++ {
+		cur := int64(binary.BigEndian.Uint32(buf[pos : pos+4]))
+		if cur >= int64(threshold) {
+			next := cur + delta
+			if next < 0 || next > 0xFFFFFFFF {
+				return errors.New("chunk 偏移平移后超出 32 位范围")
+			}
+			binary.BigEndian.PutUint32(buf[pos:pos+4], uint32(next))
+		}
+		pos += 4
+	}
+	return nil
+}
+
+// mp4ShiftCo64 就地平移 co64（64 位）里的 chunk 偏移。
+func mp4ShiftCo64(buf []byte, payloadAt, end, threshold int, delta int64) error {
+	if payloadAt+8 > end {
+		return errors.New("co64 长度不足")
+	}
+	count := int(binary.BigEndian.Uint32(buf[payloadAt+4 : payloadAt+8]))
+	pos := payloadAt + 8
+	if count < 0 || pos+count*8 > end {
+		return errors.New("co64 条目数越界")
+	}
+	for i := 0; i < count; i++ {
+		cur := binary.BigEndian.Uint64(buf[pos : pos+8])
+		if cur >= uint64(threshold) {
+			if delta < 0 && uint64(-delta) > cur {
+				return errors.New("chunk 偏移平移后为负")
+			}
+			binary.BigEndian.PutUint64(buf[pos:pos+8], cur+uint64(delta))
+		}
+		pos += 8
+	}
+	return nil
 }
 
 // filterIlst 复制 ilst 里不需要重建的条目（drop 里的条目会被丢掉）。
@@ -620,6 +822,12 @@ const (
 	flacBlockStreamInfo    = 0
 	flacBlockVorbisComment = 4
 	flacBlockPicture       = 6
+	// flacBlockInvalid 是规范里**保留的非法类型**（127）。出现它说明前面
+	// 那些「块」根本不是在按 FLAC 的 metadata 结构走，多半是容器坏了。
+	flacBlockInvalid = 127
+	// flacStreamInfoLen 是 STREAMINFO 的固定长度：规范规定它恰好 34 字节，
+	// 且**必须是第一个 metadata 块**。
+	flacStreamInfoLen = 34
 )
 
 func embedMetaFLAC(path string, covers []CoverImage, lyrics string, tags TextTags) (EmbedResult, error) {
@@ -640,6 +848,7 @@ func embedMetaFLAC(path string, covers []CoverImage, lyrics string, tags TextTag
 	vendor := ""             // 原有的 vendor 标识，写回时原样保留
 	seenComment := false     // 是否已经遇到过 VORBIS_COMMENT 块
 	off := 4
+	blockIndex := 0
 	for {
 		if off+4 > len(raw) {
 			return EmbedResult{}, errors.New("FLAC metadata 不完整")
@@ -652,13 +861,40 @@ func embedMetaFLAC(path string, covers []CoverImage, lyrics string, tags TextTag
 		if off+length > len(raw) {
 			return EmbedResult{}, errors.New("FLAC metadata 长度越界")
 		}
+		// ★ 结构校验：规范要求第一个 metadata 块是 STREAMINFO（类型 0）且
+		// 长度恰好 34 字节；类型 127 是保留的非法值。
+		//
+		// 为什么必须在**写回之前**挡住：本函数是「重建整个 metadata 区」，
+		// 如果第一个块不是 STREAMINFO（截断的文件、被别的工具改坏的容器、
+		// 只是前四个字节凑巧是 "fLaC" 的别的东西），重写出来的文件必然无法播放，
+		// 而音频帧是原样拷贝的 —— 用户会把「文件坏了」记在这次写标签上，
+		// 却完全查不出原因。宁可不写。
+		if blockIndex == 0 && (kind != flacBlockStreamInfo || length != flacStreamInfoLen) {
+			return EmbedResult{}, errors.New("FLAC 的第一个 metadata 块不是 STREAMINFO，已放弃写入以免损坏文件")
+		}
+		if kind == flacBlockInvalid {
+			return EmbedResult{}, errors.New("FLAC metadata 里出现保留的非法块类型（127），已放弃写入以免损坏文件")
+		}
 		body := raw[off : off+length]
 		off += length
+		blockIndex++
 
 		switch {
 		case kind == flacBlockPicture:
-			// 丢掉旧的 PICTURE（同一张封面重复写入时不堆叠），
-			// 稍后按 cover 是否有内容决定要不要重新加回去
+			// ★ 只有「这次真的要写封面」才丢掉旧的 PICTURE（同一张封面重复写入
+			// 时不堆叠，稍后按 covers 重新加回去）。
+			//
+			// 反过来 —— 这次不写封面（EmbedLyrics / EmbedTextTags，covers == nil）
+			// 时必须**原样保留**：空字段的语义是「这次没有要写的内容」，不是
+			// 「把文件里原来的值删掉」（见文件头与 TextTags 的说明）。
+			//
+			// 这里曾经无条件丢弃，于是「只写歌词」会把 FLAC 里全部内嵌封面
+			// （正面 / 背面 / 盘面）静默删掉 —— 而 EmbedLyrics 的注释当时还写着
+			// 「不动封面」。m4a 那条路径一直有 `if len(covers) > 0` 的对称保护
+			// （见 embedMetaMP4 的 drop 集合），只有这里漏了。
+			if len(covers) == 0 {
+				blocks = append(blocks, block{kind: kind, body: body})
+			}
 		case kind == flacBlockVorbisComment:
 			// 记下原有注释（TITLE / ARTIST…），稍后与新的 LYRICS 合并重写。
 			//
@@ -717,6 +953,14 @@ func embedMetaFLAC(path string, covers []CoverImage, lyrics string, tags TextTag
 			flag |= 0x80
 		}
 		length := len(b.body)
+		// ★ FLAC 的块长度字段只有 24 位（最大 16MB - 1）。
+		// 超了不能截断着写：声明长度小于真实长度会让后面所有块与音频帧
+		// 的定位全部错位，写出来的文件无法解析。宁可明确放弃。
+		// （metacache 侧的封面单张限 6MB，走不到这里；但 EmbedCovers /
+		// EmbedLyrics 是导出 API，歌词文本没有任何大小上限。）
+		if length > 0xFFFFFF {
+			return EmbedResult{}, fmt.Errorf("单个 FLAC metadata 块 %d 字节超过 16MB 上限，已放弃写入", length)
+		}
 		out = append(out, flag, byte(length>>16), byte(length>>8), byte(length))
 		out = append(out, b.body...)
 	}

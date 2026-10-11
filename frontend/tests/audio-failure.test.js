@@ -26,7 +26,7 @@
 
    本文件用**同一套判定规则**模拟这台状态机（audio.js 依赖 DOM，无法在
    node:test 里直接 import）。真实端到端行为由无头浏览器自检负责
-   （node tools/check-audio.mjs / tools/playtest.mjs）。
+   （node tools/playtest.mjs / tools/verify-playback-failure.mjs）。
    改 audio.js 里那段逻辑时这里要跟着改 —— 对不上就说明规则被动了。
    ========================================================================== */
 

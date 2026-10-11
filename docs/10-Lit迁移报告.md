@@ -26,19 +26,18 @@
 
 ## 2. 迁移后的目录结构
 
-`@
-frontend/src/js/
-├── core（与框架无关，基本未动）
-│   store.js  bridge.js  utils.js  mock.js  runtime-tokens.js
-│   audio.js  theme.js  backdrop.js  desktop-mode.js  desktop-wallpaper.js
-│   ai-vendors.js  probe.js  slider.js  cover-accent.js(新)  runtime.js(新)
-├── host（插件宿主，保持契约）
-│   playerhost.js
-├── logic（业务动作，渲染已剥离）
-│   shell.js  tracks.js  playlists.js  settings.js
-│   dom.js(兼容层)  coverpanel.js(兼容层)  searchpanel.js(兼容层)
-│   lyrics-panel.js(兼容层)  downloads.js
-└── ui（Lit 组件，本次全部新增）
+```
+frontend/src/js/             ★ ui/ 是唯一的子目录，其余模块平铺在这一层
+├── 状态与桥       store.js  bridge.js  runtime-tokens.js
+├── 播放链路       audio.js  spectrum.js  media-keys.js  desktop-lyrics.js
+│                  desktop-wallpaper.js  desktop-mode.js  cover-accent.js  theme.js
+├── 宿主（契约）   playerhost.js（播放详情页宿主）  skinhost.js
+├── 副作用调度     runtime.js（与渲染无关的同步，250ms 一档）  probe.js  mock.js
+├── 业务动作       shell.js  tracks.js  playlists.js  settings.js  playerbar.js
+│                  dom.js  coverpanel.js  searchpanel.js  lyrics-panel.js  downloads.js
+│                  utils.js  slider.js  ai-vendors.js  provider-names.js  about-info.js
+├── 独立窗口页     desktop-lyrics-window.js  desktop-wallpaper-window.js
+└── ui/（Lit 组件，light DOM）
     base.js              MpElement 基类（light DOM + 依赖数组响应）
     overlays.js          菜单 / 弹窗 / Toast / Tooltip
     app.js               <mp-app> 根组件
@@ -49,13 +48,21 @@ frontend/src/js/
     playerbar.js         <mp-playerbar>
     panels.js            队列 / 选项 / 定时 / 下载 四个浮层
     playerview.js        <mp-playerview>（皮肤宿主外壳）
-    settings-view.js     <mp-settings-layer>
+    settings-view.js     <mp-settings-layer>（★ 分组选中态 _activeSection 在这里）
     lyrics.js            <mp-lyrics-panel>（歌词工作台）
     search.js            <mp-search-overlay>
     cover.js             <mp-cover-layer>
+    add-songs.js         歌单批量添加浮层
     floating-lyrics.js   <mp-floating-lyrics>（预览降级）
     desktop-lyrics.js    <mp-desktop-lyrics>（桌面歌词窗口）
-`@
+    effect-presets.js / lyric-size.js   音效档位与歌词字号的小控件
+```
+
+> ⚠️ **不要去找 `core/`、`host/`、`logic/` 这三个目录 —— 它们从来没有被建出来。**
+> 早期版本的本文（和 `AGENTS.md`）把它们画成了目录树的分支，那只是**文档里的分类**；
+> 迁移当天用 `git ls-tree <迁移提交>:frontend/src/js` 看到的就已经是「平铺模块 + 唯一
+> 子目录 `ui/`」。照旧版去 `core/store.js` 找文件一定找不到。
+> `backdrop.js` 也在迁移后被删除了（它曾是 `core` 组的一员）。
 
 ## 3. 关键设计决策
 
@@ -78,9 +85,9 @@ frontend/src/js/
 多选状态 / 曲库长度 …），漏加字段就是「设置改了界面不动」的 BUG。
 每个组件现在声明自己真正依赖的原始值：
 
-`@js
+```js
 static deps = (s) => [s.view, s.visibleVersion, s.currentId, s.playing, /* … */];
-`@
+```
 
 store 广播时逐项 `===` 比较，只有变了才 `requestUpdate()`。
 组件之外的变化源（下载任务、皮肤注册表、歌词缓存、封面候选）通过
@@ -91,9 +98,9 @@ store 广播时逐项 `===` 比较，只有变了才 `requestUpdate()`。
 `tracks.js` 里近 200 行的 `tableStates(WeakMap)` + 字段快照 +
 `patchRowEl` + `reconcileRows` 全部删除，换成：
 
-`@js
+```js
 repeat(songs, (song) => song.id, (song, i) => this.rowTemplate(song, i, mode))
-`@
+```
 
 换歌只改 `aria-current` / `data-playing`，封面变化时才换 `img.src`
 （且仍保留「先在游离 Image 上预加载再替换」的防闪白处理，见 `coverSrc` 指令）。
@@ -157,13 +164,13 @@ repeat(songs, (song) => song.id, (song, i) => this.rowTemplate(song, i, mode))
 
 ### 6.1 自动化
 
-`@bash
+```bash
 npm run check          # eslint + tsc + node --test（26 项，全绿）
 npm run build          # vite 构建 + 绑定拷贝 + 主题同步
 node tools/verify-lit.mjs   # 无头 Edge 端到端功能验证（18 组）
 node tools/shot-lit.mjs     # 关键界面截图 → .task/shots/
 node tools/perf-lit.mjs frontend/dist lit   # 性能测量
-`@
+```
 
 ### 6.2 端到端检查项（`tools/verify-lit.mjs`）
 

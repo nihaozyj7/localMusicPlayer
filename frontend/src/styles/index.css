@@ -10,9 +10,10 @@
    新增主题：在 themes/ 下新增一个 CSS 文件，并在此处按主题加入一行 @import。
    （后续由 Go 后端扫描 themes/ 目录自动注入 <link>，届时无需手改本文件。）
 
-   注意：歌词区与三种播放样式的 CSS **不在这里** —— 它们跟着「播放详情界面」
-   一起抽到了独立包 frontend/packages/player-skins（由包的入口 import），
-   宿主样式表只负责播放页的外壳与其它界面。
+   注意：歌词区与播放界面样式的 CSS **不在这里**。歌词 / 特效歌词 / 背景层的 CSS
+   零件在独立包 frontend/packages/player-skins/src/ 里；而**内置样式本体是数据** ——
+   internal/skins/resources/player-skins/<id>/skin.css，运行时按清单从 /skins/ 加载
+   （与第三方样式同一条路径）。宿主样式表只负责播放页的外壳与其它界面。
    ========================================================================== */
 
 @import "./base.css";

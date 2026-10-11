@@ -434,6 +434,7 @@ class MpLyricsPanel extends MpElement {
           class="nudge__line${i === active ? " is-active" : ""}"
           data-act="nudge-seek"
           data-ms=${t}
+          data-index=${i}
           @click=${() => seek(t)}
         >
           <span class="nudge__time">${formatLrcTime(line.time + offset).slice(1, -1)}</span>
@@ -449,6 +450,10 @@ class MpLyricsPanel extends MpElement {
    以前这块只在重建时画一次，预览里的高亮永远停在打开面板那一刻。
    */
   paintNudgeFollow() {
+    // ★ 依赖上面渲染时写出的 data-index：它把「DOM 里的第一行」映射回歌词
+    // 数组里的绝对行号（窗口只画 active±5 那一段）。模板以前只写了
+    // data-act / data-ms → dataset.index 永远是 undefined → 下面拿到 -1
+    // 直接 return，于是这段「跟随播放」的逻辑一次都没有真正跑过。
     if (activeTab !== "nudge") return;
     const box = this.querySelector("[data-nudge-preview]");
     if (!box) return;

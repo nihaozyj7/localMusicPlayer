@@ -244,6 +244,59 @@ func TestYieldIfPending(t *testing.T) {
 	}
 }
 
+// TestYieldIfPendingClearsAfterCancelledUrgent 守一个会让批量测量**永久停摆**的计数泄漏。
+//
+// q.inter 是「还有交互请求在排队」的计数，YieldIfPending() 读它来决定让路。
+// 旧实现的递减写在「真正取出这个请求并返回」之前 —— 而被取消的交互请求走的是
+// `if r.cancelled { close(Done); continue }` 这条 continue 路径，递减被跳过：
+//
+//	计数永久留在 1 以上 → YieldIfPending() 永远为 true →
+//	MeasureAll（"测量整个曲库"）从此一直让路，一首都不再测。
+//	用户看到的是「响度均衡第一次点完之后就再也不测新歌了」，重启才好。
+func TestYieldIfPendingClearsAfterCancelledUrgent(t *testing.T) {
+	m := NewManager(t.TempDir(), 2)
+	song := bootstrap.Song{ID: "c", Path: `D:\m\c.flac`, Size: 1, ModTime: 1}
+
+	// 槽位先占满，让请求停在队列里（不真起 ffmpeg）
+	m.q.mu.Lock()
+	m.q.running = m.conc
+	m.q.started = true
+	m.q.mu.Unlock()
+
+	req := &Request{Song: song, Priority: PriorityInterrupt, Done: make(chan struct{})}
+	if !m.enqueue(req) {
+		t.Fatal("交互请求应能入队")
+	}
+	if !m.YieldIfPending() {
+		t.Fatal("排队期间应当要求让路")
+	}
+
+	// 用户又点了别的歌 / 关掉了播放：这个交互请求被作废
+	m.cancelRequest(req)
+
+	// 放行并取出：被取消的请求会被丢弃（Done 关闭），计数必须跟着归零
+	m.q.mu.Lock()
+	m.q.running = 0
+	m.q.mu.Unlock()
+
+	if got := m.nextRequest(); got != nil {
+		t.Fatalf("被取消的请求不该被取出执行，实际取到 %s", got.Song.ID)
+	}
+	select {
+	case <-req.Done:
+	default:
+		t.Error("被取消的请求应当关闭 Done，否则调用方会一直等")
+	}
+
+	if m.YieldIfPending() {
+		t.Fatal("被取消的交互请求没有把 inter 计数减回去 —— " +
+			"后台批量测量会从此永久让路（一首都不再测），只有重启才恢复")
+	}
+	if got := m.Pending(); got != 0 {
+		t.Errorf("队列应当已空，实际 %d", got)
+	}
+}
+
 // TestSubmitReturnsCachedImmediately 已测量的歌不进队列（快速路径）
 func TestSubmitReturnsCachedImmediately(t *testing.T) {
 	m := NewManager(t.TempDir(), 2)

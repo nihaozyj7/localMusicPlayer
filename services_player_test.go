@@ -879,7 +879,7 @@ func TestPlayerServiceConcurrentLoad(t *testing.T) {
    -------------------------------------------------------------------------- */
 
 // TestPlayerServiceSpectrumBandsClamp 段数越界要钳到 1..128，
-// 与前端 audio.js#spectrum 的口径一致。
+// 与前端 audio.js#spectrumLegacy 的口径一致。
 func TestPlayerServiceSpectrumBandsClamp(t *testing.T) {
 	dir := tempDirFor(t)
 	defer cleanupDir(dir)

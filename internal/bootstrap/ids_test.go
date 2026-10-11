@@ -3,7 +3,7 @@ package bootstrap
 import "testing"
 
 // TestStableIDMatchesFrontend 确保 Go 侧生成的 id 与前端 utils.js#stableId 完全一致。
-// 测试向量由 tools/gen-id-vectors.mjs 用前端同一算法生成。
+// 测试向量按前端 utils.js#stableId 的算法一次性生成后内联在下面（没有生成脚本）。
 // 如果这条测试挂了，说明重扫后歌单 / 收藏 / 播放队列会集体失效，务必先修这里。
 func TestStableIDMatchesFrontend(t *testing.T) {
 	cases := []struct {

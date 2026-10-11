@@ -32,9 +32,11 @@ html.wp-window .skin-bg {
 }
 
 /* —— 外壳 .app ——
-   这一层是**给皮肤 CSS 用的钩子**，不是布局容器：样式包约定整窗背景层写在
-   .app[data-mode="<样式id>"] 下（见 wallpaper.html 的说明）。主界面里它是
-   三区网格骨架；这里两个固定定位的孩子，网格没有意义，改回普通块。
+   这一层不是「给皮肤 CSS 用的钩子」（v3 的插件 CSS 被 @scope 圈在舞台里，
+   够不到它），而是**主界面层叠与能力钩子的落点**：
+   `.app[data-skin-background="yes"][data-view="player"]` 一族规则（见 layout.css）
+   挂在它上面，整窗背景层靠它们让位。主界面里它是三区网格骨架；
+   这里两个固定定位的孩子，网格没有意义，改回普通块。
    z-index: var(--z-content)(10) 仍然保留 —— 它把 .skin-bg(25) 与
    .playerview(30) 收进同一个层叠上下文，顺序与主界面完全一致。 */
 html.wp-window .app {

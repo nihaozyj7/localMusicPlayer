@@ -27,7 +27,7 @@ import { backend, isWails } from "./bridge.js";
 import { state } from "./store.js";
 import { requestAppUpdate } from "./ui/base.js";
 
-/** 上次推给后端的快照签名：歌词行每帧都在算，不去重会变成每帧一次 IPC */
+/** 上次推给后端的快照签名：同步档每 250ms 都会算一次，不去重就是每 250ms 一次 IPC */
 let lastSignature = "";
 
 /** 桌面歌词是否开启（配置项，主窗口与歌词窗口共用）。 */
@@ -80,7 +80,7 @@ export async function applyDesktopLyrics(on, { force = false } = {}) {
  */
 export function pushDesktopLyrics({ text = "", playing = false, fontSize = 26 } = {}) {
   // 关着就什么都不做。「把预览条收起来」这件事由 applyDesktopLyrics 负责 ——
-  // 在这里每帧收一次的话，会连带把桌面背景歌词模式下那条正常的悬浮条也抹掉。
+  // 在这里每次都收一次的话，会连带把桌面背景歌词模式下那条正常的悬浮条也抹掉。
   if (!desktopLyricsEnabled()) return;
   const signature = [text, playing ? 1 : 0, Math.round(fontSize)].join("|");
   if (signature === lastSignature) return;

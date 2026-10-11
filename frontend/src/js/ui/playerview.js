@@ -8,7 +8,8 @@
      · .playerview 元素与舞台容器（id 与迁移前完全一致，皮肤按 id 拿不到就废）
      · 头部按钮：返回 / 更换封面 / 封面轮播 / 播放界面样式（样式按钮组以前是
        innerHTML 重建的，现在是 keyed repeat）
-     · 每帧把进度推给皮肤（调 playerhost#renderPlayerView，与原 tick 同频）
+     · 跟随 store 广播把进度推给皮肤（调 playerhost#renderPlayerView，内部按快照去重，
+       不是每帧都推）
    ========================================================================== */
 
 import { MpElement, define, html, nothing, repeat, icon } from "./base.js";

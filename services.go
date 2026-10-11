@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -450,8 +451,13 @@ func (s *PlaylistService) Delete(id string) error {
 }
 
 // AddSongs 批量加入歌单（去重）
+//
+// 歌单 id 不存在时必须**报错**，不能返回 (0, nil)：调用方（前端）拿到
+// added=0 会理解成「这些歌本来就在里面」，而真实原因是「后端根本没有这个歌单」，
+// 于是内存里的歌单看着加进去了、config.json 里一首都没有。
 func (s *PlaylistService) AddSongs(id string, songIDs []string) (int, error) {
 	added := 0
+	found := id == likedPlaylistID
 	err := s.store.Update(func(c *bootstrap.Config) {
 		if id == likedPlaylistID {
 			before := len(c.LikedIDs)
@@ -463,12 +469,19 @@ func (s *PlaylistService) AddSongs(id string, songIDs []string) (int, error) {
 			if c.Playlists[i].ID != id {
 				continue
 			}
+			found = true
 			before := len(c.Playlists[i].SongIDs)
 			c.Playlists[i].SongIDs = appendUnique(c.Playlists[i].SongIDs, songIDs...)
 			added = len(c.Playlists[i].SongIDs) - before
 		}
 	})
-	return added, err
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, fmt.Errorf("歌单不存在: %s", id)
+	}
+	return added, nil
 }
 
 // RemoveSongs 从歌单移除（「我喜欢」请用 Library.ToggleLike）
@@ -477,6 +490,7 @@ func (s *PlaylistService) RemoveSongs(id string, songIDs []string) (int, error) 
 		return 0, errors.New("请用爱心按钮取消喜欢")
 	}
 	removed := 0
+	found := false
 	drop := map[string]bool{}
 	for _, sid := range songIDs {
 		drop[sid] = true
@@ -486,6 +500,7 @@ func (s *PlaylistService) RemoveSongs(id string, songIDs []string) (int, error) 
 			if c.Playlists[i].ID != id {
 				continue
 			}
+			found = true
 			before := len(c.Playlists[i].SongIDs)
 			next := make([]string, 0, before)
 			for _, sid := range c.Playlists[i].SongIDs {
@@ -498,22 +513,47 @@ func (s *PlaylistService) RemoveSongs(id string, songIDs []string) (int, error) 
 			removed = before - len(next)
 		}
 	})
-	return removed, err
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		// 与 AddSongs 同理：id 不存在时不能返回 (0, nil)，否则前端会把它
+		// 当成「本来就没有这些歌」。
+		return 0, fmt.Errorf("歌单不存在: %s", id)
+	}
+	return removed, nil
 }
 
 // Reorder 调整歌单内歌曲顺序（前端拖拽排序后调用，用于持久化）
+//
+// 「我喜欢」的歌曲顺序存在 config.LikedIDs 而不是 Playlists 里，
+// 这里必须单独处理：否则拖拽「我喜欢」的队列时后端静默什么都不做
+// （队列里有歌单里没有的歌时，前端还会把这次拖拽写回歌单 —— 见 store#reorderQueue）。
 func (s *PlaylistService) Reorder(id string, from, to int) error {
-	return s.store.Update(func(c *bootstrap.Config) {
+	found := id == likedPlaylistID
+	err := s.store.Update(func(c *bootstrap.Config) {
+		if id == likedPlaylistID {
+			c.LikedIDs = moveIndex(c.LikedIDs, from, to)
+			return
+		}
 		for i := range c.Playlists {
 			if c.Playlists[i].ID != id {
 				continue
 			}
+			found = true
 			c.Playlists[i].SongIDs = moveIndex(c.Playlists[i].SongIDs, from, to)
 		}
 	})
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("歌单不存在: %s", id)
+	}
+	return nil
 }
 
-// ReorderPlaylists 调整侧边栏歌单顺序
+// ReorderPlaylists 调整侧边栏歌单顺序（from/to 为「不含我喜欢」的下标）
 func (s *PlaylistService) ReorderPlaylists(from, to int) error {
 	return s.store.Update(func(c *bootstrap.Config) {
 		c.Playlists = moveIndex(c.Playlists, from, to)
@@ -1790,6 +1830,46 @@ func (s *WindowService) MainWindowShown() bool {
 	return s.shown.Load()
 }
 
+// 摘启动遮罩的重试预算（见 revealWithRetry）。
+const revealRetryAttempts = 5
+
+// revealRetryBaseDelay 是重试的起步间隔（递增退避：80/160/240/320ms）。
+//
+// 声明为变量是为了让测试能把它调小（见 window_reveal_test.go），
+// 生产路径不会改它。
+var revealRetryBaseDelay = 80 * time.Millisecond
+
+// revealWithRetry 反复尝试摘掉 DWM 启动遮罩，直到**确认**生效或耗尽预算。
+//
+// ★ 为什么必须重试：cloakNativeWindow(hwnd, false) 返回 false 的语义是
+// 「没能确认遮罩已经摘掉」，可能是 DwmSetWindowAttribute 失败，也可能是
+// DWM 的 DWMWA_CLOAKED 读取仍是非 0（刚清掉那一瞬间的常见状态）。而失败的
+// 表现是**窗口永远不出现**：进程活着、托盘图标在、任务栏按钮也在，屏幕上却
+// 什么都没有，用户只能去任务管理器杀进程。
+//
+// 这里原来只试一次、失败仅记一行日志就继续走 w.Show() —— 而 Show() 对
+// 「已经 WS_VISIBLE、只是被 DWM 遮住」的窗口毫无作用，等于把用户永久留在
+// 看不见的状态里。多数失败都是瞬时状态，几次重试就够。
+//
+// 成功路径（第一次就成功）没有任何额外开销。
+//
+// cloak 参数化只是为了可测：Windows 上它就是 cloakNativeWindow。
+func revealWithRetry(hwnd unsafe.Pointer, cloak func(unsafe.Pointer, bool) bool) bool {
+	for i := 0; i < revealRetryAttempts; i++ {
+		if cloak(hwnd, false) {
+			if i > 0 {
+				log.Printf("[boot] 第 %d 次尝试后成功摘掉启动遮罩", i+1)
+			}
+			return true
+		}
+		// 最后一次失败后不用再等
+		if i < revealRetryAttempts-1 {
+			time.Sleep(time.Duration(i+1) * revealRetryBaseDelay)
+		}
+	}
+	return false
+}
+
 // startPreparedBoot 在应用跑起来之后尽早执行 showPrepared。
 //
 // 为什么要轮询：ApplicationStarted 是 Wails 消息循环刚起来时发的，而窗口本身
@@ -1875,8 +1955,16 @@ func (s *WindowService) ShowMain() {
 	// 屏幕上直接就是 WebView2 已经画好的那一帧（见 showPrepared）。
 	if reveal {
 		if hwnd := w.NativeWindow(); hwnd != nil {
-			if !cloakNativeWindow(hwnd, false) {
-				log.Printf("[boot] 摘掉启动遮罩失败：窗口可能不会出现")
+			if !revealWithRetry(hwnd, cloakNativeWindow) {
+				log.Printf("[boot] 摘掉启动遮罩失败（重试 %d 次仍未生效）：窗口可能一直不可见",
+					revealRetryAttempts)
+				// ★ 把标记放回去：下一次 ShowMain（托盘点击 / 第二个实例）会再试一遍。
+				// 不放回的话，后续每次 ShowMain 都会认为「已经露过面了」而跳过摘遮罩，
+				// 窗口就永远留在遮住的状态里 —— 进程活着、托盘图标在、任务栏按钮也在，
+				// 但屏幕上什么都没有，用户只能去任务管理器杀掉它。
+				s.bootMu.Lock()
+				s.bootCloaked.Store(true)
+				s.bootMu.Unlock()
 			}
 			// 任务栏按钮与窗口同时回来（showPrepared 里摘掉的那一下）。
 			// 放在摘遮罩之后：窗口还是遮着的时候 AddTab 会被资源管理器忽略。
@@ -2131,6 +2219,16 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			c.Muted = asBool(raw, c.Muted)
 		case "playerViewMode":
 			c.PlayerViewMode = asString(raw, c.PlayerViewMode)
+		// —— 播放界面背景动效帧率 ——
+		// ★ 这个键曾经被漏掉：前端 SYNCED_KEYS 有它、Config 有它，只有这里没有 case。
+		// 后果与前几行注释里的响度三兄弟一模一样：用户改完「背景动效帧率」，
+		// 前端会把它推到后端，后端静默丢弃；下次启动 hydrateFromBackend 用后端的
+		// 旧值（smooth）覆盖界面 —— 表现是「设置自己变回去了」，没有任何报错。
+		case "skinPerformanceMode":
+			// 在这里就规范化，与 Load 时的兜底同一份白名单（见
+			// bootstrap.NormalizeSkinPerformanceMode）：非法值当场落回 smooth，
+			// 而不是先存进去、等下次启动才被纠正（那期间界面与行为不一致）。
+			c.SkinPerformanceMode = bootstrap.NormalizeSkinPerformanceMode(asString(raw, c.SkinPerformanceMode))
 		case "autoScanOnStart":
 			c.AutoScanOnStart = asBool(raw, c.AutoScanOnStart)
 		case "watchFolders":

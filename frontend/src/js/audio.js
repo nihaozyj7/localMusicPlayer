@@ -119,7 +119,8 @@ let tickTimer = null;
  * ★ 它解决的是切歌瞬间进度条的乱跳（真实报障：「进度条会反复横跳一下」）。
  *
  * 切歌发生时 state.position 会被 store 清零，但**旧歌的锚点还挂在本模块里**：
- * 后端的 tick 每 200ms 就会按旧歌的位置推一个锚点过来，外推也仍在按旧锚点
+ * 后端的 tick 每 500ms 就会按旧歌的位置推一个锚点过来（`anchorIntervalMs`），
+ * 外推也仍在按旧锚点
  * 算位置。这些数字写进 store 就是「清零 → 又跳回旧位置 → 再清零」的横跳。
  * 更糟的是它还会被写进 noteProgress（记忆播放进度）——于是刚播的新歌
  * 可能带着旧歌的位置被记下来，下次打开就跑到了中间。
@@ -368,7 +369,7 @@ function extrapolate() {
 function pushPosition(pos, force) {
   if (!Number.isFinite(pos) || pos < 0) return;
   const rounded = Math.round(pos);
-  // 250ms 量化：与 audio.js 原来 runtime.js 的依赖键频率一致，
+  // 250ms 量化：与 runtime.js 依赖键的 250ms 一档一致，
   // 歌词高亮与进度条不需要更细。
   if (!force && Math.round(rounded / 250) === Math.round(lastPushedPosition / 250)) {
     return;
@@ -905,8 +906,19 @@ async function syncPlayState() {
 /** 从某个位置开始播放当前曲目 */
 async function playFrom(ms) {
   if (!backendReady) return;
+  const target = Math.max(0, ms);
+  // ★ 先把本地锚点挪到新位置，再让后端 seek。
+  //
+  // 唯一调用者是单曲循环播完（handleEnded → playFrom(0)）。旧实现只发
+  // playerSeek/playerPlay，不动 anchor：从「本首播完」到「后端推来新锚点」
+  // 之间最多有 500ms，这段时间进度外推还在用**上一轮结尾**的旧锚点，
+  // 表现是进度条顶在末尾不动（甚至因为 extrapolate 越界被夹到 duration），
+  // 然后突然跳到 0 —— 也就是「单曲循环时进度条会卡一下」。
+  // 与 seekAudio 同一套处理，保证「发起跳转」和「画面跟上」是同时的。
+  if (anchor) anchor = { ...anchor, positionMs: target, at: performance.now() };
+  lastPushedPosition = -1;
   try {
-    await backend.playerSeek(ms);
+    await backend.playerSeek(target);
     await backend.playerPlay();
     backendPlaying = true;
   } catch (err) {
@@ -989,7 +1001,7 @@ async function pushLoudnessToBackend(songId) {
 
 /**
  * 歌曲切换后重新套用补偿增益。
- * main 的 tick 每帧都会调用它，所以这里做去重。
+ * runtime 的依赖键每 250ms 一档都会走到它，所以这里做去重。
  */
 export function applyGainForSong() {
   if (!backendReady) {

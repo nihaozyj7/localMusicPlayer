@@ -506,20 +506,6 @@
   background: var(--surface-2);
 }
 
-/* 不支持桌面背景歌词的平台（非 Windows）：入口置灰并保留 tooltip 里的原因。
-   这两条以前挂在 .mode-group 下；桌面歌词 / 桌面背景歌词从按钮组拆开之后，
-   它们与旁边那些独立按钮一样直接命中 .mode-btn。 */
-.mode-btn[aria-disabled="true"] {
-  color: var(--text-3);
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.mode-btn[aria-disabled="true"]:hover {
-  background: none;
-  color: var(--text-3);
-}
-
 .mode-btn__badge {
   position: absolute;
   right: 0;

@@ -50,7 +50,7 @@ library, cover art and lyric cache all live on your own disk.
 | [Playback](#playback) | Byte-exact seeking, embedded-FFmpeg transcoding cache, loudness normalisation, silence skipping, track gap, three sound effects, bad-track fallback |
 | [Cover art](#cover-art) | Several covers per track, cache vs embedded managed separately, five online sources, atomic write-back |
 | [Lyrics](#lyrics) | Four-level fallback, word-level (karaoke) lyrics, lyrics workbench, floating desktop lyrics, wallpaper lyrics |
-| [Interface](#interface) | Three themes + custom CSS, six player skins, sorting / columns / density / frame-rate presets |
+| [Interface](#interface) | Three themes + custom CSS, two player skins, sorting / columns / density / frame-rate presets |
 | [Online & AI](#online--ai) | Search → preview → download, preview-is-cache, optional AI metadata cleanup and post-download tagging |
 | [Updates](#updates) | Manual or on-start update check, multi-mirror downloads, per-version skip |
 
@@ -118,8 +118,9 @@ library, cover art and lyric cache all live on your own disk.
 - **Player skins**: classic / immersive — two built-in styles. Third-party packs are loaded from the
   data directory; the contract lives in [`packages/player-skins`](frontend/packages/player-skins).
   (Four more styles — minimal / hand-drawn anime / magic-circle sketch / arcanum stage — were removed
-  in 2026-10 and fully backed up; see `docs/41-样式插件耦合报告.md` for how to re-add them as
-  third-party skins.)
+  in 2026-10 and fully backed up; see
+  [`docs/42-播放器样式插件系统设计方案.md`](docs/42-播放器样式插件系统设计方案.md) and the
+  《皮肤说明.md》 shipped in `internal/skins/template/` for how to re-add them as third-party skins.)
 - **Sorting**: one toolbar button opens a floating panel where the field (date added / title / artist /
   album / duration / file size / play count) and the direction (ascending / descending) are chosen
   separately. The button always shows the active sort, and clicking a column header still toggles it;
@@ -302,7 +303,11 @@ docs/                    design, review and implementation documents
   `internal/bilibili` / `lyricsfetch` / `coverfetch` change without notice, so isolating them keeps the
   blast radius to one file.
 - **Code that writes user files only does minimal insertion**: adding cover art to m4a / flac never touches
-  the audio data or any offset, and every write goes through "temp file + atomic rename".
+  the audio data or the meaning/order of any chunk; but when the container header grows, the absolute
+  offsets recorded in `stco` / `co64` **must be shifted by the same delta** — skipping that corrupts the
+  file. The rule is "can we prove it is safe": when a container structure cannot be fixed up, we **abort
+  and leave the original file byte-for-byte untouched** rather than gamble. Every write goes through
+  "temp file + atomic rename".
 
 ---
 

@@ -332,6 +332,7 @@ ctx 是插件唯一的入口（只读，直接改它不会生效）：
 - ctx.root            挂载点（宿主已清空，往这里写 DOM）
 - ctx.backgroundRoot  整窗背景层容器（清单声明 capabilities.background 才有内容）
 - ctx.track()         返回 { id, title, artist, album, duration, kind }
+                      · kind 是 "local" | "online"（只标记来源，不暴露 URL）
 - ctx.media()         返回 { song, cover, covers, coverIndex, lyrics }（聚合快照）
                       · song：当前曲目（可能为 null），即 track() 那一份
                       · cover：当前封面（data URL 或同源 URL）；covers：全部封面（至少一张）；coverIndex：轮播下标
@@ -353,7 +354,7 @@ ctx 是插件唯一的入口（只读，直接改它不会生效）：
 - ctx.themeId / ctx.mode（getter）
 
 宿主推送：update(ctx, patch) 与 ctx.on() 收到同一份 patch，patch.type 取值：
-mount（挂载后立即一次，带全量快照）/ song（换歌）/ media（封面变化或轮播切图）/ lyrics（歌词装载完成或匹配状态变化）/ progress（播放进度，已按帧节流）/ state（播放、暂停、音量）/ options / theme / resize / visibility（详情页开关，据此停帧）/ close / destroy。
+mount（挂载后立即一次，带全量快照）/ song（换歌）/ media（封面变化或轮播切图）/ lyrics（歌词装载完成或匹配状态变化）/ progress（播放进度，约 4Hz —— 位置按 250ms 一档量化，插件要自己在帧循环里插值）/ state（播放、暂停、音量）/ options / theme / resize / visibility（详情页开关，据此停帧）/ close / destroy。
 没有 spectrum 补丁：实时频谱是**拉取式**（ctx.spectrum()，见上），推的那套已删除。
 patch 只带与该类型相关的字段；不确定时用 ctx.track() / ctx.lyrics() / ctx.playback() 现取快照（推送之后快照与载荷一定一致）。
 
@@ -1117,6 +1118,36 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       ctx.refreshRules?.();
       break;
     }
+    /* ★ 规则类型 / 运算符这两个下拉框以前**完全没有分支**。
+       <select> 的 change 事件确实派发到了这里（见 settings-view.js#onChange：
+       它只要求元素带 data-act），于是 switch 直接穿过、静默什么都不做 ——
+       用户把「按文件大小」改成「按正则表达式」，下拉框自己变了（浏览器行为），
+       state 里的规则和下面的预览统计纹丝不动，看起来就像「设置改不了」。
+       同一条路径上 rule-scope 是有分支的，所以更显得像偶发性故障。 */
+    case "rule-type": {
+      const rule = state.filterRules.find((r) => r.id === id);
+      if (rule) {
+        rule.type = actEl.value === "regex" ? "regex" : "size";
+        // 切换类型时把运算符收敛到该类型合法的取值：
+        // size 只认 lt/lte/gt/gte/eq（见 store.js#SIZE_OPS 与 Go 侧 filter.Match），
+        // regex 只认 match。不收敛会留下「size + match」这种两边引擎都不认的组合，
+        // 表现是规则挂在界面上、却永远不生效。
+        const SIZE_OPS = ["lt", "lte", "gt", "gte", "eq"];
+        if (rule.type === "regex") rule.op = "match";
+        else if (!SIZE_OPS.includes(rule.op)) rule.op = "lt";
+        if (rule.type === "size" && !rule.unit) rule.unit = "B";
+      }
+      ctx.commit?.();
+      ctx.refreshRules?.();
+      break;
+    }
+    case "rule-op": {
+      const rule = state.filterRules.find((r) => r.id === id);
+      if (rule) rule.op = actEl.value;
+      ctx.commit?.();
+      ctx.refreshRules?.();
+      break;
+    }
     case "preset-small":
       state.filterRules.push({
         id: uid("rule"),
@@ -1599,7 +1630,7 @@ async function applyDownloadDir(dir, migrate, ctx) {
 /**
  * 拉取后端注册的封面来源与熔断状态。
  *
- * 单独放在 settings.js 里（而不是塞进主 tick）：它只在打开设置页时才需要，
+ * 单独放在 settings.js 里（而不是塞进 runtime.js 的 250ms 同步链）：它只在打开设置页时才需要，
  * 而来源可用性来自第三方接口，不需要实时刷新。
  */
 export async function refreshCoverProviders() {

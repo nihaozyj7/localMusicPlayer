@@ -334,8 +334,8 @@ export function subscribe(fn) {
  * 窗口最小化、或收进托盘时，WebView 判定页面不可见，**rAF 会被挂起**
  * ——不是变慢，是这一帧永远不来。而「自动下一首」这条链路只有一处异步：
  *
- *   <audio> 的 ended → playNext() → playSong() → commit() →（rAF）→ notify()
- *     → runtime.run() → syncAudio() → 给 <audio> 换 src 并起播
+ *   后端 player:ended → playNext() → playSong() → commit() →（rAF）→ notify()
+ *     → runtime.run() → syncAudio() → 把下一首装进后端引擎并起播
  *
  * 于是表现成：歌播完了，state.currentId 已经指向下一首，但 rAF 不回调 →
  * notify 不跑 → 音频元素还停在旧歌上 →「卡住不切」。一旦把主界面打开，
@@ -647,8 +647,8 @@ function currentSongList() {
   // ★ 必须复用 songIndex，**绝不能**在这里再建一次 Map。
   //
   // 这里原来是 `const byId = new Map(songs.map((s) => [s.id, s]));`，而本函数
-  // 由 commit() → recalcVisible() 无条件调用，commit() 又被 <audio>.timeupdate
-  // 按约 4 次/秒驱动 —— 于是每帧广播都要为整个曲库重建一次 Map（每个元素还会
+  // 由 commit() → recalcVisible() 无条件调用，commit() 又被进度通知
+  // 按约每秒数次驱动 —— 于是每帧广播都要为整个曲库重建一次 Map（每个元素还会
   // 先分配一个 [id, song] 二元数组，纯垃圾）。实测（node）：
   //   5,000 首 0.56ms/次、20,000 首 2.4ms/次、100,000 首 22ms/次，
   // 改走 songIndex 后同样的循环分别是 0.047 / 0.23 / 1.36ms，快 10~16 倍。
@@ -993,21 +993,50 @@ export function toggleLike(songId) {
   if (isWails()) syncToBackend("收藏状态", backend.toggleLike(songId));
 }
 
-export function createPlaylist(name) {
+/**
+ * 新建歌单。**异步**：真实后端下 id 由后端生成，必须等它回来再入库。
+ *
+ * ★ 为什么不能沿用「前端 uid("pl") 先造一个 id，再 fire-and-forget 同步」：
+ * 后端 Create 自己生成 id（`bootstrap.RandomID("pl")`），两端的 id 从此不同。
+ * 之后所有以本地 id 发起的调用（加歌 / 移除 / 重命名 / 删除 / 拖拽重排）
+ * 在后端都匹配不到这个歌单 —— 其中加歌是**静默无效**（返回 added=0 且不报错），
+ * 于是界面显示「已添加 N 首到『新歌单』」，config.json 里却一首都没有：
+ * 重启后新歌单是空的，而用户完全没有收到任何提示。
+ *
+ * 返回新歌单对象；失败（重名 / 后端拒绝）返回 null，由调用方提示。
+ */
+export async function createPlaylist(name) {
   const clean = String(name || "").trim();
   if (!clean) return null;
+  let id = uid("pl");
+  let createdAt = Date.now();
+  if (isWails()) {
+    // 先问后端要 id：id 是后端生成的主键，前端不可能自己「猜」对。
+    // 这一步失败就不要入库 —— 建一个后端不知道的歌单只会让后续操作全部无效。
+    let created = null;
+    try {
+      created = await backend.createPlaylist(clean);
+    } catch (err) {
+      console.error("[store] 新建歌单失败", err);
+      toast(`新建歌单失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
+      return null;
+    }
+    if (created?.id) {
+      id = created.id;
+      if (created.createdAt) createdAt = created.createdAt;
+    }
+  }
   const pl = {
-    id: uid("pl"),
+    id,
     name: clean,
     locked: false,
     builtin: false,
     songIds: [],
-    createdAt: Date.now(),
+    createdAt,
   };
   state.playlists = [...state.playlists, pl];
   bumpPlaylists();
   commit();
-  if (isWails()) syncToBackend("新建歌单", backend.createPlaylist(clean));
   return pl;
 }
 
@@ -1065,6 +1094,10 @@ export function removeSongsFromPlaylist(id, songIds) {
 /**
  * 调整歌单在侧边栏中的顺序（from/to 为自定义歌单索引）
  * 「我喜欢」永远固定在第一位，不可移动、不可删除。
+ *
+ * from/to 的下标空间与后端**一致**：后端把「我喜欢」的存在性做成了独立字段
+ * （`config.LikedIDs`，List() 时才拼到最前面），`config.Playlists` 里不含它，
+ * 所以「排除我喜欢之后的下标」两边逐个对应，可以直接透传。
  */
 export function movePlaylist(from, to) {
   const custom = state.playlists.filter((p) => p.id !== LIKED_ID);
@@ -1074,6 +1107,8 @@ export function movePlaylist(from, to) {
   state.playlists = [liked, ...next].filter(Boolean);
   bumpPlaylists();
   commit();
+  // ★ 以前这里没有同步后端：拖拽重排只改内存，重启就回到老顺序。
+  if (isWails()) syncToBackend("歌单排序", backend.reorderPlaylists(from, to));
 }
 
 /* --------------------------------------------------------------------------
@@ -1153,7 +1188,7 @@ export function reorderQueue(from, to) {
   // 而且会落盘污染歌单。所以这里先比对内容，不一致就不写。
   const origin = state.queueOrigin?.id ? playlistById(state.queueOrigin.id) : null;
   if (isWails() && origin && sameIdOrder(origin.songIds, state.queue)) {
-    backend.reorderPlaylist(origin.id, from, to);
+    syncToBackend("歌单内排序", backend.reorderPlaylist(origin.id, from, to));
   } else if (origin) {
     // 队列已经不等于歌单了：来源标记降级，避免后续拖拽继续误写歌单
     state.queueOrigin = null;
@@ -1890,7 +1925,7 @@ export function playPrev() {
 
 export function seek(ms) {
   state.position = Math.max(0, Math.min(ms, state.duration || 0));
-  // 暂停状态下拖动进度条也要记住落点：<audio> 的 timeupdate 只在播放时来。
+  // 暂停状态下拖动进度条也要记住落点：进度通知只在播放时来。
   noteProgress(state.position);
   commit();
   emit("player:seek", { ms });
@@ -1899,7 +1934,7 @@ export function seek(ms) {
 /**
  * 记下当前歌曲的播放位置（毫秒）。
  *
- * 高频调用（<audio> 的 timeupdate 约每秒 4 次），所以这里只写内存：
+ * 高频调用（进度通知约每秒数次），所以这里只写内存：
  * 真正的落盘交给 persist() 的去抖与 beforeunload 时的 flushConfigSync()，
  * 不会因为拖着进度条就把 localStorage 写穿。
  */
@@ -1958,8 +1993,9 @@ export function setPlayMode(mode) {
 
 /* --------------------------------------------------------------------------
    播放进度模拟（仅浏览器预览使用）
-   接上真实音频后（<audio id="audio-engine"> 已在播放），进度由 <audio> 的
-   timeupdate 事件驱动，这里的模拟时钟自动让位，避免两个来源互相打架。
+   接上真实音频后（后端引擎已装载、或 legacy <audio id="audio-engine"> 已在播放），
+   进度由后端锚点（或 <audio> 的 timeupdate）驱动，这里的模拟时钟自动让位，
+   避免两个来源互相打架。
    -------------------------------------------------------------------------- */
 let tickTimer = null;
 
@@ -2539,21 +2575,61 @@ function waitForScanDone() {
 
     // ★ 只等信号，**不再自己拉一次 songs()**。
     //
-    // main.js 的全局 `scan:done` 处理器（main.js:250）已经在同一个事件里做过
+    // main.js 的全局 `scan:done` 处理器（main.js:265）已经在同一个事件里做过
     // 「拉全库 + 重算 + commit」。这里原来又 `await backend.songs()` 拉了一遍 ——
     // 也就是用户点一次「重新扫描」要传两遍整个曲库（10 万首就是两倍 IPC 载荷），
     // 而且两次结果可能落在不同的时序上、互相覆盖 state.allSongsRaw。
     //
-    // 现在这里等一小段让 main.js 的处理器把数据落好，再从 state 里取 ——
-    // 单次 IPC，且两条路径不会打架。
+    // 现在这里等 main.js 的处理器把数据落好，再从 state 里取 —— 单次 IPC。
     off = on("scan:done", async () => {
       clearTimeout(timer);
       off();
-      // 让出一次微/宏任务，确保 main.js 的处理器（同样监听 scan:done）已完成 commit
-      await new Promise((r) => setTimeout(r, 0));
+
+      // ★ 判断「落好了」不能只让出一个宏任务。
+      //
+      // main.js 那个处理器是 **async** 的：它 await 了一次 backend.songs()
+      //（一次 IPC 往返，几毫秒到几十毫秒才回来）。而 on() 是同步逐个调监听器的：
+      // 它先跑到 main.js 的处理器（在 await 处挂起），再跑到这里 ——
+      // 所以此时 state.allSongsRaw 还是**扫描之前**的旧快照。
+      // 一个 setTimeout(0) 在同一轮宏任务里就跑完了，远早于那次 IPC 返回。
+      //
+      // 后果不是「列表不对」（列表随后会被 main.js 的处理器纠正），
+      // 而是 rescan() 用旧快照算出的「新增 / 移除 / 共 N 首」全是错的，
+      // 并且一直错到下一次扫描 —— 关于页与扫描完成提示显示的就是这些数字。
+      //
+      // main.js 那边每次都是 `state.allSongsRaw = songs`（IPC 回来的新数组），
+      // 所以「实例变了」就是数据已经落好的可靠信号。
+      const stale = state.allSongsRaw;
+      const arrived = await waitUntil(() => state.allSongsRaw !== stale, {
+        waitMs: 2000,
+        stepMs: 10,
+      });
+      if (!arrived) {
+        // 没等到（处理器抛错 / 事件没来 / 后端返回的不是数组）：
+        // 宁可多花一次 IPC，也不能拿着旧快照去算「本次扫描」的结果。
+        const fresh = await backend.songs().catch(() => null);
+        resolve(Array.isArray(fresh) ? fresh : null);
+        return;
+      }
       resolve(Array.isArray(state.allSongsRaw) ? state.allSongsRaw : null);
     });
   });
 }
 
-export { DEFAULT_CONFIG, SORTERS, computeSorted };
+/**
+ * 轮询等待 predicate 成立；成立返回 true，超时返回 false。
+ *
+ * 用轮询而不是条件变量/事件：这里的「条件」就是 state 上某个字段被另一个模块
+ * 改了，没有任何通知渠道，而等待窗口只有毫秒级。
+ */
+async function waitUntil(predicate, { waitMs = 1000, stepMs = 10 } = {}) {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    if (predicate()) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+}
+
+// waitUntil 一并导出：它是扫描收尾那段时序逻辑里唯一能脱离浏览器/后端单测的部分
+export { DEFAULT_CONFIG, SORTERS, computeSorted, waitUntil };

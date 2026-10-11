@@ -563,7 +563,11 @@ func (s *OnlineService) proxyStream(w http.ResponseWriter, r *http.Request, stre
 		// （临时目录可能不可写、可能满）。
 		body := io.LimitReader(resp.Body, maxRemoteAudioBytes)
 		if !download && resp.StatusCode == http.StatusOK && r.Header.Get("Range") == "" {
-			body = s.teeToCache(stream, body)
+			teed := s.teeToCache(stream, body)
+			// ★ 必须 defer 关闭：客户端提前断开时，io.Copy 是在**写端**失败的，
+			// 转发侧永远读不到 EOF，旁路 goroutine 就再也不会醒（见 teeToCache）。
+			defer teed.Close()
+			body = teed
 		}
 		_, _ = io.Copy(w, body)
 		return
@@ -579,11 +583,25 @@ func (s *OnlineService) proxyStream(w http.ResponseWriter, r *http.Request, stre
 //
 // 用 io.Pipe 而不是简单包一层 MultiWriter：MultiWriter 会让 Write 变成
 // 「两边都写完才返回」，磁盘一慢就把播放拖成卡顿。
-func (s *OnlineService) teeToCache(stream *bilibili.AudioStream, body io.Reader) io.Reader {
+//
+// ★ 调用方必须 Close 返回值（见下面的 pipeTee.Close 与返回语句处的 defer）。
+func (s *OnlineService) teeToCache(stream *bilibili.AudioStream, body io.Reader) *pipeTee {
 	path, ok := s.files.Path(stream.BVID, "m4a")
 	if !ok {
-		return body // 拿不到安全文件名：只播放，不缓存
+		return &pipeTee{r: body} // 拿不到安全文件名：只播放，不缓存
 	}
+	// ★ 已有可用缓存时**绝不能**再套 TeeReader。
+	//
+	// 旧实现把「缓存已存在」的判断放在 WriteTo 内部：它会直接 return，
+	// 而此时 pipe 已经套在返回路径上了 —— 没有任何人在读 pipe 的读端。
+	// io.Pipe 没有缓冲，写端一旦没有读者就会**永久阻塞**，于是
+	// TeeReader 的每一次 pw.Write 都卡死，连带把 io.Copy(w, body) 卡死：
+	// 表现是「第二次播放同一首在线歌曲时，进度条走到某处就再也不动了」。
+	// （Lookup 顺带刷新 LRU，所以这里用它而不是再 stat 一次。）
+	if _, hit := s.files.Lookup(stream.BVID, "m4a"); hit {
+		return &pipeTee{r: body}
+	}
+
 	pr, pw := io.Pipe()
 	go func() {
 		// 写缓存；失败只是没缓存，不影响正在播放的这一路
@@ -597,8 +615,52 @@ func (s *OnlineService) teeToCache(stream *bilibili.AudioStream, body io.Reader)
 	}()
 	// TeeReader：读到的字节顺手喂给 pipe（写端由上面那个 goroutine 消费）。
 	// 读端出错（客户端断开）时 pipe 写端也会收到错误并结束上面那个 goroutine。
-	return io.TeeReader(body, pw)
+	return &pipeTee{r: io.TeeReader(body, pw), pw: pw}
 }
+
+// pipeTee 是「边转发边写缓存」的转发侧。
+//
+// 它存在的唯一目的是**保证旁路 goroutine 一定能退出**：io.Pipe 的写端不关，
+// 读者（s.files.WriteTo 里的 io.Copy）就永远等不到 EOF —— 客户端提前断开
+// （用户切歌、关窗口、拖动进度条重发请求）时，转发侧其实是在写端失败的，
+// Read 根本不会返回错误，于是那个 goroutine 加上半成品 .part 文件就会一直留着。
+// 每断开一次泄漏一个，长时间使用后缓存目录里堆满 .part，内存里堆满 goroutine。
+type pipeTee struct {
+	r      io.Reader
+	pw     *io.PipeWriter // nil 表示这条路径不写缓存
+	closed bool
+}
+
+func (t *pipeTee) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if err != nil {
+		// io.EOF → 正常读完，让旁路把临时文件改名落盘
+		// 其它错误 → 让旁路中止并清掉半成品
+		t.finish(err)
+	}
+	return n, err
+}
+
+// Close 由调用方 defer 调用，保证「转发提前结束」时旁路也能收尾。
+func (t *pipeTee) Close() error {
+	t.finish(errTeeAborted)
+	return nil
+}
+
+func (t *pipeTee) finish(cause error) {
+	if t.closed || t.pw == nil {
+		return
+	}
+	t.closed = true
+	if cause == io.EOF {
+		_ = t.pw.Close() // 正常读完：旁路收到 EOF，写盘并改名
+		return
+	}
+	_ = t.pw.CloseWithError(cause) // 中止：旁路清掉 .part
+}
+
+// errTeeAborted 表示转发在读完之前就结束了（客户端断开 / 用户在切歌）。
+var errTeeAborted = errors.New("试听转发提前结束")
 
 // registerVirtual 把一个已缓存的在线音频登记成后端可解析的歌曲。
 func (s *OnlineService) registerVirtual(bvid, path, ext string) {
