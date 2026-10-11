@@ -412,10 +412,13 @@ func mp4Commit(path string, raw []byte, moovStart, moovEnd int, newMoov []byte, 
 		// 顶层的 moof / mfra 里也存着绝对偏移（tfhd 的 base_data_offset、
 		// trun 的 data_offset、tfra 指向 moof 的位置），分片布局本包不处理。
 		if err := mp4RejectTopLevelRewriters(out); err != nil {
-			return EmbedResult{}, fmt.Errorf("写标签会让音频 chunk 偏移失效（%w），已放弃写入以免损坏文件", err)
+			// 这句会原样走进用户看到的提示（歌词/封面「已保存但没写进文件」的原因），
+			// 所以顺序是「原因在前、决定在后」，且不出现 chunk/stco 这类内部术语 ——
+			// 细节由 %w 带出来（如「文件是分片（fMP4）布局，存在 moof」）。
+			return EmbedResult{}, fmt.Errorf("%w，无法安全地把标签写进这个文件，为不损坏文件已放弃写入", err)
 		}
 		if err := mp4ShiftChunkOffsets(out[moovStart:moovStart+len(newMoov)], shiftFrom, delta); err != nil {
-			return EmbedResult{}, fmt.Errorf("写标签会让音频 chunk 偏移失效（%w），已放弃写入以免损坏文件", err)
+			return EmbedResult{}, fmt.Errorf("%w，无法安全地把标签写进这个文件，为不损坏文件已放弃写入", err)
 		}
 	}
 	if err := writeFileAtomic(path, out); err != nil {
@@ -480,7 +483,7 @@ func mp4ShiftBoxRegion(buf []byte, from, to int, threshold int, delta int64) err
 			kind == "sidx" || kind == "tfhd":
 			// 这些结构里还有别的绝对偏移（或它们本身意味着分片布局），
 			// 本包不同步它们，所以放弃写入。
-			return fmt.Errorf("文件里存在 %s，其中还有需要同步的偏移，本包不处理", kind)
+			return fmt.Errorf("文件里存在 %s，其中还有需要同步的偏移，本程序不处理", kind)
 		case mp4ContainerBoxes[kind]:
 			childFrom := payloadAt
 			if kind == "meta" {

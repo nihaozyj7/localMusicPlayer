@@ -618,7 +618,9 @@ func (s *CoverService) triggerEmbed(songID string, embed *bool) string {
 	case errors.Is(err, metacache.ErrUnsupported):
 		return "该格式暂不支持写入文件，播放器仍会显示新封面"
 	default:
-		return "写入文件失败：" + errText(err)
+		// 与歌词同一套措辞：封面已经存进缓存了，没做成的只是「额外写一份进歌曲文件」。
+		// 说成「写入文件失败」会让用户以为封面没保存上。
+		return "封面已保存（播放器显示的就是它）；没有写入歌曲文件 —— " + errText(err)
 	}
 }
 

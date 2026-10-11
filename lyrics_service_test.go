@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
@@ -432,3 +434,76 @@ func TestLyricsUpgradeWordLyricsSkipsPlaceholder(t *testing.T) {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+// mp4TestBox 造一个长度正确的 mp4 box（只给本文件的「分片布局」用例用）。
+func mp4TestBox(kind string, payload []byte) []byte {
+	out := make([]byte, 4)
+	binary.BigEndian.PutUint32(out, uint32(len(payload)+8))
+	out = append(out, []byte(kind)...)
+	return append(out, payload...)
+}
+
+/*
+--------------------------------------------------------------------------
+
+	写不进文件时的提示措辞。
+	--------------------------------------------------------------------------
+	用户报过：「提示歌词使用失败了」—— 而实际上歌词**已经应用**（进了缓存、
+	播放时用的就是它），没做成的只是「额外写一份进歌曲文件」。所以 note 必须先说
+	已应用、再说没写进文件、最后给原因。这里用一个真的写不进去的场景钉住它：
+	分片（fMP4）布局的文件，metacache 会明确放弃写入以保文件不坏。
+	--------------------------------------------------------------------------
+*/
+func TestLyricsSaveOnFragmentedFileSaysAppliedNotWritten(t *testing.T) {
+	f := newLyricsFixture(t)
+	// 追加一个顶层 moof：文件变成分片布局，写标签需要重排数据偏移，本包不处理
+	raw := append(buildTinyM4A(), mp4TestBox("moof", []byte("x"))...)
+	if err := os.WriteFile(f.m4a, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := f.svc.Save("t_m4a", "[00:08.00]分片文件里的歌词", "user", boolPtr(true))
+	if err != nil {
+		t.Fatalf("写不进文件不该让 Save 报错（缓存已经成功）: %v", err)
+	}
+	if res["cached"] != true {
+		t.Fatalf("歌词必须先落进缓存: %+v", res)
+	}
+	if res["embedded"] == true {
+		t.Fatalf("分片文件写不了标签，embedded 不能为 true: %+v", res)
+	}
+
+	note, _ := res["note"].(string)
+	applied := strings.Index(note, "歌词已应用")
+	notWritten := strings.Index(note, "没有写入歌曲文件")
+	if applied < 0 || notWritten < 0 {
+		t.Fatalf("提示要同时说清「已应用」与「没有写入歌曲文件」，实际: %q", note)
+	}
+	if applied > notWritten {
+		t.Fatalf("「已应用」必须出现在「没有写入歌曲文件」之前，否则读起来还是失败: %q", note)
+	}
+	if !strings.Contains(note, "fMP4") || !strings.Contains(note, "放弃写入") {
+		t.Fatalf("提示要给出原因（分片布局 + 放弃写入），实际: %q", note)
+	}
+	if strings.Contains(note, "失败") {
+		t.Fatalf("这次保存是成功的，提示里不该出现「失败」二字: %q", note)
+	}
+
+	// 放弃写入 = 原始文件一个字节都不能变
+	after, err := os.ReadFile(f.m4a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, raw) {
+		t.Fatal("放弃写入时原始文件被改动了")
+	}
+
+	// 而且缓存里真的有：换一个实例（相当于重启应用）仍读得到
+	got, err := f.reload(t).Load("t_m4a")
+	if err != nil {
+		t.Fatalf("Load 失败: %v", err)
+	}
+	if got.LRC != "[00:08.00]分片文件里的歌词" {
+		t.Fatalf("缓存里的歌词不对: %+v", got)
+	}
+}

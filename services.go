@@ -866,7 +866,7 @@ func (s *LyricsService) Save(songID, lrc, source string, embed *bool) (map[strin
 	song, ok := s.songs(songID)
 	if !ok {
 		// 在线试听曲目：没有本地文件可写，缓存就是全部
-		out["note"] = "已缓存歌词（在线曲目没有本地文件，不写嵌入）"
+		out["note"] = "歌词已应用并保存到歌词缓存（在线曲目没有本地文件，不写进歌曲文件）"
 		return out, nil
 	}
 
@@ -875,11 +875,11 @@ func (s *LyricsService) Save(songID, lrc, source string, embed *bool) (map[strin
 		embedEnabled = *embed
 	}
 	if !embedEnabled {
-		out["note"] = "已缓存歌词"
+		out["note"] = "歌词已应用并保存到歌词缓存（设置里没有开启「写入歌曲文件」）"
 		return out, nil
 	}
 	if !metacache.SupportedEmbed(song.Ext) {
-		out["note"] = "歌词已缓存；该格式暂不支持写入文件"
+		out["note"] = "歌词已应用并保存到歌词缓存；该格式暂不支持写入歌曲文件"
 		return out, nil
 	}
 	// 写进歌曲文件的必须是行级：逐字标记（<00:12.00> / (0,300)）进了标签，
@@ -891,9 +891,13 @@ func (s *LyricsService) Save(songID, lrc, source string, embed *bool) (map[strin
 		out["embedded"] = true
 		out["note"] = "已写入歌曲文件：" + res.Message
 	case errors.Is(err, metacache.ErrUnsupported):
-		out["note"] = "歌词已缓存；该格式暂不支持写入文件"
+		out["note"] = "歌词已应用并保存到歌词缓存；该格式暂不支持写入歌曲文件"
 	default:
-		out["note"] = "歌词已缓存，但写入文件失败：" + errText(err)
+		// ★ 措辞要点：这次「应用」是**成功**的 —— 歌词已经进了缓存，播放时用的就是它，
+		//   没做成的只是「额外写一份进歌曲文件」。早先写成「写入文件失败：…」，
+		//   用户看到就以为歌词根本没保存上（实测反馈）。所以先说已应用，
+		//   再说没写进文件，原因紧跟在后面。
+		out["note"] = "歌词已应用并保存到歌词缓存；没有写入歌曲文件 —— " + errText(err)
 	}
 	return out, nil
 }
@@ -956,11 +960,13 @@ func (s *LyricsService) cleanMetaFor(song bootstrap.Song) (string, string) {
 	return title, artist
 }
 
+// errText 取错误的正文用于**给用户看的提示**，顺带去掉尾部的句号/逗号，
+// 好让调用方用「：原因」「—— 原因」这类前缀接上去时不会出现「。，」这种叠标点。
 func errText(err error) string {
 	if err == nil {
 		return ""
 	}
-	return err.Error()
+	return strings.TrimRight(strings.TrimSpace(err.Error()), "。，,.")
 }
 
 // ---------------------------------------------------------------------------

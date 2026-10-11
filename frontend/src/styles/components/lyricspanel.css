@@ -184,6 +184,29 @@
   display: none;
 }
 
+/* 标题 + 感叹号角标：说明文字全部搬到 data-tip 里（悬浮标题或角标都会显示），
+   标题本身只留动作名，读起来不再被一长串括号打断。 */
+.lyricspanel__notice-opt-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.lyricspanel__notice-opt-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border: 1px solid var(--warning);
+  border-radius: var(--r-full);
+  color: var(--warning);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+}
+
 /* —— 主体 —— */
 .lyricspanel__body {
   flex: 1 1 auto;
@@ -334,6 +357,17 @@
 
 .candidate:hover {
   background: var(--surface-hover);
+}
+
+/* 刚被应用的那一条：与按钮的成功态同一套配色（成功色描边 + 淡淡底色），
+   让「点的是哪一条」在整行范围内都看得出来。 */
+.candidate--applied {
+  border-bottom-color: var(--success);
+  background: var(--surface-1);
+}
+
+.candidate--applied:hover {
+  background: var(--surface-1);
 }
 
 .candidate__main {

@@ -56,6 +56,23 @@ const EMBED_EXTS = new Set(["m4a", "mp4", "m4b", "alac", "aac", "flac"]);
 let activeTab = "online";
 
 /* --------------------------------------------------------------------------
+   一次「应用歌词」的结果怎么告诉用户
+
+   后端 note 有几种：已写入歌曲文件 / 已应用但（按设置、格式不支持、文件布局
+   写不了）没写进歌曲文件 / 在线曲目只进缓存。它们**都算应用成功** —— 歌词已经
+   进了缓存，播放时用的就是这一份。所以统一用 success 语气，把「没写进文件」
+   放在后半句解释，而不是弹一条看着像失败的红点提示。
+
+   停留时间按文案长度给：只写「歌词已应用」时 2 秒够了，但
+   「…没有写入歌曲文件 —— 文件是分片（fMP4）布局，存在 moof，…」这种长句
+   2 秒根本读不完（实测反馈：用户只看到红点闪了一下）。
+   -------------------------------------------------------------------------- */
+function toastApplied(saved, fallback) {
+  const note = String(saved?.note || "").trim() || fallback;
+  toast(note, { tone: "success", duration: Math.min(6500, 1800 + note.length * 55) });
+}
+
+/* --------------------------------------------------------------------------
    编辑草稿；songId 用来判断「换了歌，草稿要不要重来」
    -------------------------------------------------------------------------- */
 const draft = {
@@ -108,6 +125,10 @@ class MpLyricsPanel extends MpElement {
     this._formats = new Map();
     // 每次搜索递增：探测是逐条等待的，中途又搜一次时旧的一轮要能自己停下
     this._searchSeq = 0;
+    // 「使用」按钮的成功反馈：被应用的那条候选的 key（provider:id），
+    // 以及它的复原定时器（见 markApplied）。
+    this._appliedKey = "";
+    this._appliedTimer = null;
   }
 
   onConnected() {
@@ -131,6 +152,8 @@ class MpLyricsPanel extends MpElement {
 
   onDisconnected() {
     document.removeEventListener("keydown", this._onKeyDownCapture, true);
+    // 面板被拆掉后不需要再复原按钮状态（定时器回调里的 tick 只是白跑一次）
+    clearTimeout(this._appliedTimer);
   }
 
   get open() {
@@ -265,7 +288,14 @@ class MpLyricsPanel extends MpElement {
           canEmbed
             ? html`<label class="lyricspanel__notice-opt" data-notice-opt>
                 <input type="checkbox" data-embed-toggle checked />
-                <span>同时写入歌曲文件（否则下次打开仍显示旧歌词）</span>
+                <!-- 说明不再挤在标题里：标题只留「同时写入歌曲文件」+ 感叹号角标，
+                     悬浮（角标也算，角标在标题内部）时由全局 tooltip 显示 data-tip。 -->
+                <span
+                  class="lyricspanel__notice-opt-text"
+                  data-tip="这首歌的歌词来自「${label}」，优先级高于歌词缓存：只存缓存的话，下次打开会显示回旧歌词。勾上则同时写进歌曲文件本身（会改动音乐文件）。"
+                >
+                  同时写入歌曲文件<span class="lyricspanel__notice-opt-badge" aria-hidden="true">!</span>
+                </span>
               </label>`
             : nothing
         }
@@ -345,26 +375,31 @@ class MpLyricsPanel extends MpElement {
       return repeat(
         this._candidates,
         (c, i) => `${c.provider || ""}-${c.id || i}`,
-        (c, i) => html`
-          <div class="candidate">
-            <div class="candidate__main">
-              <div class="candidate__title">${(c.title || "未命名") + " - " + (c.artist || "未知")}</div>
-              <div class="candidate__sub">
-                ${this.formatChip(c)}
-                ${(c.provider || "") + " · score " + (c.score || 0) + " · " + fmtTime(c.duration)}
+        (c, i) => {
+          // 刚被应用的那一条：按钮变「已应用」（✓ + 成功色），整行也带一点成功色，
+          // 这样视线停在按钮上时也能立刻看出点的是哪一条（见 markApplied）。
+          const applied = Boolean(this._appliedKey) && this._appliedKey === candidateKey(c);
+          return html`
+            <div class="candidate ${applied ? "candidate--applied" : ""}" data-applied=${applied ? "1" : nothing}>
+              <div class="candidate__main">
+                <div class="candidate__title">${(c.title || "未命名") + " - " + (c.artist || "未知")}</div>
+                <div class="candidate__sub">
+                  ${this.formatChip(c)}
+                  ${(c.provider || "") + " · score " + (c.score || 0) + " · " + fmtTime(c.duration)}
+                </div>
               </div>
+              <button
+                class="btn btn--sm ${applied ? "btn--applied" : "btn--primary"}"
+                type="button"
+                data-act="use-lyric"
+                data-i=${i}
+                @click=${() => this.applyCandidate(i)}
+              >
+                ${applied ? html`${icon("check")}<span>已应用</span>` : "使用"}
+              </button>
             </div>
-            <button
-              class="btn btn--sm btn--primary"
-              type="button"
-              data-act="use-lyric"
-              data-i=${i}
-              @click=${() => this.applyCandidate(i)}
-            >
-              使用
-            </button>
-          </div>
-        `
+          `;
+        }
       );
     }
     if (this._searched) {
@@ -978,11 +1013,32 @@ class MpLyricsPanel extends MpElement {
       });
       setLyricsOffset(song.id, 0);
       draft.songId = ""; // 歌词换了，手动编辑里的草稿作废
-      toast(saved?.note || "歌词已应用并保存", { tone: "success", duration: 2000 });
+      toastApplied(saved, "歌词已应用并保存");
+      this.markApplied(candidateKey(candidate));
       bumpLyricsPanelTick();
     } catch (err) {
       toast("获取歌词失败：" + (err.message || err), { tone: "error" });
     }
+  }
+
+  /**
+    「使用」点下去之后的成功反馈。
+
+    只弹 toast 是不够的：toast 在窗口底部中间、面板在右侧，用户的视线正停在
+    按钮上（实测反馈：点完不知道到底生效没有，就会连点几次）。所以让**被点的
+    那一条**自己变成「已应用」（✓ + 成功色 + 轻微弹出），2.6 秒后复原成可点的
+    「使用」—— 既给出了确认，也不把按钮永久占成不可再点。
+  */
+  markApplied(key) {
+    if (!key) return;
+    this._appliedKey = key;
+    bumpLyricsPanelTick();
+    clearTimeout(this._appliedTimer);
+    this._appliedTimer = setTimeout(() => {
+      if (this._appliedKey !== key) return; // 期间又点了别的候选：让新的一次管到底
+      this._appliedKey = "";
+      bumpLyricsPanelTick();
+    }, 2600);
   }
 
   /* ------------------------------------------------------------------------
@@ -1010,7 +1066,7 @@ class MpLyricsPanel extends MpElement {
     if (saved === false) return;
     setLyricsOffset(info.songId, 0);
     bumpLyricsPanelTick();
-    toast(saved?.note || "已应用并保存", { tone: "success", duration: 2600 });
+    toastApplied(saved, "已应用并保存");
   }
 
   /* ------------------------------------------------------------------------
@@ -1127,7 +1183,7 @@ class MpLyricsPanel extends MpElement {
     draft.dirty = false;
     draft.songId = info.songId;
     bumpLyricsPanelTick();
-    toast(saved?.note || "歌词已保存", { tone: "success", duration: 2600 });
+    toastApplied(saved, "歌词已保存");
   }
 
   async copyLrc() {

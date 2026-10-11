@@ -229,6 +229,20 @@ svg {
   }
 }
 
+/* 「应用成功」的轻微弹出：用于 .btn--applied。只做位移幅度很小的缩放，
+   不碰颜色 —— 颜色由类上的令牌决定，主题换色时不用改这里。 */
+@keyframes applied-pop {
+  0% {
+    transform: scale(0.94);
+  }
+  60% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: none;
+  }
+}
+
 @keyframes shimmer {
   from {
     background-position: -160% 0;

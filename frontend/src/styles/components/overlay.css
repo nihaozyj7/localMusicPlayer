@@ -926,7 +926,12 @@
   -webkit-backdrop-filter: blur(var(--popover-blur));
   color: var(--text-1);
   font-size: var(--fs-xs);
-  white-space: nowrap;
+  /* 短提示（绝大多数按钮）保持单行；长说明（如歌词面板里解释「同时写入歌曲文件」
+     的那句）换行显示 —— 不设上限时 nowrap 会把它拉成一条跨越半个窗口的长条，
+     窄窗口下还会顶到夹取边界上。position() 会按实际高度重新摆位，多行也放得下。 */
+  max-width: min(360px, calc(100vw - var(--sp-6)));
+  white-space: normal;
+  line-height: 1.55;
   pointer-events: none;
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease);

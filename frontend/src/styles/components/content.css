@@ -158,6 +158,26 @@
   background: var(--surface-2);
 }
 
+/* —— 「应用成功」态 ——
+   用在「点下去会真的生效、但生效过程看不见」的按钮上（歌词匹配的「使用」）。
+   与 .candidate__format--word 同一套配色：边框 + 文字取成功色，底色保持普通按钮，
+   这样它在主题之间都不会因为底色反转而变脏。弹出动画只播一次（动画名挂在类上，
+   类一加上就播），2600ms 后由 markApplied 摘掉。 */
+.btn--applied {
+  color: var(--success);
+  border-color: var(--success);
+  animation: applied-pop var(--dur) var(--ease);
+}
+
+.btn--applied:hover {
+  background: var(--surface-2);
+  border-color: var(--success);
+}
+
+.btn--applied:focus-visible {
+  box-shadow: var(--neu-raised-sm), var(--focus-ring);
+}
+
 .btn--icon {
   width: var(--btn-md);
   padding: 0;
