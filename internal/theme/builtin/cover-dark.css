@@ -74,4 +74,13 @@
   --heart-off: rgba(247, 247, 250, 0.42);
 
   --immersive-veil: rgba(0, 0, 0, 0.4);
+
+  /* 封面虚化：本主题的整窗底子就是「当前封面 + 重模糊」（代码在 base.css 的
+     .app-bg / .playerview::before），所以这组值属于这个主题自己的观感 ——
+     --cover-veil 是压在封面上的那层渐变压暗，保证封面再亮文字也读得清。 */
+  --cover-blur: 56px;
+  --cover-blur-strong: 60px;
+  --cover-saturate: 1.35;
+  --cover-brightness: 0.62;
+  --cover-veil: linear-gradient(180deg, rgba(8, 9, 14, 0.4) 0%, rgba(5, 6, 10, 0.74) 100%);
 }

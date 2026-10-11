@@ -14,7 +14,9 @@
      @theme-swatch #111 #333 #eee #fff #f66
    不写也能用：名称取文件名，模式按 dark/light 或 深色/浅色 猜，色板从文件里的颜色取前 5 个。
 
-   注意：主题文件只能声明令牌，不要写选择器/组件样式，否则会破坏「布局固定」。
+   注意：主题文件只能声明令牌，不要写选择器 / 组件样式。想改界面的观感，
+   请改下面这些令牌 —— 组件的布局（尺寸、间距、位置）与视觉（颜色、背景、
+   阴影、模糊、不透明度）是分开的，所以改这里**不可能**把界面改歪。
    ========================================================================== */
 
 :root[data-theme="_template"] {
@@ -90,7 +92,54 @@
     repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.045) 0 1px, transparent 1px 4px),
     linear-gradient(145deg, #131316, #08080a 60%);
 
-  /* —— 8. 布局（一般不用改，改了会移动「固定布局」）—— */
+  /* —— 8. 遮罩与浮层的模糊 ——
+     遮罩 = 「全屏压暗 + 毛玻璃」的那几层（设置 / 封面 / 搜索）；
+     弹窗背后那层只做轻微失焦，半径小得多（大了会糊成一片、没有层次）；
+     tip / 滑条气泡这类小浮层用 --popover-blur。 */
+  --scrim-bg: rgba(0, 0, 0, 0.42);
+  --scrim-blur: 10px;
+  --scrim-tint: rgba(0, 0, 0, 0.16); /* 遮罩内次级条（搜索状态行）底色 */
+  --veil-blur: 4px;
+  --scan-blur: 3px;
+  --popover-blur: 10px;
+
+  /* —— 9. 封面虚化（只有「封面取色」类主题用得上）——
+     .app-bg / .playerview::before 把当前封面铺满整窗再重度模糊。
+     压暗不够时，压在封面上的歌词与按钮会看不清。 */
+  --cover-blur: 56px;
+  --cover-blur-strong: 60px; /* 详情页底下那层再糊一点 */
+  --cover-saturate: 1.35;
+  --cover-brightness: 0.62;
+  --cover-veil: linear-gradient(180deg, rgba(8, 9, 14, 0.4) 0%, rgba(5, 6, 10, 0.74) 100%);
+
+  /* —— 10. 零散阴影与滤镜 ——
+     拟态三件套（--neu-*）之外的单体视觉效果：滑条手柄的投影、
+     实底强调按钮悬停时的加深、底栏进度条未聚焦时的压暗
+     （不需要压暗就写 filter: none）。 */
+  --thumb-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+  --accent-hover-filter: brightness(0.92);
+  --slider-idle-filter: brightness(0.62) saturate(0.82);
+
+  /* —— 11. 视觉强度（不透明度）——
+     界面里所有「置灰 / 变淡」都取这一组：想让界面更淡或更实，
+     改这几个数即可，不必去组件里找散落的 opacity。 */
+  --op-strong: 0.9; /* 几乎不透明：侧栏导航图标 */
+  --op-icon: 0.8; /* 常显但要让位给文字的图标、分隔线 */
+  --op-dim: 0.7; /* 次要装饰：空态插画、按钮前缀图标 */
+  --op-soft: 0.6; /* 轻覆盖层 / 弱化文字 */
+  --op-hint: 0.55; /* 「正在加载」呼吸动画的基线 */
+  --op-half: 0.5; /* 空态大图标、被关掉的规则行 */
+  --op-disabled: 0.45; /* 不可用控件 */
+  --op-dragging: 0.35; /* 正在被拖拽的源项 */
+  --op-ghost: 0.25; /* 整窗背景型样式下，宿主壳高光让位 */
+
+  /* —— 12. 「定位到当前播放」的落点描边（曲目表格 / 播放列表面板共用）——
+     时长必须 < 1500ms（tracks.js 的 LOCATE_HIGHLIGHT_MS），超了会被截断。 */
+  --locate-dur: 1.4s;
+  --locate-ring: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
+  --locate-ring-mid: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+
+  /* —— 13. 布局（一般不用改，改了会移动「固定布局」）—— */
   --h-titlebar: 36px;
   --w-sidebar: 232px;
   --h-playerbar: 92px;
@@ -98,7 +147,7 @@
   --row-h: 56px;
   --row-h-compact: 44px;
 
-  /* —— 9. 圆角 / 动效 —— */
+  /* —— 14. 圆角 / 动效 —— */
   --r-sm: 10px;
   --r-md: 14px;
   --r-lg: 20px;

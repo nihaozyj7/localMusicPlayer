@@ -129,7 +129,7 @@
 
 .download-panel__btn[disabled] {
   color: var(--text-3);
-  opacity: 0.4;
+  opacity: var(--op-disabled);
   cursor: default;
 }
 

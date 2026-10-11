@@ -215,7 +215,14 @@ frontend/dist/       Vite 产物 + bindings 副本 + 内置主题同步源（**�
     改成不一致会让歌单 / 收藏 / 队列在重扫后集体失效。
  3. **「当前」只能有一个真源**：选中行 = `state.currentId`；当前封面 = `coverSets.active`；轮播开关 = `config.coverCarousel`（全局）。
     新增任何「当前是哪个」的界面元素前，先想清楚真源在哪，不要在 DOM 里再存一份。
- 4. **HTML 里不写样式，组件 CSS 不写颜色字面量**：不加 `style="…"` / `<style>`；颜色只出现在 `tokens.css` 与 `themes/*.css`；
+ 4. **HTML 里不写样式；组件 CSS 只写布局，视觉一律走令牌（= 归主题）**：不加 `style="…"` / `<style>`；
+    尺寸、间距、定位、栅格、过渡时长留在 `components/*.css`，凡是**不影响盒子尺寸与位置**的东西
+    （颜色、描边色、背景、渐变、阴影、模糊、滤镜、不透明度）都必须 `var(--token)` ——
+    字面量只出现在 `tokens.css` 与 `themes/*.css`，主题文件只声明令牌。
+    新增视觉值要同时补进 `tokens.css` 与 `themes/_template.css`（用户复制的就是后者）。
+    守卫测试 `frontend/tests/css-visual-tokens.test.js`：颜色 / 硬编码滤镜 / 裸 `box-shadow`、
+    以及引用了不存在的令牌都会失败。**唯一例外**是独立透明页 `desktoplyrics.css`（不加载主题），
+    它的视觉常量集中在该文件顶部自己的 `:root { --dl-* }`。
     布局关键尺寸（`--h-titlebar` / `--w-sidebar` / `--h-playerbar` / `--h-header` / `--row-h`）全部令牌化。
     运行时改变量走 `runtime-tokens.js#setRuntimeToken()`：它写一条带 `!important` 的 `:root` 规则，
     能盖过 `early_theme.go` 留下的首帧**行内**值（直接写 `element.style` 一来盖不过它，

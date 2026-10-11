@@ -22,17 +22,11 @@
      而不是硬切一个框。
    · 纯 box-shadow 动画：不改布局、不改背景，和 .track:hover / [aria-current]
      的行底色互不干扰。
-   ========================================================================== */
 
-:root {
-  /* 动画时长。必须 < tracks.js 的 LOCATE_HIGHLIGHT_MS（1500ms）——
-     超了就会被摘 .is-located 的定时器从半路截断。
-     定时器是固定值，所以这里也固定，不跟「过渡速度」档位联动
-     （落点提示是一次性反馈，快慢档改的是面板 / 菜单的过渡节奏）。 */
-  --locate-dur: 1.4s;
-  /* 描边本体：亮起时的成色；关了动效（prefers-reduced-motion）时静态兜底也用它 */
-  --locate-ring: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
-}
+   成色与时长（--locate-ring / --locate-ring-mid / --locate-dur）都在
+   tokens.css 里 —— 这里是「什么时候放这一轮动画」的实现，不是配色处；
+   主题换强调色时描边自动跟着走。
+   ========================================================================== */
 
 /* 一轮呼吸：淡入（0→25%）→ 停留并微微收敛（25%→65%）→ 淡出（65%→100%） */
 .track.is-located,
@@ -48,7 +42,7 @@
     box-shadow: var(--locate-ring);
   }
   65% {
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+    box-shadow: var(--locate-ring-mid);
   }
   100% {
     box-shadow: inset 0 0 0 0 transparent;

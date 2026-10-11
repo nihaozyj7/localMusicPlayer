@@ -110,7 +110,7 @@
   width: 17px;
   height: 17px;
   flex: none;
-  opacity: 0.9;
+  opacity: var(--op-strong);
 }
 
 .navitem__text {
@@ -203,7 +203,7 @@
 }
 
 .navitem.is-dragging {
-  opacity: 0.4;
+  opacity: var(--op-dragging);
 }
 
 .navitem.is-drop-target {

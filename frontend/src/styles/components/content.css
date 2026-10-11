@@ -107,7 +107,7 @@
 }
 
 .btn[disabled] {
-  opacity: 0.45;
+  opacity: var(--op-disabled);
   pointer-events: none;
 }
 
@@ -124,7 +124,7 @@
 
 .btn--primary:hover {
   background: var(--accent);
-  filter: brightness(0.92);
+  filter: var(--accent-hover-filter);
 }
 
 .btn--ghost {
@@ -241,7 +241,7 @@
 
 .btn--sort svg {
   /* 前缀的排序图标略小一点，让文字仍是视觉主体 */
-  opacity: 0.75;
+  opacity: var(--op-dim);
 }
 
 /* 方向箭头：紧跟在文字后面、更小、更暗 —— 它是**状态**而不是第二个图标 */
@@ -332,7 +332,7 @@
   width: 88px;
   height: 88px;
   color: var(--text-3);
-  opacity: 0.7;
+  opacity: var(--op-dim);
 }
 
 .empty__title {

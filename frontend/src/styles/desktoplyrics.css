@@ -28,6 +28,57 @@
    注意以前窗口是半透明的一层，会让桌面看起来蒙了灰；现在默认不铺任何底色。
    ========================================================================== */
 
+/* ==========================================================================
+   视觉常量（本页面自己的令牌）
+   --------------------------------------------------------------------------
+   桌面歌词窗口是**独立透明页面**：它刻意不引入 styles/index.css，也不加载主题
+   （见上面的三条硬约束），主题令牌到不了这里。而这个窗口本身就是一块「浮在
+   任意壁纸上的材质」—— 颜色必须自己定死，不能跟着主题走。
+   为了不让这些值散落在规则里，全部收在这一块：**改这一块 = 换整个窗口的材质**。
+   （不放进 styles/tokens.css 与 themes/*.css：那两个文件的令牌这里读不到，
+   放过去只会得到一份「看着能改、实际无效」的令牌。）
+   ========================================================================== */
+:root {
+  --dl-font: "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+
+  /* 悬浮形态：圆角 / 毛玻璃 / 底色 / 描边 / 投影 */
+  --dl-radius: 16px;
+  --dl-pill-radius: 999px;
+  --dl-blur: 16px;
+  --dl-surface: rgba(16, 16, 20, 0.86);
+  --dl-surface-bar: rgba(24, 24, 30, 0.94);
+  --dl-border: rgba(255, 255, 255, 0.12);
+  --dl-border-bar: rgba(255, 255, 255, 0.14);
+  --dl-border-control: rgba(255, 255, 255, 0.16);
+  --dl-window-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  --dl-bar-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+
+  /* 控制栏里的下拉与文字 */
+  --dl-control-bg: rgba(255, 255, 255, 0.08);
+  --dl-control-bg-hover: rgba(255, 255, 255, 0.14);
+  --dl-fg: #ffffff;
+  --dl-fg-dim: rgba(255, 255, 255, 0.72);
+  --dl-arrow: rgba(255, 255, 255, 0.7);
+  /* <option> 的展开面板由系统绘制：必须给不透明底色，否则文字和桌面混在一起 */
+  --dl-menu-bg: #1b1b21;
+
+  /* 歌词文字的 5 种样式 —— 桌面壁纸什么颜色都可能有，
+     每一种的目标都是「在任何背景上都读得清」，所以白色字 + 深色描边/投影。 */
+  --dl-line-color: #ffffff;
+  --dl-classic-shadow: 0 0 2px rgba(0, 0, 0, 0.95), 0 0 5px rgba(0, 0, 0, 0.8),
+    0 2px 6px rgba(0, 0, 0, 0.85);
+  --dl-outline-stroke: 1.4px rgba(0, 0, 0, 0.9);
+  --dl-soft-shadow: 0 1px 2px rgba(0, 0, 0, 0.7), 0 4px 12px rgba(0, 0, 0, 0.72);
+  --dl-glow-shadow: 0 0 6px rgba(124, 199, 255, 0.95), 0 0 18px rgba(124, 199, 255, 0.8),
+    0 2px 8px rgba(0, 0, 0, 0.7);
+  --dl-gradient: linear-gradient(92deg, #7ee8fa, #eec0c6 48%, #ffd76e);
+  --dl-gradient-shadow: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55));
+  --dl-tip-shadow: 0 0 2px rgba(0, 0, 0, 0.95), 0 2px 5px rgba(0, 0, 0, 0.8);
+
+  /* 暂停：整体降一点不透明度，明确「现在没在唱」 */
+  --dl-paused-opacity: 0.72;
+}
+
 html.dl-window,
 html.dl-window body {
   margin: 0;
@@ -41,7 +92,7 @@ html.dl-window body {
   /* 桌面歌词不需要文本选择，避免拖动时误选 */
   user-select: none;
   -webkit-user-select: none;
-  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  font-family: var(--dl-font);
 }
 
 /* 关掉主界面的背景光斑层（base.css 的 body::before）。
@@ -77,18 +128,18 @@ html.dl-window body::before {
   text-align: center;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 16px;
+  border-radius: var(--dl-radius);
   transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 
 /* —— 鼠标移入 = 常规窗口形态 —— */
 .dl:hover,
 .dl:focus-within {
-  background: rgba(16, 16, 20, 0.86);
-  border-color: rgba(255, 255, 255, 0.12);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: var(--dl-surface);
+  border-color: var(--dl-border);
+  box-shadow: var(--dl-window-shadow);
+  backdrop-filter: blur(var(--dl-blur));
+  -webkit-backdrop-filter: blur(var(--dl-blur));
 }
 
 /* —— 悬浮控制栏（不悬浮时不占交互、完全不可见）—— */
@@ -100,10 +151,10 @@ html.dl-window body::before {
   align-items: center;
   gap: 8px;
   padding: 4px 6px 4px 12px;
-  border-radius: 999px;
-  background: rgba(24, 24, 30, 0.94);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  border-radius: var(--dl-pill-radius);
+  background: var(--dl-surface-bar);
+  border: 1px solid var(--dl-border-bar);
+  box-shadow: var(--dl-bar-shadow);
   opacity: 0;
   transform: translate(-50%, -8px);
   pointer-events: none;
@@ -121,7 +172,7 @@ html.dl-window body::before {
 
 .dl__bar-label {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--dl-fg-dim);
   white-space: nowrap;
 }
 
@@ -134,10 +185,10 @@ html.dl-window body::before {
   appearance: none;
   height: 26px;
   padding: 0 26px 0 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  border-radius: var(--dl-pill-radius);
+  border: 1px solid var(--dl-border-control);
+  background: var(--dl-control-bg);
+  color: var(--dl-fg);
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
@@ -145,13 +196,13 @@ html.dl-window body::before {
 }
 
 .dl__select:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--dl-control-bg-hover);
 }
 
 .dl__select option {
   /* 下拉展开的面板由系统绘制，必须给不透明底色，否则文字和桌面混在一起 */
-  background: #1b1b21;
-  color: #fff;
+  background: var(--dl-menu-bg);
+  color: var(--dl-fg);
 }
 
 /* 自绘下拉箭头（appearance:none 之后默认箭头会消失） */
@@ -162,8 +213,8 @@ html.dl-window body::before {
   top: 50%;
   width: 6px;
   height: 6px;
-  border-right: 1.5px solid rgba(255, 255, 255, 0.7);
-  border-bottom: 1.5px solid rgba(255, 255, 255, 0.7);
+  border-right: 1.5px solid var(--dl-arrow);
+  border-bottom: 1.5px solid var(--dl-arrow);
   transform: translateY(-70%) rotate(45deg);
   pointer-events: none;
 }
@@ -182,39 +233,32 @@ html.dl-window body::before {
 }
 
 /* —— 桌面歌词样式（下拉框切换）——
-   桌面壁纸可能任何颜色，每种样式的目标都是「在任何背景上都读得清」。 */
+   桌面壁纸可能任何颜色，每种样式的目标都是「在任何背景上都读得清」。
+   每种样式的具体成色见文件顶部的 --dl-* 令牌。 */
 .dl[data-style="classic"] .dl__line {
-  color: #ffffff;
-  text-shadow:
-    0 0 2px rgba(0, 0, 0, 0.95),
-    0 0 5px rgba(0, 0, 0, 0.8),
-    0 2px 6px rgba(0, 0, 0, 0.85);
+  color: var(--dl-line-color);
+  text-shadow: var(--dl-classic-shadow);
 }
 
 .dl[data-style="outline"] .dl__line {
-  color: #ffffff;
+  color: var(--dl-line-color);
   text-shadow: none;
-  -webkit-text-stroke: 1.4px rgba(0, 0, 0, 0.9);
+  -webkit-text-stroke: var(--dl-outline-stroke);
   paint-order: stroke fill;
 }
 
 .dl[data-style="shadow"] .dl__line {
-  color: #ffffff;
-  text-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.7),
-    0 4px 12px rgba(0, 0, 0, 0.72);
+  color: var(--dl-line-color);
+  text-shadow: var(--dl-soft-shadow);
 }
 
 .dl[data-style="glow"] .dl__line {
-  color: #ffffff;
-  text-shadow:
-    0 0 6px rgba(124, 199, 255, 0.95),
-    0 0 18px rgba(124, 199, 255, 0.8),
-    0 2px 8px rgba(0, 0, 0, 0.7);
+  color: var(--dl-line-color);
+  text-shadow: var(--dl-glow-shadow);
 }
 
 .dl[data-style="gradient"] .dl__line {
-  background-image: linear-gradient(92deg, #7ee8fa, #eec0c6 48%, #ffd76e);
+  background-image: var(--dl-gradient);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -223,7 +267,7 @@ html.dl-window body::before {
 
 /* 渐变色字在浅色桌面上可能偏淡：加一层很轻的深色投影 */
 .dl[data-style="gradient"] .dl__line {
-  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55));
+  filter: var(--dl-gradient-shadow);
 }
 
 /* 切行时淡入：直接换字会「跳」一下 */
@@ -245,10 +289,8 @@ html.dl-window body::before {
 .dl__tip {
   margin: 0;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.72);
-  text-shadow:
-    0 0 2px rgba(0, 0, 0, 0.95),
-    0 2px 5px rgba(0, 0, 0, 0.8);
+  color: var(--dl-fg-dim);
+  text-shadow: var(--dl-tip-shadow);
 }
 
 /* 有歌词时收起提示行，只留一行歌词 */
@@ -258,7 +300,7 @@ html.dl-window body::before {
 
 /* 暂停：整体降一点不透明度，明确「现在没在唱」 */
 .dl[data-state="paused"] .dl__line {
-  opacity: 0.72;
+  opacity: var(--dl-paused-opacity);
 }
 
 /* --------------------------------------------------------------------------

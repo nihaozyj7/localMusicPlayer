@@ -22,8 +22,9 @@
   justify-content: center;
   align-items: flex-start;
   padding-top: var(--sp-6);
-  background: rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(10px);
+  background: var(--scrim-bg);
+  backdrop-filter: blur(var(--scrim-blur));
+  -webkit-backdrop-filter: blur(var(--scrim-blur));
   opacity: 0;
   transition: opacity var(--dur) var(--ease-out);
 }
@@ -297,7 +298,7 @@
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-4);
   border-bottom: var(--hairline);
-  background: rgba(0, 0, 0, 0.16);
+  background: var(--scrim-tint);
 }
 
 .search-overlay__tabs {
@@ -367,7 +368,7 @@
 .search-overlay__empty svg {
   width: var(--fs-2xl);
   height: var(--fs-2xl);
-  opacity: 0.5;
+  opacity: var(--op-half);
 }
 
 .search-overlay__loading {

@@ -204,7 +204,7 @@
 
 /* 播放列表面板里的拖拽排序状态 */
 .queue-item.is-dragging {
-  opacity: 0.4;
+  opacity: var(--op-dragging);
 }
 
 .queue-item.is-drop-before {
@@ -657,7 +657,7 @@
   width: 15px;
   height: 15px;
   flex: none;
-  opacity: 0.85;
+  opacity: var(--op-icon);
 }
 
 .menu__item span {
@@ -683,7 +683,7 @@
 }
 
 .menu__item[disabled] {
-  opacity: 0.4;
+  opacity: var(--op-disabled);
   pointer-events: none;
 }
 
@@ -731,8 +731,8 @@
   display: grid;
   place-items: center;
   background: var(--immersive-veil);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(var(--veil-blur));
+  -webkit-backdrop-filter: blur(var(--veil-blur));
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease-out);
 }
@@ -906,8 +906,8 @@
   border-radius: var(--r-xs);
   background: var(--glass-bg-strong);
   border: var(--hairline);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(var(--popover-blur));
+  -webkit-backdrop-filter: blur(var(--popover-blur));
   color: var(--text-1);
   font-size: var(--fs-xs);
   white-space: nowrap;
@@ -928,8 +928,8 @@
   display: grid;
   place-items: center;
   background: var(--immersive-veil);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(var(--scan-blur));
+  -webkit-backdrop-filter: blur(var(--scan-blur));
 }
 
 .scanning[hidden] {

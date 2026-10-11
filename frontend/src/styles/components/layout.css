@@ -181,7 +181,7 @@
 .app[data-skin-background="yes"][data-view="player"] .titlebar::after,
 .app[data-skin-background="yes"][data-view="player"] .playerbar::before {
   background: var(--glass-highlight);
-  opacity: 0.25;
+  opacity: var(--op-ghost);
 }
 
 .app[data-skin-background="yes"][data-view="player"] .sidebar {

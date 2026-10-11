@@ -347,7 +347,7 @@
   margin-left: auto;
   font-size: var(--fs-xs);
   color: var(--text-3);
-  opacity: 0.8;
+  opacity: var(--op-icon);
 }
 
 /* 折叠头（整行可点�?*/
@@ -567,7 +567,7 @@
 }
 
 .rule[data-enabled="false"] {
-  opacity: 0.5;
+  opacity: var(--op-half);
 }
 
 .rule__field,
@@ -743,7 +743,7 @@
    这套控件不写 aria-disabled，别照旧选择器去查。 */
 .segmented__btn:disabled {
   color: var(--text-3);
-  opacity: 0.45;
+  opacity: var(--op-disabled);
   cursor: not-allowed;
   background: none;
   box-shadow: none;
@@ -883,7 +883,7 @@
 .skincard__warn {
   display: inline-flex;
   flex: none;
-  color: var(--warn, #e0a63c);
+  color: var(--warning);
 }
 
 .skincard__warn svg {

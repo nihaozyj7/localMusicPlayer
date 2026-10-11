@@ -108,7 +108,7 @@
 }
 
 .playerbar__cover:hover::after {
-  opacity: 0.6;
+  opacity: var(--op-soft);
 }
 
 .playerbar__cover-icon {
@@ -200,7 +200,7 @@
 }
 
 .playerbar__add:disabled {
-  opacity: 0.35;
+  opacity: var(--op-disabled);
   cursor: default;
 }
 
@@ -282,12 +282,12 @@
    需求：进度条颜色亮度降低一点，鼠标悬浮时才变成原来那种亮度。
    这样底栏在播放时不会一直有一根高亮色条抢视线，更沉浸。 */
 .playerbar__progress .slider__fill {
-  filter: brightness(0.62) saturate(0.82);
+  filter: var(--slider-idle-filter);
   transition: width 80ms linear, filter var(--dur-fast) var(--ease);
 }
 
 .playerbar__progress .slider__thumb {
-  filter: brightness(0.62) saturate(0.82);
+  filter: var(--slider-idle-filter);
   transition: transform var(--dur-fast) var(--ease), filter var(--dur-fast) var(--ease);
 }
 
@@ -350,7 +350,7 @@
   margin-left: calc(var(--thumb-size) / -2);
   border-radius: var(--r-full);
   background: var(--accent);
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--thumb-shadow);
   transform: translateY(-50%) scale(0);
   transition: transform var(--dur-fast) var(--ease);
 }
@@ -370,7 +370,7 @@
 }
 
 .slider[data-disabled="true"] {
-  opacity: 0.45;
+  opacity: var(--op-disabled);
   cursor: default;
 }
 
@@ -387,8 +387,8 @@
   border-radius: var(--r-xs);
   background: var(--glass-bg-strong);
   border: var(--hairline);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(var(--popover-blur));
+  -webkit-backdrop-filter: blur(var(--popover-blur));
   color: var(--text-1);
   font-family: var(--font-num);
   font-size: var(--fs-xs);
@@ -596,7 +596,7 @@
 /* 按钮组里可能有「当前不可用」的项：封面相关按钮对在线试听曲目没有意义，
    轮播开关在只有一张封面时也没意义。置灰而不是隐藏，按钮组的位置才不会跳。 */
 .viewmode__btn:disabled {
-  opacity: 0.34;
+  opacity: var(--op-disabled);
   cursor: not-allowed;
 }
 

@@ -1,6 +1,8 @@
 /* ==========================================================================
    base.css — 复位、字体、滚动条、动画关键帧
-   不含任何颜色字面量（除透明/继承），颜色一律走令牌。
+   --------------------------------------------------------------------------
+   只负责结构与排版：这里不出现任何颜色、阴影、模糊半径的字面量，
+   视觉效果一律引用 tokens.css 的令牌（主题可覆盖）。
    ========================================================================== */
 
 *,
@@ -59,7 +61,9 @@ body::before {
   background-image: var(--cover-bg, none);
   background-position: center;
   background-size: cover;
-  filter: blur(56px) saturate(1.35) brightness(0.62);
+  /* 虚化程度与压暗量都是视觉令牌：主题（cover-dark）决定封面该怎么被处理 */
+  filter: blur(var(--cover-blur)) saturate(var(--cover-saturate))
+    brightness(var(--cover-brightness));
   opacity: 0;
   transition: opacity var(--dur-slow) var(--ease);
 }
@@ -73,7 +77,7 @@ body::before {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(8, 9, 14, 0.4) 0%, rgba(5, 6, 10, 0.74) 100%);
+  background: var(--cover-veil);
 }
 
 /* 取色主题下的详情页底：再铺一层同样的封面虚化图。
@@ -89,7 +93,8 @@ body::before {
   inset: 0;
   z-index: -1;
   background: var(--cover-bg, none) center / cover no-repeat;
-  filter: blur(60px) saturate(1.35) brightness(0.62);
+  filter: blur(var(--cover-blur-strong)) saturate(var(--cover-saturate))
+    brightness(var(--cover-brightness));
   pointer-events: none;
 }
 
@@ -217,7 +222,7 @@ svg {
 @keyframes pulse-soft {
   0%,
   100% {
-    opacity: 0.55;
+    opacity: var(--op-hint);
   }
   50% {
     opacity: 1;
