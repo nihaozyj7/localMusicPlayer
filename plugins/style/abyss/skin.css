@@ -1,0 +1,366 @@
+/* ==========================================================================
+   深渊 abyss · skin.css
+   --------------------------------------------------------------------------
+   宿主会把本文件整体裹进 `@layer skin { @scope (.playerview[data-skin="abyss"],
+   .skin-bg[data-skin="abyss"]) { … } }`，所以选择器**相对舞台根**写：
+   舞台自己用 `.ab`，背景层用 `.abbg`，不要写 `.playerview[data-skin=…]` 前缀。
+
+   分工：
+     · 水与折射       —— canvas（WebGL2，拿不到时是 Canvas2D 兜底）
+     · 液面 / 光晕    —— 纯 CSS，由 --ab-lift / --ab-turb 驱动（低频抬升看得见）
+     · 歌词           —— 宿主 SDK 的矢量文字，`mix-blend-mode` 咬进水里
+     · 读数           —— HUD（曲名 / 下潜深度 / 时间码）
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   舞台
+   -------------------------------------------------------------------------- */
+.ab {
+  --ab-w: 100%;
+  --ab-h: 100%;
+  --ab-lift: 0;
+  --ab-turb: 0;
+  --ab-foam: 0;
+  --ab-surge: 0;
+  position: absolute;
+  inset: 0;
+  width: var(--ab-w);
+  height: var(--ab-h);
+  overflow: hidden;
+  color: var(--ab-fg-90);
+  background: transparent;
+}
+
+/* 水：整块舞台。alpha 是开的（premultipliedAlpha:false），所以底下的背景层透得出来。
+   `.ab__fluid` 走 GL，`.ab__soft` 是 Canvas2D 兜底 —— **两张画布**是必须的：
+   一个 canvas 一辈子只能有一种上下文，已经拿过 webgl2 的那张再要 "2d" 只会得到 null
+   （上下文丢了之后也一样）。用 visibility 切换，布局盒子完全一致，能量尺寸。 */
+.ab__fluid,
+.ab__soft {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ab__soft {
+  visibility: hidden;
+}
+
+.ab[data-render="2d"] .ab__soft {
+  visibility: visible;
+}
+
+.ab[data-render="2d"] .ab__fluid {
+  visibility: hidden;
+}
+
+/* 字形遮罩：只是给自检读像素用的镜子，不参与布局 */
+.ab__mask {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 水下的光晕：低频越大越亮（不是每帧写 DOM，只写两个自定义属性） */
+.ab__glow {
+  position: absolute;
+  left: -10%;
+  right: -10%;
+  top: -20%;
+  height: 86%;
+  background: radial-gradient(58% 62% at 50% 62%, var(--ab-accent-18) 0%, transparent 72%);
+  opacity: calc(0.45 + var(--ab-lift) * 0.55);
+  transform: translateY(calc(var(--ab-lift) * -16px));
+  pointer-events: none;
+}
+
+/* 液面：低频涌上来时整条带子抬高、变亮、变粗 */
+.ab__surface {
+  position: absolute;
+  left: -6%;
+  right: -6%;
+  top: 30%;
+  height: 5px;
+  background: linear-gradient(90deg, transparent 0%, var(--ab-accent-35) 22%, var(--ab-fg-55) 50%, var(--ab-accent-35) 78%, transparent 100%);
+  filter: blur(3px);
+  opacity: calc(0.35 + var(--ab-lift) * 0.55);
+  transform: translateY(calc(var(--ab-lift) * -26px)) scaleY(calc(1 + var(--ab-turb) * 3.2));
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   歌词（宿主 SDK 的 createLyricsView 渲染在这里）
+   -------------------------------------------------------------------------- */
+.ab__text {
+  position: absolute;
+  left: 9%;
+  right: 9%;
+  top: 30%;
+  bottom: 24%;
+  overflow: hidden;
+  /* 关键：矢量文字与水面混合，"咬"进去而不是浮在上面 */
+  mix-blend-mode: screen;
+}
+
+.ab__text .lyrics {
+  position: absolute;
+  inset: 0;
+}
+
+/* 滚动交给 SDK（它要按 scrollTop 把当前行居中）；滚动条藏掉 */
+.ab__text .lyrics__scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.ab__text .lyrics__scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* 注意：这里**只许改字号/颜色/不透明度**，不许用 transform 缩放当前行 ——
+   transform 会缩放字形，而遮罩是按"盒子 + 计算字号"画的，一缩就对不齐了。 */
+.ab__text .lyric {
+  padding: 3px 0;
+  font-size: 16px;
+  line-height: 1.46;
+  letter-spacing: 0.02em;
+  color: var(--ab-fg-55);
+  opacity: 0.5;
+  transition: opacity 180ms linear;
+}
+
+.ab__text .lyric[aria-current="true"] {
+  font-size: 21px;
+  color: var(--ab-fg);
+  opacity: 1;
+  text-shadow: 0 2px 22px var(--ab-bg-85);
+}
+
+.ab__text .lyric[data-exit="1"] {
+  opacity: 0.28;
+}
+
+/* 逐字：SDK 写的是离散的 data-active 与连续的 --w（0..1），
+   把 --w 变成"被水压出来的亮边"，不切开文字本身 */
+.ab__text .lyric__word {
+  text-shadow: 0 0 calc(var(--w, 0) * 14px) var(--ab-accent);
+}
+
+.ab__text .lyric__word[data-active="true"] {
+  color: var(--ab-accent);
+}
+
+.ab__text .lyric__trans {
+  display: block;
+  font-size: 0.76em;
+  opacity: 0.68;
+}
+
+.ab__text .lyrics__empty {
+  margin-top: 14%;
+  text-align: center;
+  color: var(--ab-fg-55);
+}
+
+.ab__text .lyrics__empty-icon {
+  display: none;
+}
+
+.ab__text .lyrics__empty-text {
+  font-size: 14px;
+  letter-spacing: 0.18em;
+}
+
+.ab__text .lyrics__empty-hint,
+.ab__text .lyrics__empty .btn {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   暗角 / HUD / 兜底角标
+   -------------------------------------------------------------------------- */
+.ab__vig {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(76% 68% at 50% 46%, transparent 0%, var(--ab-bg-60) 72%, var(--ab-bg-85) 100%);
+  pointer-events: none;
+}
+
+.ab__hud {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 22px 26px;
+  pointer-events: none;
+}
+
+.ab__hud-top,
+.ab__hud-bottom {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ab__depth {
+  font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  color: var(--ab-accent);
+  text-shadow: 0 0 12px var(--ab-accent-35);
+}
+
+.ab__hint {
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--ab-fg-55);
+}
+
+.ab__title {
+  max-width: 62%;
+  overflow: hidden;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ab-fg-90);
+}
+
+.ab__tc {
+  font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  color: var(--ab-fg-55);
+}
+
+.ab__nogl {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--ab-accent-35);
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ab-accent);
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   整窗背景层（清单 background:true ⇒ 这一层的容器由宿主给、内容由本包填）
+   -------------------------------------------------------------------------- */
+.abbg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--ab-bg);
+}
+
+.abbg__img {
+  position: absolute;
+  inset: -12%;
+  width: 124%;
+  height: 124%;
+  object-fit: cover;
+  filter: blur(26px) saturate(1.15) brightness(0.5);
+  opacity: 0;
+  transition: opacity 900ms ease-out;
+}
+
+.abbg__img[data-ready="1"] {
+  opacity: 0.55;
+}
+
+/* 深度分层：越往下越黑 */
+.abbg__deep {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, var(--ab-bg-60) 0%, var(--ab-bg) 46%, var(--ab-bg-85) 100%);
+}
+
+/* 水下的光斑（极慢的漂移；静态档与低动效下直接停住） */
+.abbg__caustics {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(30% 24% at 18% 22%, var(--ab-accent-18) 0%, transparent 70%),
+    radial-gradient(26% 20% at 76% 34%, var(--ab-accent-18) 0%, transparent 70%),
+    radial-gradient(36% 26% at 44% 78%, var(--ab-accent-35) 0%, transparent 76%);
+  opacity: 0.5;
+  animation: ab-caustics 42s ease-in-out infinite alternate;
+}
+
+@keyframes ab-caustics {
+  from {
+    transform: translate3d(-2%, 1%, 0) scale(1.04);
+  }
+  to {
+    transform: translate3d(3%, -2%, 0) scale(1.12);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   降级档：低动效 / 静态 / performance / 窄窗口
+   -------------------------------------------------------------------------- */
+/* 背景层不在 .ab 里（宿主给的另一个容器），所以状态镜像到 .abbg 自己身上 */
+.abbg[data-low-motion="1"] .abbg__caustics,
+.abbg[data-animations="0"] .abbg__caustics {
+  animation: none;
+}
+
+.abbg[data-idle="1"] .abbg__caustics {
+  animation-play-state: paused;
+}
+
+.ab[data-animations="0"] .ab__glow {
+  transform: none;
+}
+
+/* 静态档：液面与光晕停在低频的最后一帧（不写 --ab-lift 就不会动） */
+.ab[data-animations="0"] .ab__surface,
+.ab[data-animations="0"] .ab__glow {
+  transition: none;
+}
+
+.ab[data-idle="1"] .abbg__caustics {
+  animation-play-state: paused;
+}
+
+.ab[data-perf="1"] .ab__glow {
+  opacity: calc(0.3 + var(--ab-lift) * 0.4);
+  filter: blur(6px);
+}
+
+.ab[data-narrow="1"] .ab__hud {
+  padding: 14px 16px;
+}
+
+.ab[data-narrow="1"] .ab__text {
+  left: 5%;
+  right: 5%;
+  top: 26%;
+  bottom: 26%;
+}
+
+.ab[data-narrow="1"] .ab__text .lyric {
+  font-size: 15px;
+}
+
+.ab[data-narrow="1"] .ab__text .lyric[aria-current="true"] {
+  font-size: 18px;
+}

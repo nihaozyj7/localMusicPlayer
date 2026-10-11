@@ -1,0 +1,15 @@
+{
+  "id": "rubbing",
+  "name": "拓印",
+  "version": "1.0.0",
+  "apiVersion": "3.0",
+  "entry": "skin.js",
+  "styles": ["skin.css"],
+  "icon": { "file": "assets/icon.svg" },
+  "order": 220,
+  "description": "歌词是用这张封面的像素堆出来的：上万个彩色颗粒磁吸成字，唱到哪句就聚到哪句。",
+  "capabilities": { "spectrum": true, "background": true, "interactive": true },
+  "colors": { "bg": "#0d0c0b", "fg": "#e8e2d6", "accent": "#b9a37e" },
+  "performance": { "budgetFps": 45 },
+  "author": "第三方样式"
+}

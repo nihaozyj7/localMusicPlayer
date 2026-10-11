@@ -11,8 +11,9 @@
      · 想影响宿主壳（标题栏 / 底栏 / 浮层）的颜色，只有一条合法通道 ——
        清单 colors（静态兜底）+ ctx.actions.reportBackdrop()（随封面动态上报）。
 
-   画面配色集中在下面这一段，运行期 JS 只会改这三个数字与强调色：
+   画面配色集中在下面这一段，运行期 JS 只会改这几个数字与强调色：
      --dr-bloom（低频 → 光晕呼吸）/ --dr-grain（高频 → 颗粒浓度）/ --dr-hal（打击 → halation）
+    / --dr-snap（打击 → 快门内收）
    以及 --dr-shift（当前行的居中位移）、每个字素的 --g（0..1 点亮进度）。
 
    ★ 性能纪律：filter 只在这里设一次（背景大图、bloom 层），运行期**只动
@@ -28,10 +29,11 @@
   --dr-lit: #ffd9a0;
   --dr-accent: #c8a165;
 
-  /* —— 每帧由 JS 写入的三个量（初值 = 静音时的样子） —— */
+  /* —— 每帧由 JS 写入的量（初值 = 静音时的样子） —— */
   --dr-bloom: 0.16;
   --dr-grain: 0.18;
   --dr-hal: 0;
+  --dr-snap: 0;
   --dr-shift: 0px;
   --dr-fs: 18px;
 
@@ -170,16 +172,30 @@
   text-overflow: ellipsis;
 }
 .dr__sub {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
   font-size: 12px;
   letter-spacing: 0.06em;
   color: var(--dr-dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.dr__artist {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .dr__tc {
+  flex: none;
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   color: var(--dr-accent);
+  /* 等宽数字：时间码跳秒时整行不会左右抖 */
+  font-variant-numeric: tabular-nums;
 }
 .dr__roll {
-  margin-left: 12px;
+  flex: none;
+  margin-left: auto;
 }
 
 /* --------------------------------------------------------------------------
@@ -283,23 +299,37 @@
   background: radial-gradient(115% 85% at 50% 45%, rgba(0, 0, 0, 0) 42%, rgba(0, 0, 0, 0.58) 100%);
 }
 
-/* 快门：两片黑幕，换歌时开合一次（转场只有这一处） */
+/* 快门：两片黑幕。外层管"换歌开合"（慢，300ms），
+   内层 ::before 管"跟着拍点轻轻内收"（快，60ms）——
+   两种运动拆到两层，是为了让它们各自有各自的 transition，互不拖慢。 */
 .dr__gate {
   position: absolute;
   left: 0;
   right: 0;
   height: 52%;
-  background: linear-gradient(180deg, #0a0908, #15120f);
   pointer-events: none;
   transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.dr__gate::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #0a0908, #15120f);
+  transition: transform 60ms linear;
 }
 .dr__gate--top {
   top: 0;
   transform: translateY(-101%);
 }
+.dr__gate--top::before {
+  transform: translateY(calc(var(--dr-snap) * 7%));
+}
 .dr__gate--bottom {
   bottom: 0;
   transform: translateY(101%);
+}
+.dr__gate--bottom::before {
+  transform: translateY(calc(var(--dr-snap) * -7%));
 }
 .dr[data-shutter="shut"] .dr__gate--top,
 .dr[data-shutter="shut"] .dr__gate--bottom {

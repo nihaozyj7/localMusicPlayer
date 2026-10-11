@@ -56,7 +56,11 @@ const SHELL = `
     <div class="dr__empty"></div>
     <div class="dr__hud">
       <div class="dr__title"></div>
-      <div class="dr__sub"><span class="dr__tc">00:00</span><span class="dr__roll"></span></div>
+      <div class="dr__sub">
+        <span class="dr__artist"></span>
+        <span class="dr__tc">00:00</span>
+        <span class="dr__roll"></span>
+      </div>
     </div>
     <div class="dr__frame" aria-hidden="true"></div>
     <div class="dr__scan" aria-hidden="true"></div>
@@ -95,7 +99,9 @@ export default {
     const elList = dr.querySelector(".dr__list");
     const elEmpty = dr.querySelector(".dr__empty");
     const elTitle = dr.querySelector(".dr__title");
-    const elSub = dr.querySelector(".dr__sub");
+    // ★ 只写 .dr__artist，**不要**写 .dr__sub.textContent ——
+    //   那会把同一行里的时间码与"片号"两个 span 一起抹掉（它们会变成游离节点，再也画不出来）
+    const elArtist = dr.querySelector(".dr__artist");
     const elTc = dr.querySelector(".dr__tc");
     const elRoll = dr.querySelector(".dr__roll");
 
@@ -115,12 +121,13 @@ export default {
       wordAligned: [],
       gCache: [],
       activeIndex: -1,
-      lastLyH: -1,
       // 视觉量
       vars: new Map(),
       bloom: 0.16,
       grain: 0.18,
       hal: 0,
+      snap: 0,
+      duration: 0,
       tcText: "",
       // 频谱
       specSeen: false,
@@ -212,8 +219,9 @@ export default {
       const src = m.cover || ctx.defaultCover || "";
 
       elTitle.textContent = song.title || "未在播放";
-      elSub.textContent = html.subtitleOf(song.artist, song.album);
+      elArtist.textContent = html.subtitleOf(song.artist, song.album);
       elRoll.textContent = song.kind === "online" ? "试听" : `片号 ${rollLabel(song.id)}`;
+      st.duration = Number(song.duration) || 0;
 
       // bloom 层用 background-image（只在这一层设 filter，运行期只动 opacity/transform）
       elBloom.style.backgroundImage = film.cssUrl(src);
@@ -353,12 +361,19 @@ export default {
       }
       elList.appendChild(frag);
 
-      st.lastLyH = -1;
       syncShift();
       paintPosition(Math.max(0, clock.at(nowMs()) - VISUAL_LAG_MS), nowMs());
     }
 
-    /** 把当前行挪到可视区中央（位移交给 CSS 过渡，只写一个变量） */
+    /**
+     * 把当前行挪到可视区中央（位移交给 CSS 过渡，只写一个变量）。
+     *
+     * ★ 每帧都调（不是"高度变了才调"）：行高会**晚于**第一帧才定下来
+     *   （字体/行高/换行在布局完成时才生效），那时容器高度可能没变、
+     *   行内偏移却变了 —— 只比 clientHeight 会让位移永久停在 0。
+     *   代价与原来一样：反正每帧都在读 elLy.clientHeight，同一次强制布局里多读两个属性。
+     *   值没变时 setVar 不写，不会触发样式失效。
+     */
     function syncShift() {
       const idx = st.activeIndex;
       const row = idx >= 0 ? st.lineEls[idx] : null;
@@ -387,7 +402,7 @@ export default {
       const idx = timing.lineIndexAt(st.lines, pos);
       if (idx !== st.activeIndex) setActive(idx);
       if (idx >= 0) paintGlyphs(idx, pos);
-      const tc = film.timecode(pos);
+      const tc = `${film.timecode(pos)} / ${film.timecode(st.duration)}`;
       if (tc !== st.tcText) {
         st.tcText = tc;
         elTc.textContent = tc;
@@ -468,14 +483,9 @@ export default {
       const pb = ctx.playback() || {};
       if (pb.playing) st.lastActive = t;
 
-      // 画面自身布局变化（详情页刚打开时舞台高度为 0）自愈
-      if (!elLy.hidden) {
-        const h = elLy.clientHeight;
-        if (h !== st.lastLyH) {
-          st.lastLyH = h;
-          syncShift();
-        }
-      }
+      // 布局自愈：舞台高度为 0（详情页刚打开）、行高晚一帧才定下来、换字号、改窗口宽度……
+      // 都靠每帧重算位移解决；值没变时不会写变量
+      syncShift();
 
       // —— 频谱 → 三个视觉量 ——
       let targetBloom = 0.16;
@@ -490,6 +500,8 @@ export default {
           if (film.shouldOnset({ flux, threshold: th, lastOnsetAt: st.lastOnsetAt, now: t, cooldownMs: 260 })) {
             st.lastOnsetAt = t;
             st.hal = Math.min(1, st.hal + 0.9);
+            // 快门跟着"啪"一下轻微内收：走 ::before 的 transform，与换歌开合互不干扰
+            st.snap = 1;
           }
           fluxWin.push(flux);
         }
@@ -503,10 +515,12 @@ export default {
       st.bloom = film.approach(st.bloom, targetBloom, dt, 380);
       st.grain = film.approach(st.grain, targetGrain, dt, 520);
       st.hal = film.approach(st.hal, 0, dt, 260);
+      st.snap = film.approach(st.snap, 0, dt, 150);
 
       setVar("--dr-bloom", film.fmt3(st.bloom));
       setVar("--dr-grain", film.fmt3(st.grain));
       setVar("--dr-hal", film.fmt3(st.hal));
+      setVar("--dr-snap", film.fmt3(st.snap));
 
       // —— 歌词：视觉比声音慢一点点 ——
       paintPosition(Math.max(0, clock.at(t) - VISUAL_LAG_MS), t);
@@ -641,10 +655,14 @@ export default {
         S.wake();
         break;
 
-      case "progress":
+      case "progress": {
         S.clock.set(patch.position, patch.playing, nowMs());
+        // 总时长只用来自时间码（"00:42 / 03:20"），变了就跟着更新
+        const dur = Number((ctx.playback() || {}).duration) || 0;
+        if (dur && dur !== S.duration) S.duration = dur;
         S.requestPaint();
         break;
+      }
 
       case "state": {
         const pb = ctx.playback() || {};
@@ -660,7 +678,6 @@ export default {
         break;
 
       case "resize":
-        st.lastLyH = -1;
         S.syncShift();
         S.requestPaint();
         break;

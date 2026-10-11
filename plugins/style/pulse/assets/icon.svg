@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="心跳">
+  <rect width="64" height="64" rx="10" fill="#05070a" />
+  <rect x="6" y="10" width="52" height="26" rx="4" fill="none" stroke="#7cfc9b" stroke-opacity="0.45" />
+  <path
+    d="M8 30 L16 30 L20 21 L24 38 L28 14 L32 33 L36 26 L40 30 L56 30"
+    fill="none"
+    stroke="#7cfc9b"
+    stroke-width="2.4"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+  />
+  <g stroke="#7cfc9b" stroke-opacity="0.6" stroke-width="1.6">
+    <path d="M14 44 v10" />
+    <path d="M8 49 h12" />
+  </g>
+  <g fill="none" stroke="#7cfc9b" stroke-opacity="0.7" stroke-width="1.6">
+    <circle cx="48" cy="49" r="8" />
+  </g>
+  <g fill="none" stroke="#7cfc9b" stroke-opacity="0.35" stroke-width="1.2">
+    <path d="M48 41 v3 M48 54 v3 M40 49 h3 M53 49 h3" />
+  </g>
+</svg>

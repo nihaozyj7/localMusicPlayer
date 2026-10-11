@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="塔">
+  <!--
+    单色线稿：宿主把它当 mask（mask-image + currentColor），形状只由不透明度决定。
+    意象：沿 Z 轴升上去的一层层玻璃板 —— 越远越小、越淡，右侧一条纵向的光轴。
+  -->
+  <g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round">
+    <path d="M14 47h36l-4 5H18z" opacity="1" />
+    <path d="M16.5 38.5h31l-2.6 4.4H19.1z" opacity="0.86" />
+    <path d="M19.5 31h25l-2.4 4H21.9z" opacity="0.7" />
+    <path d="M22.5 24.5h19l-2 3.6H24.5z" opacity="0.55" />
+    <path d="M25.5 19h13l-1.7 3.2h-9.6z" opacity="0.4" />
+  </g>
+  <g fill="#fff">
+    <circle cx="32" cy="14.6" r="1.5" />
+  </g>
+  <g fill="none" stroke="#fff" stroke-width="1.3" stroke-linecap="round" opacity="0.42">
+    <path d="M39 47V16.5" />
+    <path d="M42.5 44.5V20" />
+  </g>
+</svg>

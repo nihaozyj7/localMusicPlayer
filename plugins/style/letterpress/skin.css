@@ -1,0 +1,416 @@
+/* ==========================================================================
+   活字 letterpress —— 样式包自带 CSS
+   --------------------------------------------------------------------------
+   宿主会把这整份文件包进 `@layer skin { @scope (舞台根) { … } }`，所以：
+     · 选择器一律**相对舞台根**写（舞台自身用 `.lp`，不加 .playerview 前缀）；
+     · 不写 :root / html / body / .playerview[data-skin=…]；
+     · 不用 !important。
+
+   两个刻意的选择：
+     · 只有一个 `filter: blur()`，而且只用在**纸张纹理**上（`.lp__rules`）——
+       整屏文字一个滤镜都不挂，正文永远是矢量清晰的（这就是"清晰度"这条极限轴）。
+     · 版面尺寸全部走自定义属性（--lp-base / --lp-sz / --lp-leading / --lp-shift），
+       字体曲线由 JS 每帧写这几个变量，CSS 里不写死任何排版数值。
+   ========================================================================== */
+
+.lp {
+  /* 纸白与墨黑来自清单 colors（JS 会覆盖成取色后的值） */
+  --lp-paper: #f2efe7;
+  --lp-ink: #171610;
+  --lp-spot: #a8452c;
+  --lp-spot-ink: #f2efe7;
+  /* 排版曲线（JS 每帧写：字重 / 字号倍率 / 字距 / 斜切 / 基线抬升 / 墨色） */
+  --lp-wt: 500;
+  --lp-sz: 1;
+  --lp-sp: -0.012em;
+  --lp-sk: 0deg;
+  --lp-lift: 0px;
+  --lp-inkv: 0.9;
+  --lp-progress: 0;
+  /* 版面 */
+  --lp-base: 21px;
+  --lp-fit: 1;
+  --lp-leading: 54px;
+  --lp-shift: 0px;
+  --lp-move: 420ms;
+
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--lp-paper);
+  color: var(--lp-ink);
+  font-family: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "SimSun", Georgia, serif;
+  font-variant-ligatures: none;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+  isolation: isolate;
+}
+
+/* --------------------------------------------------------------------------
+   纸面：基线网格 + 版口标记（全静态，不随帧变）
+   -------------------------------------------------------------------------- */
+.lp__paper {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+/* 纸纹：极淡的一层横线 + 一层噪点（噪点用小尺寸渐变平铺，不是图） */
+.lp__rules {
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(180deg, color-mix(in srgb, var(--lp-ink) 7%, transparent) 0 1px, transparent 1px var(--lp-leading)),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--lp-ink) 3%, transparent) 0 1px, transparent 1px 96px);
+  opacity: 0.5;
+  filter: blur(0.2px);
+}
+/* 版口（crop marks）：四角短线，纯 CSS，示意"这是一张要裁的纸" */
+.lp__marks {
+  position: absolute;
+  inset: 22px;
+}
+.lp__mark {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border: 0 solid color-mix(in srgb, var(--lp-ink) 34%, transparent);
+}
+.lp__mark--a {
+  left: 0;
+  top: 0;
+  border-left-width: 1px;
+  border-top-width: 1px;
+}
+.lp__mark--b {
+  right: 0;
+  top: 0;
+  border-right-width: 1px;
+  border-top-width: 1px;
+}
+.lp__mark--c {
+  left: 0;
+  bottom: 0;
+  border-left-width: 1px;
+  border-bottom-width: 1px;
+}
+.lp__mark--d {
+  right: 0;
+  bottom: 0;
+  border-right-width: 1px;
+  border-bottom-width: 1px;
+}
+
+/* --------------------------------------------------------------------------
+   版面：一列文字，当前行永远停在画面中央
+   -------------------------------------------------------------------------- */
+.lp__sheet {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 56px;
+  bottom: 112px;
+  overflow: hidden;
+}
+.lp__col {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 0;
+  /* 分页位移：只由 (当前行 - 视窗首行) 决定 → 视窗滑动本身不动画面 */
+  transform: translateY(var(--lp-shift, 0px));
+  transition: transform var(--lp-move, 420ms) cubic-bezier(0.22, 0.86, 0.2, 1);
+}
+.lp__line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* 槽位固定在池子里（--slot 建池时写一次），页面推进靠列的位移 */
+  transform: translateY(calc(var(--slot, 0) * var(--lp-leading)));
+  font-size: calc(var(--lp-base) * var(--lp-fit) * var(--lp-sz) * var(--lp-ds, 1));
+  font-weight: var(--lp-wt);
+  letter-spacing: var(--lp-sp);
+  line-height: var(--lp-leading);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transform-origin: left center;
+  opacity: var(--lp-di, 1);
+  color: color-mix(in srgb, var(--lp-ink) 62%, var(--lp-paper));
+  transition:
+    opacity 420ms ease,
+    font-size 220ms ease;
+}
+/* 斜切与基线抬升只用在**当前行**上：整屏都斜就没"排版"了，那是糊 */
+.lp__line[data-state="active"] {
+  color: var(--lp-ink);
+  font-weight: calc(var(--lp-wt) + 40);
+  transform: translateY(calc(var(--slot, 0) * var(--lp-leading))) skewX(var(--lp-sk)) translateY(calc(var(--lp-lift) * -1));
+  /* 当前行的墨色由低频决定（墨足 = 印得重） */
+  opacity: var(--lp-inkv, 1);
+}
+.lp__line[data-state="near"] {
+  color: color-mix(in srgb, var(--lp-ink) 82%, var(--lp-paper));
+}
+.lp__line[data-state="far"] {
+  color: color-mix(in srgb, var(--lp-ink) 46%, var(--lp-paper));
+}
+/* 行末的"墨点"：当前行的进度读数（宽度 = 行内进度） */
+.lp__line[data-state="active"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: calc(var(--lp-leading) * 0.18);
+  height: 2px;
+  width: calc(var(--lp-progress) * 100%);
+  background: var(--lp-spot);
+  opacity: 0.9;
+}
+
+/* 逐字素：轴值在行上，字素只带一个相位（--lp-a）与点亮量（--g）。
+   点亮用 opacity 而不是 color-mix：不透明度是纯数字运算（color-mix 的百分数里
+   再套 calc(var()) 属于"能跑但不该赌"的写法），而且它天然与纸色混合出"墨没上来"的样子。 */
+.lp__u {
+  display: inline-block;
+  position: relative;
+  font-size: calc(var(--lp-a, 1) * 1em);
+  color: var(--lp-ink);
+  /* 没唱到 = 墨只上了一部分（0.3），唱满 = 满墨 */
+  opacity: calc(0.3 + var(--g, 0) * 0.7);
+}
+/* 当前行：字从"专色偏墨"逐渐印成墨黑（--g 越大越黑，专色退到边上去） */
+.lp__line[data-state="active"] .lp__u {
+  color: color-mix(in srgb, var(--lp-spot) 34%, var(--lp-ink));
+}
+/* 铅块：刚排好的那一下，每个字后面短暂显形（活字在版盘里的样子） */
+.lp__u::after {
+  content: "";
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  bottom: -0.08em;
+  height: 0.06em;
+  background: var(--lp-spot);
+  opacity: 0;
+  transform: translateY(0.24em);
+  transition:
+    opacity 160ms ease,
+    transform 260ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+.lp[data-set="1"] .lp__u::after {
+  opacity: 0.75;
+  transform: translateY(0);
+}
+/* 唱到的字带一个小小的"字脚"（像铅字压在纸上留下的印痕） */
+.lp__line[data-state="active"] .lp__u::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -0.02em;
+  height: 1px;
+  background: color-mix(in srgb, var(--lp-spot) 70%, transparent);
+  opacity: calc(var(--g, 0) * 0.8);
+}
+
+/* 版口省略：上下还有多少行没排出来 */
+.lp__elide {
+  position: absolute;
+  left: 0;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  color: color-mix(in srgb, var(--lp-ink) 34%, var(--lp-paper));
+}
+.lp__elide--top {
+  top: 0;
+}
+.lp__elide--bottom {
+  bottom: 0;
+}
+
+/* --------------------------------------------------------------------------
+   海报形态（showLyrics:false）：整屏只剩曲名与字号的排版
+   -------------------------------------------------------------------------- */
+.lp__poster {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.lp__poster-title {
+  font-size: calc(var(--lp-base) * var(--lp-fit) * var(--lp-sz) * 2.4);
+  font-weight: calc(var(--lp-wt) + 100);
+  letter-spacing: var(--lp-sp);
+  line-height: 1.18;
+  color: var(--lp-ink);
+  text-wrap: balance;
+}
+.lp__poster-sub {
+  margin-top: 18px;
+  font-size: calc(var(--lp-base) * var(--lp-fit) * 0.9);
+  letter-spacing: 0.28em;
+  color: color-mix(in srgb, var(--lp-ink) 52%, var(--lp-paper));
+}
+.lp[data-poster="1"] .lp__col,
+.lp[data-poster="1"] .lp__elide {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   空态：也走同一套排版（"整屏只有字"包括提示语）
+   -------------------------------------------------------------------------- */
+.lp__empty {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.lp__empty-text {
+  font-size: calc(var(--lp-base) * var(--lp-fit) * var(--lp-sz) * 1.6);
+  font-weight: calc(var(--lp-wt) + 60);
+  letter-spacing: var(--lp-sp);
+  color: var(--lp-ink);
+}
+.lp__empty-sub {
+  margin-top: 14px;
+  font-size: calc(var(--lp-base) * var(--lp-fit) * 0.85);
+  letter-spacing: 0.2em;
+  color: color-mix(in srgb, var(--lp-ink) 48%, var(--lp-paper));
+}
+
+/* --------------------------------------------------------------------------
+   HUD：曲名 / 行号 / 字号读数 / 时间码（都是字，没有图标）
+   -------------------------------------------------------------------------- */
+.lp__hud {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 26px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--lp-ink) 22%, transparent);
+}
+.lp__hud-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--lp-ink);
+  max-width: 46%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lp__hud-title[data-empty="1"] {
+  visibility: hidden;
+}
+.lp__hud-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  color: color-mix(in srgb, var(--lp-ink) 56%, var(--lp-paper));
+  font-variant-numeric: tabular-nums;
+}
+.lp__num {
+  color: var(--lp-spot);
+  font-weight: 600;
+}
+/* 字号/字重读数与时间码：等宽数字（每秒跳动时不会左右抖） */
+.lp__read {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.1em;
+}
+.lp__tc {
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--lp-ink) 44%, var(--lp-paper));
+}
+
+/* --------------------------------------------------------------------------
+   交互：整行可点（只点得动当前行前后那几行 —— 那是视野里的行）
+   -------------------------------------------------------------------------- */
+.lp[data-interactive="1"] .lp__line[data-state="active"],
+.lp[data-interactive="1"] .lp__line[data-state="near"] {
+  cursor: pointer;
+}
+.lp[data-interactive="1"] .lp__line[data-state="active"]:hover .lp__u::after {
+  opacity: 0.45;
+  transform: translateY(0);
+}
+.lp[data-interactive="0"] .lp__line {
+  cursor: default;
+}
+
+/* --------------------------------------------------------------------------
+   窄窗口：版面收拢（列位移/字号由 JS 写，这里只调节距与 HUD）
+   -------------------------------------------------------------------------- */
+.lp[data-narrow="1"] .lp__sheet {
+  left: 5%;
+  right: 5%;
+  top: 40px;
+  bottom: 96px;
+}
+.lp[data-narrow="1"] .lp__hud {
+  left: 5%;
+  right: 5%;
+}
+.lp[data-narrow="1"] .lp__hud-title {
+  max-width: 38%;
+}
+.lp[data-narrow="1"] .lp__poster-title {
+  font-size: calc(var(--lp-base) * var(--lp-fit) * var(--lp-sz) * 1.9);
+}
+
+/* --------------------------------------------------------------------------
+   静态档（animations:false / reducedMotion）：版面定住，但排版依然成立
+   -------------------------------------------------------------------------- */
+.lp[data-animations="0"] .lp__col {
+  transition: none;
+}
+.lp[data-animations="0"] .lp__line {
+  transition: none;
+}
+.lp[data-animations="0"] .lp__line[data-state="active"] {
+  transform: translateY(calc(var(--slot, 0) * var(--lp-leading)));
+}
+.lp[data-animations="0"] .lp__u::after {
+  display: none;
+}
+.lp[data-animations="0"] .lp__rules {
+  filter: none;
+  opacity: 0.34;
+}
+
+/* --------------------------------------------------------------------------
+   性能档：去掉过渡与纸纹的呼吸（曲线只剩低频轴，JS 已经不再写字距/斜切）
+   -------------------------------------------------------------------------- */
+.lp[data-perf="1"] .lp__line {
+  transition: none;
+}
+.lp[data-perf="1"] .lp__rules {
+  filter: none;
+  opacity: 0.3;
+}
+.lp[data-perf="1"] .lp__u::after {
+  transition: none;
+}
+
+/* 待机痕迹（自检断言 data-idle 时也能用眼睛看出"停了"） */
+.lp[data-idle="1"] .lp__line[data-state="active"]::after {
+  opacity: 0.4;
+}
+
+/* 前后台：切到后台时把纸张压暗一点（证明真的停帧了，而不是还在画） */
+.lp[data-foreground="0"] .lp__paper {
+  opacity: 0.72;
+}
+
+/* 深色主题：纸面**不跟着变**（印好的纸不会因为房间变暗就变灰）。
+   这不是漏了规则 —— 深浅主题只影响 HUD 之外的壳，本款的画面由清单 colors 与封面专色决定。
+   写在这里是为了防止以后"顺手"加一条深色纸面把对比度做坏。 */

@@ -3,11 +3,72 @@
   "kind": "style",
   "items": [
     {
+      "id": "abyss",
+      "dir": "abyss",
+      "name": "深渊",
+      "version": "1.0.0",
+      "author": "第三方样式示例",
+      "description": "半分辨率 WebGL2 流体：频谱泵浦水压、封面当颜料、当前行文字做字形遮罩压出液面凹陷，歌词用 DOM 叠在上面保持矢量。",
+      "apiVersion": "3.0",
+      "swatch": [
+        "#04121b",
+        "#dff2ff",
+        "#58c7ff"
+      ],
+      "files": [
+        {
+          "path": "abyss/README.md",
+          "size": 9152,
+          "sha256": "df18c49502d72f8de45ca5cac93d22e5b7dd8baddeb108bd93124331960fe16d"
+        },
+        {
+          "path": "abyss/assets/icon.svg",
+          "size": 1124,
+          "sha256": "a91406147702ecf9651fe898427cc348c1ff594ccc2abea41c27fb282662efdd"
+        },
+        {
+          "path": "abyss/lib/canvas2d.js",
+          "size": 5730,
+          "sha256": "c71d1fcb6071ba9922e0271494f7b66aa2703ee8ec8ffd32335df89eee19d7f3"
+        },
+        {
+          "path": "abyss/lib/gl.js",
+          "size": 15838,
+          "sha256": "62f12f5fed3e395164b6ad37dd9a92dcd9b7505d48206e41ba210a5ee04a79d7"
+        },
+        {
+          "path": "abyss/lib/mask.js",
+          "size": 5884,
+          "sha256": "fb737ac4361830e12e33ff8934b7d740e5cca470405b6a8d8a8f52dea06f5f6d"
+        },
+        {
+          "path": "abyss/lib/water.js",
+          "size": 11622,
+          "sha256": "1fb589251eadda8a96dd830e5a82eab38f4b735d9ac3a5979a76fcd91d5637ea"
+        },
+        {
+          "path": "abyss/skin.css",
+          "size": 9516,
+          "sha256": "437c9bc01cc141f6f004d80be752e821968d5f44ac1245e72e16f63212ae40a5"
+        },
+        {
+          "path": "abyss/skin.js",
+          "size": 34307,
+          "sha256": "cf93cb652f761e4c886235792350c6cba8d21f95be6a62a4423c0ddb470019e6"
+        },
+        {
+          "path": "abyss/skin.json",
+          "size": 620,
+          "sha256": "011e219a5ec8724b5180133f674e5695b09369c5500cf66b49d01c7db4c12d85"
+        }
+      ]
+    },
+    {
       "id": "darkroom",
       "dir": "darkroom",
       "name": "暗房",
       "version": "1.0.0",
-      "author": "第三方样式（按 plugins/style/pending-designs.md 01 实现）",
+      "author": "第三方样式",
       "description": "整块舞台是一张正在显影的胶片：halation 高光溢出、色差、颗粒、扫描线、快门开合全部由 CSS 叠层完成；封面主色实时上报给宿主壳",
       "apiVersion": "3.0",
       "swatch": [
@@ -38,23 +99,74 @@
         },
         {
           "path": "darkroom/lib/lyric-timing.js",
-          "size": 5687,
-          "sha256": "c5ecd0ba4871a10fb030a905487654958e795f02607e2cc822cebc2bd9e635b6"
+          "size": 6469,
+          "sha256": "69fda3e721bc12b32c9a84db682a128dd0a81409e078492433b1f6ff5638f0a2"
         },
         {
           "path": "darkroom/skin.css",
-          "size": 11145,
-          "sha256": "2cd7fea1ecebdce9bcf65d3276f8e706e47a4c24214565cc5b56aa407a1e35b6"
+          "size": 11938,
+          "sha256": "732aa7c61c3a9e9387e176efeda850d5a207f3e23404054cc9b41a434e3e4e89"
         },
         {
           "path": "darkroom/skin.js",
-          "size": 24152,
-          "sha256": "93a76737d5f377e9258394bca1c955b4e5f866c44ac46af14dc13f5587ae77c5"
+          "size": 25409,
+          "sha256": "d0e5ad3b8e19591bbde3cb94ae18249eafea8c1bc6102381f22a2d1358685279"
         },
         {
           "path": "darkroom/skin.json",
-          "size": 697,
-          "sha256": "2394ec7fa209d80911816c37b4c1111970141bd854b5ede4f97a958bf99b5006"
+          "size": 645,
+          "sha256": "c49bd227d29c0063f1fc39c32df890192a076e78345cb4412dd1b70668efa74c"
+        }
+      ]
+    },
+    {
+      "id": "letterpress",
+      "dir": "letterpress",
+      "name": "活字",
+      "version": "1.0.0",
+      "author": "第三方样式",
+      "description": "整屏只有字：字号/字重/字距/斜切由频谱排成一条排版曲线，换句就是一次活字重排。",
+      "apiVersion": "3.0",
+      "swatch": [
+        "#f2efe7",
+        "#171610",
+        "#a8452c"
+      ],
+      "files": [
+        {
+          "path": "letterpress/README.md",
+          "size": 9633,
+          "sha256": "1d5fc026d20dba89891578b2013aba2e1727aa0898f9909d62cbfa3e1e1127ae"
+        },
+        {
+          "path": "letterpress/assets/icon.svg",
+          "size": 749,
+          "sha256": "b15fedbef9b36623152de2b47557219cc495084b5de63d8c32e1dc4b83199b9a"
+        },
+        {
+          "path": "letterpress/lib/ink.js",
+          "size": 5688,
+          "sha256": "3ae693452e08eb39e2be08ce9d695962b637639ab0c5b9d03e10156b75a9ba7e"
+        },
+        {
+          "path": "letterpress/lib/typeset.js",
+          "size": 13157,
+          "sha256": "0b012e52a310f56997e6bcf7fcc69b89d1a63c739f93411c1c52314d4a0db76f"
+        },
+        {
+          "path": "letterpress/skin.css",
+          "size": 13105,
+          "sha256": "b3aebf919417aa44635baa325f76f9e5157dbafd04a6d1e2a86abc3c33373d6e"
+        },
+        {
+          "path": "letterpress/skin.js",
+          "size": 34903,
+          "sha256": "8e717104bccca3898e41a5feadeac1fd1608e5c30be606af6b81b8f14f9b7d36"
+        },
+        {
+          "path": "letterpress/skin.json",
+          "size": 553,
+          "sha256": "782aaa60d6acf0c011205cf111b452a6c5c077c2a82e566b9d509389959a5fc0"
         }
       ]
     },
@@ -131,6 +243,164 @@
           "path": "magic-circle/skin.json",
           "size": 699,
           "sha256": "ccb255ab63ea421a80c6a7f2a0c4bedb03fbfeca4688194cf2a16f9ae0236d8d"
+        }
+      ]
+    },
+    {
+      "id": "pulse",
+      "dir": "pulse",
+      "name": "心跳",
+      "version": "1.0.0",
+      "author": "第三方样式示例",
+      "description": "老式心电示波器：128 段频谱算能量包络与谱质心，flux 做 onset 检测，中位数估 BPM，歌词行切换柔性吸附到预测拍点。",
+      "apiVersion": "3.0",
+      "swatch": [
+        "#05070a",
+        "#7cfc9b",
+        "#7cfc9b"
+      ],
+      "files": [
+        {
+          "path": "pulse/README.md",
+          "size": 11656,
+          "sha256": "2a01b9df6e735c08e4ad7201389e3754fd1a85dd9d7096411b964a3739c611d6"
+        },
+        {
+          "path": "pulse/assets/icon.svg",
+          "size": 866,
+          "sha256": "b01a5c7c716622ced5a44bcc36d6268cd434cd94f1be38f2d52754abad0f5509"
+        },
+        {
+          "path": "pulse/lib/beat.js",
+          "size": 15971,
+          "sha256": "5925c14fbbafc409f4feca96455648afe70794fe847f2114076b23b92597d644"
+        },
+        {
+          "path": "pulse/lib/scope.js",
+          "size": 7571,
+          "sha256": "efc248f6718fdbb398ad9dec0f760a0a52708490a1ef5c11447073ae86a28246"
+        },
+        {
+          "path": "pulse/skin.css",
+          "size": 12013,
+          "sha256": "ca04d9c9b7937e30c61e22dce655691f9c3386b0d78b2c1173a24d3b09681ae7"
+        },
+        {
+          "path": "pulse/skin.js",
+          "size": 34243,
+          "sha256": "4ad80a452c8d76534ed65e2b53e37b18544cda81909dae6b65b22083fafac332"
+        },
+        {
+          "path": "pulse/skin.json",
+          "size": 616,
+          "sha256": "172fb3258ffa6bdf61538fc5429ea84f7c6d8162a43bb8054e4cf9defe5eda76"
+        }
+      ]
+    },
+    {
+      "id": "rubbing",
+      "dir": "rubbing",
+      "name": "拓印",
+      "version": "1.0.0",
+      "author": "第三方样式",
+      "description": "歌词是用这张封面的像素堆出来的：上万个彩色颗粒磁吸成字，唱到哪句就聚到哪句。",
+      "apiVersion": "3.0",
+      "swatch": [
+        "#0d0c0b",
+        "#e8e2d6",
+        "#b9a37e"
+      ],
+      "files": [
+        {
+          "path": "rubbing/README.md",
+          "size": 7356,
+          "sha256": "ae317c70d40cdb145a4e3fc2592b91f08051c745dbcb97ed78b0f5e6d7a40002"
+        },
+        {
+          "path": "rubbing/assets/icon.svg",
+          "size": 1655,
+          "sha256": "685c227355b90bf98d844f3b910332a317f1d84d1ceb7d8687266364e0f30a98"
+        },
+        {
+          "path": "rubbing/lib/field.js",
+          "size": 13490,
+          "sha256": "a88c38714e0da4eeb3deb16b6cc8fa403cc299d99ebcff5fd21d82c60f4ecb43"
+        },
+        {
+          "path": "rubbing/lib/glyph.js",
+          "size": 9368,
+          "sha256": "686419413c630ae8cdcd315696d827e12c4d82c7bebc5474b304c2b5a4e747aa"
+        },
+        {
+          "path": "rubbing/lib/palette.js",
+          "size": 9014,
+          "sha256": "9bf4f2ed4c0370ae6a54a8fcca575fde80ec785db2f895baa98776e26210dd4c"
+        },
+        {
+          "path": "rubbing/skin.css",
+          "size": 6688,
+          "sha256": "ce04c9c825d2ce15abc9d98bf239c4f0b628ffdf2a8bfe9a69c167695bc5587c"
+        },
+        {
+          "path": "rubbing/skin.js",
+          "size": 35338,
+          "sha256": "1ecf377437564343e3b5665fdcbf3ff1eb8b04634c629f5b1a80ba9eb3ef9f15"
+        },
+        {
+          "path": "rubbing/skin.json",
+          "size": 548,
+          "sha256": "dbfbacbeba82df79efda8d5305361799cead1206d0112ffb7fd65ad5077c4ecd"
+        }
+      ]
+    },
+    {
+      "id": "spire",
+      "dir": "spire",
+      "name": "塔",
+      "version": "1.0.0",
+      "author": "第三方样式",
+      "description": "歌词是一层层悬浮的玻璃板，沿 Z 轴螺旋排成一座无限塔；唱到哪一层，镜头就停在哪一层。",
+      "apiVersion": "3.0",
+      "swatch": [
+        "#070a12",
+        "#e9eefb",
+        "#6f9dff"
+      ],
+      "files": [
+        {
+          "path": "spire/README.md",
+          "size": 6960,
+          "sha256": "1d7721c80c053ef2f9bdacdd54c60517546ff09feb4b9d48124346a9c5d16763"
+        },
+        {
+          "path": "spire/assets/icon.svg",
+          "size": 940,
+          "sha256": "e0a7f060d00ee8313172cdee093d0e4648b33c41f4338499eefaaf2bb70faec6"
+        },
+        {
+          "path": "spire/lib/camera.js",
+          "size": 3533,
+          "sha256": "962c493ac0b7045b5406336a1bfd7d35dfa8e583136d7887241ecc08d2bd831a"
+        },
+        {
+          "path": "spire/lib/tower.js",
+          "size": 9247,
+          "sha256": "a65d7abd283d00ee3ea5ab4b09d15b5a8c5d44e53c52b2640b359769e1d900ca"
+        },
+        {
+          "path": "spire/skin.css",
+          "size": 10396,
+          "sha256": "392776c61df702517d0021c16e2ac67c73db842bc21c492df2b5f0fc74041c10"
+        },
+        {
+          "path": "spire/skin.js",
+          "size": 30991,
+          "sha256": "e9de467cb8d2adc4f5730d9ee344e8be73361aea7e839e4f9826345ba14ba985"
+        },
+        {
+          "path": "spire/skin.json",
+          "size": 552,
+          "sha256": "3daeef0675c56682c91ab4222489c4b83434e33134d6ace9a8ea49b6bd7c542f"
         }
       ]
     }

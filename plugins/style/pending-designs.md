@@ -93,6 +93,56 @@
 
 > P5 理论上必然成立（data URL 与同源都不污染画布），但**封面尺寸与 base64 解码开销**要实测：
 > 一张 3000×3000 的 data URL 封面，每次都重新解码会掉帧 → 必须**每首歌只采样一次并缓存**。
+>
+> **P5 已结（拓印签收时实测）**：真机 `bin/lmplayer.exe` 里 `drawImage` + `getImageData` 拿得到像素、
+> 画布未被 taint；采样固定走 **64×64 离屏画布**（解码一次、`getImageData` 一次、按歌缓存），
+> 所以封面尺寸与 base64 长度对帧率没有影响。4K + dpr2 的填充率那一半由**自适应降级控制器**兜住
+> （见 §5.02「实现偏差」#8）。
+>
+> **P4 已结（动「塔」之前先探，`.tmp-p4-3d.mjs` → 17/17 通过）**，判据全部走几何读数
+> （`getBoundingClientRect` / `elementFromPoint`），不依赖 GPU 像素回读：
+>
+> | 结论 | 实测 |
+> | :--- | :--- |
+> | `preserve-3d` + `perspective` 真的投影 | `perspective:800px` 下 `translateZ(200px)` 的板投影宽度 ×**1.3333**（不是被压平） |
+> | `filter` 是分组属性 | 容器上挂 `blur(0.0001px)` → 两块板的投影**完全重合**（scale=1）→ **塔的祖先链上一个 `filter` 都不能有** |
+> | `overflow != visible` 同样压平 | `overflow:hidden` → scale=1（塔的"取景框"不能用 overflow 裁） |
+> | `opacity < 1` 同样压平 | `opacity:0.999` → scale=1 |
+> | `backdrop-filter` 同样压平 | 挂在塔容器上 → scale=1（**玻璃板不能用 `backdrop-filter` 做"透出背景"**，改用半透明渐变 + 内发光） |
+> | `will-change: transform` **不**压平 | scale 仍是 1.3333 → 可以放心给塔加合成提示 |
+> | 祖先上的分组属性**不**压平 | `overflow:hidden` / `filter` / `opacity<1` 挂在**透视容器的祖先**上时 scale 仍 1.3333 → **舞台根可以放心用 `overflow:hidden` 裁掉飞出去的层**（致命的是挂在 `preserve-3d` 那个元素自己身上） |
+> | 按 Z 正确排序 | `elementFromPoint` 命中近处板；交换两块板的 Z 后命中换人 |
+> | `rotateY` 与 `translateZ` 可叠加 | `rotateY(28deg) translateZ(200px)` 投影 scale 1.1848 → 螺旋塔成立 |
+> | `transform` 不参与布局 | 改 Z 前后 `offsetWidth` 恒为 140、`font-size` 不变 → 逐帧动画不触发重排 |
+> | 文字栅格化倍率 ≈ 投影比 | `translateZ(140px)` 下文本投影宽 ×1.2121 → **把 Z 引起的缩放控制在 1.15× 以内**，字形就不会糊 |
+>
+> **P1 已结（动「深渊」之前先探，`.tmp-gl-probe.mjs`）**：真机 `bin/lmplayer.exe`（WebView2）里
+> 建得出 `webgl2`，走的是真 GPU —— `ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001681) Direct3D11 vs_5_0 ps_5_0, D3D11)`，
+> 不是 SwiftShader 软渲。读数：
+>
+> | 探针项 | 实测（1280×820 窗口 / dpr 1） |
+> | :--- | :--- |
+> | 上下文 | `WebGL 2.0 (OpenGL ES 3.0 Chromium)` / `GLSL ES 3.00`；`alpha:true` 与 **`premultipliedAlpha:false` 都被接受**（要拿到非预乘 alpha 才能和舞台叠） |
+> | 上限 | `MAX_TEXTURE_SIZE 16384` / `MAX_SAMPLES 8` / `MAX_DRAW_BUFFERS 8` / `MAX_FRAGMENT_UNIFORM_VECTORS 1024` / `MAX_TEXTURE_IMAGE_UNITS 16` / 各向异性 16 |
+> | 浮点渲染目标 | `EXT_color_buffer_float` ✓、`EXT_color_buffer_half_float` ✓、`OES_texture_float_linear` ✓、`EXT_float_blend` ✓；**`RGBA16F` 的 FBO `checkFramebufferStatus` = 36053（COMPLETE）**，半浮点线性过滤可用 |
+> | 计时 | `EXT_disjoint_timer_query_webgl2` ✓（**能拿真实 GPU 时间**，不用猜帧率）、`KHR_parallel_shader_compile` ✓、`WEBGL_lose_context` ✓ |
+> | 重片元成本（1216×269，64 步循环 + 每步一次纹理采样） | GPU 计时 **0.557ms**；"回读 1 像素强制同步"对照 **0.65ms**（两个读数一致 ⇒ 计时可信） |
+> | 同一条着色器 | 半分辨率（608×135）**0.116ms**、1/3 分辨率（405×90）**0.096ms** |
+> | 流体的一趟推进（608×135 `RGBA16F` ping-pong：读上一帧 + 半拉格朗日回采 + 加力） | GPU 计时 **0.014ms**、强制同步对照 **0.016ms** |
+> | 回读 / 兜底 | `readPixels` ✓（`getError()===0`）；`canvas2d` 的 `filter: blur()` ✓、`getImageData` ✓；CSS `mix-blend-mode` / `backdrop-filter` / `filter` / `will-change` 都支持 |
+>
+> 两个**必须写进实现的教训**（都是探针里真踩到的）：
+> 1. `gl.finish()` 在 ANGLE 上**基本不等 GPU**：同样 20 帧 64 步循环，`finish()` 量出 **0ms**，
+>    而 GPU 计时器量出 0.557ms/帧。要"先跑一帧测耗时再决定分辨率"，只能用
+>    `EXT_disjoint_timer_query_webgl2`（真机上就有），或者用**回读 1 像素**强制同步 —— 绝不能信 `finish()`。
+> 2. 渲染目标**绝不能同时当采样源**（反馈环）：探针第一版把上一帧纹理既绑成采样器、又绑成 FBO 附件，
+>    结果 GL 报 1282 `INVALID_OPERATION`，绘制被整帧丢掉 —— 表现是"每帧 0.008ms，快得像没画"。
+>    必须 ping-pong 两张纹理，并且**每帧查一次 `getError()`**（自检里把这条固定成断言）。
+>
+> 结论：P1 成立且余量极大（半分辨率流体哪怕再多 20 趟也在 0.3ms 量级），
+> §5.06 的"半分辨率 + 自适应降级"照原设计实现，不需要退化成 Canvas2D 伪流体；
+> 兜底路径仍然保留（拿不到 `webgl2` / 上下文丢失时无缝切 Canvas2D）。
+
 
 ---
 
@@ -138,18 +188,49 @@ plugins/style/<id>/
 
 | 序 | 样式 | id | 目录 | 清单 order | 极限轴 | 依赖 | 状态 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 01 | 暗房 | `darkroom` | `plugins/style/darkroom/` | 210 | 后期 / 光 | 纯 CSS+DOM（无 canvas 绘制） | 待实现 |
-| 02 | 拓印 | `rubbing` | `plugins/style/rubbing/` | 220 | 图像数据化 + 粒子物理 | Canvas2D + 封面采样（P5） | 待实现 |
-| 03 | 塔 | `spire` | `plugins/style/spire/` | 230 | 空间 / 清晰度 | CSS 3D（P4） | 待实现 |
-| 04 | 活字 | `letterpress` | `plugins/style/letterpress/` | 240 | 文字 / 排版 | 逐字素 + 伪可变轴（P3 可选） | 待实现 |
-| 05 | 心跳 | `pulse` | `plugins/style/pulse/` | 250 | 同步 / 预测 | 自写 onset + PLL | 待实现 |
-| 06 | 深渊 | `abyss` | `plugins/style/abyss/` | 270 | 像素 / 着色器 | WebGL2（P1） | 待实现 |
+| 01 | 暗房 | `darkroom` | `plugins/style/darkroom/` | 210 | 后期 / 光 | 纯 CSS+DOM（无 canvas 绘制） | **已签收** |
+| 02 | 拓印 | `rubbing` | `plugins/style/rubbing/` | 220 | 图像数据化 + 粒子物理 | Canvas2D + 封面采样（P5） | **已签收** |
+| 03 | 塔 | `spire` | `plugins/style/spire/` | 230 | 空间 / 清晰度 | CSS 3D（P4） | **已签收** |
+| 04 | 活字 | `letterpress` | `plugins/style/letterpress/` | 240 | 文字 / 排版 | 逐字素 + 四个真实排版轴（不用可变字体） | **已签收** |
+| 05 | 心跳 | `pulse` | `plugins/style/pulse/` | 250 | 同步 / 预测 | 自写 onset + PLL | **已签收** |
+| 06 | 深渊 | `abyss` | `plugins/style/abyss/` | 270 | 像素 / 着色器 | WebGL2（P1） | **已签收** |
 
 ### 签收记录
 
 > 每款签收时在这里追加一行。格式：`- YYYY-MM-DD <id>：证据命令 → 结果`。
 
-（尚无）
+- 2026-10-11 `darkroom`：
+  - `node --test "plugins/style/darkroom/tests/*.test.js"` → **28/28 通过**（含封面采样边界、快门/时间码/逐字插值的纯函数，以及 imports / fetch / eval / `ctx.*` 白名单 / CSS 禁用项 / 清单 / 图标 的静态扫描）。
+  - `node plugins/style/darkroom/tests/darkroom-check.mjs` → **72/72 通过**（真静态服务 + 假宿主 + 无头 Edge：逐字点亮、长间奏末字不拖亮、暂停 6 秒停帧、`visibility:false` 停帧、`animations:false` 零帧、performance 档限帧、destroy 零残留）。
+  - `node .tmp-skin-live.mjs --skin darkroom` → **27/27 通过**（真机 `bin/lmplayer.exe` + 隔离数据目录 + 现场生成的宽带 FLAC）：真 CSP 下 `/skins/` token 路由 import 成功、真频谱（0.38/0.20/0.58）驱动光晕与颗粒、真歌词写出 `--g`、暂停 6 秒 `data-idle=1` 且时间码不再走、换样式零残留、820px 窄窗文字不越界、关详情页再开能重挂、控制台零 error/warn。
+  - `node plugins/build-index.mjs --check` → `plugins/style/index.json` 已是最新（2 个条目 / 20 个文件）。
+- 2026-10-11 `rubbing`：
+  - `node --test "plugins/style/rubbing/tests/*.test.js"` → **35/35 通过**（色板 LUT / 主色提取 / 字形位图采样 / 目标点散布与装框 / 字素档位与末字 tail / 粒子池 SoA 步进与磁铁 / 面积→粒子数 / 降级控制器 / EMA 与 LOD 状态机，以及 imports / `?t=` 透传 / `ctx.*` 白名单 / CSS 禁用项 / `filter`、`blur` 白名单 / 清单 / 图标 / destroy 的静态扫描）。
+  - `node plugins/style/rubbing/tests/rubbing-check.mjs` → **70/70 通过**（真静态服务 + 假宿主 + 无头 Edge）：逐字进度（亮像素质心右移）、封面换色重新上报 `reportBackdrop` 且对比度 ≥ 3.9、暂停后质心继续下落、暂停 6 秒停帧、切后台停帧、`animations:false` 零帧但静态画面完整、performance 档按清单 45fps 限帧、`fillRect` 打点拖到 45ms 后 `data-lod` 退档且仍在画、dpr2 背板翻倍、820px 窄窗不溢出、destroy 零残留。
+  - `node .tmp-skin-live.mjs --skin rubbing` → **29/29 通过**（真机 `bin/lmplayer.exe` + 隔离数据目录 + 现场生成的宽带 FLAC）：真 CSP 下 `/skins/rubbing/…?t=` token 路由 import 成功、真频谱喂进 `--rb-turb`（0.375）、真歌词写出 `data-lit`/`data-glyphs`（新句开门时 lit=1 < glyphs=5）、暂停 6 秒 `data-idle=1` 且时间码不再走、换样式零残留、820px 窄窗画布跟随舞台不溢出、关详情页再开能重挂、控制台零 error/warn。
+  - 同一份探针回归 `--skin darkroom` → **28/28 通过**（探针已改成按样式适配表驱动，两款共用一条链路）。
+  - `node plugins/build-index.mjs --check` → `plugins/style/index.json` 已是最新（3 个条目 / 28 个文件）。
+- 2026-10-11 `spire`：
+  - `node --test "plugins/style/spire/tests/*.test.js"` → **42/42 通过**（塔体几何 / 可见度 / 深度着色 / DOM 窗口 / 行间隔→飞行时长 / easeOutCubic 飞行插值 / 塔形收缩 / 逐字档位 / 行定位 / 时间码 + 阻尼相机 / 段落抬升 / 呼吸 / EMA，以及 imports / `?t=` 透传 / `ctx.*` 白名单 / 频谱 `.bands` / **shapeFor 完整性** / 3D 链条分组属性 / 背景层有样式 / 清单 / 图标 / destroy 的静态扫描）。
+  - `node plugins/style/spire/tests/spire-check.mjs` → **70/70 通过**（真静态服务 + 假宿主 + 无头 Edge，固定 1200×760 视口）：`preserve-3d` 在真 `@layer`+`@scope` 下仍然生效、**投影尺寸分层**（近层 760×73.8 → 远层 494×65.1，不是"计算值对但被压平"）、螺旋层沿 X 偏移、三片切片都拿到了封面、逐字 `--g` 由 1/7 推到 5/7、8s 行间隔→飞行 1400ms 且 `data-cam` 中途停在 0.16、点第 3 层 seek 14000、低频→`--sp-breath`、换封面重上报、空态收起塔体、暂停 6 秒 `data-idle` 且停帧、切后台停帧/回前台醒、`close` 藏背景层、`animations:false` 零帧但静态一列列表完整（含补丁来了一帧）、performance 档 13 张卡片+45fps 限帧+直跳、窄窗 820px 塔形收敛、destroy 零残留且再收 update 不抛。
+  - `node .tmp-skin-live.mjs --skin spire` → **27/27 通过**（真机 `bin/lmplayer.exe` + 隔离数据目录 + 现场生成的宽带 FLAC）：真 CSP 下 `/skins/spire/…?t=` token 路由 import 成功、**真实舞台上塔的投影真的分层**（近层 760×76.2 / 远层 518×70.7）、真频谱喂进 `--sp-breath`（3.30px）、真歌词逐字写进 `--g`、`--sp-cam` 在真机上真的在飞行（0.156）、暂停 6 秒 `data-idle=1` 且时间码不再走、换样式零残留、820px 窄窗塔形收敛（900→648 / 108→69）、切深浅色不炸、关详情页再开能重挂、控制台零 error/warn。
+  - `node plugins/build-index.mjs --check` → `plugins/style/index.json` 已是最新（4 个条目 / 35 个文件）。
+- 2026-10-11 `letterpress`：
+  - `node --test "plugins/style/letterpress/tests/*.test.js"` → **41/41 通过**（排版曲线的值域与单调性（低频→字重/字号、中频→字距/抬升、高频→斜切/收字号）/ performance 档只剩低频轴 / 幅度收敛但不归零 / 版面视窗与列位移（**视窗滑动必须不动画面**）/ 深度样式 / 字素相位确定性 / 逐字时间戳插值（含最后一个字的兜底时长、长度对不齐就退回整行）/ FLIP 增量 / 行定位 / 时间码 / 专色取色与 WCAG 对比度，以及 imports / `?t=` 透传 / `ctx.*` 白名单 / `update(ctx, patch)`+`destroy(ctx)` 签名 / **逐字素只写当前行** / CSS 禁用项 / 全 CSS 只有一个 `filter` / 清单 / destroy 的静态扫描）。
+  - `node plugins/style/letterpress/tests/letterpress-check.mjs` → **115/115 通过**（真静态服务 + 假宿主 + 无头 Edge，固定 1200×760 视口；**连跑两次全绿**）：宿主 `@layer`+`@scope` 之后纸白/字号/字距/字重/斜切**真的穿过 CSS 生效**（读 computed 而不是读行内）/ 行池恒为 81 且五行按 54px 槽位依次落位（`--slot` 被换歌词清掉会让整页叠在一起 —— 这条是自检抓出来的 bug）/ **只有当前行**有字素 span（其余行纯文本）/ 换行真的播 FLIP（拦 `Element.prototype.animate`：keyframes 只有 `transform,opacity`、时长 280–560ms）/ 列上移一个行高且**当前行仍停在版面中央**（322→322）/ 铅块「刚排好」会自动退掉 / 长歌 300 行时行池仍是 81、版口省略号「后 219 行 ⋯」/ 点某行 seek 到那一句（点 HUD 与空槽位不 seek）/ 上报 `reportBackdrop`（bg/fg 固定、专色随封面变，对比度 15.77）/ 海报形态与空态互切 / 暂停 6 秒停帧→回前台醒→切后台立即停帧 / `animations:false` **零帧**（补丁来了同步画一帧）且是中性版式 / performance 档**数出来的真帧数**按清单 30fps 限帧（rAF 回调数≈刷新率，数回调会得出 61 的假数）/ 宿主字号改 40 时正文与读数同步 / 820px 窄窗收敛（fit 1→0.745、行高 54→44）不溢出 / destroy 清空自己的树且**没删宿主给的挂载点**、没碰背景层、无残留 WAAPI。
+  - `node .tmp-skin-live.mjs --skin letterpress --port 9371` → **28/28 通过**（真机 `bin/lmplayer.exe` + 隔离数据目录 + 现场生成的宽带 FLAC）：真 CSP 下 `/skins/letterpress/…?t=` token 路由 import 成功、真实频率喂进排版曲线（`--lp-wt 490` / `--lp-sz 1.032` / `--lp-sp 0.036em` / `--lp-sk -1.437deg` / `--lp-lift 0.722px`）、真歌词逐字写进 `--g`（新句开门时 0.02/0/0/0/0）、HUD「§ 1 / 5」、暂停 6 秒 `data-idle=1` 且时间码不再走、换样式零残留（舞台 + 整窗背景层都干净）、820px 窄窗收敛（fit 1→0.72、行高 54→44）且文字仍在视口内、切深浅色不炸、关详情页再开能重挂、控制台零 error/warn。
+  - `node plugins/build-index.mjs` → `plugins/style/index.json` 已更新（5 个条目 / 42 个文件），`--check` 通过。
+- 2026-10-11 `pulse`：
+  - `node --test "plugins/style/pulse/tests/*.test.js"` → **49/49 通过**（onset 检测（自适应阈值 / 冷却 / 静音不误报 / 稳态巨响只出一次）/ 节拍收敛（500ms 一拍 → 120BPM、「8% 抖动仍锁得住」、「间隔忽长忽短必须落 free」/ PLL 软校正只挪偏差的一半 / **负延迟脉冲**（峰值在拍点前 40ms，`pulseAt(beat−40)` 必须是极值）/ 吸附取最近且在窗口内 / 环形缓冲与窗口切片 / 窗口映射（`winOf` 的双倍保留区 + `markXs` 用 refT 映射、保留范围用 from/to）/ 几何 / 颜色 / 时间码 / 齿轮相位，以及 imports / `?t=` 透传 / `ctx.*` 白名单 / 不用 backgroundRoot / CSS 禁用项（无 `!important`、无 `:root`、无裸标签）/ **全包只有 3 个 rAF**（且歌词视图恒以 `playing:false` 驱动 —— 宿主 SDK 的平滑 rAF 不许被点亮）/ destroy 的静态扫描）。
+  - `node plugins/style/pulse/tests/pulse-check.mjs` → **109/109 通过**（真静态服务 + 假宿主 + 无头 Edge，固定 1200×760 视口；**连跑两次全绿**）：宿主的 `@layer`+`@scope` 之后清单底色/扫描线/`@keyframes pl-spin` **真的生效**（读 computed）/ 歌词用的是**宿主真模块** `createLyricsView`（`/sdk/` 路由托管整个 `player-skins/src`，5 行真渲染、当前行有且只有一个 `aria-current`）/ 合成 500ms onset 流 → **锁定 120BPM**、拍点间距 = 估出来的周期（±2px）、最右可见拍点就在扫描指针处 / **字级刻度真的吸到拍点上**（吸过的刻度与拍点标记 rect 重合 ≤1.5px —— 证明"窗口映射 + 容器位移"两套坐标是同一套数字）/ 点屏幕中间 = seek 到那一刻 / **滑动窗口连续**（每 50ms 位移 = −plotW×50/6000，窗口重设那一下正好复位 +plotW，拍点整体刚性左移）/ 脉冲峰值 0.94 而拍点之间回到 0 / 间隔 180..900ms 的散板 → **`free` 且只显示「自由节拍」**（不谎报 BPM）、不画网格、不吸附、齿轮回到 4 秒一圈 / 断掉频谱 → 「无频谱输入」但仍然在画 / `interactive:false` 不 seek / performance 档**数真帧**按 15Hz 渲染（rAF 回调 60）且齿轮停转 / `animations:false` **零帧**且补丁来了同步画一帧、画面与读数完整 / 切后台停帧、`close` 停帧、暂停 6 秒 `data-idle` 后归零、恢复播放立刻继续画 / 820px 窄窗齿轮 40px、画布跟随盒子、页面不横向滚动 / destroy 清空自己的树且**没删宿主给的挂载点**、没碰背景层、无残留帧。
+  - `node .tmp-skin-live.mjs --skin pulse` → **30/30 通过**（真机 `bin/lmplayer.exe` + 隔离数据目录 + 现场生成的宽带 FLAC）：真 CSP 下 `/skins/pulse/…?t=` token 路由 import 成功（子模块靠 `?t=` 透传）、**真频谱上真的锁上了拍**（`data-beat=locked` / `data-onsets=27` / `data-cv=0.05` / 29 个拍点 / 1 个刻度吸附）、真歌词逐字写进 `--w`（0.53）、时间码在走、暂停 6 秒 `data-idle=1` 且时间码不再动、换样式零残留、820px 窄窗画布跟随舞台不溢出、切深浅色不炸、关详情页再开能重挂、控制台零 error/warn。
+  - `node plugins/build-index.mjs` → `plugins/style/index.json` 已更新（6 个条目 / 49 个文件），`--check` 通过。
+- 2026-10-11 `abyss`：
+  - `node --test "plugins/style/abyss/tests/*.test.js"` → **39/39 通过**（频谱→泵浦（三段分频不串台 / attack-release 不对称 / 音量无关 / 静音回落）/ 封面降采样成密度场（双线性平滑且对比度还在）/ 深度读数（0..2400m 与「− N m」文案）/ 分辨率（`min(dpr,1.5)` + 档位系数）/ **降档状态机**（`nextTier` 的 lo/hi 取反曾把「从 full 降档」判成不动，是这条测出来的）/ 泵浦相位积分 / 字形遮罩的坐标规划与 key / 涌浪包络 / 液面抬升，以及 imports / 子模块 `?t=` 透传 / `ctx.*` 白名单 / **lib 之间的静态 import 禁令**（会丢 `?t=` 并二次加载）/ 只有 `mask.js` 碰 DOM / 无 fetch·eval·setInterval / CSS 禁用项 / **当前行不许 transform 缩放**（一缩遮罩就对不齐）/ 全包一条 rAF / GL 三条铁律（ping-pong、不许采样自己渲染的目标、不靠 `gl.finish()`）/ 遮罩按行上传而不是按帧 / destroy 清单 / 可观测 `data-*` 的静态扫描）。
+  - `node plugins/style/abyss/tests/abyss-check.mjs` → **125/125 通过**（真静态服务 + 假宿主 + 宿主真 `createLyricsView` + 无头 Edge 走真 WebGL2；**连跑两次全绿**）：把 `WebGL2RenderingContext.prototype.drawArrays` 打点并在**成画那一笔**（默认帧缓冲）之后立刻 `readPixels` 取 16×4 像素指纹 —— **81 帧 80 个不同指纹**（"水真的在流"是读回来的像素，不是自己报的计数）/ `data-glerr=0` 且一整轮没有 1282（自我反馈环会留下它）/ **一份排版渲染两次对得上**：字形遮罩的墨迹包围盒 vs DOM 文字行盒（左边缘 0px、中心 2px、宽度比 0.972、整体包含）/ GPU 计时器量到真时间（1.0~1.3ms，`gl.finish()` 在 ANGLE 上是假 0ms）/ 同一行跑 500ms 遮罩**一次都没重画**（`data-maskrev` 不变）/ 换行才重画且三行都对齐 / 换歌涌浪 + 深度归零 + 曲名跟着换 / 点水面 seek 而点歌词让路给 SDK（各一次）/ 拿不到 `webgl2` → 无缝切 Canvas2D（兜底画布顶上来、GL 画布藏起来、2D 每帧 clearRect 真的在重画）/ **真的丢上下文**（`WEBGL_lose_context`）→ 同样无缝切并记 `data-gl-lost=1` / performance 档 1/3 分辨率且**数真帧**按 24fps 封顶（1 秒 23 帧 / rAF 112）/ 静态档 rAF·GL·2D 三处都是 0 帧而补丁来了同步画一帧 / 切后台停帧、回前台继续、暂停 6 秒 `data-idle=1` 停帧、恢复播放继续画 / 820px 窄窗字号收一档（21→18）不溢出 / 上报配色对比度 16.51 / destroy 后自己的树空、背景层清空并收回、**真的调了 `loseContext()`**、之后零帧。
+  - `node .tmp-skin-live.mjs --skin abyss` → **28/28 通过**（真机 `bin/lmplayer.exe` + 隔离数据目录 + 现场生成的宽带 FLAC）：真 CSP 下 `/skins/abyss/…?t=` token 路由 import 成功（子模块靠 `?t=` 透传）、**真机上真的跑在 WebGL2 上**（`data-gl=1` / `glerr=0` / 854 次出帧 / 流场 1280×820 / `tier=full`）、真频谱喂进水里（`--ab-lift 0.995` / `--ab-turb 1.000` / `--ab-foam 1.000`）、真歌词逐字写进 `--w`（0.06）且字形遮罩按当前行画出来（`mask=5` / `maskerr=0`）、下潜深度读数、暂停 6 秒 `data-idle=1` 且时间码不再走、换样式零残留（舞台 + 整窗背景层都干净）、820px 窄窗画布跟随舞台不溢出、切深浅色不炸、关详情页再开能重挂、控制台零 error/warn。
+  - 探针同时修了一处**隔离不干净**：`pvMode` 也存在 WebView2 profile 的 localStorage 里，上一次跑别的样式会留下它的 id，应用启动时 localStorage 先于 Go 配置生效 → 控制台多一条「样式「X」不存在，已回退到「经典」」，把"零 error/warn"误判成失败。现在每次跑都清掉 `wv2/` profile。（另：探针的 `SPECS` 为 abyss 显式**不用** `SPEC.canvas` 读像素 —— GL 画布是 `preserveDrawingBuffer:false`，复制到 2D 上读到的可能是空的，那是量具不可靠而不是画面没画。）
+  - `node plugins/build-index.mjs` → `plugins/style/index.json` 已更新（7 个条目 / 58 个文件），`--check` 通过。
 
 ---
 
@@ -226,16 +307,29 @@ ctx.root（舞台）
 
 ### 签收清单（01）
 
-- [ ] S1 包结构齐全
-- [ ] S2 纯逻辑自检全绿
-- [ ] S3 浏览器自检全绿（含 destroy 无残留、关动效零帧）
-- [ ] S4 契约纪律零违规
-- [ ] S5 `colors` 三项齐全 + `reportBackdrop` 防抖上报已验证
-- [ ] S6 一条 rAF / 暂停停帧 / 前台切换停帧 / performance 档 24fps
-- [ ] S7 `destroy` 清干净
-- [ ] S8 真机挂载 + 换歌/暂停/切主题/窄窗口不崩
-- [ ] S9 `node plugins/build-index.mjs` 已重跑
-- [ ] S10 本文件 §4 已签收
+- [x] S1 包结构齐全（`skin.json` / `skin.js` / `skin.css` / `assets/icon.svg` / `lib/*.js` / `README.md` / `tests/`）
+- [x] S2 纯逻辑自检全绿（28/28）
+- [x] S3 浏览器自检全绿（72/72，含 destroy 无残留、关动效零帧、切后台停帧）
+- [x] S4 契约纪律零违规（静态扫描：无 fetch / eval / setInterval / 越权 `ctx.*`；CSS 只写相对舞台的选择器）
+- [x] S5 `colors` 三项齐全 + `reportBackdrop` 防抖上报（≥300ms）已验证
+- [x] S6 一条 rAF / 暂停停帧 / 前台切换停帧 / performance 档按清单 30fps
+- [x] S7 `destroy` 清干净（舞台节点 + 整窗背景层 + 帧循环 + 计时器）
+- [x] S8 真机挂载 + 真播放/暂停/换样式/切主题/窄窗口不崩（`.tmp-skin-live.mjs` 27/27）
+- [x] S9 `node plugins/build-index.mjs` 已重跑（`--check` 通过）
+- [x] S10 本文件 §4 已签收
+
+### 实现偏差（与设计稿不同之处，均为落地时的实测取舍）
+
+| # | 设计稿 | 实际实现 | 原因 |
+| :--- | :--- | :--- | :--- |
+| 1 | 用 `ctx.sdk.createBackgroundLayer` | 自己往 `ctx.backgroundRoot` 里放 `.drbg__img` + veil，`destroy` 时清空并 `hidden = true` | 需要「封面 second copy + 暖色 veil」两层且要按 `--dr-*` 变量呼吸，sdk 那层不够用；宿主**不会**替你清 `backgroundRoot`，所以卸载必须自己清 |
+| 2 | 用 `ctx.sdk.createFxLyrics`（`--w`） | 自己的歌词渲染器（每字素一个 `.dr__g`，写 `--g`） | 逐字进度要按**自算的字素进度**（含末字 tail 规则）而 sdk 只给整行状态 |
+| 3 | 色差用「复制一层歌词」 | 每字素 `text-shadow` 双色偏移 | 复制层会让 DOM/帧成本翻倍，`text-shadow` 免费拿到同样的错位感 |
+| 4 | 频段划分 64~128 为高频 | 与 `magic-circle` 对齐：低 0–11 / 中 32–95 / 高 96–127 | 128 段是对数分桶，64–128 实际只覆盖 4kHz 以上，做不出「低频 → 光晕」 |
+| 5 | 降级矩阵写 24fps | 清单 `performance.budgetFps = 30` | 以清单为唯一口径（自检直接读清单值断言） |
+| 6 | 快门「轻微开合」 | 由 onset 驱动 `--dr-snap`（0→1 衰减），两层结构（慢 300ms 换歌过渡 + 快 60ms 打击抖动）分开 | 一层做不出「换歌慢开合 + 打击瞬间抖一下」 |
+| 7 | 末字按 `words[i+1]` 或行尾结束 | 末字时长 = 相邻正间隔的**中位数**（回退 400ms），并夹在行尾之内 | 否则长间奏时最后一个字会亮十几秒（已写进测试） |
+| 8 | 「延迟补偿插值」 | `VISUAL_LAG_MS = 80` 的固定前视 + 墙钟外推（`maxExtrapolateMs = 1200`） | 进度补丁 4Hz、位置量化 250ms，不等就必然一顿一顿 |
 
 ### 风险
 
@@ -305,6 +399,34 @@ ctx.root
 - **纯逻辑**：字形目标点采样（笔画密度加权、去重、数量归一）、封面色板 LUT（按亮度排序 + 主色提取）、`dt` 钳制、粒子池索引换算（**不 new 对象**）。
 - **画布像素**：跑 N 帧后画布上非背景像素 ≥ 阈值；暂停后粒子**继续下落**（前后两帧的质心 y 增大）；`destroy` 后画布节点消失。
 
+### 签收清单（02）
+
+- [x] S1 包结构齐全（`skin.json` / `skin.js` / `skin.css` / `assets/icon.svg` / `lib/*.js` / `README.md` / `tests/`）
+- [x] S2 纯逻辑自检全绿（35/35）
+- [x] S3 浏览器自检全绿（70/70，含画布像素质心、destroy 无残留、关动效零帧、切后台停帧、LOD 退档仍在画）
+- [x] S4 契约纪律零违规（静态扫描：无 fetch / eval / setInterval / 越权 `ctx.*`；子模块 import 透传 `?t=`；CSS 只写相对舞台的选择器、`filter`/`blur` 只在白名单元素上）
+- [x] S5 `colors` 三项齐全 + `reportBackdrop` 防抖上报（400ms）+ 上报配色对比度 ≥ 3.9 已验证
+- [x] S6 一条 rAF / 暂停停帧 / 前台切换停帧 / performance 档按清单 45fps（自检直接读清单值断言）
+- [x] S7 `destroy` 清干净（舞台节点 + 整窗背景层 + 帧循环 + 计时器 + 类型化数组）
+- [x] S8 真机挂载 + 真播放/暂停/换样式/切主题/窄窗口不崩（`.tmp-skin-live.mjs` 29/29）
+- [x] S9 `node plugins/build-index.mjs` 已重跑（`--check` 通过）
+- [x] S10 本文件 §4 已签收
+
+### 实现偏差（与设计稿不同之处，均为落地时的实测取舍）
+
+| # | 设计稿 | 实际实现 | 原因 |
+| :--- | :--- | :--- | :--- |
+| 1 | 四层直接挂在 `ctx.root` 上 | 自包一层 `.rb`（画布 / 灰尘 / 空态 / HUD 都在里面） | 宿主用 `@layer skin { @scope(舞台根) }` 包插件 CSS，插件需要一个**自己的**作用域根来写 `--rb-*` 变量与状态属性（`data-lit`/`data-lod`/`data-idle`）；直接写舞台根会和宿主的状态属性混在一起，`destroy` 也没法整块回收 |
+| 2 | 封面采样 96×96 | **64×64** | 采样只为"每个目标点取一个颜色"，64×64 在 14000 个点下已经够密；再大只是白付解码与 `getImageData` 的钱 |
+| 3 | 未唱到的字画"低 alpha 粒子" | 未唱的部位改成 **DOM 文本印痕**（`.rb__dust`，极淡 + `blur(1.1px)`） | 一万个粒子再画一遍轮廓是双倍填充；而且"模糊的轮廓"用 canvas 画更贵。灰尘层只做"没唱到的地方有东西"这一件事，交给合成器最便宜 |
+| 4 | 逐字"聚拢"（连续量） | 逐字档位**量化成 3 档**，颜色预建 **18 条批次**（6 色桶 × 3 档） | 逐粒子上色（每帧上万次 `fillStyle` + 字符串拼接）会直接顶掉帧预算；批次化后每帧只有 18 次 `fillStyle` + 每粒子一次 `fillRect` |
+| 5 | `bands[0..8]` 驱动湍流 | `bands[0..12]` 的均值（与暗房 / `magic-circle` 的低频口径对齐） | 128 段是对数分桶，0–8 只到 ~200Hz；0–12 才是"低频涌"的手感 |
+| 6 | `flux` 是一次「撒沙」 | 撒沙由**两个**来源驱动：自算的谱通量（突增）+ 换句 | 契约里没有 `flux` 数据面（进度补丁只给 position/playing），只能自己从频谱算通量 |
+| 7 | 降级矩阵写 30fps | 清单 `performance.budgetFps = 45` | 以清单为唯一口径（自检直接读清单值断言）；30fps 在粒子上会明显看出跳格 |
+| 8 | 「必要时整幅画按 scale 画在半分辨率画布上再放大」 | 做成**自适应降级控制器**：量每帧画布耗时的 EMA，连续 2 帧超预算才退一档（`data-lod` 0→3：粒子 ×1/×0.66/×0.45/×0.30，后两档背板半分辨率），8 秒后不再退 | 静态阈值在 4K/核显/后台负载下必然选错；退档要"迟滞 + 封顶"，否则会在两档之间来回跳（每次跳都 resize 画布 = 一次清屏） |
+| 9 | （设计稿未提）切句时才现算字形位图 | 切句前 **240ms 预热**下一句的目标点，LRU 缓存 8 条 | 否则每次换行都在同一帧里塞一次离屏 `fillText` + `getImageData`（低端机上一次就是一次掉帧） |
+| 10 | （设计稿未提）频谱口径 | 探针里音量给 `0.04`；`ctx.spectrum()` 必须读 `.bands` | 频谱是**音量后**的：音量 0 时分析器读到静音，视觉量全 0（宿主行为）。另外 `spectrum()` 给的是快照 `{bands, at}` —— 当成裸数组用会静默读出恒 0（本项目已两次踩到，第二次写进了静态扫描） |
+
 ### 风险
 
 - 填充率：4K + dpr2 的整屏填充会顶到上限（`magic-circle` 的教训）。→ 粒子数**按面积自适应**，必要时整幅画按 `scale` 画在半分辨率画布上再放大。
@@ -331,26 +453,27 @@ ctx.root
 ### 画面结构（`perspective` + `preserve-3d`）
 
 ```
-.sp__world（perspective: 900px）
-├─ .sp__fog        远景雾（CSS 渐变 + mask-image）
-├─ .sp__slices     封面视差切片（3~4 片，各自 translateZ / 不同 --depth）
-├─ .sp__tower      preserve-3d 的塔体
-│   └─ .sp__card × N（窗口化：只保留当前句前后 ±12 层）
-│        ├─ .sp__line     歌词行（DOM 文本，矢量）
-│        └─ .sp__plate    玻璃板（边框 + 内阴影；不用 filter）
-└─ .sp__hud        曲名 + 层号「第 n / N 层」
+.sp__world（perspective: var(--sp-persp)，默认 900px）
+├─ .sp__fog        远景雾（两层静态渐变；**不用 mask-image**，它是分组属性）
+├─ .sp__slices     封面视差切片（3 片，translateZ −180/−260/−420px，screen 混合）
+├─ .sp__tower      preserve-3d 的塔体（卡片**池**：2×半窗+1 个节点，与歌词行数无关）
+│   └─ .sp__card × (2×半窗+1)   窗口化：只画当前句前后 ±12 层（性能档 ±6）
+│        ├─ .sp__plate    玻璃板（渐变底 + 描边 + 内阴影；不用 filter）
+│        └─ .sp__line     歌词行（DOM 文本，矢量；逐字素 span 带 --g）
+├─ .sp__empty      空态
+└─ .sp__hud        曲名 + 歌手 · 「第 n / N 层」+ 时间码
 ```
 
 ### 数据映射
 
 | 输入 | 驱动 |
 | :--- | :--- |
-| `lyrics().index` | 当前层号 → 塔体 `rotateY` 与 `translate3d` 的目标值 |
-| 行距（两行时间差） | 层间距 `--step`（长留白 → 层更高，产生"抬头看"的段落感） |
-| `bands[0..8]` | 塔体的呼吸式下沉/上浮（幅度很小，只为了让空间"活着"） |
-| 相机值 | 每帧由 JS 写各层的 `--cam-x / --cam-y / --cam-z / --cam-rot`（**自己实现分层相机**：`sdk.createCamera` 只能驱动一个容器） |
+| `progress` 的位置 | 当前层号（`lineIndexAt`）→ 镜头目标；层内逐字 `--g` |
+| `lyrics()` 的行 | 每一层（`time` + 字素 + 字级时间戳） |
+| 行距（两行时间差） | 飞行时长（`600..1400ms`） |
+| `bands[0..12]` | 塔体的呼吸式上浮（`--sp-breath`，0..9px） |
+| 相机值 | 每帧由 JS 写每层的 `--c-tf` / `--c-op`（**自己实现分层相机**：`sdk.createCamera` 只能驱动一个容器） |
 | 点击某层 | `ctx.actions.seek(该行 time)`（DOM 命中天然精确） |
-| `progress` | 当前层内的逐字点亮（`createLyricsView` 的 `--w`） |
 
 ### 状态机
 
@@ -360,21 +483,54 @@ ctx.root
 
 | 条件 | 行为 |
 | :--- | :--- |
-| `performance` 档 | 层数 ±12 → ±6；关雾；镜头改为直接跳（无飞行） |
-| `animations:false` | 不做 3D 变换，退化成「一列垂直居中列表」 |
+| `performance` 档 | 层数 ±12 → ±6；关雾与切片；镜头改为直接跳（无飞行）；按清单 45fps 限帧 |
+| `animations:false` | 不做 3D 变换，退化成「一列垂直居中列表」，且**一帧都不进帧循环**（补丁来了只画一帧） |
 | P4 不成立（3D 撕裂/糊） | 退化成 **2.5D**：只保留 `translate3d` 与 `scale`，不做 `rotateY` |
-| 窄窗口（< 900px） | 透视收敛（`--sp-zoom` 变小），层间距压缩 |
+| 窄窗口（< 900px） | 透视收敛（900→648px），层间距压缩（108→69px），`rotateY` ×0.4 |
+| 无封面 | 用 `ctx.defaultCover`；取色失败回落到清单配色 |
+| 无字级歌词 / 字数对不齐 | 整行一起亮（不做逐字） |
 | `interactive:false` | 层不可点 |
 
 ### 自检
 
 - **纯逻辑**：塔体几何（层号 → `x/y/z/rotateY`）、行间隔 → 层间距映射、飞行时长反算、窗口化的可见区间计算（当前句 ±N）。
 - **DOM**：点第 k 层 → `actions.seek` 收到该行的 `time`（假宿主断言）；`destroy` 后 `.sp__world` 消失且 `preserve-3d` 节点清空。
+- **投影**：近层与远层的 `getBoundingClientRect` 必须**不一样**（被压平的两个值会完全相同）——这是"3D 真的生效"唯一靠得住的判据，假宿主与真机各验一次。
+
+### 签收清单（03）
+
+- [x] S1 包结构齐全（`skin.json` / `skin.js` / `skin.css` / `assets/icon.svg` / `lib/tower.js` / `lib/camera.js` / `README.md` / `tests/`）
+- [x] S2 纯逻辑自检全绿（42/42）
+- [x] S3 浏览器自检全绿（70/70，含投影分层、逐字推进、飞行中途值、destroy 零残留、关动效零帧、切后台停帧、performance 档按清单 45fps）
+- [x] S4 契约纪律零违规（静态扫描：无 fetch / eval / setInterval / 越权 `ctx.*`；子模块 import 透传 `?t=`；CSS 只写相对舞台的选择器；3D 链条（`.sp__world` / `.sp__tower` / `.sp__card`）上零分组属性）
+- [x] S5 `colors` 三项齐全 + 封面取色→`reportBackdrop` 防抖上报（400ms）+ 对比度已算（`--sp-on-accent` 按对比度选深浅）
+- [x] S6 一条 rAF / 暂停停帧 / 前台切换停帧 / performance 档按清单 45fps（自检直接读清单值断言；静态档一帧都不进循环）
+- [x] S7 `destroy` 清干净（舞台节点 + 整窗背景层 + 帧循环 + 计时器 + 点击监听 + 卡片池引用）
+- [x] S8 真机挂载 + 真播放/暂停/换样式/切主题/窄窗口不崩（`.tmp-skin-live.mjs` 27/27）
+- [x] S9 `node plugins/build-index.mjs` 已重跑（`--check` 通过：4 个条目 / 35 个文件）
+- [x] S10 本文件 §4 已签收
+
+### 实现偏差（与设计稿不同之处，均为落地时的实测取舍）
+
+| # | 设计稿 | 实际实现 | 原因 |
+| :--- | :--- | :--- | :--- |
+| 1 | `lyrics().index` 驱动镜头 | 镜头是**自己算的一个数**（`st.camPos`，可带小数），由 `progress` 的位置经 `lineIndexAt` 推出 | 契约里 `lyrics().index` 只在换句时更新一次（4Hz 的 `progress` 才是连续量）；而且镜头要能停在**层间**（飞行途中），必须允许小数 |
+| 2 | 行距 → 层间距 `--step`（"长留白 → 层更高"） | 行距改为驱动**飞行时长**（`600..1400ms`）；层间距是**常量**（`--sp-step`） | 层间距随行距变化会让塔在歌里忽高忽低（空间感崩），而"抬头看"的段落感用飞行时长表达更准（也更好断言） |
+| 3 | `bands[0..8]` 驱动呼吸 | `bands[0..12]` 的均值（与暗房 / 拓印同一口径） | 128 段是对数分桶，0–8 只到 ~200Hz；0–12 才是"低频涌"的手感 |
+| 4 | 每帧写各层的 `--cam-x/--cam-y/--cam-z/--cam-rot` | 每层每帧只写 **2 个**自定义属性：`--c-tf`（整条 transform）与 `--c-op` | 写 4~6 个属性 × 25 层 = 每帧上百次样式失效；整条 transform 一次写完还没有中间态。写之前先与上次的值比对，静止时不产生任何写入 |
+| 5 | `.dr__fog` 用 `mask-image` 做雾 | 改用**两层静态渐变**（径向 + 线性） | `mask-image` 是分组属性（P4：挂在 `preserve-3d` 子树里会压平 3D）—— 塔里一个分组属性都不能有 |
+| 6 | 玻璃板"边框 + 内阴影" | 半透明**渐变底** + 1px 描边 + 内阴影 + 一条上沿反光伪元素 | 完全透明的板在深色封面下没有"玻璃"的体积感；`::before` 是伪元素、不参与 3D 排序，不会引起 z 撕裂 |
+| 7 | 封面视差切片 3~4 片 | **3 片** + `mix-blend-mode: screen` + `translateZ(-180/-260/-420px)` | 4 片在窄窗口会互相盖住；3 片已经能读出视差。切片在塔外（`.`sp__slices`），所以用混合模式也不会影响塔的 3D 上下文 |
+| 8 | 窄窗口"透视收敛（`--sp-zoom` 变小）" | 改的是 `--sp-persp`（透视距离 900→648）与 `--sp-ty`（层距 108→69），并把 `rotateY` 降到 40% | 减小投影缩放会同时把文字缩糊（P4：栅格化倍率 ≈ 投影比）；拉远透视距离 + 压缩层距既能"收"，又让每层的投影比更贴近 1 |
+| 9 | 状态机 `empty → rising → holding → paused` | 落地为 **`data-playing` / `data-idle` / `data-flying` / `data-empty`** 四个可观测属性，不引入显式状态机 | 宿主只推补丁，没有"状态机"这一层；四个属性既够 CSS 用，也够自检断言（显式状态机在这里只是多一份要同步的真相） |
+| 10 | （设计稿未提）`preserve-3d` 的祖先能不能有分组属性 | **祖先可以**（`.sp` 的 `overflow:hidden` 用来裁掉飞出去的层），只有**挂在 `preserve-3d` 那个元素自己身上**才致命 | P4 补测（17/17）：透视容器的祖先挂 `overflow:hidden` / `filter` / `opacity<1` 时投影仍是 ×1.3333；这条放宽了舞台根的写法 |
+| 11 | （设计稿未提）`shapeFor` 的返回值形状 | 必须是**完整**塔形（`{...SHAPE, 覆盖项}`），并写了专门的自检 | 第一版只返回覆盖项，缺 `farScale` → `scale` 算出 `NaN` → `transform: scale(NaN)` 是**非法值**，CSS 直接忽略整条 transform：表现是"所有层叠在同一个位置"，控制台一声不吭。自检里现在断言"用塔形算出的几何全是有限数" |
+| 12 | （设计稿未提）`update` / `destroy` 的签名 | `update(ctx, patch)` / `destroy(ctx)` | 契约是 `update(ctx, patch)`（见 `contract.js`）。第一版写成了 `update(patch)`，自检里表现为"所有补丁都像没收到"（画面永远停在挂载那一刻、`close` 不清背景层）——这一条是自检抓出来的，最好地说明了为什么每款都要有浏览器自检 |
 
 ### 风险
 
-- `preserve-3d` 子树里出现 `filter` / `backdrop-filter` 会被**强制扁平化**，整套透视崩掉 → 塔体内部禁用 filter，玻璃感用边框 + `linear-gradient` 内阴影做。
-- 半透明层的 z 排序在 Chromium 里会撕裂 → 层用**不透明底 + 半透明描边**，绝不叠两层半透明大面。
+- `preserve-3d` 子树里出现 `filter` / `backdrop-filter` / `overflow:hidden` / `opacity<1` 会被**强制扁平化**，整套透视崩掉 → 塔体内部禁用全部分组属性（静态扫 + 投影尺寸双重把关）。
+- 半透明层的 z 排序在 Chromium 里会撕裂 → 层用**不透明感强的底 + 半透明描边**，不叠两层半透明大面。
 
 ---
 
@@ -399,49 +555,81 @@ ctx.root
 > 第一版用**四个真实存在的 CSS 属性**模拟排版轴：`font-weight` + `letter-spacing` + `font-size` + `transform: skewX/scale`。
 > 若 P3 成立且体积可接受，再做「自带子集化 woff2 + `font-variation-settings`」的 V2（那时才需要动 `FontFace`）。
 
-### 画面结构
+### 画面结构（落地版）
 
 ```
-ctx.root（浅色纸面）
-├─ .lp__grid      基线网格（极淡的 CSS 横线，随字号缩放）
-├─ .lp__lines     歌词区（createFxLyrics 的字素单元 + 自己的排版层）
-│    └─ .fxl__u × N  每个字素：--lp-w / --lp-s / --lp-sp / --lp-sk 由 JS 每帧写
-├─ .lp__blocks    活动铅块：当前行的每个字后面有一个"铅块"（伪元素，重排时短暂显形）
-└─ .lp__hud       曲名 / 行号「§ 12 / 48」/ 字号读数
+ctx.root（.lp，浅色纸面）—— 恰好 4 个直接子元素
+├─ .lp__paper     纸面：纸纹 + 基线网格（.lp__rules，全 CSS 唯一的 filter）+ 版口 marks
+├─ .lp__sheet     版面：.lp__elide--top / .lp__col / .lp__elide--bottom / .lp__poster
+│    └─ .lp__line × 81  行池（槽位固定 --slot = k，DOM 数量与歌词行数无关）
+│         └─ .lp__u × N **只有当前行**有字素 span（其余行是纯文本）
+├─ .lp__empty     空态（无歌词时的排版提示）
+└─ .lp__hud       曲名 / 「§ 行号 / 总数」/ 字号·字重读数 / 时间码
 ```
 
 ### 数据映射
 
 | 输入 | 驱动 |
 | :--- | :--- |
-| `bands` 分段（低/中/高） | 排版曲线：低频抬字重、中频拉字距、高频给斜切与抬升 |
-| `words` | 逐字素入场（**只有当前行**写字素级属性，行数 N 小、成本可控） |
-| `lyricsFontSize`（宿主设置） | **基准字号**，排版曲线是乘在它上面的相对量（不能覆盖宿主设置） |
-| `showLyrics:false` | 画面切成「只有曲名与字号的排版海报」形态 |
-| 换行 | FLIP 重排：新行字素从旧行位置飞入（WAAPI，只动 `transform`） |
+| `bands` 分段（低 0–12 / 中 13–44 / 高 45–127） | 排版曲线：低频→字重 + 字号、中频→字距 + 抬升、高频→斜切 + 收字号 |
+| `words` | 逐字素入场：**只有当前行**写字素级 `--g`（行数 N 小、成本可控） |
+| `lyricsFontSize`（宿主设置） | **基准字号**（`--lp-base`），排版曲线是乘在它上面的相对量（不覆盖宿主设置） |
+| `showLyrics:false` | 画面切成「只有曲名与歌手的排版海报」形态 |
+| 换行 | FLIP 重排：新旧行都用 `Element.prototype.animate` 动 `transform`/`opacity`（时长 280–560ms 按字数） |
 
-### 状态机
+### 状态机（落地版：四个可观测属性，不引入显式状态机）
 
-`empty` → `composing`（重排，400ms）→ `set`（排版确定，只有排版轴在呼吸）→ `paused`（呼吸停下，保留最后状态）。
+`data-empty`（无歌词）/ `data-poster`（海报形态）/ `data-set`（刚排好，铅块短暂显形 320ms）/ `data-idle`（暂停 6 秒后停帧）。
+另有 `data-perf`（performance 档）/ `data-animations` / `data-interactive` / `data-narrow` / `data-dpr` / `data-playing` / `data-show-lyrics` 供 CSS 与自检读取。
 
 ### 降级矩阵
 
 | 条件 | 行为 |
 | :--- | :--- |
-| `performance` 档 | 20fps；只有低频轴在动（字重/字号），字距与斜切不动 |
-| `animations:false` | 固定排版：一次算出静态版式后停帧 |
-| 字号很小（窄窗口） | 曲线幅度按 `fitScale` 收敛，避免字挤在一起 |
-| `interactive:false` | 行不可点，去掉 HUD 的悬停反馈 |
+| `performance` 档 | 按清单 `budgetFps: 30` 限帧（**真帧数**，不是 rAF 回调数）；只有低频轴在动，字距/斜切/抬升锁在中性值 |
+| `animations:false` 或 `env.reducedMotion` | 不进 rAF 循环：一次算出**中性版式**，之后每个补丁同步画一帧；换行不飞 |
+| 窄窗口（≤ 900px） | 曲线幅度按 `fit` 收敛（1 → 0.72），行高 54 → 44px，不溢出 |
+| `interactive:false` | 行不可点，也不 seek；`cursor: default` |
+| `showLyrics:false` | 海报形态，歌词列 `display:none` |
 
 ### 自检
 
-- **纯逻辑**：排版曲线（`bands → {weight, size, spacing, skew}`）的值域与单调性、FLIP 的起止计算、字素单元与 `words` 下标对齐（含多语言行回退逐行）、`lyricsFontSize` 的乘法关系。
-- **DOM**：活动行上确实写了字素级自定义属性，且**行数是 O(当前行)**（不能给全文都写）；关动效后属性不再变化。
+- **纯逻辑**（`tests/letterpress-logic.test.js`，41 项）：排版曲线的值域与单调性（`performance` 档只剩低频轴）、幅度收敛、版面视窗与列位移（**视窗滑动必须不动画面**）、深度样式（越远越小越淡、且 9 与 3 同档）、字素相位确定性、逐字时间戳插值（最后一个字的兜底时长、长度对不齐就退回整行）、FLIP 增量、行定位、时间码、专色取色与 WCAG 对比度。
+- **DOM**（`tests/letterpress-check.mjs`，115 项）：computed 值真的穿过 `@layer`+`@scope` 生效、行池恒 81 且按 54px 槽位依次落位、**只有当前行**有字素 span、换行真的播 FLIP（拦 `animate` 看 keyframes 只有 transform/opacity）、当前行换行后**仍在版面中央**、长歌 300 行时行池不涨且版口标出「后 N 行」、点击 seek、`reportBackdrop` 专色随封面变、暂停/切后台/关动效/performance 档/destroy 的行为。
 
 ### 风险
 
-- 每帧写字素级属性 = 每帧 N 次 `setProperty`（N ≈ 一行字数，20~40，可接受）；**绝不能给所有行写**。
-- 浅色舞台下宿主 `colors` 派生（`fg` 墨黑 / `bg` 纸白）要保证底栏可读 —— 由宿主 `deriveChrome` 兜底，但要在真机里确认一次。
+- 每帧写字素级属性 = 每帧 N 次 `setProperty`（N ≈ 一行字数，20~40，可接受）；**绝不能给所有行写** —— 实测把轴写在行根上（每行 6 个变量、**变了才写**），只有 `--g` 与 `--lp-a` 落到字素上。
+- 浅色舞台下宿主 `colors` 派生（`fg` 墨黑 / `bg` 纸白）要保证底栏可读 —— 真机确认：`colors` 三项齐全、`reportBackdrop` 对比度 15.77（清单声明 4.5 的下限之上）。
+- 深色主题**不换纸面**（印好的纸不随房间灯变）—— `[data-mode="dark"]` 下纸白仍是 `rgb(242,239,231)`，自检专门断言这一条（否则对比度会被主题做坏）。
+
+### 签收清单（04）
+
+- [x] S1 包结构齐全（`skin.json` / `skin.js` / `skin.css` / `assets/icon.svg` / `lib/typeset.js` / `lib/ink.js` / `README.md` / `tests/`）
+- [x] S2 纯逻辑自检全绿（41/41）
+- [x] S3 浏览器自检全绿（115/115，连跑两次；含 computed 值穿透 `@layer`+`@scope`、行池恒 81、只有当前行有字素 span、FLIP keyframes、当前行换行不动位、长歌 300 行、destroy 零残留、关动效零帧、切后台停帧、performance 档按清单 30fps 的**真帧数**）
+- [x] S4 契约纪律零违规（静态扫描：无 fetch / eval / setInterval / 越权 `ctx.*`；子模块 import 透传 `?t=`；`update(ctx, patch)` / `destroy(ctx)` 签名；逐字素只写当前行；CSS 只写相对舞台的选择器、全 CSS 只有一个 `filter`（且在 `.lp__rules` 上））
+- [x] S5 `colors` 三项齐全 + 封面取色→`reportBackdrop` 防抖上报（400ms，bg/fg 固定、accent 随封面变）+ 对比度已算（≥ 3.9 自检 / 15.77 实测）
+- [x] S6 一条 rAF / 暂停 6 秒停帧 / 切后台停帧 / performance 档按清单 30fps（自检读清单值并数**真帧数**；静态档一帧都不进循环，但补丁来了同步画一帧）
+- [x] S7 `destroy` 清干净（舞台自己的树 + 帧循环 + 2 个计时器 + WAAPI + 点击监听 + 行池引用；**没删宿主给的挂载点**；`background:false` 所以一个字节没碰背景层）
+- [x] S8 真机挂载 + 真播放/暂停/换样式/切主题/窄窗口不崩（`.tmp-skin-live.mjs --skin letterpress` 28/28）
+- [x] S9 `node plugins/build-index.mjs` 已重跑（`--check` 通过：5 个条目 / 42 个文件）
+- [x] S10 本文件 §4 已签收
+
+### 实现偏差（与设计稿不同之处，均为落地时的实测取舍）
+
+| # | 设计稿 | 实际实现 | 原因 |
+| :--- | :--- | :--- | :--- |
+| 1 | 自带子集化 woff2 + `font-variation-settings`（可变字体轴） | **不用可变字体**，用四个真实存在的 CSS 属性（`font-weight` / `letter-spacing` / `font-size` / `skewX`）模拟排版轴 | CJK 可变字体子集化后仍有数 MB；而且 `FontFace` 是异步加载，第一帧必然跳字（"字被排出来"的感觉全毁）。P3 只做到"可选"，实测后决定不做 |
+| 2 | 每帧给每个字素写 `--lp-w / --lp-s / --lp-sp / --lp-sk` | 轴值写在**行**上（6 个行级变量：`--lp-wt/-sz/-sp/-sk/-lift/-inkv`），且**变了才写**；字素级每帧只写 `--g`（量化到 1%）与换行时的 `--lp-a` | 一行 30 字 × 4 个属性 = 每帧 120 次样式失效，纯属浪费（同一行的轴值本来就完全相同）。落到行上还让"整行一起呼吸"在视觉上更整齐 |
+| 3 | 行池窗口 ±12 行 | **±40 行**（池子 81 个） | ±12 时换行会让窗口滑动 + 行内容重排，**正在屏幕上的行会被改文本**（肉眼可见的跳字）。±40 之后重排发生在屏幕外（可见区只有 ~7 行），屏幕上的行永远只是"往下挪一格" |
+| 4 | 重排固定 400ms | **280–560ms 按字数**（`200 + 9 × 字数`，夹在 280..560） | 一个字的重排和 40 个字的重排用同一时长，前者像卡了一下、后者像拖尾。按字数走才像"铅字一块块落版" |
+| 5 | `.lp__grid` 基线网格 + `.lp__blocks` 活动铅块两个独立层 | 合并进 `.lp__paper`（网格 + 版口 marks）与行上的伪元素（铅块），根元素只有 4 个直接子元素 | 层数不是目的；`filter` 只留给纸纹一处（多一个 `filter` 就多一层合成开销，还容易被误判成"分组属性"） |
+| 6 | 状态机 `empty → composing → set → paused` | 落地为 `data-empty` / `data-poster` / `data-set` / `data-idle` 四个可观测属性 | 与 03 同一取向：宿主只推补丁，没有"状态机"这一层；属性既够 CSS 用，也够自检断言 |
+| 7 | 逐字进度用 `lyrics().index` 定位 | 位置来自 4Hz 的 `progress` + 墙钟外推（`VISUAL_LAG_MS = 70`、最多外推 1200ms），行号由 `lineIndexAt` 推出；`lyrics().index` 只做交叉核对 | `lyrics().index` 只在换句时更新一次，是**阶跃**量；逐字进度必须是连续量 |
+| 8 | 窄窗口"曲线幅度收敛" | 收敛到 `fit ≤ 0.72` 并**行高 54 → 44px**；`--lp-base` 不动 | 只收幅度不改行高，窄窗里行会挤（44px 在 820×560 下刚好） |
+| 9 | （设计稿未提）清版面时清哪些变量 | `syncLines` 只清**内容相关**的 `--lp-ds/--lp-di`，**保留 `--slot`** | 第一版用 `removeAttribute("style")` 一把清，`--slot` 也没了 → 81 行全塌到同一个槽位（表现是"整页文字叠在一起"），而行号/帧数/逐字档位**全都是对的**。这条是浏览器自检抓出来的（"五行按 54px 槽位依次落位"） |
+| 10 | （设计稿未提）performance 档怎么证明限帧 | **数真帧数**（每帧必拉一次 `ctx.spectrum()`，数它的调用次数），不数 rAF 回调 | 被限掉的帧照样会再排一次 rAF → 数回调得到 61/秒（≈刷新率），看着像"限帧没生效"。这条差点写成假绿 |
 
 ---
 
@@ -506,6 +694,35 @@ ctx.root
 
 - 自由节拍 / 变速曲目：必须**如实**退回，不能显示假的 BPM。
 - `progress` 是 250ms 量化值：PLL 的长时基准要用墙钟外推值，直接用补丁值会把相位拉歪。
+
+### 签收清单（05）
+
+- [x] S1 包结构齐全（`skin.json` / `skin.js` / `skin.css` / `assets/icon.svg` / `lib/beat.js` / `lib/scope.js` / `README.md` / `tests/`）
+- [x] S2 纯逻辑自检全绿（49/49）
+- [x] S3 浏览器自检全绿（109/109，连跑两次；含 `@layer`+`@scope` 之后 `@keyframes` 仍生效、**宿主真 `createLyricsView`**、合成 onset 流锁 120BPM、字级刻度吸附后与拍点标记 rect 重合、滑动窗口连续（每 50ms = −plotW×50/6000）、散板如实落 `free`、performance 档数**真帧**、静态档零帧但补丁来了一帧、切后台/暂停 6 秒/恢复、窄窗、destroy 零残留）
+- [x] S4 契约纪律零违规（静态扫描：无 fetch / eval / setInterval / 越权 `ctx.*`；子模块 import 透传 `?t=`；`update(ctx, patch)` / `destroy(ctx)` 签名；`background:false` 所以全包不出现 `backgroundRoot`；CSS 无 `!important` / `:root` / 裸标签；全包只有 3 处 `requestAnimationFrame`，且**歌词视图恒以 `playing:false` 驱动**（不许把宿主 SDK 的平滑 rAF 点亮））
+- [x] S5 `colors` 三项齐全 + 挂载后**防抖 400ms** 上报一次 `reportBackdrop`（bg/fg/accent 都来自清单）+ 对比度已算（自检 15.61 / 清单声明 15.61，都 ≥ 4.5）
+- [x] S6 一条 rAF / 暂停 6 秒停帧 / 切后台停帧 / `close` 停帧 / performance 档按 `min(清单 60, 15)` = 15Hz（自检数**真渲染帧**：1 秒 13 帧而 rAF 回调 60）/ 静态档一帧都不进循环但补丁来了同步画一帧
+- [x] S7 `destroy` 清干净（帧循环 + 2 个计时器 + 点击监听 + 歌词视图 + 自己的树；**没删宿主给的挂载点**；`background:false` 所以一个字节没碰背景层）
+- [x] S8 真机挂载 + 真播放/暂停/换样式/切主题/窄窗口不崩（`.tmp-skin-live.mjs --skin pulse` 30/30，真频谱上真的锁上了拍：`onsets=27` / `cv=0.05`）
+- [x] S9 `node plugins/build-index.mjs` 已重跑（`--check` 通过：6 个条目 / 49 个文件）
+- [x] S10 本文件 §4 已签收
+
+### 实现偏差（与设计稿不同之处，均为落地时的实测取舍）
+
+| # | 设计稿 | 实际实现 | 原因 |
+| :--- | :--- | :--- | :--- |
+| 1 | BPM = 最近 8 个间隔的**中位数** | 中位数附近 ±35% 的间隔取**截尾均值** | 中位数被量化到帧网格（16.7ms）后会系统性偏高：500ms 一拍实测中位数 475ms → 126BPM。截尾均值实测稳定在 120±3；间隔抖动 8% 时误差 ≤5% |
+| 2 | 拍点标记每帧写一次 `--x` | **滑动窗口**：`--x` 只在重锚 / 换行 / 窗口重设时写，每帧只写容器的一个 `--pl-slide` | 6 秒窗口里 12~40 个标记 × 每帧写 = 每秒上千次样式失效。滑动之后每帧只有 1 次 |
+| 3 | （设计稿未提）窗口参考点怎么走 | 可见区间恒为 [now−6s, now]，`--x` 以 `tRef−6s` 为参考点、容器位移 `−(now−tRef)/6s×plotW`；`tRef` **每 6 秒**才换一次，且元素保留范围是**双倍窗口**（12 秒） | 一个周期里"过去的 6 秒"必须有现成元素；参考点一换就在同一帧里重算 x 并把位移归零，屏幕位置因此**连续**（自检专门量"拍点整体刚性左移"） |
+| 4 | 齿轮每帧写一个旋转角 | 相位交给 CSS animation（`--pl-period` + 负 `animation-delay`），只在锁定状态改变时写两个变量 | 每帧写 `transform` 会一直触发样式失效；负 delay 让"转到的角度"天然与节拍相位对齐，还省掉每帧一次字符串拼接 |
+| 5 | flux 阈值用固定倍数 | 三路自适应：`max(0.002, 峰值×0.32, 最近 24 帧中位数×1.7)`，峰值按 0.98/帧衰减 | 宿主响度补偿后音量是**未知数**（探针里是 0.04），绝对阈值必然失效；相对自身的"变响"才与音量无关 |
+| 6 | 拍点在画布上画 | 拍点标记与字级刻度都是 **DOM**（画布只留包络/质心/flux） | 吸附与时间轴这两件事必须能被**量**到（自检量 rect、量 `data-snap`、量间距），画在 canvas 里就只能靠像素取证 |
+| 7 | `--pl-pulse` 由 PLL 直接给 | 负延迟补偿后的脉冲值，锁定才非 0，`data-flash` 在 >0.5 时置 1 | 峰值提前 40ms 才是"卡在鼓点上"的观感；未锁定时恒 0（不假装在打拍子） |
+| 8 | BPM 直接显示估计值 | 折进 60..180（`foldBpm`）后显示 | 90 与 180 是同一个脉冲（相差一个八度），不折的话半拍误检会显示出两倍 BPM；锁定判据用**间隔变异系数**（cv ≤ 0.16 锁定 / ≥ 0.34 落 free / 中间仍是"校准中"） |
+| 9 | 时间轴用 `performance.now()` | 画面一律架在**歌曲位置钟**上（`position + 墙钟外推`），墙上时钟只管调度（限帧、暂停 6 秒的看门狗） | 第一版把 `performance.now()` 当时间轴：探针里字级刻度"刚好"吸上是因为合成拍点凑巧同相；真机上歌曲位置（几万毫秒）与页面开机时间（几百万毫秒）差着数量级，**一条刻度都不会画**。同时暂停时歌曲钟必须不走，而"暂停 6 秒"必须走 |
+| 10 | 6 秒窗口里的 16 个标记池 | 池子 40 个（最快 180BPM 时 12 秒窗口 = 36 个拍点） | 双倍窗口（偏差 3）带来的上限变化；DOM 数量与拍数无关这一点不变 |
+| 11 | 字级刻度由宿主 SDK 提供 | 刻度自己算（`lib/scope.js#railTicks`），歌词用宿主真 `createLyricsView` | 宿主视图只提供"字素 span + `--w` 填充"，**时间轴**是这一款的极限轴；两个都自己算就等于重写歌词视图，不如各管一段 |
 
 ---
 
@@ -583,6 +800,34 @@ shader 用它的梯度做法线，在液面上压出凹陷；DOM 上的真实文
 - 半分辨率流体在集显上仍可能吃满 → 必须有 1/3 分辨率档，并且**默认先跑一帧测耗时**，超过 33ms 自动降档（自适应）。
 - GL 上下文丢失（`webglcontextlost`）要能恢复或至少不白屏。
 
+### 签收清单（06）
+
+- [x] S1 包结构齐全（`skin.json` / `skin.js` / `skin.css` / `assets/icon.svg` / `lib/water.js` / `lib/gl.js` / `lib/canvas2d.js` / `lib/mask.js` / `README.md` / `tests/`）
+- [x] S2 纯逻辑自检全绿（39/39）
+- [x] S3 浏览器自检全绿（125/125，连跑两次；含**成画那一笔的像素指纹**、`glerr=0`、GPU 计时器真时间、字形遮罩 vs DOM 行盒对齐、遮罩每行只画一次、换歌涌浪、两条兜底路径（关掉 webgl2 / 真的丢上下文）、performance 数真帧、静态档三处零帧、切后台/暂停 6 秒/恢复、窄窗、destroy 零残留且 `loseContext()` 真的被调到）
+- [x] S4 契约纪律零违规（静态扫描：无裸包名 import / 无 fetch·eval·setInterval；子模块 import 透传 `?t=`；**lib 之间不许静态 import**（会丢查询串并二次加载），依赖一律当参数注入；只有 `mask.js` 碰 DOM；`ctx.*` 白名单；CSS 无 `!important` / `:root` / 裸标签 / 作用域前缀；全包只有一条 `requestAnimationFrame`）
+- [x] S5 `colors` 三项齐全 + 挂载后**防抖 400ms** 上报一次 `reportBackdrop`（bd/fg/accent 都来自清单 + 封面主色微调）+ 对比度已算（自检 16.51 / 清单声明 16.51，都 ≥ 4.5）
+- [x] S6 一条 rAF / 暂停 6 秒停帧 / 切后台停帧 / `close` 停帧 / performance 档按 `min(清单 45, 24)` = 24fps（自检数**真渲染帧**：1 秒 23 帧而 rAF 回调 112）/ 静态档（`animations:false` 与 `reducedMotion`）一帧都不进循环但补丁来了同步画一帧 / GPU 计时器连续三窗都说慢才降档、说快才升档
+- [x] S7 `destroy` 清干净（帧循环 + ResizeObserver + 点击监听 + 歌词视图 + 字形遮罩离屏 canvas + GL 纹理/程序/帧缓冲并主动 `WEBGL_lose_context.loseContext()` + 自己的树；**没删宿主给的挂载点**；`background:true` 所以背景层内容清空、`hidden` 收回、`data-skin` 抹掉）
+- [x] S8 真机挂载 + 真播放/暂停/换样式/切主题/窄窗口不崩（`.tmp-skin-live.mjs --skin abyss` 28/28，真机真的跑在 WebGL2 上：`gl=1` / `draws=854` / `flow=1280x820` / `tier=full`）
+- [x] S9 `node plugins/build-index.mjs` 已重跑（`--check` 通过：7 个条目 / 58 个文件）
+- [x] S10 本文件 §4 已签收
+
+### 实现偏差（与设计稿不同之处，均为落地时的实测取舍）
+
+| # | 设计稿 | 实际实现 | 原因 |
+| :--- | :--- | :--- | :--- |
+| 1 | 暂停后水**不停**（静置也有微流） | 暂停 6 秒后**停帧**，最后一帧留在屏上 | S6 的"暂停后自动停帧"是硬条件，压过了这条观感描述；停帧前水一直在微流（`--ab-lift` 衰减但不归零） |
+| 2 | 一次「涌浪」由 flux 触发 | 换歌补丁**必发**一次涌浪，flux 尖峰**也能**触发（同一条 900ms 包络，冷却 300ms） | flux 要自己从频谱里检测，静音/纯正弦的验收曲不一定有尖峰；换歌是**确定发生**的时刻，先保证它 |
+| 3 | 「测一帧耗时超 33ms 就降档」 | 用 `EXT_disjoint_timer_query_webgl2` 量**30 帧窗口**的平均 GPU 时间，连续 3 窗慢才降、连续 3 窗快才升 | 单帧耗时被帧边界/驱动抖动污染；ANGLE 上 `gl.finish()` 实测**基本不等 GPU**（探针 P1 量到 0ms），单帧根本量不准 |
+| 4 | 字形遮罩每帧重画 | 判据是「行号 + 文本 + 遮罩尺寸」的 key，**换行才重画**（`data-maskrev` 可观测） | 一张 2048 边的全舞台画布逐帧重画纯属浪费；自检专门量"同一行跑 500ms，rev 一次都不涨" |
+| 5 | 兜底用同一张 canvas | 兜底是**第二张** canvas（`.ab__soft`），用 `visibility` 切换，两张布局盒子完全一致 | 一个 canvas 一辈子只能有一种上下文：`.ab__fluid` 拿过 webgl2 之后，再问它要 `"2d"` 永远是 `null`（**上下文丢了之后也一样**）—— 这条是写完浏览器自检才暴露出来的 |
+| 6 | 背景层跟随"静态档关动画" | 状态**镜像**到 `.abbg` 自己身上再写规则（`.abbg[data-animations="0"] …`） | 背景层在宿主给的另一个容器里，`.ab[data-animations="0"] .abbg__caustics` 这条选择器**永远匹配不到**（两个容器是兄弟关系，宿主给它们各开了一个 `@scope` 根） |
+| 7 | `dpr` 只按 `min(dpr,1.5)` | 在此之上再乘档位系数（half = 0.5、third = 1/3），并因此有了**三个档位**的自适应 | 探针里 dpr 1 时 1280×820 的舞台在真机上 GPU 时间只有 ~1ms，说明半分辨率明显保守；自适应把"够快就升到 full"变成可观测的事实（探针实测 `tier=full`） |
+| 8 | 用户可见的"状态机" `empty → surfacing → flowing → paused` | 屏上只有 `empty / flowing / still` 三个值（`data-flow-state`），涌浪是**一次包络**而不是一个状态 | 涌浪只有 900ms，"surfacing"做成一档状态会与"正在播放"打架；包络更适合表达"一次扰动"，也更容易被量到 |
+| 9 | 字形遮罩用「同一字体、同一字号、同一坐标」渲染 | 用 `Range` 逐个文本节点量出**真排版矩形**（含计算字号与字距），再照着矩形画，并对齐数据写在 `data-maskerr` 上 | 直接把整行文字画进 canvas 会丢"宿主 SDK 自己切了字素 span"这层排版；按 Range 量出来才与 DOM 逐字对齐（自检量到左边缘 0px） |
+| 10 | 舞台 5 层（canvas / text / surface / vig / hud） | **9 层**：GL 水 + 兜底水 + 字形遮罩 + 光晕 + 液面 + 歌词 + 暗角 + HUD + 兜底角标 | 两条兜底路径各要一张自己的 canvas（偏差 5）、GL 的凹陷要一张离屏遮罩当纹理（偏差 9）；光晕与「Canvas2D 伪流体」角标是加出来的可见状态（降级必须是**看得见**的，不能静默变糊） |
+
 ---
 
 ## 6. 附：六款速查
@@ -591,7 +836,7 @@ shader 用它的梯度做法线，在液面上压出凹陷；DOM 上的真实文
 | :--- | :--- | :--- |
 | `darkroom` | 整块舞台是一张正在显影的胶片 | 换歌时快门「啪」地开合，画面重新显影 |
 | `rubbing` | 歌词是用封面像素堆出来的沙画 | 切句瞬间整行字散成沙，再用新封面主色聚拢 |
-| `spire` | 歌词是塔上的玻璃板，镜头飞过去 | 长留白之后镜头一口气爬起来，掠过好几层 |
-| `letterpress` | 整屏只有字，字是被排出来的 | 换句时字素从旧位置飞到新位置（活字重排） |
+| `spire` | 歌词是塔上的玻璃板，镜头飞过去 | 长留白之后镜头慢慢爬起来，整座塔往后推一层（一次跳好几句时才会掠过好几层） |
+| `letterpress` | 整屏只有字，字是被排出来的 | 换句时字素从旧位置飞到新位置（活字重排），列整版上移一格 |
 | `pulse` | 一台心电示波器，画面卡在拍点上 | 预测拍点提前点亮的那一下 |
 | `abyss` | 歌词是水面被压出的凹陷 | 低频涌上来时整个水面抬升，字从水里浮出来 |

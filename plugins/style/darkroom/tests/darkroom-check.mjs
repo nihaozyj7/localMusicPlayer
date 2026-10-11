@@ -247,6 +247,22 @@ async function at(inst, ms, playing) {
 
 const report = {};
 
+/** 等一个条件成立（动画/布局在无头下不一定在"我等的这 140ms"里就位） */
+async function waitFor(fn, ms = 1500, step = 60) {
+  const t0 = performance.now();
+  for (;;) {
+    let v = null;
+    try {
+      v = fn();
+    } catch {
+      v = null;
+    }
+    if (v) return v;
+    if (performance.now() - t0 > ms) return null;
+    await wait(step);
+  }
+}
+
 /** 第 1 行里"已唱字"与"未唱字"的计算样式（顺带落到真实像素上） */
 function colors() {
   const units = Array.from(stage.querySelectorAll('.dr__line[data-index="1"] .dr__g'));
@@ -276,6 +292,9 @@ async function scenarioA() {
       (r) => r.querySelectorAll(".dr__g").length
     ),
     fontSizeVar: prop(a.dr, "--dr-fs"),
+    hudSpans: Array.from(a.dr.querySelectorAll(".dr__sub > *")).map((el) => el.className),
+    roll: a.dr.querySelector(".dr__roll")?.textContent || "",
+    tcConnected: !!a.dr.querySelector(".dr__tc")?.isConnected,
     interactiveRows: stage.querySelectorAll('.dr__line[role="button"]').length,
     bgImgSrc: bgRoot.querySelector(".drbg__img")?.getAttribute("src")?.slice(0, 24) || "",
     layers: Array.from(a.dr.querySelectorAll(":scope > *")).map((el) => el.className || el.tagName),
@@ -296,7 +315,12 @@ async function scenarioA() {
   out.line1Start = { index: activeIndex(), g: glyphsOf(1) };
   await at(a, 9500);
   out.line1Step1 = glyphsOf(1);
-  out.colors = colors();
+  // 颜色是过渡出来的：只读一次可能正好读到过渡的起点值
+  out.colors =
+    (await waitFor(() => {
+      const c = colors();
+      return c && c.lit !== c.unlit ? c : null;
+    })) || colors();
   await at(a, 10500);
   out.line1Step2 = glyphsOf(1);
   await at(a, 11500);
@@ -307,6 +331,7 @@ async function scenarioA() {
   // ── 没有 words 的行：退回逐行线性点亮（14000 起 + 4 秒兜底窗口）──
   await at(a, 16000);
   out.line2Fallback = { index: activeIndex(), g: glyphsOf(2) };
+  out.tc = a.dr.querySelector(".dr__tc").textContent;
 
   // ── 交互：点歌词跳转 ──
   const rows = Array.from(stage.querySelectorAll(".dr__line"));
@@ -319,16 +344,24 @@ async function scenarioA() {
   const grain = a.dr.querySelector(".dr__grain");
   const bloom = a.dr.querySelector(".dr__bloom");
   const shift = computed(a.dr, "--dr-shift");
+  const gate = a.dr.querySelector(".dr__gate--top");
+  // 位移同样带过渡（520ms）：等它离开起点再读
+  const listTransform =
+    (await waitFor(() => {
+      const v = computed(list, "transform");
+      return v !== "none" && !/matrix\(1, 0, 0, 1, 0, 0\)/.test(v) ? v : null;
+    })) || computed(list, "transform");
   out.css = {
     shift,
-    listTransform: computed(list, "transform"),
+    listTransform,
     listTransition: computed(list, "transition-property"),
     grainAnimation: computed(grain, "animation-name"),
     grainBlend: computed(grain, "mix-blend-mode"),
     bloomFilter: computed(bloom, "filter"),
     bloomImage: computed(bloom, "background-image").slice(0, 30),
     bgImgFilter: computed(bgRoot.querySelector(".drbg__img"), "filter"),
-    gateTransition: computed(a.dr.querySelector(".dr__gate--top"), "transition-property"),
+    gateTransition: computed(gate, "transition-property"),
+    gatePanelTransition: getComputedStyle(gate, "::before").transitionProperty,
     shutter: a.dr.dataset.shutter || "",
   };
 
@@ -339,12 +372,14 @@ async function scenarioA() {
   a.host.setSpectrum(new Float32Array(128).fill(0.95));
   await wait(90);
   out.halAfter = prop(a.dr, "--dr-hal");
+  out.snapAfter = prop(a.dr, "--dr-snap");
   await wait(1400);
   out.bloomHigh = prop(a.dr, "--dr-bloom");
   out.grainHigh = prop(a.dr, "--dr-grain");
   a.host.setSpectrum(null);
   await wait(1500);
   out.bloomIdle = prop(a.dr, "--dr-bloom");
+  out.snapIdle = prop(a.dr, "--dr-snap");
 
   // ── 歌词空态 ──
   a.host.setLines([], "loading");
@@ -366,6 +401,23 @@ async function scenarioA() {
   const framesAtIdle = counters.frames;
   await wait(400);
   out.idle = { dataIdle: a.dr.dataset.idle === "1", frozen: counters.frames === framesAtIdle };
+
+  // ── 切到后台必须停帧，回前台要醒过来（宿主约定 S6）──
+  a.host.setPosition(11000, true);
+  push(a, { type: "progress", position: 11000, duration: 240000, playing: true });
+  push(a, { type: "visibility", foreground: true });
+  await wait(260);
+  const framesVisible = counters.frames;
+  await wait(400);
+  out.visibleFrames = counters.frames - framesVisible;
+  push(a, { type: "visibility", foreground: false });
+  await wait(300);
+  const framesHidden = counters.frames;
+  await wait(500);
+  out.hiddenFrozen = counters.frames === framesHidden;
+  push(a, { type: "visibility", foreground: true });
+  await wait(500);
+  out.wokeUp = counters.frames > framesHidden;
 
   const framesBeforeDestroy = counters.frames;
 
@@ -456,20 +508,27 @@ async function run() {
     }, 8);
   window.cancelAnimationFrame = (tid) => clearTimeout(tid);
 
+  // 注意：这一整段是外层模板字符串的**内容**，反斜杠要写两次，
+  // 否则 \\n 会在 Node 侧就被解释成真换行，页面脚本里就多出一个未闭合的字符串。
+  const brief = (err) => ({
+    error: String(err && err.message ? err.message : err),
+    stack: String(err && err.stack ? err.stack : "").split("\\n").slice(0, 5).join(" | "),
+  });
+
   try {
     report.A = await scenarioA();
   } catch (err) {
-    report.A = { error: String(err && err.message ? err.message : err) };
+    report.A = brief(err);
   }
   try {
     report.B = await scenarioB();
   } catch (err) {
-    report.B = { error: String(err && err.message ? err.message : err) };
+    report.B = brief(err);
   }
   try {
     report.C = await scenarioC();
   } catch (err) {
-    report.C = { error: String(err && err.message ? err.message : err) };
+    report.C = brief(err);
   }
 
   window.requestAnimationFrame = rafOrig;
@@ -524,7 +583,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const OUT = join(tmpdir(), "darkroom-check-" + Date.now());
 mkdirSync(OUT, { recursive: true });
 
-const CDP_PORT = 9432;
+// 随机端口：上一次跑挂了留下的 Edge 可能还占着固定端口，
+// 那样新实例绑不上，CDP 会连到**旧进程**的 about:blank 上（表现为"页面没准备好"）
+const CDP_PORT = 9400 + Math.floor(Math.random() * 500);
 const W = 1100;
 const H = 700;
 const edge = spawn(
@@ -582,7 +643,8 @@ ws.onmessage = (ev) => {
   }
   if (m.method === "Runtime.exceptionThrown") {
     const d = m.params.exceptionDetails;
-    errors.push(`exception: ${d?.exception?.description || d?.text}`);
+    const where = `${d?.url || ""}:${d?.lineNumber ?? ""}:${d?.columnNumber ?? ""}`;
+    errors.push(`exception @${where}: ${d?.exception?.description || d?.text}`);
   }
   if (m.method === "Runtime.consoleAPICalled" && m.params.type === "error") {
     const text = (m.params.args || []).map((a) => a.value ?? a.description ?? "").join(" ");
@@ -660,7 +722,13 @@ try {
     ready = (await evaluate("!!window.__dr")) === true;
     if (ready) break;
   }
-  if (!ready) throw new Error("harness 页面没准备好（window.__dr 未定义）");
+  if (!ready) {
+    console.error("harness 页面没准备好（window.__dr 未定义）");
+    console.error("  location:", await evaluate("location.href").catch(() => "?"));
+    console.error("  body:", await evaluate("document.body ? document.body.innerHTML.length : -1").catch(() => "?"));
+    for (const e of errors) console.error("  ", e.split("\n").slice(0, 3).join(" | "));
+    throw new Error("harness 页面没准备好（window.__dr 未定义）");
+  }
 
   console.log("跑场景（约 15 秒）…");
   const r = await evaluate("window.__dr.run()");
@@ -669,7 +737,7 @@ try {
   const C = r?.C || {};
 
   console.log("\n[1] 挂载与骨架");
-  check(!A.error, "样式能挂载并渲染", j(A.error || ""));
+  check(!A.error, "样式能挂载并渲染", j(A.error || "") + " " + (A.stack || ""));
   check(A.mounted?.hasDr === true, "舞台根里出现了 .dr");
   check(A.mounted?.title === "旧梦一场", "曲名进了 HUD", j(A.mounted?.title));
   check(/某歌手/.test(A.mounted?.sub || ""), "副标题（歌手 · 专辑）进了 HUD", j(A.mounted?.sub));
@@ -680,6 +748,13 @@ try {
     j(A.mounted?.glyphCounts)
   );
   check(A.mounted?.fontSizeVar === "21px", "宿主设置的字号被尊重（--dr-fs）", j(A.mounted?.fontSizeVar));
+  // 回归守卫：paintSong 里写过一次 .dr__sub.textContent，会把同一行的时间码/片号变成游离节点
+  check(
+    j(A.mounted?.hudSpans) === j(["dr__artist", "dr__tc", "dr__roll"]) && A.mounted?.tcConnected === true,
+    "HUD 副行的三个块（歌手 · 时间码 · 片号）都还挂在 DOM 上",
+    j({ spans: A.mounted?.hudSpans, connected: A.mounted?.tcConnected })
+  );
+  check(/^片号 \d{4}$/.test(A.mounted?.roll || ""), "片号是曲目 id 的稳定哈希（同一首歌永远是同一个号）", j(A.mounted?.roll));
   check(A.mounted?.interactiveRows === 3, "interactive 时每行都是可聚焦按钮", j(A.mounted?.interactiveRows));
   check(
     j(A.mounted?.layers) ===
@@ -762,6 +837,7 @@ try {
   check(A.line2Fallback?.index === 2, "高亮行切到第 2 行", j(A.line2Fallback?.index));
   const fb = A.line2Fallback?.g || [];
   check(fb[0] === 1 && fb[1] > 0 && fb[1] < 1 && fb[2] === 0, "线性点亮：走到一半就亮一半", j(fb));
+  check(/^00:1\d \/ 04:00$/.test(A.tc || ""), "时间码带总时长（墙钟外推，不是 4Hz 补丁原值）", j(A.tc));
 
   console.log("\n[6] 交互");
   check(j(A.seeks) === j([14000, 0]), "点歌词 / 回车都能跳转，且取的是行时间", j(A.seeks));
@@ -780,11 +856,18 @@ try {
   check(/data:image\/png/.test(A.css?.bloomImage || ""), "光晕层的底图是当前封面", j(A.css?.bloomImage));
   check(/blur\(40px\)/.test(A.css?.bgImgFilter || ""), "整窗背景层的大半径模糊也在", j(A.css?.bgImgFilter));
   check(/transform/.test(A.css?.gateTransition || ""), "快门两片有过渡", j(A.css?.gateTransition));
+  check(
+    A.css?.gatePanelTransition === "transform",
+    "快门内侧面板另有自己的快过渡（两者拆到两层，拍点不会拖慢开合）",
+    j(A.css?.gatePanelTransition)
+  );
   check(A.css?.shutter === "open", "挂载后快门是打开的", j(A.css?.shutter));
 
   console.log("\n[8] 频谱接线");
   check(num(A.halBefore) < 0.05, "频谱平稳时没有 halation 脉冲", j(A.halBefore));
   check(num(A.halAfter) > 0.25, "频谱突变 → halation 立刻脉冲一次", j(A.halAfter));
+  check(num(A.snapAfter) > 0.2, "同一次打击 → 快门轻轻内收一下（--dr-snap）", j(A.snapAfter));
+  check(num(A.snapIdle) < 0.02, "脉冲会自己衰减回 0（不会卡住半开）", j(A.snapIdle));
   check(num(A.bloomHigh) > 0.8, "低频喂满 → 光晕呼吸到底", j(A.bloomHigh));
   check(num(A.grainHigh) > 0.8, "高频喂满 → 颗粒浓度到底", j(A.grainHigh));
   check(num(A.bloomIdle) < 0.4, "没有频谱（暂停）时回到静音值", j(A.bloomIdle));
@@ -793,9 +876,12 @@ try {
   check(A.empty?.text === "歌词匹配中…", "空态用宿主的 statusText/status（不是写死的「暂无歌词」）", j(A.empty));
   check(A.empty?.emptyHidden === false && A.empty?.lyHidden === true, "空态时藏歌词、显提示", j(A.empty));
 
-  console.log("\n[10] 暂停 6 秒后停帧 / 卸载清理");
+  console.log("\n[10] 暂停 6 秒后停帧 / 切后台 / 卸载清理");
   check(A.idle?.dataIdle === true, "暂停 6 秒后进入停帧状态（data-idle）", j(A.idle));
   check(A.idle?.frozen === true, "停帧后 rAF 不再被调度（不是空转）", j(A.idle));
+  check(A.visibleFrames > 5, "回前台/播放中确实在出帧（对照组）", j(A.visibleFrames));
+  check(A.hiddenFrozen === true, "visibility:false 立刻停帧（切后台不烧 CPU）", j(A.hiddenFrozen));
+  check(A.wokeUp === true, "visibility:true 后重新出帧", j(A.wokeUp));
   check(A.destroy?.stageDr === false, "destroy 后舞台里没有残留节点", j(A.destroy?.stageDr));
   check(A.destroy?.rootHtml === "", "destroy 后挂载点被清空", j(A.destroy?.rootHtml));
   check(A.destroy?.bgHtml === "" && A.destroy?.bgHidden === true, "destroy 后整窗背景层被清空并隐藏（宿主不会替你清）", j(A.destroy));

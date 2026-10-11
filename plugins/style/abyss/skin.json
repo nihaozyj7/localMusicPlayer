@@ -1,0 +1,25 @@
+{
+  "id": "abyss",
+  "name": "深渊",
+  "description": "半分辨率 WebGL2 流体：频谱泵浦水压、封面当颜料、当前行文字做字形遮罩压出液面凹陷，歌词用 DOM 叠在上面保持矢量。",
+  "author": "第三方样式示例",
+  "version": "1.0.0",
+  "apiVersion": "3.0",
+  "order": 270,
+  "entry": "skin.js",
+  "styles": ["skin.css"],
+  "icon": "assets/icon.svg",
+  "capabilities": {
+    "spectrum": true,
+    "background": true,
+    "interactive": true
+  },
+  "colors": {
+    "bg": "#04121b",
+    "fg": "#dff2ff",
+    "accent": "#58c7ff"
+  },
+  "performance": {
+    "budgetFps": 45
+  }
+}

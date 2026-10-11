@@ -1,0 +1,242 @@
+/* ==========================================================================
+   rubbing/skin.css — 第三方样式「拓印」
+   --------------------------------------------------------------------------
+   宿主会把这份样式整体包进 `@layer skin { @scope (<舞台根>) { … } }`：
+     · 选择器**相对舞台根**写（舞台自身用 `.rb`），不要写
+       `.playerview[data-skin="rubbing"]` 前缀，也不要写 :root/html/body；
+     · 想影响宿主壳的观感只有一条合法通道：清单 colors + reportBackdrop。
+   ★ 视觉数值集中在这里（颜色走变量），JS 只改属性、不拼样式串。
+   ========================================================================== */
+
+.rb {
+  /* 封面取色（JS 写这三个；没有封面时就是清单配色） */
+  --rb-bg: #0d0c0b;
+  --rb-fg: #e8e2d6;
+  --rb-accent: #b9a37e;
+  /* 运行期由 JS 每帧（或变化时）写 */
+  --rb-lit: 0;
+  --rb-turb: 0;
+  --rb-flux: 0;
+  --rb-progress: 0;
+
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: var(--rb-fg);
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  /* 拓印的底是"宣纸/砂纸"：一层极淡的暖噪点（纯 CSS，不用图） */
+  background-image:
+    radial-gradient(120% 80% at 20% 0%, rgba(255, 250, 240, 0.05), transparent 60%),
+    radial-gradient(90% 70% at 90% 100%, rgba(0, 0, 0, 0.25), transparent 70%);
+}
+
+/* 主画布：铺满舞台，位于灰尘层之下 */
+.rb__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* 沙的观感：粒子本身很小，靠这一层极轻的对比度与外发光让"密处成字" */
+  filter: contrast(1.06);
+}
+.rb__canvas[hidden] {
+  display: none;
+}
+
+/* 未唱到的字：极淡的轮廓（DOM 文本，比用粒子画一遍便宜得多） */
+.rb__dust {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  top: 30%;
+  height: 44%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: clamp(30px, 5.2vw, 76px);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+  color: var(--rb-fg);
+  /* 未唱到的字只做"印痕"：整句唱完之后印痕淡下去，画面只剩沙 */
+  opacity: calc(0.15 + 0.06 * var(--rb-turb) - 0.07 * var(--rb-progress));
+  /* 未唱到的字只做"印痕"：模糊一点点，像纸背透出来的 */
+  filter: blur(1.1px);
+  pointer-events: none;
+  user-select: none;
+}
+.rb__dust[hidden] {
+  display: none;
+}
+
+/* 空态文案 */
+.rb__empty {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 46%;
+  text-align: center;
+  font-size: 14px;
+  letter-spacing: 0.14em;
+  opacity: 0.55;
+}
+.rb__empty[hidden] {
+  display: none;
+}
+
+/* HUD：曲名 + 副行 + 进度刻度 */
+.rb__hud {
+  position: absolute;
+  left: 26px;
+  right: 26px;
+  bottom: calc(var(--skin-inset-bottom, 0px) + 16px);
+  pointer-events: none;
+}
+.rb__title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rb__sub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  opacity: 0.72;
+}
+.rb__artist {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.rb__badge {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 10px;
+  opacity: 0.8;
+}
+.rb__badge[hidden] {
+  display: none;
+}
+.rb__tc {
+  flex: none;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+/* 进度刻度：48 格，亮的格数 = 播放比例（JS 只改 data-on） */
+.rb__ticks {
+  display: flex;
+  gap: 3px;
+  margin-top: 8px;
+}
+.rb__tick {
+  flex: 1;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.16;
+  transform-origin: left center;
+  transition: opacity 180ms linear;
+}
+.rb__tick[data-on="1"] {
+  opacity: calc(0.5 + 0.5 * var(--rb-lit));
+}
+
+/* 撒沙瞬间：整个画面轻微"扬起"（一次 420ms 的衰减，JS 切 --rb-flux） */
+.rb__canvas {
+  transform: translate3d(0, calc(var(--rb-flux) * -3px), 0);
+  transition: transform 220ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+/* 指针磁铁：光标在字形带上是"磁铁" */
+.rb[data-interactive="1"] .rb__canvas {
+  cursor: crosshair;
+}
+
+/* 关动效 / 减少动效：一切都是安静的，_但画面仍然完整_ */
+.rb[data-static="1"] .rb__dust {
+  filter: none;
+  opacity: 0.14;
+}
+.rb[data-static="1"] .rb__canvas {
+  transition: none;
+  transform: none;
+}
+.rb[data-static="1"] .rb__tick {
+  transition: none;
+}
+
+/* performance 档：颗粒感靠色阶，不再叠对比度滤镜（省一次全屏合成） */
+.rb[data-perf="1"] .rb__canvas {
+  filter: none;
+}
+
+/* 降级档位（JS 写 data-lod）：纯粹给自检与排查看，也顺手压低发光 */
+.rb[data-lod="2"] .rb__dust,
+.rb[data-lod="3"] .rb__dust {
+  filter: none;
+  opacity: 0.22;
+}
+
+/* 空态：画布留一点点沙当氛围，其余收敛 */
+.rb[data-empty="1"] .rb__title,
+.rb[data-empty="1"] .rb__sub {
+  opacity: 0.45;
+}
+
+/* 当前句在唱时的"呼吸"：整块沙随低频轻微起落（只动 transform/opacity） */
+@media (prefers-reduced-motion: no-preference) {
+  .rb:not([data-static="1"]) .rb__hud {
+    transform: translate3d(0, calc(var(--rb-turb) * -2px), 0);
+    transition: transform 120ms linear;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   整窗背景层的内容（容器由宿主提供并定位，见宿主 .skin-bg 的骨架）
+   ★ 模糊只在图片变化时算一次（docs/36：全屏大半径模糊是每帧最贵的操作之一）
+   -------------------------------------------------------------------------- */
+.rbbg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.rbbg__img {
+  position: absolute;
+  inset: -6%;
+  width: 112%;
+  height: 112%;
+  object-fit: cover;
+  filter: blur(34px) saturate(0.85) brightness(0.46);
+  transform: scale(1.04);
+}
+.rbbg__img[src=""] {
+  opacity: 0;
+}
+.rbbg__veil {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(8, 7, 6, 0.72), rgba(8, 7, 6, 0.5) 45%, rgba(8, 7, 6, 0.86)),
+    radial-gradient(70% 60% at 50% 45%, transparent, rgba(0, 0, 0, 0.5));
+}
+/* 砂纸颗粒：一张两层叠加的细密点阵（背景图是 CSS 渐变，不额外请求资源） */
+.rbbg__grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.16;
+  mix-blend-mode: overlay;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 4px);
+}
