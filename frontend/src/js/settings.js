@@ -241,7 +241,7 @@ function themeReferenceSection(ref) {
   if (!ref?.dir) {
     return `（浏览器预览模式读不到本机目录，以下是源码仓库里的参考文件）
 1. 令牌默认值与注释：frontend/src/styles/tokens.css、frontend/src/styles/themes/_template.css
-2. 内置主题（可直接对照写法）：frontend/src/styles/themes/dark-minimal.css、light-minimal.css、flat-dark.css、flat-light.css、cover-dark.css
+2. 内置主题（可直接对照写法）：frontend/src/styles/themes/flat-dark.css、flat-light.css、cover-dark.css
 3. 扫描与指令解析实现：internal/theme/theme.go`;
   }
   const lines = [

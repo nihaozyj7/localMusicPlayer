@@ -427,7 +427,7 @@ func NormalizeWindowCorners(mode string) string {
 func DefaultConfig() *Config {
 	dataDir := defaultDataDir()
 	return &Config{
-		Theme:           "dark-minimal",
+		Theme:           "flat-dark",
 		ThemeMode:       "dark",
 		GlassBlur:       22,
 		GlassAlpha:      62,

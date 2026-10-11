@@ -16,20 +16,6 @@ import { isPlaceholderCoverUrl } from "./utils.js";
 /** 内置主题登记表（新增主题时可在此追加，或依赖后端自动扫描） */
 const BUILTIN_THEMES = [
   {
-    id: "dark-minimal",
-    name: "深色 · 黑白极简",
-    mode: "dark",
-    builtin: true,
-    swatch: ["#08080a", "#1b1b1f", "#3a3a42", "#f4f4f6", "#ff4d6d"],
-  },
-  {
-    id: "light-minimal",
-    name: "浅色 · 黑白极简",
-    mode: "light",
-    builtin: true,
-    swatch: ["#f2f2f4", "#ffffff", "#d8d8dd", "#14141a", "#e8384f"],
-  },
-  {
     id: "flat-dark",
     name: "简约深色",
     mode: "dark",
@@ -276,7 +262,7 @@ export async function applyResolvedTheme(config) {
   if (carried["--seed"]) earlySeed = carried["--seed"];
   if (carried["--seed-2"]) earlySeed2 = carried["--seed-2"];
 
-  let themeId = config.theme || "dark-minimal";
+  let themeId = config.theme || "flat-dark";
   if (config.themeMode === "system") {
     const wanted = sysDark ? "dark" : "light";
     const fallback = registry.find((t) => t.mode === wanted && t.id !== "cover-dark");

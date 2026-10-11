@@ -26,7 +26,7 @@ const BASE = process.env.PROBE_BASE || "http://127.0.0.1:5173/";
 
 const SCENARIOS = [
   { name: "主界面 · 深色", url: "?probe=1" },
-  { name: "主界面 · 浅色", url: "?probe=1&theme=light-minimal" },
+  { name: "主界面 · 浅色", url: "?probe=1&theme=flat-light" },
   { name: "播放列表视图", url: "?probe=1&tab=queue" },
   { name: "歌单视图", url: "?probe=1&tab=playlist" },
   { name: "设置界面", url: "?probe=1&tab=settings" },

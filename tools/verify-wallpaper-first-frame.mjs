@@ -214,7 +214,7 @@ const SONG = {
   ext: "flac",
   duration: 200000,
 };
-const THEME = { type: "theme", skinId: "classic", theme: "dark-minimal", mode: "dark", density: "cozy", tokens: {} };
+const THEME = { type: "theme", skinId: "classic", theme: "flat-dark", mode: "dark", density: "cozy", tokens: {} };
 const SONG_PATCH = {
   type: "song",
   song: SONG,

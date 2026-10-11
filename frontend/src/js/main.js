@@ -477,7 +477,7 @@ function bindBackendEvents() {
 
 /* --------------------------------------------------------------------------
    浏览器预览：支持通过 URL 参数直接定格某个界面状态（方便截图与自检）
-   例：?theme=light-minimal&view=player&pv=immersive&tab=filters&scan=1
+   例：?theme=flat-light&view=player&pv=immersive&tab=filters&scan=1
    -------------------------------------------------------------------------- */
 function applyPreviewParams() {
   const q = new URLSearchParams(location.search);

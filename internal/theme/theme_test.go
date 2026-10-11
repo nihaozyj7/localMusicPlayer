@@ -93,7 +93,7 @@ func TestManagerDelete(t *testing.T) {
 	}
 
 	// 内置主题：每次启动都会重新生成，因此明确拒绝删除
-	if err := m.Delete("dark-minimal"); err == nil {
+	if err := m.Delete("flat-dark"); err == nil {
 		t.Fatal("内置主题应拒绝删除")
 	}
 	// 不存在的 id
@@ -101,7 +101,7 @@ func TestManagerDelete(t *testing.T) {
 		t.Fatal("不存在的主题应报错")
 	}
 	// 目录穿越式的 id 不能删到目录外的东西
-	if err := m.Delete("../dark-minimal"); err == nil {
+	if err := m.Delete("../flat-dark"); err == nil {
 		t.Fatal("非法 id 应报错")
 	}
 }
@@ -151,9 +151,65 @@ func TestBuiltinThemesAreDiscoverable(t *testing.T) {
 
 	// 反向：这几款是随程序分发的既定主题，改名或误删主题文件会在这里失败
 	// （加新主题不受影响，上面的循环已经覆盖它了）。
-	for _, want := range []string{"dark-minimal", "light-minimal", "flat-dark", "flat-light", "cover-dark"} {
+	for _, want := range []string{"flat-dark", "flat-light", "cover-dark"} {
 		if _, ok := byID[want]; !ok {
 			t.Errorf("内置主题 %s 没出现在扫描结果里", want)
 		}
+	}
+}
+
+// 已经从程序里移除的内置主题，留在用户目录里的那份旧副本必须被移走 ——
+// 否则它会以「用户主题」的身份继续出现在主题列表里，等于没删掉。
+// 同时要守住边界：连修订号都没有的同名文件不许动。
+func TestDropRetiredBuiltins(t *testing.T) {
+	dir := t.TempDir()
+	themesDir := filepath.Join(dir, "themes")
+	// ① 正常的内置副本（带我们的修订号）
+	writeThemeFile(t, filepath.Join(themesDir, "dark-minimal.css"),
+		"/* 用户可能动过内容，但这是我们写下去的那一份 */\n"+
+			":root[data-theme=\"dark-minimal\"]{--bg-app:#08080a}\n"+
+			"@theme-name 深色 · 黑白极简\n@theme-mode dark\n@theme-builtin-rev 3\n")
+	// ② 磁盘上的修订号比代码里记的新：装过更新（或更旧）的版本，实测本机就是这种
+	writeThemeFile(t, filepath.Join(themesDir, "light-minimal.css"),
+		"@theme-name 浅色 · 黑白极简\n@theme-mode light\n@theme-builtin-rev 99\n")
+
+	m, err := NewManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, id := range []string{"dark-minimal", "light-minimal"} {
+		if _, err := os.Stat(filepath.Join(themesDir, id+".css")); !os.IsNotExist(err) {
+			t.Errorf("退役内置主题 %s 的旧副本应该被移走", id)
+		}
+		if _, err := os.Stat(filepath.Join(themesDir, id+".css.bak")); err != nil {
+			t.Errorf("%s 移走前应留一份 .bak：%v", id, err)
+		}
+		for _, info := range m.List() {
+			if info.ID == id {
+				t.Errorf("退役主题 %s 不该再出现在列表里", id)
+			}
+		}
+	}
+
+	// ③ 没有修订号的同名文件：比这套机制更早的副本 / 用户另存的稿子，不能确定
+	//    是我们写的，留着。（重新建一次 Manager，走的就是「程序升级后重启」那条路径。）
+	writeThemeFile(t, filepath.Join(themesDir, "light-minimal.css"),
+		"@theme-name 浅色 · 黑白极简\n@theme-mode light\n")
+	m2, err := NewManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(themesDir, "light-minimal.css")); err != nil {
+		t.Errorf("没写修订号的同名文件不该被动：%v", err)
+	}
+	found := false
+	for _, info := range m2.List() {
+		if info.ID == "light-minimal" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("没写修订号的同名文件应继续作为普通主题出现")
 	}
 }

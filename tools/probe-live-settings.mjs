@@ -75,7 +75,7 @@ writeFileSync(
   path.join(dataDir, "config.json"),
   JSON.stringify(
     {
-      theme: "dark-minimal",
+      theme: "flat-dark",
       themeMode: "dark",
       showLyrics: true,
       playMode: "sequence",

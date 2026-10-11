@@ -333,9 +333,36 @@ const search = await evaluate(`(async () => {
 check("search", search);
 
 /* ---- 8. 歌词工作台 ---- */
+// 正式构建里 mock 曲库是关掉的（见 verify-sort.mjs 的说明），这里先注入 3 首歌：
+// 浏览器预览下第 3 首会拿到占位歌词（playerhost.js#buildFallbackLyrics），
+// 微调的预览跟随必须有真歌词行才测得出来。
+const SEED_SONGS = `(() => {
+  const app = window.__app;
+  const mk = (i, title, artist) => ({
+    id: "seed-" + i, path: "D:/Music/seed-" + i + ".mp3", title, artist, album: "测试专辑",
+    ext: "mp3", duration: 300000, size: 1000000, sampleRate: 44100, bitrate: 320,
+    addedAt: 1000 + i, playCount: 0, cover: "", coverUrl: "",
+  });
+  // 8 首：后面 row-update / sort-filter 那几项要求曲目表里有足够多的行
+  app.state.allSongsRaw = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => mk(i, "曲目 " + i, "歌手 " + i));
+  app.state.allSongsRaw[2].title = "Banana";
+  app.state.allSongsRaw[2].artist = "Mike";
+  app.state.songs = app.state.allSongsRaw.slice();
+  app.state.filterRules = [];
+  app.state.queue = app.state.songs.map((s) => s.id);
+  app.state.currentId = "seed-3";
+  app.state.duration = 300000;
+  app.state.position = 0;
+  app.commit();
+  return app.state.songs.length;
+})()`;
+const seeded = await evaluate(SEED_SONGS);
+check("注入测试歌曲（歌词工作台需要当前曲目）", seeded === 8, `实际 ${seeded}`);
+await new Promise((r) => setTimeout(r, 400));
+
 const lyrics = await evaluate(`(async () => {
   document.querySelector("#btn-lyrics").click();
-  await new Promise(r => setTimeout(r, 700));
+  await new Promise(r => setTimeout(r, 900));
   const p = document.querySelector("#lyrics-panel");
   const open = !p.hidden;
   const tabs = p.querySelectorAll(".lyricspanel__tab").length;
@@ -345,18 +372,37 @@ const lyrics = await evaluate(`(async () => {
   const onlineKeyword = p.querySelector("[data-online-input]").value.trim();
   const expectKeyword = [songTitle, songArtist].filter(Boolean).join(" ");
   const prefillOk = Boolean(expectKeyword) && onlineKeyword === expectKeyword;
-  p.querySelector('[data-tab="nudge"]').click();
-  await new Promise(r => setTimeout(r, 400));
-  const nudgeVisible = !p.querySelector('[data-pane="nudge"]').hidden;
+  // 还没搜过 → 空态必须是「有标题有说明」的那种，不是一行灰字
+  const idleState = p.querySelector('[data-online-state="idle"]');
+  const idleOk = !!idleState && !!idleState.querySelector(".lyricspanel__state-title");
+  return { open, tabs, prefillOk, onlineKeyword, idleOk, songTitle, songArtist };
+})()`);
+check("lyrics", lyrics);
+
+/* ---- 8b. 手动编辑：文本在弹层里，主界面只打轴 ---- */
+// 顺便用真实链路（文本弹层 → 应用文本 → 保存并应用）给这首歌灌 40 行带时间的
+// 歌词 —— 下面的微调预览需要一份行数够多的歌词，才知道列表画的是整首还是窗口。
+const edit = await evaluate(`(async () => {
+  const p = document.querySelector("#lyrics-panel");
   p.querySelector('[data-tab="edit"]').click();
   await new Promise(r => setTimeout(r, 500));
   const editVisible = !p.querySelector('[data-pane="edit"]').hidden;
-  // 手动编辑：灌 100 行，点最后一行 —— 列表必须自己滚下去
-  const ta = p.querySelector("[data-editor-text]");
-  ta.value = Array.from({ length: 100 }, (_, i) => "第" + (i + 1) + "句歌词").join("\\n");
-  ta.dispatchEvent(new Event("input", { bubbles: true }));
-  await new Promise(r => setTimeout(r, 800));
+  // 主编辑界面不再常驻文本框
+  const inlineTextarea = !!p.querySelector("[data-editor-text]");
+  p.querySelector('[data-act="editor-text-open"]').click();
+  await new Promise(r => setTimeout(r, 400));
+  const bd = document.querySelector("#modal-backdrop");
+  const ta = bd.querySelector("[data-editor-text]");
+  const modalOpen = !bd.hidden && !!ta;
+  const lines = Array.from({ length: 40 }, (_, i) => {
+    const s = String(i + 1).padStart(2, "0");
+    return "[00:" + s + ".00]第" + (i + 1) + "句歌词";
+  });
+  ta.value = lines.join("\\n");
+  bd.querySelector(".modal__foot .btn--primary").click();
+  await new Promise(r => setTimeout(r, 700));
   const rows = p.querySelectorAll(".drow").length;
+  // 行列表必须自己滚动：点最后一行 → 它要进可视区
   const list = p.querySelector("[data-editor-list]");
   list.scrollTop = 0;
   await new Promise(r => setTimeout(r, 150));
@@ -364,11 +410,50 @@ const lyrics = await evaluate(`(async () => {
   if (all.length) all[all.length - 1].click();
   await new Promise(r => setTimeout(r, 800));
   const editorScrolled = list.scrollTop > 0;
+  // 保存并应用 → 写进歌词缓存（预览模式下没有后端，只走内存那一层）
+  p.querySelector('[data-act="editor-save"]').click();
+  await new Promise(r => setTimeout(r, 800));
+  const savedSource = p.querySelector("[data-song-source]").textContent.trim();
+  return { editVisible, inlineTextarea, modalOpen, rows, editorScrolled, savedSource };
+})()`);
+check("lyrics-edit", edit);
+
+/* ---- 8c. 微调：整首预览 + 跟随播放 + 说明弹层 ---- */
+const nudge = await evaluate(`(async () => {
+  const p = document.querySelector("#lyrics-panel");
+  p.querySelector('[data-tab="nudge"]').click();
+  await new Promise(r => setTimeout(r, 600));
+  const preview = p.querySelector("[data-nudge-preview]");
+  const rows = [...preview.querySelectorAll(".nudge__line")];
+  // 预览必须是整首歌词（40 行），而不是「当前行 ±5 行」的窗口
+  const wholeSong = rows.length >= 40;
+  // 点第 9 行 → 高亮应当跟到那一行（并把它滚进可视区）
+  const target = rows.length > 8 ? rows[8] : rows[0];
+  const clickedIdx = target ? Number(target.dataset.index) : -1;
+  if (target) target.click();
+  await new Promise(r => setTimeout(r, 600));
+  const after = [...preview.querySelectorAll(".nudge__line")];
+  const activeIdx = after.findIndex((r) => r.classList.contains("is-active"));
+  const followed = activeIdx === clickedIdx;
+  const scrolled = preview.scrollTop > 0;
+  // 「说明」按钮在「重置」右侧：点它弹出介绍与指引
+  const footBtns = [...p.querySelectorAll(".lyricspanel__foot [data-act]")].map((b) => b.dataset.act);
+  p.querySelector('[data-act="nudge-guide"]').click();
+  await new Promise(r => setTimeout(r, 400));
+  const bd = document.querySelector("#modal-backdrop");
+  const guide = bd.querySelector(".lguide");
+  const guideText = guide ? guide.textContent.replace(/\\s+/g, "") : "";
+  const guideOk = !bd.hidden && guideText.includes("微调在改什么") && guideText.includes("应用到歌词");
+  bd.querySelector(".modal__foot .btn--primary").click();
+  await new Promise(r => setTimeout(r, 400));
   p.querySelector("[data-act='close']").click();
   await new Promise(r => setTimeout(r, 300));
-  return { open, tabs, nudgeVisible, editVisible, rows, prefillOk, onlineKeyword, editorScrolled, closed: p.hidden };
+  return {
+    rows: rows.length, wholeSong, followed, clickedIdx, activeIdx, scrolled,
+    footBtns, guideOk, closed: p.hidden,
+  };
 })()`);
-check("lyrics", lyrics);
+check("lyrics-nudge", nudge);
 
 /* ---- 9. 右键菜单 ---- */
 const menu = await evaluate(`(async () => {

@@ -17,7 +17,7 @@ if (-not $edge) { throw "Microsoft Edge not found; cannot run UI probe" }
 $base = "http://127.0.0.1:$Port/"
 $scenarios = @(
   @{ name = "main-dark";            url = "?probe=1" },
-  @{ name = "main-light";           url = "?probe=1&theme=light-minimal" },
+  @{ name = "main-light";           url = "?probe=1&theme=flat-light" },
   @{ name = "queue-drag";           url = "?probe=1&tab=queue" },
   @{ name = "playlist";             url = "?probe=1&tab=playlist" },
   @{ name = "settings";             url = "?probe=1&tab=settings" },

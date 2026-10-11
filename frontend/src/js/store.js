@@ -22,7 +22,7 @@ const LS_KEY = "music-player.state.v1";
 export const PLAY_MODES = ["sequence", "loop-one", "shuffle"];
 
 const DEFAULT_CONFIG = {
-  theme: "dark-minimal", // 主题 id（= themes/ 下的文件名）
+  theme: "flat-dark", // 主题 id（= themes/ 下的文件名）
   themeMode: "dark", // dark | light | system
   glassBlur: 22,
   glassBlurCustom: false, // 用户是否手动调整过毛玻璃强度（true 才覆盖主题令牌）

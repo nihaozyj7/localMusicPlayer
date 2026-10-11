@@ -47,7 +47,6 @@ class MpApp extends MpElement {
         id="app"
         data-view=${state.playerOpen ? "player" : "library"}
         data-mode=""
-        data-resolved-theme="dark-minimal"
       >
         <div class="skin-bg" id="skin-background" hidden aria-hidden="true"></div>
         <mp-titlebar></mp-titlebar>

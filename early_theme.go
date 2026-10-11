@@ -21,7 +21,7 @@ import (
    --------------------------------------------------------------------------
    问题：主题是**前端脚本**在启动时套用的（discoverThemes → applyResolvedTheme），
    而脚本要等 JS bundle 下载、解析、执行。在那之前页面用的是 index.html 根元素
-   上写死的 data-theme="dark-minimal"，也就是一整块近黑。
+   上写死的 data-theme="flat-dark"，也就是一整块近黑。
 
    于是启动时会看到两次「先错后对」：
      1. 浅色主题：先黑一下，脚本跑完才变白；
@@ -72,7 +72,7 @@ func resolveEarlyTheme(store *bootstrap.Store, themeMgr *theme.Manager) earlyThe
 	// 配置里的主题可能已经被用户删掉了（主题文件不在磁盘上）。这时别硬套，
 	// 退回到 index.html 的默认主题，剩下的交给前端 discoverThemes 去纠正。
 	if st.Theme == "" || !themeExists(themeMgr, st.Theme) {
-		st.Theme = "dark-minimal"
+		st.Theme = "flat-dark"
 	}
 	if st.Mode == "" {
 		st.Mode = "dark"

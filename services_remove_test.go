@@ -53,7 +53,7 @@ func TestThemeServiceDelete(t *testing.T) {
 	}
 
 	// 内置主题不给删：每次启动都会重新生成，删了只会让用户以为删不掉
-	if err := svc.Delete("dark-minimal"); err == nil {
+	if err := svc.Delete("flat-dark"); err == nil {
 		t.Fatal("内置主题应拒绝删除")
 	}
 	// 不存在的主题

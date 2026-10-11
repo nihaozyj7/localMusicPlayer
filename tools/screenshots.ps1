@@ -19,14 +19,14 @@ $base = "http://127.0.0.1:$Port/"
 
 $shots = @(
   @{ n = "01-main-dark";        w = 1440; h = 900; u = "?probe=0" },
-  @{ n = "02-main-light";       w = 1440; h = 900; u = "?theme=light-minimal" },
+  @{ n = "02-main-light";       w = 1440; h = 900; u = "?theme=flat-light" },
   @{ n = "03-queue";            w = 1440; h = 900; u = "?tab=queue" },
   @{ n = "04-playlist";         w = 1440; h = 900; u = "?tab=playlist" },
   @{ n = "05-settings-folders"; w = 1440; h = 1100; u = "?tab=settings" },
   @{ n = "06-player-classic";   w = 1440; h = 900; u = "?view=player&pv=classic&playing=1" },
   @{ n = "07-player-immersive"; w = 1440; h = 900; u = "?view=player&pv=immersive&playing=1" },
   @{ n = "08-player-minimal";   w = 1440; h = 900; u = "?view=player&pv=minimal&playing=1" },
-  @{ n = "09-player-light";     w = 1440; h = 900; u = "?theme=light-minimal&view=player&pv=classic&playing=1" },
+  @{ n = "09-player-light";     w = 1440; h = 900; u = "?theme=flat-light&view=player&pv=classic&playing=1" },
   @{ n = "10-cover-dark";       w = 1440; h = 900; u = "?theme=cover-dark&view=player&pv=immersive&playing=1" },
   @{ n = "11-min-window";       w = 1000; h = 680; u = "?probe=0" }
 )

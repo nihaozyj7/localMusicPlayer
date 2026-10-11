@@ -20,8 +20,6 @@
 
 @import "./tokens.css";
 
-@import "./themes/dark-minimal.css";
-@import "./themes/light-minimal.css";
 @import "./themes/flat-dark.css";
 @import "./themes/flat-light.css";
 @import "./themes/cover-dark.css";

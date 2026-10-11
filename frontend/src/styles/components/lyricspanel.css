@@ -254,6 +254,70 @@
   background: var(--surface-1);
 }
 
+/* —— 空状态 / 搜索中（与搜索层的空态同一套观感） —— */
+.lyricspanel__state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  height: 100%;
+  min-height: 168px;
+  padding: var(--sp-6) var(--sp-4);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.lyricspanel__state > svg {
+  width: var(--fs-2xl);
+  height: var(--fs-2xl);
+  opacity: var(--op-half);
+}
+
+.lyricspanel__state--error > svg {
+  color: var(--warning);
+  opacity: 1;
+}
+
+.lyricspanel__state-title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+
+.lyricspanel__state-desc {
+  max-width: 40ch;
+  line-height: 1.7;
+}
+
+/* 原始报错（"后端 500" 这类）：给人看的那句话在上面，这行留给排查 */
+.lyricspanel__state-detail {
+  max-width: 46ch;
+  font-family: var(--font-num);
+  font-size: var(--fs-xs);
+  opacity: var(--op-half);
+  overflow-wrap: anywhere;
+}
+
+.lyricspanel__state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+
+.lyricspanel__spinner {
+  width: 22px;
+  height: 22px;
+  margin-bottom: var(--sp-1);
+  border: 2px solid var(--border-2);
+  border-top-color: var(--accent);
+  border-radius: var(--r-full);
+  animation: spin 0.8s linear infinite;
+}
+
 /* —— 在线匹配候选 —— */
 .candidate {
   display: grid;
@@ -289,11 +353,36 @@
   color: var(--text-3);
 }
 
-/* —— 微调 —— */
-.nudge__readout {
+/* --------------------------------------------------------------------------
+   微调
+   --------------------------------------------------------------------------
+   控件只占顶部两行，其余高度全部让给预览列表（.nudge__preview 就是
+   .lyricspanel__list 的 flex:1）。说明性文字一律在「说明」弹层里，
+   不在这里占位置 —— 界面越小，预览越大。
+   -------------------------------------------------------------------------- */
+.nudge__bar {
   display: flex;
-  align-items: baseline;
-  gap: var(--sp-3);
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.nudge__label,
+.nudge__warn {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.nudge__warn {
+  color: var(--warning);
+}
+
+.nudge__warn[hidden] {
+  display: none;
+}
+
+.nudge__spacer {
+  flex: 1 1 auto;
 }
 
 .nudge__value {
@@ -303,7 +392,10 @@
 }
 
 .nudge__dirty {
-  font-size: var(--fs-sm);
+  padding: 1px var(--sp-2);
+  border-radius: var(--r-full);
+  border: 1px solid var(--warning);
+  font-size: var(--fs-xs);
   color: var(--warning);
 }
 
@@ -311,28 +403,10 @@
   display: none;
 }
 
-.nudge__block {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-}
-
-.nudge__block--grow {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
+/* 听感按钮：一档 0.5 秒的快捷方式，读起来要像一句话而不是一个开关 */
 .nudge__feel {
-  display: grid;
-  gap: var(--sp-2);
-}
-
-.nudge__feel .btn {
-  justify-content: flex-start;
-  text-align: left;
-  height: auto;
-  padding: var(--sp-2) var(--sp-3);
-  white-space: normal;
+  gap: var(--sp-1);
+  white-space: nowrap;
 }
 
 .nudge__steps {
@@ -342,16 +416,23 @@
 }
 
 .nudge__range {
-  width: 100%;
+  flex: 1 1 180px;
+  min-width: 140px;
   accent-color: var(--accent);
+}
+
+/* 预览列表：面板里的主角，占据控件与底栏之间的全部高度 */
+.nudge__preview {
+  padding: var(--sp-2) 0;
 }
 
 .nudge__line {
   display: grid;
   grid-template-columns: 64px 1fr;
   gap: var(--sp-3);
-  padding: var(--sp-1) var(--sp-3);
-  font-size: var(--fs-sm);
+  padding: var(--sp-1) var(--sp-4);
+  font-size: var(--fs-md);
+  line-height: 1.6;
   cursor: pointer;
 }
 
@@ -369,21 +450,69 @@
   color: var(--accent);
 }
 
+.nudge__line.is-active .nudge__text {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+
 .nudge__time {
   font-family: var(--font-num);
   color: var(--text-3);
 }
 
 .nudge__text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* —— 微调说明弹层 —— */
+.lguide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.lguide__sec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.lguide__title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.lguide__text {
+  font-size: var(--fs-sm);
+  line-height: 1.75;
+  color: var(--text-2);
+}
+
+.lguide__kv {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.lguide__k {
+  flex: none;
+  min-width: 84px;
+  font-family: var(--font-num);
+  color: var(--text-1);
 }
 
 /* —— 手动编辑 —— */
+/* 文本入口 + 行数 + 清空时间：一条工具栏，文本本体在弹层里（见 openDraftTextModal） */
 .editor__source {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--sp-2);
 }
 
@@ -403,6 +532,13 @@
   /* 拟态：歌词编辑区是一块凹进去的书写面 */
   box-shadow: var(--neu-inset);
   transition: box-shadow var(--dur-fast) var(--ease);
+}
+
+/* 弹层里的文本区：一整块能摊开的书写面，改完点「应用文本」才生效 */
+.editor__text--modal {
+  height: min(46vh, 360px);
+  resize: vertical;
+  line-height: 1.85;
 }
 
 .editor__text:focus {
@@ -609,6 +745,7 @@
   border-top: var(--hairline);
 }
 
-.lyricspanel__foot > .lyricspanel__hint {
+.lyricspanel__foot > .lyricspanel__hint,
+.lyricspanel__foot > .nudge__spacer {
   flex: 1 1 auto;
 }

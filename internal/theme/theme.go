@@ -138,6 +138,37 @@ func (m *Manager) syncBuiltin() error {
 			return fmt.Errorf("写入内置主题失败: %w", err)
 		}
 	}
+	return m.dropRetiredBuiltins()
+}
+
+// dropRetiredBuiltins 把「已移除的内置主题」留在用户目录里的旧副本移走。
+//
+// 判据（见 retiredBuiltins 的注释）：文件名匹配退役名单，且文件里写着
+// @theme-builtin-rev（> 0）—— 那就是我们自己写下去的那一份。用户改过名字
+// （不受管理）、或把修订号那行删掉（= 比这套机制更早的副本 / 自己另存的稿子）
+// 都**不动**。删除前写 .bak，和覆盖旧内置主题的做法保持一致。
+func (m *Manager) dropRetiredBuiltins() error {
+	for id := range retiredBuiltins {
+		if _, stillBuiltin := builtinIDs[id]; stillBuiltin {
+			// 名单里又加回来了（比如换个版本重新分发）：别删，交给上面的同步逻辑。
+			continue
+		}
+		target := filepath.Join(m.dir, id+".css")
+		existing, err := os.ReadFile(target)
+		if err != nil {
+			continue // 没这份文件是常态（新装 / 已经清过）
+		}
+		if builtinRev(string(existing)) <= 0 {
+			continue // 不是我们写的那一份
+		}
+		if err := os.WriteFile(target+".bak", existing, 0o644); err != nil {
+			fmt.Printf("[theme] 备份退役内置主题失败 %s: %v\n", target, err)
+		}
+		if err := os.Remove(target); err != nil {
+			return fmt.Errorf("移除退役内置主题 %s 失败: %w", id, err)
+		}
+		fmt.Printf("[theme] 已移除不再随程序分发的内置主题 %s\n", id)
+	}
 	return nil
 }
 
@@ -364,11 +395,28 @@ func (m *Manager) BuiltinIDs() []string {
    -------------------------------------------------------------------------- */
 
 var builtinIDs = map[string]string{
-	"dark-minimal":  "深色 · 黑白极简",
-	"light-minimal": "浅色 · 黑白极简",
-	"flat-dark":     "简约深色",
-	"flat-light":    "简约浅色",
-	"cover-dark":    "封面取色 · 深色",
+	"flat-dark":  "简约深色",
+	"flat-light": "简约浅色",
+	"cover-dark": "封面取色 · 深色",
+}
+
+// retiredBuiltins 是**已经从程序里移除**的内置主题 id。
+//
+// 为什么需要它：内置主题会被 syncBuiltin 复制一份到用户主题目录，而扫描认的是
+// 「目录里有什么」，不认「是不是还随程序分发」。不移走的话，删掉的内置主题会
+// 以**用户主题**的身份继续出现在主题列表里（能选中、能删、名字还是内置那个），
+// 也就是「删了等于没删」。
+//
+// 判据只看「文件名 + 文件里有没有 @theme-builtin-rev」：同一个名字又带着我们的
+// 修订号，那就是程序自己写下去的那一份。**不比较修订号大小** —— 磁盘上的副本
+// 可能来自更新（或更旧）的版本，比这里记的新是常态（实测本机就是 rev 4，
+// 而仓库里最后一版是 rev 3）；按大小判断会把这种最常见的副本放过去。
+//
+// 与既有约定一致：想长期自定义内置主题要**换个文件名**（见 syncBuiltin 的注释），
+// 同名文件本来就是受管理的。删除前留一份 .bak。
+var retiredBuiltins = map[string]bool{
+	"dark-minimal":  true,
+	"light-minimal": true,
 }
 
 // IsBuiltinID 判断 id 是否为内置主题。

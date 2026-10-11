@@ -40,14 +40,14 @@ func newTestThemeManager(t *testing.T) *theme.Manager {
 func TestEarlyThemeScriptAppliesSavedLightTheme(t *testing.T) {
 	store := newTestStore(t)
 	if err := store.Update(func(c *bootstrap.Config) {
-		c.Theme = "light-minimal"
+		c.Theme = "flat-light"
 		c.ThemeMode = "light"
 	}); err != nil {
 		t.Fatalf("写入配置失败: %v", err)
 	}
 
 	js := string(earlyThemeScript(store, newTestThemeManager(t)))
-	if !strings.Contains(js, `setAttribute('data-theme',"light-minimal")`) {
+	if !strings.Contains(js, `setAttribute('data-theme',"flat-light")`) {
 		t.Fatalf("没有把保存的主题写进首帧脚本: %s", js)
 	}
 	if !strings.Contains(js, `setAttribute('data-mode',"light")`) {
@@ -113,7 +113,7 @@ func TestEarlyThemeScriptFallsBackWhenThemeMissing(t *testing.T) {
 	}
 
 	js := string(earlyThemeScript(store, newTestThemeManager(t)))
-	if !strings.Contains(js, `setAttribute('data-theme',"dark-minimal")`) {
+	if !strings.Contains(js, `setAttribute('data-theme',"flat-dark")`) {
 		t.Fatalf("主题不存在时应回退到默认主题: %s", js)
 	}
 }
@@ -122,33 +122,33 @@ func TestFirstFrameWindowColourFollowsSavedTheme(t *testing.T) {
 	store := newTestStore(t)
 	mgr := newTestThemeManager(t)
 
-	// 深色主题：用内置 dark-minimal 自己声明的 --bg-app(#0b0c12)
+	// 深色主题：用内置 flat-dark 自己声明的 --bg-app(#101113)
 	if err := store.Update(func(c *bootstrap.Config) {
-		c.Theme = "dark-minimal"
+		c.Theme = "flat-dark"
 		c.ThemeMode = "dark"
 	}); err != nil {
 		t.Fatalf("写入配置失败: %v", err)
 	}
-	if got := firstFrameWindowColour(store, mgr); got.Red != 0x0b || got.Green != 0x0c || got.Blue != 0x12 {
-		t.Errorf("深色主题的窗口底色应取 --bg-app(#0b0c12), 得到 %+v", got)
+	if got := firstFrameWindowColour(store, mgr); got.Red != 0x10 || got.Green != 0x11 || got.Blue != 0x13 {
+		t.Errorf("深色主题的窗口底色应取 --bg-app(#101113), 得到 %+v", got)
 	}
 
 	// 浅色主题必须跟着变 —— 否则窗口露出来的那一下还是黑的（这正是本次修复）
 	if err := store.Update(func(c *bootstrap.Config) {
-		c.Theme = "light-minimal"
+		c.Theme = "flat-light"
 		c.ThemeMode = "light"
 	}); err != nil {
 		t.Fatalf("写入配置失败: %v", err)
 	}
-	if got := firstFrameWindowColour(store, mgr); got.Red != 0xec || got.Green != 0xee || got.Blue != 0xf4 {
-		t.Errorf("浅色主题的窗口底色应取 --bg-app(#eceef4), 得到 %+v", got)
+	if got := firstFrameWindowColour(store, mgr); got.Red != 0xf5 || got.Green != 0xf6 || got.Blue != 0xf7 {
+		t.Errorf("浅色主题的窗口底色应取 --bg-app(#f5f6f7), 得到 %+v", got)
 	}
 
 	// 主题被删掉时回退到默认主题的底色，而不是随便一个值
 	if err := store.Update(func(c *bootstrap.Config) { c.Theme = "gone-theme" }); err != nil {
 		t.Fatalf("写入配置失败: %v", err)
 	}
-	if got := firstFrameWindowColour(store, mgr); got.Red != 0x0b || got.Green != 0x0c || got.Blue != 0x12 {
+	if got := firstFrameWindowColour(store, mgr); got.Red != 0x10 || got.Green != 0x11 || got.Blue != 0x13 {
 		t.Errorf("主题不存在时应回退到默认主题底色, 得到 %+v", got)
 	}
 }

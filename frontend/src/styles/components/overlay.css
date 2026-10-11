@@ -767,6 +767,22 @@
   transform: none;
 }
 
+/* 宽弹窗（歌词文本编辑 / 微调说明）：内容比确认框多得多，420px 装不下 */
+.modal--wide {
+  width: min(760px, calc(100vw - 48px));
+}
+
+/* 内容区自己滚：弹窗高度不许超过视口，否则底部的按钮会被顶出屏幕 */
+.modal--scroll .modal__body {
+  max-height: min(56vh, 460px);
+  overflow-y: auto;
+}
+
+/* 纯说明弹窗只有一个「知道了」：藏掉取消按钮，避免两个按钮做同一件事 */
+.modal--single .modal__foot .btn--ghost {
+  display: none;
+}
+
 .modal__head {
   padding: var(--sp-4) var(--sp-5) var(--sp-2);
   font-size: var(--fs-lg);

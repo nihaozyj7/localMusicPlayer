@@ -102,7 +102,7 @@ func TestSkipSilenceJSONTags(t *testing.T) {
 // （而不是零值 —— 那会让切歌间隔变成 0 秒，用户的停顿设置凭空消失）。
 func TestSkipSilenceBackfillsLegacyConfig(t *testing.T) {
 	// 模拟一份「加入这个功能之前」的配置
-	raw := []byte(`{"theme":"dark-minimal","volume":0.8,"playMode":"sequence"}`)
+	raw := []byte(`{"theme":"cover-dark","volume":0.8,"playMode":"sequence"}`)
 	parsed := DefaultConfig()
 	if err := json.Unmarshal(raw, parsed); err != nil {
 		t.Fatalf("解析旧配置失败: %v", err)

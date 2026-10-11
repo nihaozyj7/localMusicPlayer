@@ -318,7 +318,7 @@ const settingsSync = await evaluate(`(async () => {
   await sleep(400);
 
   const cardFor = (id) => document.querySelector('.themecard__pick[data-id="' + id + '"]');
-  const targetTheme = state.config.theme === 'light-minimal' ? 'dark-minimal' : 'light-minimal';
+  const targetTheme = state.config.theme === 'flat-light' ? 'flat-dark' : 'flat-light';
   cardFor(targetTheme).click();
   await sleep(600);
   const themeCard = cardFor(targetTheme);
