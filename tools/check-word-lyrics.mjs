@@ -7,6 +7,10 @@
      1. 经典/沉浸渲染器（lyrics-view.js）：当前行拆成 `.lyric__word` 字素，
         按时间只点亮「已经唱到的字」；非当前行保持纯文本（不给整篇拆 span）；
         行文本里不能出现 `<00:12.000>` 这类标记；
+     1.5 **逐字平滑填充**：点亮不再是一字一格地跳 —— 每个字素带一个 `--w`
+         （0→1）进度，CSS 用渐变文字把强调色从左扫到右。这一节量的是：
+         字内部真的是**中间值**（0.5 这类）、随时间连续推进、
+         并且确实是用「渐变 + 透明填充色」画出来的（而不是整字换色）；
      2. 暂停（不给 playing）时点亮位置必须严格等于进度 —— 外推只在播放中发生；
      3. 播放中：两次进度推送之间（250ms）也要自己往前推进（rAF 平滑）；
      4. 特效渲染器（fx-lyrics.js）：有 `words` 按字级点亮、没有则退回行内线性插值；
@@ -208,6 +212,30 @@ const wordSnap = () =>
     })()
   `);
 
+/** 读当前行的「逐字填充进度」与画法：`--w` 是 0..1，画法是渐变文字填充 */
+const wordFillSnap = () =>
+  evaluate(`
+    (() => {
+      const cur = document.querySelector("#pv-lyrics .lyric[aria-current='true']");
+      if (!cur) return { error: "没有当前行" };
+      const words = [...cur.querySelectorAll(".lyric__word")];
+      const read = (el) => {
+        const cs = getComputedStyle(el);
+        return {
+          w: Number(cs.getPropertyValue("--w")) || 0,
+          fill: cs.webkitTextFillColor || cs.getPropertyValue("-webkit-text-fill-color"),
+          clip: String(cs.backgroundClip || cs.getPropertyValue("background-clip") || ""),
+          grad: String(cs.backgroundImage || "").includes("gradient"),
+        };
+      };
+      return {
+        total: words.length,
+        fills: words.map((el) => read(el).w),
+        style: words.length ? read(words[0]) : null,
+      };
+    })()
+  `);
+
 /** 设置播放状态（预览里由 mock ticker 每 250ms 推一次进度） */
 const setPlayingExpr = (on) => `
   (async () => {
@@ -267,28 +295,39 @@ try {
   check(at6200?.active === 3, "推进到第三个字（6200ms）", JSON.stringify(at6200));
   await shot("classic-6200");
 
-  // 成色：唱到的字与还没唱到的字必须明显不同（只换颜色在「强调色接近白」
-  // 的主题里看不出来，所以未唱到的字还压了透明度）
-  const colors = await evaluate(`
-    (() => {
-      const cur = document.querySelector("#pv-lyrics .lyric[aria-current='true']");
-      const words = cur ? [...cur.querySelectorAll(".lyric__word")] : [];
-      const on = words.find((w) => w.dataset.active === "true");
-      const off = words.find((w) => w.dataset.active !== "true");
-      const info = (el) =>
-        el
-          ? { color: getComputedStyle(el).color, opacity: +getComputedStyle(el).opacity }
-          : null;
-      return { on: info(on), off: info(off) };
-    })()
-  `);
-  console.log("    成色:", JSON.stringify(colors));
+  // 吃水线：**唱到的字**与**还没唱到的字**现在靠「渐变的两侧」而不是整块换色区分，
+  // 所以要量的不是某个属性值，而是三件事：
+  //   ① 画法确实是渐变文字（background-clip: text + 透明填充色）；
+  //   ② 字内部出现中间值（6150ms 时第二个字应填到 0.5 左右）—— 这正是「平滑」；
+  //   ③ 同一个字内随时间连续推进（0.1 → 0.4 → 0.8），不是到点才跳一下。
+  await evaluate(seekExpr(6150));
+  await sleep(450);
+  const mid = await wordFillSnap();
+  console.log("    @6150ms", JSON.stringify(mid));
   check(
-    Boolean(colors?.on && colors?.off) &&
-      colors.on.color !== colors.off.color &&
-      colors.on.opacity > colors.off.opacity,
-    "唱到的字（亮 / 强调色）与没唱到的字（暗）成色不同",
-    JSON.stringify(colors)
+    mid?.fills?.[0] === 1 && mid?.fills?.[1] > 0 && mid?.fills?.[1] < 1 && mid?.fills?.[2] === 0,
+    "6150ms：第一个字已填满、第二个字填到一半、第三个字还没开始（--w 连续）",
+    JSON.stringify(mid?.fills)
+  );
+  check(
+    mid?.style?.grad === true && /transparent|rgba\(0,\s*0,\s*0,\s*0\)/.test(String(mid?.style?.fill)),
+    "字是「渐变 + 透明填充色」画出来的（不是整字换色）",
+    JSON.stringify(mid?.style)
+  );
+  check(/text/.test(String(mid?.style?.clip)), "渐变被裁进字形（background-clip: text）", mid?.style?.clip);
+  await shot("classic-6150");
+
+  const ramp = [];
+  for (const ms of [6110, 6140, 6180]) {
+    await evaluate(seekExpr(ms));
+    await sleep(320);
+    ramp.push((await wordFillSnap())?.fills?.[1]);
+  }
+  console.log("    同一个字内的推进:", JSON.stringify(ramp));
+  check(
+    ramp[0] > 0 && ramp[0] < ramp[1] && ramp[1] < ramp[2] && ramp[2] < 1,
+    "同一个字内部连续推进（0.1 → 0.4 → 0.8），不是到点整字变色",
+    JSON.stringify(ramp)
   );
 
   await evaluate(seekExpr(6400));
@@ -324,6 +363,10 @@ try {
         view.setLines(pkg.parseLrc(${JSON.stringify(WORD_LRC)}));
         const activeCount = () =>
           host.querySelectorAll(".lyric[aria-current='true'] .lyric__word[data-active='true']").length;
+        const wOf = (i) => {
+          const el = host.querySelectorAll(".lyric[aria-current='true'] .lyric__word")[i];
+          return el ? Number(getComputedStyle(el).getPropertyValue("--w")) || 0 : null;
+        };
 
         view.setPosition(6000); // 没给 playing：不许自己动
         await new Promise((r) => setTimeout(r, 120));
@@ -337,9 +380,22 @@ try {
         await new Promise((r) => setTimeout(r, 60));
         const paused = activeCount();
 
+        // 平滑填充：停在某个字的**起点**时 --w 还是 0，播放 60ms 后自己走到中间值
+        // （宿主这侧一次进度都没推过）—— 这就是「不等推送也连续」的那一步。
+        // 只等 60ms：等太久就跨过这个字（100ms 一个字），量到的是 1 而不是中间值。
+        view.setPosition(6100);
+        await new Promise((r) => setTimeout(r, 80));
+        const wFrozen = wOf(1);
+        view.setPosition(6100, { playing: true });
+        await new Promise((r) => setTimeout(r, 60));
+        const wAdvanced = wOf(1);
+        view.setPosition(6100, { playing: false });
+        await new Promise((r) => setTimeout(r, 60));
+        const wPaused = wOf(1);
+
         view.destroy();
         host.remove();
-        return { frozen, advanced, paused };
+        return { frozen, advanced, paused, wFrozen, wAdvanced, wPaused };
       } catch (err) {
         return { error: String(err && err.message ? err.message : err) };
       }
@@ -354,6 +410,13 @@ try {
     JSON.stringify(smooth)
   );
   check(smooth?.paused === 1, "暂停后外推值落回真实进度（回到第一个字）", JSON.stringify(smooth));
+  check(smooth?.wFrozen === 0, "停在一个字的起点时还没开始填（--w = 0）", JSON.stringify(smooth));
+  check(
+    (smooth?.wAdvanced ?? 0) > 0 && (smooth?.wAdvanced ?? 1) < 1,
+    "播放 60ms 后这个字自己填到中间（--w 在 0..1 之间）",
+    JSON.stringify(smooth)
+  );
+  check(smooth?.wPaused === 0, "暂停后填充落回锚点（--w 回到 0）", JSON.stringify(smooth));
 
   /* ------------------------------------------------------------------ */
   console.log("\n[4] 歌词工作台：来源徽标显示「逐字」");
@@ -484,7 +547,7 @@ try {
       await host.applyOnlineLyrics(store.state.currentId, ${JSON.stringify(WORD_LRC)}, "preview");
       await new Promise((r) => setTimeout(r, 700));
       const audio = await app("audio");
-      audio.seekTo(6300);
+      audio.seekTo(6150);
       await new Promise((r) => setTimeout(r, 600));
       const cur = document.querySelector(".lyric[aria-current='true']");
       const words = cur ? [...cur.querySelectorAll(".lyric__word")] : [];
@@ -493,13 +556,20 @@ try {
         total: words.length,
         active: words.filter((w) => w.dataset.active === "true").length,
         text: cur ? cur.textContent : "",
+        // 平滑填充在沉浸式样式下也必须在（两套内置样式共用同一份 lyrics.css）
+        fills: words.map((w) => Number(getComputedStyle(w).getPropertyValue("--w")) || 0),
       };
     })()
   `);
   console.log("   ", JSON.stringify(immersive));
   check(immersive?.pv === "immersive", "已经切到沉浸式样式", String(immersive?.pv));
   check(immersive?.total === 5, "沉浸式当前行拆成 5 个字素 span", String(immersive?.total));
-  check(immersive?.active === 4, "6300ms：唱到的 4 个字点亮", String(immersive?.active));
+  check(immersive?.active === 2, "6150ms：唱到的 2 个字点亮", String(immersive?.active));
+  check(
+    immersive?.fills?.[1] > 0 && immersive?.fills?.[1] < 1,
+    "沉浸式样式下字内部同样是连续填充（--w 中间值）",
+    JSON.stringify(immersive?.fills)
+  );
   check(!/<\\d\\d:/.test(immersive?.text || ""), "行文本里没有残留 <00:12.000> 标记", String(immersive?.text));
 
   /* ------------------------------------------------------------------ */

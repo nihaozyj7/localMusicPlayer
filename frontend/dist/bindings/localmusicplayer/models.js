@@ -88,9 +88,20 @@
 
 /**
  * desktopLyricsSnapshot 桌面歌词窗口要显示的内容。
+ * 
+ * 字级歌词（逐字）多带三样东西：每个字素的起点 Words、结束 WordEnds，以及一个
+ * 「位置锚点」PosMs + AtMs。窗口拿锚点按自己的墙钟外推，于是两次推送之间也能
+ * 继续把颜色扫过去（推送只有 250ms 一档，只吃推送的话边界是一跳一跳的）。
+ * 行级歌词用不到这些字段，omitempty 让它们在事件里根本不出现。
  * @typedef {Object} desktopLyricsSnapshot
  * @property {boolean} enabled
  * @property {string} text
+ * @property {string[] | null} [trans]
+ * @property {string[] | null} [chars]
+ * @property {number[] | null} [words]
+ * @property {number[] | null} [wordEnds]
+ * @property {number} posMs
+ * @property {number} atMs
  * @property {boolean} playing
  * @property {number} fontSize
  */

@@ -1602,6 +1602,12 @@ type WindowService struct {
 	desktopMu       sync.Mutex
 	desktopOn       bool
 	desktopText     string
+	desktopTrans    []string
+	desktopChars    []string
+	desktopWords    []int
+	desktopWordEnds []int
+	desktopPosMs    int
+	desktopAtMs     int64
 	desktopPlaying  bool
 	desktopFontSize int
 	// posSaveTimer / posSaveSeq 是「记住桌面歌词窗口位置」的去抖状态

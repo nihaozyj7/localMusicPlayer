@@ -19,7 +19,7 @@ import { subscribe, songById, state } from "./store.js";
 import { applyGainForSong, syncAudio } from "./audio.js";
 import { desktopLyricsEnabled, pushDesktopLyrics } from "./desktop-lyrics.js";
 import { desktopWallpaperEnabled, pushDesktopWallpaper } from "./desktop-wallpaper.js";
-import { currentLyricLine, ensureLyricsLoaded } from "./playerhost.js";
+import { currentLyricFrame, ensureLyricsLoaded } from "./playerhost.js";
 import { coverOf } from "./utils.js";
 import { syncCoverAccent, syncThemeBackdrop } from "./cover-accent.js";
 
@@ -63,8 +63,17 @@ function run() {
   // 桌面歌词：算「当前该显示的一行」推给独立的透明窗口
   if (desktopLyricsEnabled()) {
     if (state.playing) ensureLyricsLoaded();
+    // 播放中才给歌词与逐字时间轴（暂停时窗口只显示提示行，与从前一致）；
+    // 位置锚点让窗口在两次推送之间自己外推，逐字填充才不会一顿一顿的
+    const frame = state.playing ? currentLyricFrame() : null;
     pushDesktopLyrics({
-      text: state.playing ? currentLyricLine() : "",
+      text: frame ? frame.text : "",
+      trans: frame ? frame.trans : [],
+      chars: frame ? frame.chars : [],
+      words: frame ? frame.words : [],
+      wordEnds: frame ? frame.wordEnds : [],
+      posMs: Math.round(state.position || 0),
+      atMs: Date.now(),
       playing: Boolean(state.playing),
       // 桌面歌词是「隔着整个桌面看」的，比详情页里的歌词字号放大一点才看得清
       fontSize: Math.round((Number(state.config.lyricsFontSize) || 16) * 1.5),

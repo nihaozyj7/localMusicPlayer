@@ -76,13 +76,37 @@ export async function applyDesktopLyrics(on, { force = false } = {}) {
 /**
  * 主窗口每次同步调用：把当前歌词行推给桌面歌词窗口。
  *
- * 内部按内容去重 —— 不变量时一次 IPC 都不发。
+ * 内部按内容去重 —— 不变量时一次 IPC 都不发。**逐字歌词是个例外**：那边的
+ * 平滑填充要靠「位置锚点 + 字级时间轴」自己外推（见 ui/desktop-lyrics.js），
+ * 所以位置也得进签名，否则窗口只拿到第一帧就再也不更新了。锚点按 250ms 量化
+ * （正好是运行时同步的档位），代价是逐字歌词播放期间每 250ms 一次 IPC ——
+ * 行级歌词**签名与从前完全一样**，仍然是零 IPC。
+ *
+ * @param {{text?:string, trans?:string[], chars?:string[], words?:number[], wordEnds?:number[],
+ *          posMs?:number, atMs?:number, playing?:boolean, fontSize?:number}} [frame]
  */
-export function pushDesktopLyrics({ text = "", playing = false, fontSize = 26 } = {}) {
+export function pushDesktopLyrics({
+  text = "",
+  trans = [],
+  chars = [],
+  words = [],
+  wordEnds = [],
+  posMs = 0,
+  atMs = 0,
+  playing = false,
+  fontSize = 26,
+} = {}) {
   // 关着就什么都不做。「把预览条收起来」这件事由 applyDesktopLyrics 负责 ——
   // 在这里每次都收一次的话，会连带把桌面背景歌词模式下那条正常的悬浮条也抹掉。
   if (!desktopLyricsEnabled()) return;
-  const signature = [text, playing ? 1 : 0, Math.round(fontSize)].join("|");
+  const smooth = Array.isArray(words) && words.length > 1;
+  const signature = [
+    text,
+    playing ? 1 : 0,
+    Math.round(fontSize),
+    smooth ? words.join(",") : "",
+    smooth ? Math.round(posMs / 250) : "",
+  ].join("|");
   if (signature === lastSignature) return;
   lastSignature = signature;
 
@@ -90,9 +114,21 @@ export function pushDesktopLyrics({ text = "", playing = false, fontSize = 26 } 
     paintFloatingLyricBar({ text, playing });
     return;
   }
-  backend.updateDesktopLyrics({ text, playing, fontSize }).catch((err) => {
-    console.warn("[desktop-lyrics] 同步歌词失败", err?.message ?? err);
-  });
+  backend
+    .updateDesktopLyrics({
+      text,
+      trans,
+      chars: smooth ? chars : [],
+      words: smooth ? words : [],
+      wordEnds: smooth ? wordEnds : [],
+      posMs: Math.round(posMs),
+      atMs: Math.round(atMs),
+      playing,
+      fontSize,
+    })
+    .catch((err) => {
+      console.warn("[desktop-lyrics] 同步歌词失败", err?.message ?? err);
+    });
 }
 
 /**

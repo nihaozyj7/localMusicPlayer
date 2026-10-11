@@ -328,6 +328,72 @@ export function lyricDisplayText(line, sep = " · ") {
   return [base, ...trans].join(sep);
 }
 
+/** 一个字素的最短填充时长（见 wordEndsOf 的第三条） */
+const WORD_MIN_MS = 60;
+
+/**
+ * 一行里每个字素的**结束**毫秒 —— 逐字平滑填充（`--w`）要用的那一刻。
+ *
+ * 为什么需要它：`words` 只给每个字素的**起点**，而「从左到右逐渐变颜色」需要
+ * 知道边界此刻应该在字素内部的哪个位置，也就是这个字素在什么时候填完。
+ * 规则：
+ *   · 一般就是**下一个字素的起点** —— 中间不留空档，填充边界才不会在字与字
+ *     之间跳一下；
+ *   · 最后一个字素填到**本行结束**（下一行的起点）为止；但如果本行结束离得
+ *     太远（长间奏），按前面字素的**典型时值**给上限：否则最后一个字会拖着
+ *     慢慢填满整个间奏，看起来像卡住了；
+ *   · 时值给一个下限：QRC / KRC 里偶发 0 时值，会让那个字瞬间变完色（闪一下）。
+ *
+ * @param {number[]} starts 每个字素的起始毫秒（与 splitGraphemes(text) 对齐）
+ * @param {number} [nextLineTime] 下一行的起始毫秒（没有下一行就传 0 / undefined）
+ * @returns {number[]} 与 starts 等长的结束毫秒
+ */
+export function wordEndsOf(starts, nextLineTime) {
+  const n = Array.isArray(starts) ? starts.length : 0;
+  if (!n) return [];
+  const ends = new Array(n);
+  for (let k = 0; k < n; k += 1) ends[k] = k + 1 < n ? starts[k + 1] : 0;
+
+  // 典型时值 = 相邻间隔的中位数（只有一个字素时用 320ms 兜底）
+  const gaps = [];
+  for (let k = 1; k < n; k += 1) {
+    const g = starts[k] - starts[k - 1];
+    if (g > 0) gaps.push(g);
+  }
+  gaps.sort((a, b) => a - b);
+  const typical = gaps.length ? gaps[gaps.length >> 1] : 320;
+  const tailMax = Math.max(400, Math.min(typical * 2, 1400));
+
+  const last = n - 1;
+  const lineEnd = Number.isFinite(nextLineTime) && nextLineTime > starts[last] ? nextLineTime : 0;
+  ends[last] = starts[last] + Math.min(lineEnd ? lineEnd - starts[last] : tailMax, tailMax);
+
+  for (let k = 0; k < n; k += 1) {
+    if (ends[k] - starts[k] < WORD_MIN_MS) ends[k] = starts[k] + WORD_MIN_MS;
+  }
+  return ends;
+}
+
+/**
+ * 某个字素在 positionMs 时刻填了多少（0 = 还没开始，1 = 填满）。
+ *
+ * 量化到 1%：调用方每帧都会算一遍，量化能挡掉绝大多数「值没变却写一次 style」
+ * 的写入（60fps × 一行 40 个字素，不量化就是每帧 40 次无意义的样式写入）。
+ *
+ * @param {number} start 这个字素的起始毫秒
+ * @param {number} end 它的结束毫秒（见 wordEndsOf）
+ * @param {number} positionMs 当前播放位置
+ * @returns {number} 0..1，两位小数
+ */
+export function wordFill(start, end, positionMs) {
+  const span = end - start;
+  if (!(span > 0)) return positionMs >= start ? 1 : 0;
+  const raw = (positionMs - start) / span;
+  if (raw <= 0) return 0;
+  if (raw >= 1) return 1;
+  return Math.round(raw * 100) / 100;
+}
+
 /**
  * 二分查找当前播放位置对应的歌词行下标（-1 表示还没到第一句）。
  * @param {Array<{time:number}>} lines

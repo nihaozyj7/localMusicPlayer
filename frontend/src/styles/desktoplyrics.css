@@ -77,6 +77,13 @@
 
   /* 暂停：整体降一点不透明度，明确「现在没在唱」 */
   --dl-paused-opacity: 0.72;
+  /* —— 逐字（卡拉OK）平滑填充 ——
+     组件每帧写 --w（0→1，见 ui/desktop-lyrics.js），这里的渐变把分界线停在 --w 处：
+       · --dl-word-fill 是这个样式的填充色（已唱到的一侧）；
+       · --dl-word-rest 是还没唱到时的一侧 —— 桌面壁纸可能是任何颜色，
+         所以用半透明白而不是某个固定深色。 */
+  --dl-word-fill: var(--dl-line-color);
+  --dl-word-rest: rgba(255, 255, 255, 0.4);
 }
 
 html.dl-window,
@@ -273,6 +280,60 @@ html.dl-window body::before {
 /* 切行时淡入：直接换字会「跳」一下 */
 .dl__line[data-fresh="1"] {
   animation: dl-line-in 260ms var(--dl-ease, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+/* —— 逐字（卡拉OK）平滑填充 ——
+   data-words="1" 表示这一行有字级时间轴，`.dl__line` 里是 .dl__word 而非纯文本
+   （见 ui/desktop-lyrics.js）。组件每帧给每个字素写 --w，这里的渐变把分界线停在
+   --w 处 —— 同一个字素内部是渐变的，边界是**扫过去**的，不是整字换色。
+
+   文字填充为什么是透明的：分界线两侧来自两层背景（同一元素上，上层盖下层），
+   要让背景透出来，字本身就不能再画一遍（-webkit-text-fill-color 只影响填充，
+   描边与投影照样画，所以「纯描边」「霓虹发光」这些样式的观感不变）。 */
+.dl[data-words="1"] .dl__line {
+  -webkit-text-fill-color: transparent;
+}
+
+.dl[data-words="1"] .dl__word {
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+/* 纯色填充的四款：渐变的一侧是这个样式的填充色，另一侧是未唱到的压暗色
+   （两层背景不写在一条声明里：background-image 的每一层都必须是**图像**，
+   颜色会被判为非法、整条声明作废 —— 真踩过） */
+.dl[data-words="1"]:not([data-style="gradient"]) .dl__word {
+  background-image: linear-gradient(
+    90deg,
+    var(--dl-word-fill) 0 calc(var(--w, 0) * 100%),
+    var(--dl-word-rest) calc(var(--w, 0) * 100%) 100%
+  );
+}
+
+/* 渐变色那款：填充本来就是 .dl__line 上**整行一张**的渐变（逐字时若把它挪到
+   每个字素上，每个字都会摊到整张渐变，看起来是错的），所以这里只叠加压暗层，
+   已经唱过的部分让父级的渐变透出来。 */
+.dl[data-style="gradient"][data-words="1"] .dl__word {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0 calc(var(--w, 0) * 100%),
+    var(--dl-word-rest) calc(var(--w, 0) * 100%) 100%
+  );
+}
+
+/* 多语言歌词的翻译行：主行按字渲染，翻译排在下一行（不要拼进主行 ——
+   拼进去的话「第几个字素」就对不上字级时间轴了） */
+.dl__trans {
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(var(--dl-size, 26px) * 0.62);
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--dl-fg-dim);
+  text-shadow: var(--dl-tip-shadow);
 }
 
 @keyframes dl-line-in {

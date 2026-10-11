@@ -20,7 +20,7 @@
      · 离开当前行时还原成纯文本，DOM 形状与没有字级时完全一样。
    ========================================================================== */
 
-import { findLyricIndex, splitGraphemes } from "./lrc.js";
+import { findLyricIndex, splitGraphemes, wordEndsOf, wordFill } from "./lrc.js";
 
 /** 用户滚动之后，多久重新接管自动滚动 */
 const USER_SCROLL_PAUSE_MS = 1200;
@@ -85,8 +85,12 @@ export function createLyricsView(host, opts = {}) {
   let wordEls = [];
   /** @type {number[]|null} 该行每个字素的起始毫秒 */
   let wordStarts = null;
+  /** @type {number[]|null} 该行每个字素的结束毫秒（平滑填充用，见 lrc.js#wordEndsOf） */
+  let wordEnds = null;
   /** 上一次点亮到第几个（不变化就不写 DOM） */
   let wordHold = -1;
+  /** 上一次写进 DOM 的每字填充进度（0..1，只用于判断「值变了没有」） */
+  let wordFills = null;
 
   /* ---- 平滑推进（宿主的进度是 250ms 一跳，逐字点亮必须自己补齐中间帧） ---- */
   /** 最近一次 setPosition 的锚点：位置 + 它被推过来的时刻 */
@@ -217,6 +221,9 @@ export function createLyricsView(host, opts = {}) {
     wordIdx = idx;
     wordEls = Array.from(el.querySelectorAll(".lyric__word"));
     wordStarts = starts;
+    // 结束时刻进入这一行时算一次就够：它只取决于字级时间轴与下一行的起点
+    wordEnds = wordEndsOf(starts, lines[idx + 1]?.time);
+    wordFills = new Array(starts.length).fill(-1);
     wordHold = -1;
   }
 
@@ -235,17 +242,36 @@ export function createLyricsView(host, opts = {}) {
       wordIdx = -1;
       wordEls = [];
       wordStarts = null;
+      wordEnds = null;
+      wordFills = null;
       wordHold = -1;
     }
     if (activeIndex >= 0 && wordIdx !== activeIndex) enterWords(activeIndex);
   }
 
   /**
-   * 按播放进度点亮当前行的字。只在位置真的推进了时才写 DOM。
+   * 按播放进度画当前行的字：既点亮（`data-active`，工作台与第三方皮肤读的是它），
+   * 又写**逐字平滑填充进度** `--w`（0..1，内置样式的 CSS 拿它把强调色从左扫到右）。
+   *
+   * 为什么还要 `--w`：`data-active` 是「一字一格」的跳变 —— 到点就整字换色，
+   * 观感很硬。`--w` 是**一个字素内部**的进度，CSS 渐变的分界线就停在 `--w` 处，
+   * 颜色于是连续扫过去。这个方法每帧都会被调（见 smoothTick），所以这里不读
+   * DOM、量化后只写真的变了的那些值（见 lrc.js#wordFill）。
+   *
    * @param {number} positionMs
    */
   function paintWords(positionMs) {
     if (wordIdx < 0 || !wordStarts || !wordEls.length) return;
+
+    for (let k = 0; k < wordEls.length; k += 1) {
+      const start = wordStarts[k];
+      const end = wordEnds?.[k] ?? start;
+      const w = wordFill(start, end, positionMs);
+      if (wordFills && wordFills[k] === w) continue;
+      if (wordFills) wordFills[k] = w;
+      wordEls[k].style.setProperty("--w", String(w));
+    }
+
     let hold = 0;
     while (hold < wordStarts.length && wordStarts[hold] <= positionMs) hold += 1;
     if (hold === wordHold) return;
@@ -326,6 +352,8 @@ export function createLyricsView(host, opts = {}) {
     wordIdx = -1;
     wordEls = [];
     wordStarts = null;
+    wordEnds = null;
+    wordFills = null;
     wordHold = -1;
     syncSmooth();
     if (!lines.length) {

@@ -157,26 +157,44 @@
   animation: lyric-exit calc(var(--dur) * 1.4) var(--ease) both;
 }
 
-/* —— 字级（逐字）歌词：当前行内的按字点亮 ——
+/* —— 字级（逐字）歌词：当前行内的**平滑填充** ——
    `.lyric__word` 只存在于**当前行**（其它行保持纯文本，见 lyrics-view.js），
-   所以可以直接挂在 [aria-current] 下面：
-     · 还没唱到的字：正文色 + 压暗（整行仍是亮的，一眼看出这是当前句，
-       而「只点亮了几个字」靠明暗差表达 —— 只换颜色的话，在强调色接近白/黑
-       的主题里根本看不出来）；
-     · 唱到的字：强调色 + 全亮，跟行高亮连成一片。
+   所以可以直接挂在 [aria-current] 下面。
+
+   以前是「一字一格」：唱到哪个字，那个字整块换成强调色，边界是跳的。现在改成
+   卡拉OK 那样的**从左到右连续填充**：
+     · 渲染器每帧给每个字素写 `--w`（0 → 1，见 lyrics-view.js#paintWords）；
+     · 这里的渐变把分界线停在 `--w` 处：左边是强调色（已唱），右边是压暗的正文色；
+     · 同一个字素内部因此是渐变的 —— 边界扫过笔画，而不是整字变色。
+   两个坐落在同一位置的色标（`calc(var(--w) * 100%)`）就是那条分界线：CSS 里
+   这样写等于「硬边界」，不是把两种颜色混起来。没唱到的一侧取各样式自己的
+   `--lyric-dim`（与「非当前行」的压暗程度一致），两套内置样式因此观感统一。
+
+   文字本身仍然带 color（未唱到 = 正文色、唱到 = 强调色）：真正画上去的是下面
+   那层渐变（`-webkit-text-fill-color: transparent` 让文字透明、由背景透出来），
+   保留 color 是为了第三方皮肤 / 主题按老属性取值时不会读到空值。
+
    没有字级的歌词不产生任何 .lyric__word，观感与从前完全一致。 */
 .lyric__word {
   color: inherit;
 }
 
 .lyric[aria-current="true"] .lyric__word {
+  /* 没唱到的一侧：正文色按 --lyric-dim 压暗（透明色 = 让下面的东西透出来） */
+  --word-rest: color-mix(in srgb, var(--text-1) calc(var(--lyric-dim, 0.36) * 100%), transparent);
   color: var(--text-1);
-  opacity: 0.45;
+  background-image: linear-gradient(
+    90deg,
+    var(--accent) 0 calc(var(--w, 0) * 100%),
+    var(--word-rest) calc(var(--w, 0) * 100%) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .lyric[aria-current="true"] .lyric__word[data-active="true"] {
   color: var(--accent);
-  opacity: 1;
 }
 
 /* 翻译 / 罗马音副行 */

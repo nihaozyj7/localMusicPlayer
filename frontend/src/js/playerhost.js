@@ -41,7 +41,9 @@ import {
   parseLrc,
   resetBuiltins,
   resolveSkin,
+  splitGraphemes,
   unregisterSkin,
+  wordEndsOf,
 } from "@localmusicplayer/player-skins";
 import { createSkinHost } from "./skinhost.js";
 
@@ -450,6 +452,43 @@ export function currentLyricLine() {
   const idx = findLyricIndex(lines, state.position);
   // 多语言歌词：桌面歌词只有一条，把同一时间戳的其它语言行拼在后面一起显示
   return idx >= 0 ? lyricDisplayText(lines[idx]) : "";
+}
+
+/**
+ * 桌面歌词窗口要的「当前这一句」：字素 + 字级时间轴 + 翻译行。
+ *
+ * 为什么不像 currentLyricLine 那样只给一个字符串：桌面歌词也要「逐字平滑填充」
+ * （见 ui/desktop-lyrics.js），而填充需要每个字素的**起点、结束时刻与文本本身**。
+ * 结束时刻用皮肤包里的 wordEndsOf 算 —— 与播放详情页用的是**同一个函数**，
+ * 两处效果才会一致（尤其最后一个字与间奏那一段）。字素也在这里拆：拆一次，
+ * 两边（详情页 / 歌词窗口）与 words 的对齐关系就只有一种。
+ *
+ * 文本给的是主行（不含翻译）：翻译另放 trans，由歌词窗口自己排成副行 ——
+ * 拼进主行的话，「第几个字素」就再也对不上 words 了。
+ *
+ * @returns {{ text: string, chars: string[], trans: string[], words: number[], wordEnds: number[] }}
+ */
+export function currentLyricFrame() {
+  const empty = { text: "", chars: [], trans: [], words: [], wordEnds: [] };
+  const song = currentSong();
+  if (!song) return empty;
+  const lines = linesForSong(song);
+  if (!lines.length) return empty;
+  const idx = findLyricIndex(lines, state.position);
+  if (idx < 0) return empty;
+  const line = lines[idx];
+  const text = String(line.text ?? "");
+  const words = Array.isArray(line.words) && line.words.length ? line.words : [];
+  const chars = words.length ? splitGraphemes(text) : [];
+  // 字素数与时间轴对不上就别给字级数据（点亮错位比不逐字更糟）
+  const aligned = chars.length === words.length;
+  return {
+    text,
+    chars: aligned ? chars : [],
+    trans: Array.isArray(line.trans) ? line.trans.filter(Boolean) : [],
+    words: aligned ? words : [],
+    wordEnds: aligned ? wordEndsOf(words, lines[idx + 1]?.time) : [],
+  };
 }
 
 /**

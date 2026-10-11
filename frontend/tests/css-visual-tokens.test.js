@@ -129,6 +129,7 @@ const RUNTIME_TOKENS = new Set([
   "seed-2",
   "dl-size", // ui/desktop-lyrics.js（桌面歌词字号）
   "dl-ease", // 桌面歌词窗口（行切换缓动）
+  "w", // 逐字歌词的填充进度 0→1：lyrics-view.js / ui/desktop-lyrics.js 每帧写入
   "skin-icon", // 皮肤图标 URL，组件内联传参
   "hit-pad-x", // .u-hit 的可选覆盖，未给时回落到 --hit-pad
   "hit-pad-y",

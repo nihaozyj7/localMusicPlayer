@@ -46,7 +46,66 @@ import {
   FIT_MAX,
   lyricsEmptyText,
   splitGraphemes,
+  wordEndsOf,
+  wordFill,
 } from "@localmusicplayer/player-skins";
+
+/* --------------------------------------------------------------------------
+   逐字平滑填充：字素的结束时刻与「填了多少」
+   --------------------------------------------------------------------------
+   渲染器每帧用这两个函数算出 `--w`（见 lyrics-view.js#paintWords），CSS 再拿它
+   把强调色从左扫到右。这里盯的是三件容易出错的事：边界在字与字之间**不留空档**、
+   最后一个字**不会拖着填完整段间奏**、以及时值为 0 的字不会瞬间变完色。
+   -------------------------------------------------------------------------- */
+
+test("wordEndsOf：每个字素填到下一个字素的起点（相邻之间不留空档）", () => {
+  const ends = wordEndsOf([1000, 1200, 1500], 2400);
+  assert.deepEqual(ends.slice(0, 2), [1200, 1500]);
+});
+
+test("wordEndsOf：最后一个字按典型时值收尾，不被长间奏拖住", () => {
+  // 间隔都是 200ms → 上限 max(400, min(400, 1400)) = 400ms
+  const ends = wordEndsOf([1000, 1200, 1400], 9000);
+  assert.equal(ends[2], 1800, "最后一个字 400ms 填完，而不是填到 9000ms");
+});
+
+test("wordEndsOf：本行结束离得不远时，最后一个字就填到那一行为止", () => {
+  const ends = wordEndsOf([1000, 1200, 1400], 1700);
+  assert.equal(ends[2], 1700);
+});
+
+test("wordEndsOf：没有下一行时也能算（用典型时值上限兜底）", () => {
+  const ends = wordEndsOf([1000, 1200], undefined);
+  assert.equal(ends[1], 1600);
+});
+
+test("wordEndsOf：时值为 0 的字给下限，不会瞬间变完色", () => {
+  // 三个字素同一个起点（QRC / KRC 里偶发）：每个都要有最短时值
+  const ends = wordEndsOf([1000, 1000, 1000], 0);
+  assert.ok(ends[0] - 1000 >= 60 && ends[1] - 1000 >= 60, `每个字素至少 60ms：${JSON.stringify(ends)}`);
+});
+
+test("wordEndsOf：空时间轴返回空数组", () => {
+  assert.deepEqual(wordEndsOf([], 5000), []);
+  assert.deepEqual(wordEndsOf(undefined, 5000), []);
+});
+
+test("wordFill：按位置线性推进，并夹在 0..1", () => {
+  assert.equal(wordFill(1000, 1200, 900), 0, "还没开始");
+  assert.equal(wordFill(1000, 1200, 1100), 0.5, "走到一半");
+  assert.equal(wordFill(1000, 1200, 1300), 1, "已经过去");
+});
+
+test("wordFill：量化到 1%，同一帧内不会反复写同一个值", () => {
+  assert.equal(wordFill(1000, 1200, 1000.4), 0);
+  assert.equal(wordFill(1000, 1200, 1001), 0.01);
+  assert.equal(String(wordFill(1000, 1200, 1183)).length <= 4, true, "两位小数");
+});
+
+test("wordFill：时值为 0 时按「到点即满」处理（不产生 NaN / Infinity）", () => {
+  assert.equal(wordFill(1000, 1000, 999), 0);
+  assert.equal(wordFill(1000, 1000, 1000), 1);
+});
 
 /* --------------------------------------------------------------------------
    歌词空态文案（「匹配中 / 匹配失败」不能显示成「暂无歌词」）
@@ -312,14 +371,8 @@ test("composeSkin：元数据以清单为准，生命周期以模块为准", () 
 
 test("composeSkin：清单与模块的 id / apiVersion 不一致必须报错（不静默二选一）", () => {
   const manifest = { id: "a", name: "A", apiVersion: SKIN_API_VERSION };
-  assert.throws(
-    () => composeSkin({ default: { id: "b", mount() {} } }, manifest),
-    /id 不一致/
-  );
-  assert.throws(
-    () => composeSkin({ default: { apiVersion: "2.0", mount() {} } }, manifest),
-    /apiVersion 不一致/
-  );
+  assert.throws(() => composeSkin({ default: { id: "b", mount() {} } }, manifest), /id 不一致/);
+  assert.throws(() => composeSkin({ default: { apiVersion: "2.0", mount() {} } }, manifest), /apiVersion 不一致/);
 });
 
 test("composeSkin：缺 mount / 模块不是对象都要报出可读错误", () => {

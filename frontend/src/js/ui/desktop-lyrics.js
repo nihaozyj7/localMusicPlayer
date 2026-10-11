@@ -18,6 +18,41 @@ import { backend, connect, on } from "../bridge.js";
 import { define } from "./base.js";
 
 /* --------------------------------------------------------------------------
+   逐字平滑填充（卡拉OK）
+   --------------------------------------------------------------------------
+   字级歌词（增强 LRC / QRC / KRC）里每个字素都有自己的起点，主窗口把
+   「字素 + 起点 + 结束 + 位置锚点」一起推过来（见 playerhost.js#currentLyricFrame
+   与 desktop-lyrics.js#pushDesktopLyrics），这里只做两件事：
+
+     · 把这一行拆成 .dl__word（一个字素一个 span），每帧给它们写 `--w`（0→1）；
+     · desktoplyrics.css 拿 `--w` 把「未唱到」的压暗层从左侧收走。
+
+   为什么要自己外推：位置只有 250ms 一档的推送，只看推送的话边界是**一跳一跳**
+   的。锚点 `{posMs, atMs}` 用 Date.now()（两个窗口同一个系统时钟），于是每帧都能
+   算出当前真正的位置。
+   -------------------------------------------------------------------------- */
+
+/** 锚点最多外推多久：超过说明主窗口那侧停了（暂停没同步 / 卡缓冲），冻在锚点上 */
+const SMOOTH_MAX_MS = 700;
+
+/**
+ * 某个字素在 posMs 时刻填了多少（0..1，量化到 1%）。
+ *
+ * 与皮肤包里的 lrc.js#wordFill 是同一套算法 —— 这里没有 import 那个包：
+ * 歌词窗口是独立页面，为了一个 clamp 把整包（连它的三张骨架样式表）拉进来不值当。
+ * 结束时刻由主窗口算好一起推过来（wordEndsOf 在那边只算一次），所以真正需要
+ * 保证一致的「最后一个字 / 间奏」那段逻辑仍然只有一份实现。
+ */
+function fillAt(start, end, posMs) {
+  const span = end - start;
+  if (!(span > 0)) return posMs >= start ? 1 : 0;
+  const raw = (posMs - start) / span;
+  if (raw <= 0) return 0;
+  if (raw >= 1) return 1;
+  return Math.round(raw * 100) / 100;
+}
+
+/* --------------------------------------------------------------------------
    桌面歌词样式（下拉框）
    --------------------------------------------------------------------------
    样式只影响「歌词文字怎么画」，与主窗口配置无关，所以存在 localStorage 里：
@@ -59,6 +94,21 @@ class MpDesktopLyrics extends LitElement {
     this.tip = "桌面歌词 · 播放歌曲后逐行显示（鼠标移入可选择样式，拖动可移动）";
     this.tipHidden = false;
     this._lastText = null;
+
+    // —— 逐字平滑填充的状态（见文件头）——
+    /** 这一行的字素（与 words / wordEnds 一一对应，由主窗口算好推来） */
+    this.chars = [];
+    this.words = [];
+    this.wordEnds = [];
+    this.trans = [];
+    /** 位置锚点：posMs 是锚点时刻的真实进度，atMs 是那一刻的 Date.now() */
+    this.posMs = 0;
+    this.atMs = 0;
+    /** 这一行是否按字渲染（字素与时间轴对得上才开） */
+    this._wordsOn = false;
+    this._wordNodes = null;
+    this._fills = null;
+    this._raf = 0;
   }
 
   connectedCallback() {
@@ -72,11 +122,59 @@ class MpDesktopLyrics extends LitElement {
     // 与迁移前 lineEl.removeAttribute + void offsetWidth + setAttribute 完全一致。
     const line = this.querySelector("#dl-line");
     if (!line) return;
+    // 模板重建了字素 span：缓存的节点与已写过的填充值都作废
+    this._wordNodes = null;
+    this._fills = null;
     if (this.text !== this._lastText) {
       this._lastText = this.text;
       line.removeAttribute("data-fresh");
       void line.offsetWidth;
       if (this.text) line.setAttribute("data-fresh", "1");
+    }
+    this._syncSmooth();
+  }
+
+  /* --------------------------------------------------------------------------
+     逐字填充：rAF 循环
+     -------------------------------------------------------------------------- */
+
+  /** 播放中且有字级时间轴才开循环；否则停掉并按锚点画最后一帧 */
+  _syncSmooth() {
+    const want = this._wordsOn && this.playing && typeof requestAnimationFrame === "function";
+    if (!want) {
+      this._stopSmooth();
+      this._paint(this.posMs);
+      return;
+    }
+    if (!this._raf) this._raf = requestAnimationFrame(this._tick);
+  }
+
+  _stopSmooth() {
+    if (!this._raf) return;
+    cancelAnimationFrame(this._raf);
+    this._raf = 0;
+  }
+
+  /** 箭头属性：绑定 this，才能直接交给 requestAnimationFrame */
+  _tick = () => {
+    this._raf = 0;
+    const extra = Date.now() - this.atMs;
+    this._paint(extra > SMOOTH_MAX_MS ? this.posMs : this.posMs + Math.max(0, extra));
+    this._raf = requestAnimationFrame(this._tick);
+  };
+
+  /** 把每个字素的填充进度写进 `--w`（量化后只写真的变了的那些） */
+  _paint(posMs) {
+    if (!this._wordsOn) return;
+    const nodes = this._wordNodes || (this._wordNodes = [...this.querySelectorAll(".dl__word")]);
+    if (!this._fills || this._fills.length !== nodes.length) {
+      this._fills = new Array(nodes.length).fill(-1);
+    }
+    for (let k = 0; k < nodes.length; k += 1) {
+      const w = fillAt(this.words[k], this.wordEnds[k], posMs);
+      if (this._fills[k] === w) continue;
+      this._fills[k] = w;
+      nodes[k].style.setProperty("--w", String(w));
     }
   }
 
@@ -107,6 +205,7 @@ class MpDesktopLyrics extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    this._stopSmooth();
     if (this._offLyrics) {
       this._offLyrics();
       this._offLyrics = null;
@@ -118,9 +217,22 @@ class MpDesktopLyrics extends LitElement {
     if (!state || typeof state !== "object") return;
     const px = Math.max(12, Math.min(64, Number(state.fontSize) || 26));
     const text = String(state.text || "").trim();
+    const words = Array.isArray(state.words) ? state.words.map(Number) : [];
+    const wordEnds = Array.isArray(state.wordEnds) ? state.wordEnds.map(Number) : [];
+    const chars = Array.isArray(state.chars) ? state.chars.map(String) : [];
+    // 字素与时间轴必须一一对应，否则退回整行显示 —— 点亮错位比不逐字更糟。
+    // 判据与播放详情页一致（见 player-skins/lyrics-view.js#enterWords）。
+    this._wordsOn = words.length > 1 && words.length === chars.length && wordEnds.length === words.length;
+
     this.fontSize = px;
     this.text = text;
     this.playing = Boolean(state.playing);
+    this.chars = this._wordsOn ? chars : [];
+    this.words = this._wordsOn ? words : [];
+    this.wordEnds = this._wordsOn ? wordEnds : [];
+    this.trans = Array.isArray(state.trans) ? state.trans.filter(Boolean).map(String) : [];
+    this.posMs = Math.round(Number(state.posMs) || 0);
+    this.atMs = Math.round(Number(state.atMs) || 0);
     if (text) this.tipHidden = true;
     this.requestUpdate();
     // 字号是给整窗用的（提示语也一起缩放），挂在渲染根上
@@ -139,12 +251,18 @@ class MpDesktopLyrics extends LitElement {
   }
 
   render() {
+    // 字级歌词：一个字素一个 span（`--w` 写在它们身上，见文件头）；
+    // 行级歌词：与从前一样，整行一个字符串。
+    const line = this._wordsOn
+      ? html`${this.chars.map((ch, k) => html`<span class="dl__word" data-i=${k}>${ch}</span>`)}`
+      : this.text;
     return html`
       <div
         class="dl"
         id="dl"
         data-state=${this.text ? (this.playing ? "singing" : "paused") : "idle"}
         data-style=${this.styleId}
+        data-words=${this._wordsOn ? "1" : "0"}
       >
         <!-- 悬浮控制栏：鼠标移入窗口时才出现（"常规窗口"形态）。
              不悬浮时整块（含窗口背景）完全透明，不会在桌面上留下半透明色块。 -->
@@ -162,7 +280,8 @@ class MpDesktopLyrics extends LitElement {
             </select>
           </div>
         </div>
-        <p class="dl__line" id="dl-line">${this.text}</p>
+        <p class="dl__line" id="dl-line">${line}</p>
+        ${this.trans.length ? html`<p class="dl__trans" id="dl-trans">${this.trans.join(" · ")}</p>` : nothing}
         <p class="dl__tip" id="dl-tip" ?hidden=${this.tipHidden}>${this.tip}</p>
       </div>
     `;

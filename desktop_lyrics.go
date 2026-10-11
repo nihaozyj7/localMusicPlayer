@@ -50,11 +50,22 @@ const (
 )
 
 // desktopLyricsSnapshot 桌面歌词窗口要显示的内容。
+//
+// 字级歌词（逐字）多带三样东西：每个字素的起点 Words、结束 WordEnds，以及一个
+// 「位置锚点」PosMs + AtMs。窗口拿锚点按自己的墙钟外推，于是两次推送之间也能
+// 继续把颜色扫过去（推送只有 250ms 一档，只吃推送的话边界是一跳一跳的）。
+// 行级歌词用不到这些字段，omitempty 让它们在事件里根本不出现。
 type desktopLyricsSnapshot struct {
-	Enabled  bool   `json:"enabled"`
-	Text     string `json:"text"`
-	Playing  bool   `json:"playing"`
-	FontSize int    `json:"fontSize"`
+	Enabled  bool     `json:"enabled"`
+	Text     string   `json:"text"`
+	Trans    []string `json:"trans,omitempty"`
+	Chars    []string `json:"chars,omitempty"`
+	Words    []int    `json:"words,omitempty"`
+	WordEnds []int    `json:"wordEnds,omitempty"`
+	PosMs    int      `json:"posMs"`
+	AtMs     int64    `json:"atMs"`
+	Playing  bool     `json:"playing"`
+	FontSize int      `json:"fontSize"`
 }
 
 // desktopLyricsWindow 返回已存在的歌词窗口（没有则 nil）。
@@ -351,6 +362,27 @@ func (s *WindowService) UpdateDesktopLyrics(payload map[string]any) desktopLyric
 	if v, ok := payload["text"].(string); ok {
 		s.desktopText = v
 	}
+	if v, ok := payload["trans"].([]any); ok {
+		s.desktopTrans = jsonStrings(v)
+	}
+	// 字级时间轴：前端每次都会带这几个键（没有字级时是空数组），
+	// 所以「键存在」就等于「以这次为准」—— 没有它就清空，
+	// 否则上一句的逐字时间轴会留在窗口里，拿旧的起点继续填。
+	if v, ok := payload["chars"]; ok {
+		s.desktopChars = jsonStrings(v)
+	}
+	if v, ok := payload["words"]; ok {
+		s.desktopWords = jsonInts(v)
+	}
+	if v, ok := payload["wordEnds"]; ok {
+		s.desktopWordEnds = jsonInts(v)
+	}
+	if v, ok := payload["posMs"].(float64); ok {
+		s.desktopPosMs = int(v)
+	}
+	if v, ok := payload["atMs"].(float64); ok {
+		s.desktopAtMs = int64(v)
+	}
 	if v, ok := payload["playing"].(bool); ok {
 		s.desktopPlaying = v
 	}
@@ -360,6 +392,38 @@ func (s *WindowService) UpdateDesktopLyrics(payload map[string]any) desktopLyric
 	s.desktopMu.Unlock()
 	s.pushDesktopLyrics()
 	return s.desktopState()
+}
+
+// jsonInts / jsonStrings 把 Wails 传进来的 JSON 数组转成 Go 切片。
+//
+// 走 map[string]any 的值一律是 []any，元素是 float64（JS 没有整数类型），
+// 所以不能直接用类型断言，必须逐个转。
+func jsonInts(v any) []int {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]int, 0, len(arr))
+	for _, item := range arr {
+		if n, ok := item.(float64); ok {
+			out = append(out, int(n))
+		}
+	}
+	return out
+}
+
+func jsonStrings(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, item := range arr {
+		if str, ok := item.(string); ok && str != "" {
+			out = append(out, str)
+		}
+	}
+	return out
 }
 
 // DesktopLyricsState 读当前状态。
@@ -410,6 +474,12 @@ func (s *WindowService) desktopState() desktopLyricsSnapshot {
 	return desktopLyricsSnapshot{
 		Enabled:  s.desktopOn,
 		Text:     s.desktopText,
+		Trans:    s.desktopTrans,
+		Chars:    s.desktopChars,
+		Words:    s.desktopWords,
+		WordEnds: s.desktopWordEnds,
+		PosMs:    s.desktopPosMs,
+		AtMs:     s.desktopAtMs,
 		Playing:  s.desktopPlaying,
 		FontSize: size,
 	}
