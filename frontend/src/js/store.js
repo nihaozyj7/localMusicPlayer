@@ -115,6 +115,11 @@ const DEFAULT_CONFIG = {
   downloadDir: "",
   // 是否为在线歌曲联网抓取封面（多来源，见 internal/coverfetch）
   onlineCover: true,
+  // 在线歌词是否优先使用「字级（逐字）」来源。
+  // 字级歌词只有 QQ 音乐（QRC）与酷狗（KRC）有，而这两家用的是**第三方私有编码**
+  // （本程序只做兼容性解析，见 docs/43 的 H2）。关掉后只用行级来源，
+  // 歌词照常可用，只是没有逐字高亮。
+  onlineWordLyrics: true,
   // 是否把抓到的封面/歌词写回歌曲文件自身的标签。
   // 默认关闭：这会在用户的音乐文件上做修改，必须由用户明确开启。
   embedMeta: false,
@@ -2343,6 +2348,7 @@ const SYNCED_KEYS = [
   "loudnessLimit",
   "downloadDir",
   "onlineCover",
+  "onlineWordLyrics",
   "embedMeta",
   "rowClickAction",
   "resumeProgress",

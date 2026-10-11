@@ -211,6 +211,18 @@ func (s *OnlineService) coversEnabled() bool {
 	return s.store.Get().OnlineCover
 }
 
+// applyLyricsPrefs 把「在线歌词偏好」同步给歌词聚合器。
+//
+// 为什么在**调用点**读配置而不是启动时读一次：配置是前端 400ms 防抖推过来的，
+// 用户刚拨完「优先使用逐字歌词」就该立刻生效；调用点读到的永远是最新值。
+// 聚合器内部只在值真的变化时才清缓存，所以重复同步接近零成本。
+func (s *OnlineService) applyLyricsPrefs() {
+	if s.lyrics == nil {
+		return
+	}
+	s.lyrics.SetWordLevelEnabled(s.store.Get().OnlineWordLyrics)
+}
+
 // coverURLForTrack 给一首在线曲目生成「同源封面地址」。
 //
 // 直接把标题/歌手/专辑作为查询参数带过去，代理端再用 coverfetch 解析出真实图源。
@@ -242,6 +254,7 @@ func (s *OnlineService) Lyrics(title, artist string, duration int64) (map[string
 	if strings.TrimSpace(title) == "" {
 		return map[string]any{"lrc": "", "source": "none"}, nil
 	}
+	s.applyLyricsPrefs()
 	// 先做本地整形（不联网、不等 AI），再按需让 AI 兜底清洗脏标题。
 	// 顺序不能反：AI 很慢，本地整形能解决的那部分不该花一次网络往返。
 	title, artist = sanitizeLyricsMeta(title, artist)
@@ -783,6 +796,7 @@ func (s *OnlineService) SearchLyrics(keyword, title, artist string, duration int
 	if s.lyrics == nil {
 		return nil, fmt.Errorf("lyrics service disabled")
 	}
+	s.applyLyricsPrefs()
 	keyword = strings.TrimSpace(keyword)
 	title, artist = sanitizeLyricsMeta(title, artist)
 
@@ -844,6 +858,7 @@ func (s *OnlineService) FetchLyrics(provider, id string) (map[string]any, error)
 	if s.lyrics == nil {
 		return nil, fmt.Errorf("lyrics service disabled")
 	}
+	s.applyLyricsPrefs()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	item, err := s.lyrics.Fetch(ctx, provider, id)
@@ -872,6 +887,7 @@ func (s *OnlineService) ProbeLyricsFormat(provider, id string) (map[string]any, 
 	if s.lyrics == nil {
 		return nil, fmt.Errorf("lyrics service disabled")
 	}
+	s.applyLyricsPrefs()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	item, err := s.lyrics.Fetch(ctx, provider, id)

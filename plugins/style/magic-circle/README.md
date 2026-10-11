@@ -115,8 +115,16 @@ export const LAYOUT = {
   拼字态、逐字点亮整句都不亮；
 - 释放走 `render.dropGlyphs(node)`：**一份清两份**（未唱 + 已唱），不然金字位图会漏在节点上。
 
-自检：`node tools/check-word-lyrics.mjs` 的 §[7] 直接数画布上的金色像素
-（逐字变多 + 行级歌词零金色）；纯逻辑在 `frontend/tests/magic-circle-word.test.js`。
+自检（全部在**本样式包自己**的 `tests/` 下，不依赖播放器项目源码）：
+
+```powershell
+node --test "plugins/style/magic-circle/tests/*.test.js"          # 纯逻辑
+node plugins/style/magic-circle/tests/canvas-word-check.mjs       # 画布金色像素
+```
+
+前者覆盖 `wordLitCount`（含多语言行整行回退）/ `withAlpha` / `WORD` 配色契约 /
+`shouldLeave` / `withDisplayText`；后者自带静态服务与假宿主，直接数 canvas 上的
+金色像素（逐字变多 + 行级歌词零金色），不需要先起 `npm run dev`。
 
 ## 沉浸式整窗渲染
 
@@ -246,6 +254,10 @@ CPU 画像里 93% 的时间落在**原生绘制**、JS 只占个位数：瓶颈�
 - `destroy()` 里取消帧循环、摘掉指针监听、清空粒子池与 DOM。
 
 ## 安装
+
+> 本目录（`plugins/style/magic-circle/`）是这份样式的**源码管理位置**——
+> 播放器不会去读它，它也不会被播放器的 lint / typecheck / 单测门禁扫到。
+> 要让播放器用上，按下面三步拷进数据目录。
 
 1. 把整个 `magic-circle/` 目录拷进 `<数据目录>/player-skins/`；
    （Windows 下通常是 `%APPDATA%\LocalMusicPlayer\player-skins\magic-circle`）

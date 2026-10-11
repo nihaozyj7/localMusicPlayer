@@ -149,6 +149,13 @@ type Config struct {
 	DownloadDir string `json:"downloadDir"`
 	// OnlineCover 是否联网为在线歌曲抓取封面（多来源，见 internal/coverfetch）。
 	OnlineCover bool `json:"onlineCover"`
+	// OnlineWordLyrics 在线歌词是否优先使用「字级（逐字）」来源。
+	//
+	// 字级歌词只有 QQ 音乐（QRC）与酷狗（KRC）能给，而这两家用的是**第三方私有
+	// 编码**：本程序只做兼容性解析以便显示逐字时间轴（见 internal/lyricsfetch）。
+	// 关掉后不再请求/解析这两种编码，只用行级来源 —— 歌词照常可用，只是没有逐字高亮。
+	// 这是给「不希望涉及私有格式解析」的用户留的开关，默认开启（与加入它之前行为一致）。
+	OnlineWordLyrics bool `json:"onlineWordLyrics"`
 	// EmbedMeta 是否把抓到的封面/歌词写回歌曲文件自身的标签。
 	// 默认关闭：写标签会改写用户的音乐文件，必须是用户明确开启的行为。
 	// 关闭时封面与歌词仍然可用，只是放在缓存目录里（见 internal/metacache）。
@@ -467,7 +474,9 @@ func DefaultConfig() *Config {
 
 		DownloadDir: DefaultDownloadDir(),
 		OnlineCover: true,
-		EmbedMeta:   false,
+		// 默认开启：与加入这个开关之前的行为一致（能拿到逐字歌词就播逐字）。
+		OnlineWordLyrics: true,
+		EmbedMeta:        false,
 
 		RowClickAction: "next",
 		// 默认开启：与加入这个开关之前「回到上次那首歌」的体验一致，

@@ -17,9 +17,10 @@
      5. 歌词工作台的来源徽标要显示「逐字」，让用户看得出字级真的被用上了；
      6. 行级歌词照旧不产生任何字素 span；全程无控制台 error；
      7. 换成沉浸式（immersive）样式后逐字点亮同样生效（两套内置样式共用 lyrics-view）；
-     8. 魔法阵（magic-circle）样式：canvas 上的字同样按字素点亮（金色像素随进度
-        变多），没有字级时间轴时一个金色像素都不出现、且渲染结果一像素不变
-        （= 回退成逐行歌词）。纯逻辑部分在 frontend/tests/magic-circle-word.test.js。
+   ★ 第三方样式（如「魔法阵」）的画布逐字点亮**不在这里验**：那部分自检已随
+     样式包迁到 plugins/style/magic-circle/tests/，自带静态服务与假宿主，
+     不需要先起 Vite：
+       node plugins/style/magic-circle/tests/canvas-word-check.mjs
 
    前置：npm run dev（5173）
    用法：node tools/check-word-lyrics.mjs [port]
@@ -29,20 +30,11 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
 
 const WEB = process.argv[2] ? String(process.argv[2]).replace(/\/$/, "") : "http://127.0.0.1:5173";
 const CDP_PORT = 9478;
 const W = 1440;
 const H = 900;
-
-/**
- * 魔法阵（第三方示例样式）：它的字画在 canvas 上，DOM 里查不到 ——
- * 用 Vite 的 `/@fs/` 直接 import 仓库里那份示例包（不必先拷进
- * internal/skins/resources，那是静态预览服务器的路径）。
- */
-const MC_SKIN = fileURLToPath(new URL("../player-skins/magic-circle/skin.js", import.meta.url));
-const MC_URL = "/@fs" + decodeURIComponent(pathToFileURL(MC_SKIN).pathname);
 
 /**
  * 字级歌词：每行五个字，逐字间隔 100ms（增强 LRC = 后端归一化后的形态）。
@@ -571,152 +563,6 @@ try {
     JSON.stringify(immersive?.fills)
   );
   check(!/<\\d\\d:/.test(immersive?.text || ""), "行文本里没有残留 <00:12.000> 标记", String(immersive?.text));
-
-  /* ------------------------------------------------------------------ */
-  console.log("\n[8] 魔法阵（magic-circle 示例样式）：画布上的逐字点亮与行级回退");
-  if (!existsSync(MC_SKIN)) {
-    check(false, "示例样式包 player-skins/magic-circle 存在", MC_SKIN);
-  } else {
-    const mc = await evaluate(`
-      (async () => {
-        // ★ headless 下合成器不给 BeginFrame（实测 rAF 一次都不来，document.hidden
-        //   还是 false），皮肤自己的帧循环于是一帧都不跑 —— 把 rAF 换成定时器，
-        //   这条循环就跟合成器无关，能稳定推进。顺带也不必靠截图断言：
-        //   画布像素直接 getImageData 数出来。
-        const rafOrig = window.requestAnimationFrame;
-        const cafOrig = window.cancelAnimationFrame;
-        let frames = 0;
-        window.requestAnimationFrame = (cb) => setTimeout(() => { frames += 1; cb(performance.now()); }, 8);
-        window.cancelAnimationFrame = (tid) => clearTimeout(tid);
-        let root = null;
-        let skin = null;
-        let ctx = null;
-        try {
-          const urls = performance.getEntriesByType("resource").map((e) => e.name);
-          const base =
-            urls.find((n) => /player-skins\\/src\\/index\\.js/.test(n)) ||
-            urls.find((n) => /player-skins/.test(n) && n.endsWith("index.js")) ||
-            "/packages/player-skins/src/index.js";
-          const pkg = await import(new URL(base, location.href).href);
-          const mod = await import(/* @vite-ignore */ ${JSON.stringify(MC_URL)});
-
-          root = document.createElement("div");
-          root.style.cssText = "position:fixed;left:0;top:0;width:900px;height:600px;z-index:-1";
-          document.body.appendChild(root);
-
-          let lines = [];
-          let index = -1;
-          let src = "preview";
-          ctx = {
-            root,
-            backgroundRoot: null,
-            env: () => ({ width: 900, height: 600, dpr: 1, reducedMotion: false }),
-            options: () => ({
-              showLyrics: true,
-              interactive: false,
-              animations: false,
-              lyricsFontSize: 16,
-              performanceMode: "smooth",
-            }),
-            lyrics: () => ({ lines, index, source: src, text: "x", status: "ready", statusText: "" }),
-            track: () => ({ title: "T", artist: "A", album: "" }),
-            spectrum: () => null,
-            sdk: pkg,
-            actions: { seek() {} },
-          };
-          skin = mod.default;
-          skin.mount(ctx);
-
-          const canvas = root.querySelector(".mc__canvas");
-          if (!canvas) return { error: "挂载后没有 .mc__canvas" };
-          const g = canvas.getContext("2d");
-          const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
-          /** 整幅画面的两个判据：金色像素（已唱）与亮像素（字画出来了） */
-          const stats = () => {
-            const d = g.getImageData(0, 0, canvas.width, canvas.height).data;
-            let warm = 0;
-            let bright = 0;
-            let sum = 0;
-            for (let i = 0; i < d.length; i += 4) {
-              if (d[i] >= 200) bright += 1;
-              if (d[i] - d[i + 2] >= 30 && d[i] >= 150) warm += 1;
-              sum = (sum + d[i] * 31 + d[i + 1] * 17 + d[i + 2] * 7) % 2147483647;
-            }
-            return { warm, bright, sum };
-          };
-          const setLines = (lrc, source) => {
-            lines = pkg.parseLrc(lrc);
-            src = source;
-            index = 0;
-            skin.update(ctx, { type: "lyrics" });
-          };
-          const at = async (ms) => {
-            skin.update(ctx, { type: "progress", position: ms, lyricIndex: 0, duration: 40000, playing: false });
-            await wait(400);
-            return stats();
-          };
-
-          const WORD = "[00:06.00]<00:06.000>第<00:06.100>二<00:06.200>句<00:06.300>开<00:06.400>唱\\n[00:12.00]下一句";
-          const PLAIN = "[00:06.00]第二句开唱\\n[00:12.00]下一句";
-
-          setLines(WORD, "w1");
-          await wait(1400);
-          const wordPre = await at(5900); // 还没开口：整行压暗，一个字都不该亮
-          const word0 = await at(6050); // 唱到第 1 个字
-          const word2 = await at(6300); // 唱到第 4 个字
-          const word4 = await at(6500); // 整句唱完
-          setLines(PLAIN, "p1");
-          await wait(900);
-          const plain0 = await at(6050);
-          const plain2 = await at(6300);
-          const plain4 = await at(6500);
-
-          return {
-            frames,
-            canvas: { w: canvas.width, h: canvas.height },
-            wordPre,
-            word0,
-            word2,
-            word4,
-            plain0,
-            plain2,
-            plain4,
-            // 行级歌词在不同进度下必须**一像素不变**（外推 / 点亮都不该发生）
-            plainSame: plain0.sum === plain2.sum && plain2.sum === plain4.sum,
-          };
-        } catch (err) {
-          return { error: String(err && err.message ? err.message : err) };
-        } finally {
-          window.requestAnimationFrame = rafOrig;
-          window.cancelAnimationFrame = cafOrig;
-          try {
-            if (skin) skin.destroy(ctx);
-          } catch {
-            /* 已经拆过了 */
-          }
-          if (root) root.remove();
-        }
-      })()
-    `);
-    console.log("   ", JSON.stringify(mc));
-    check(!mc?.error, "魔法阵能在页面里挂载并渲染", String(mc?.error || ""));
-    check(mc?.frames > 0, "皮肤自己的帧循环跑起来了（rAF 已换成定时器）", `frames=${mc?.frames}`);
-    check(
-      mc?.wordPre && mc.wordPre.warm === 0 && mc.wordPre.bright < mc.plain0.bright,
-      "还没唱到这一句：没有金色字，且未唱字被压暗",
-      JSON.stringify(mc?.wordPre)
-    );
-    check(mc?.word0?.warm > 0, "唱到第 1 个字：金色开始出现", JSON.stringify(mc?.word0));
-    check(
-      mc?.word2?.warm > mc?.word0?.warm,
-      "唱到第 4 个字：点亮的字更多（金色像素变多）",
-      JSON.stringify(mc?.word2)
-    );
-    check(mc?.word4?.warm > mc?.word2?.warm, "整句唱完：整行都点亮", JSON.stringify(mc?.word4));
-    check(mc?.plain0?.warm === 0, "行级歌词一个金色像素都不产生", JSON.stringify(mc?.plain0));
-    check(mc?.plainSame === true, "行级歌词在不同进度下渲染完全一致（回退成逐行）", String(mc?.plainSame));
-  }
 
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   console.log(errors.length ? `—— 控制台报错 ${errors.length} 条 ——` : "—— 控制台无 error ——");

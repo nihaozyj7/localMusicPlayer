@@ -17,7 +17,7 @@
    ========================================================================== */
 
 import { MpElement, define, html, nothing, repeat, requestAppUpdate, icon } from "./base.js";
-import { toast } from "./overlays.js";
+import { openModal, toast } from "./overlays.js";
 import { backend, isWails } from "../bridge.js";
 import { playContext, registerOnlineSong, state } from "../store.js";
 import { commit } from "../store.js";
@@ -487,11 +487,73 @@ function previewOnline(songId) {
   toast(`已加入播放列表并开始试听：${online.title}`, { tone: "success", duration: 2200 });
 }
 
+/* --------------------------------------------------------------------------
+   下载前的版权提示
+   --------------------------------------------------------------------------
+   「下载」把第三方平台上的音频**复制到用户磁盘**上：对用户属于个人使用，
+   但工具方有义务把「只能自己听、不要传播」讲清楚 —— 这个按钮是整条链路上
+   唯一能让用户看到这句话的地方（见 docs/43 的 H1）。
+
+   做成「首次确认 + 不再提示」而不是每次弹窗：每次点都拦一下会被当成噪音，
+   用户很快就会条件反射地点确定，反而比不提示更糟。
+   -------------------------------------------------------------------------- */
+const DOWNLOAD_NOTICE_KEY = "music-player.download.notice.v1";
+
+/** 用户之前是否勾选过「不再提示」。localStorage 不可用时当作「没确认过」。 */
+function downloadNoticeAccepted() {
+  try {
+    return localStorage.getItem(DOWNLOAD_NOTICE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 记住「不再提示」；写不进去（隐私模式 / 存储被禁用）不影响本次下载。 */
+function rememberDownloadNotice() {
+  try {
+    localStorage.setItem(DOWNLOAD_NOTICE_KEY, "1");
+  } catch {
+    /* 存储不可用：下次仍然提示，不是错误 */
+  }
+}
+
+/**
+ * 弹出下载前的使用范围提示。
+ * @returns {Promise<boolean>} true = 已知晓，可以继续下载
+ */
+function confirmDownloadNotice(song) {
+  return new Promise((resolve) => {
+    openModal({
+      title: "下载前请确认",
+      desc: `即将把《${song.title || "未命名"}》的音频保存到你的下载目录。`,
+      body: html`
+        <div class="about-note">
+          <div class="about-note__body">· 下载内容来自第三方平台，版权归原作者与权利人所有。</div>
+          <div class="about-note__body">· 仅限个人学习、欣赏使用，请勿传播、二次分发或用于商业用途。</div>
+          <div class="about-note__body">· 各平台对其内容的使用另有服务条款，请一并遵守。</div>
+        </div>
+        <label class="setting__hint"><input type="checkbox" data-field="dontAsk" /> 不再提示</label>
+      `,
+      okText: "我已知晓，开始下载",
+      onOk: (values) => {
+        if (values.dontAsk) rememberDownloadNotice();
+        resolve(true);
+        return true;
+      },
+      onCancel: () => {
+        resolve(false);
+      },
+    });
+  });
+}
+
 async function downloadOnline(song) {
   if (!isWails()) {
     toast("浏览器预览无法下载", { tone: "warning" });
     return;
   }
+  // 首次下载先确认一次（之后由「不再提示」记住）
+  if (!downloadNoticeAccepted() && !(await confirmDownloadNotice(song))) return;
   try {
     const res = await backend.downloadStart(
       song.bvid || String(song.id).replace(/^bili:/, ""),

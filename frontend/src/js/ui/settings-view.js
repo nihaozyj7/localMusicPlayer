@@ -33,7 +33,10 @@ import {
   BUNDLED_BINARIES,
   DATA_SOURCES,
   DISCLAIMER,
+  DOWNLOAD_SCOPE,
   LICENSE_NOTES,
+  NETWORK_USAGE,
+  PRIVACY_NOTES,
   PROJECT_LINKS,
   TECH_STACK,
   THANKS,
@@ -1416,6 +1419,14 @@ class MpSettingsLayer extends MpElement {
           control: switchControl("onlineCover", state.config.onlineCover !== false, "联网获取封面"),
         })}
         ${settingRow({
+          label: "优先使用逐字歌词",
+          hint:
+            "逐字（卡拉OK）歌词来自 QQ 音乐 QRC / 酷狗 KRC 这两种第三方私有编码，" +
+            "本程序只做兼容性解析以便显示逐字时间轴。关掉后只用行级来源（LRCLIB / 网易云等），" +
+            "歌词仍然可用，只是没有逐字高亮。",
+          control: switchControl("onlineWordLyrics", state.config.onlineWordLyrics !== false, "优先使用逐字歌词"),
+        })}
+        ${settingRow({
           label: "把封面/歌词写进歌曲文件",
           hint: embedHintText(),
           control: switchControl("embedMeta", state.config.embedMeta === true, "写进歌曲文件"),
@@ -1452,6 +1463,27 @@ class MpSettingsLayer extends MpElement {
               ${icon("lyrics")}<span>歌词</span>
             </button>
           </div>
+        </div>
+
+        <!-- 联网与隐私：让用户不读源码也能知道「什么时候联网 / 连到哪 / 怎么关」。
+             清单本体在 about-info.js（NETWORK_USAGE / PRIVACY_NOTES），
+             改默认开关时要同步那一份。 -->
+        <div class="about-subtitle">联网与隐私</div>
+        <div class="about-note">
+          <div class="about-note__title"><span>会联网的功能</span></div>
+          ${NETWORK_USAGE.map(
+            (u) => html`<div class="about-note__body">
+              · ${u.what} → ${u.where}（${u.when}；关闭方式：${u.off}）
+            </div>`
+          )}
+        </div>
+        <div class="about-note">
+          <div class="about-note__title"><span>什么留在本机</span></div>
+          ${PRIVACY_NOTES.map((t) => html`<div class="about-note__body">· ${t}</div>`)}
+        </div>
+        <div class="about-note">
+          <div class="about-note__title"><span>下载内容的使用范围</span></div>
+          ${DOWNLOAD_SCOPE.map((t) => html`<div class="about-note__body">· ${t}</div>`)}
         </div>
       </div>
       <div class="card__foot">
@@ -1532,6 +1564,15 @@ class MpSettingsLayer extends MpElement {
             "下载歌曲时用 AI 整理元数据"
           ),
         })}
+        <!-- 发送内容的常驻说明：横幅式的「首次确认」只在第一次弹（见 settings.js#confirmAIFirstUse），
+             真正要能随时查到的是这一段。 -->
+        <div class="about-note">
+          <div class="about-note__title"><span>AI 会收到什么</span></div>
+          <div class="about-note__body">· 发送：歌曲的标题 / 歌手 / 专辑 / 时长，以及文件名（只有文件名，不含完整路径）。</div>
+          <div class="about-note__body">· 不发：曲库列表、播放记录、文件路径与任何设备标识。</div>
+          <div class="about-note__body">· 接口地址由你自己填写，通常在境外；请自行确认该服务的隐私政策与数据处理方式。</div>
+          <div class="about-note__body">· 随时可关：清空 Base URL / API Key，或关掉下面两个使用 AI 的开关。</div>
+        </div>
         <div class="setting__hint">
           ${
             configured

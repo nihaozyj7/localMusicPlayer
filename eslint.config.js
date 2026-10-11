@@ -7,6 +7,7 @@
      · frontend/tests/**          单测（node --test）
      · tools/**、*.config.js      构建脚本（Node 环境）
    忽略：dist / bindings（生成物）、build/ffmpeg（第三方源码）、bin、node_modules
+         plugins/（第三方主题与样式包 —— 它们自带 tests/，不参与本项目的门禁）
    ========================================================================== */
 
 import js from "@eslint/js";
@@ -40,6 +41,8 @@ export default [
       "frontend/.bindings-tmp-*/**",
       ".task/**",
       "frontend/packages/*/dist/**",
+      // 第三方主题与样式包：它们有自己的目录约定与 tests/，不进本项目的 lint 门禁
+      "plugins/**",
     ],
   },
 

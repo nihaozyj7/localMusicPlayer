@@ -12,7 +12,8 @@
         两种语言用分隔符拼在一起。
 
    另外断言「歌词工作台的行没被折叠」走的是纯单测（frontend/tests/lrc-edit.test.js），
-   这里不再重复。
+   这里不再重复。第三方样式（如「魔法阵」）自己的多语言拼接自检也已随样式包迁到
+   plugins/style/magic-circle/tests/magic-circle-logic.test.js。
 
    前置：npm run dev（5173）
    用法：node tools/check-multilingual-lyrics.mjs [port]
@@ -22,7 +23,6 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { pathToFileURL } from "node:url";
 
 const WEB = process.argv[2] ? String(process.argv[2]).replace(/\/$/, "") : "http://127.0.0.1:5173";
 const CDP_PORT = 9465;
@@ -149,46 +149,6 @@ function check(ok, label, detail = "") {
   }
 }
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-
-/* --------------------------------------------------------------------------
-   [0] 魔法阵样式：画布上没有 DOM 副行可查，直接打它的拼接函数
-   -------------------------------------------------------------------------- */
-console.log("\n[0] 魔法阵样式（画布渲染）：副行拼进这一行的文本");
-const mcPath = join(process.cwd(), "player-skins", "magic-circle", "skin.js");
-if (!existsSync(mcPath)) {
-  console.log("  SKIP 仓库里没有 player-skins/magic-circle");
-} else {
-  let mc;
-  try {
-    const mod = await import(pathToFileURL(mcPath).href);
-    const joinLine = mod.withDisplayText;
-    if (typeof joinLine !== "function") throw new Error("skin.js 没有导出 withDisplayText");
-    const viaSdk = joinLine({ sdk: { lyricDisplayText: (l) => [l.text, ...(l.trans || [])].join(" · ") } }, [
-      { time: 0, text: "Hello", trans: ["你好"] },
-      { time: 1, text: "Solo" },
-    ]);
-    const fallback = joinLine({ sdk: {} }, [{ time: 0, text: "A", trans: ["B"] }]);
-    mc = {
-      count: viaSdk.length,
-      joined: viaSdk[0]?.text,
-      solo: viaSdk[1]?.text,
-      fallback: fallback[0]?.text,
-      keptTime: viaSdk[0]?.time,
-    };
-  } catch (err) {
-    mc = { error: String(err?.message || err) };
-  }
-  console.log("   ", JSON.stringify(mc));
-  check(!mc.error, "能加载样式入口", JSON.stringify(mc.error || ""));
-  check(mc.count === 2, "行数不变（只改文本，不改时间轴）", String(mc.count));
-  check(mc.joined === "Hello · 你好", "有副行 → 拼成一行", String(mc.joined));
-  check(
-    mc.solo === "Solo" && mc.keptTime === 0,
-    "没副行 → 原样返回，时间不动",
-    JSON.stringify([mc.solo, mc.keptTime])
-  );
-  check(mc.fallback === "A · B", "老宿主没有 sdk 零件时退回本地拼接", String(mc.fallback));
-}
 
 try {
   await send("Runtime.enable");

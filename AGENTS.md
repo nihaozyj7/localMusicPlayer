@@ -174,6 +174,23 @@ src/styles/index.css      唯一样式入口（@import 顺序固定）
   与第三方样式**同构、同一条加载路径**（`skin.json` + `skin.js` + `skin.css` + `assets/`）。
 - 第三方样式放数据目录 `player-skins/<id>/`；示例包与《皮肤说明.md》在 `internal/skins/template/`。
 
+### 4.3b `plugins/` —— 自开发的第三方主题与样式包（**与项目源码解耦**）
+
+`plugins/theme/`（主题 CSS）+ `plugins/style/<id>/`（样式包）是**外部产物**的源码管理位置，
+播放器**不会读这个目录**（它只认 `%APPDATA%\LocalMusicPlayer\themes\` 与 `player-skins\`），
+改完要自己拷过去再「重新扫描」。
+
+解耦是**硬约定**，不是"尽量别引用"：
+
+- `plugins/**` 已在 `eslint.config.js` 的 `ignores` 与 `.prettierignore` 里 —— 不进本项目的
+  lint / format / typecheck 门禁（注意 eslint 的 `**/*.test.js` 会跨目录命中，必须显式忽略）；
+- **自检跟着插件走**：`plugins/style/<id>/tests/` 里放这份样式包自己的测试
+  （纯逻辑用 `node --test`，需要浏览器的自带静态服务 + 假宿主），
+  **不要**为了某个第三方样式去改 `tools/check-*.mjs` 或往 `frontend/tests/` 加用例；
+- 插件零项目 import：主题只声明令牌；样式包只走契约（见 §6 第 10 条）。
+
+目录约定、令牌契约、安装与自检命令见 `plugins/README.md` 与各自的 `README.md`。
+
 ### 4.4 生成物与构建
 
 ```

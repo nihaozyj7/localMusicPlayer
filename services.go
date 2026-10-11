@@ -2408,6 +2408,8 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			c.DownloadDir = bootstrap.ExpandPath(asString(raw, c.DownloadDir))
 		case "onlineCover":
 			c.OnlineCover = asBool(raw, c.OnlineCover)
+		case "onlineWordLyrics":
+			c.OnlineWordLyrics = asBool(raw, c.OnlineWordLyrics)
 		case "embedMeta":
 			c.EmbedMeta = asBool(raw, c.EmbedMeta)
 		// —— 交互 ——

@@ -9,18 +9,19 @@
         CSS 播 lyric-exit；**只有真当过当前行的那一行**会退场（seek 直接跳过
         一整段行时，中间那些不该集体退场）；
      2. 特效渲染器（fx-lyrics.js）：同样的语义，动画是 fxl-exit；
-     3. 重新成为当前行 → data-exit 被摘掉（下一次退场能重播）；
-     4. 魔法阵样式：切到它、连唱两句，抓两张截图供人工核对「碎裂飘散」。
+     3. 重新成为当前行 → data-exit 被摘掉（下一次退场能重播）。
 
-   前置：npm run dev（5173）；魔法阵那份要拷进 internal/skins/resources/
+   ★ 第三方样式（如「魔法阵」）的退场自检**不在这里**：判据部分（shouldLeave）
+     已随样式包迁到 plugins/style/magic-circle/tests/magic-circle-logic.test.js。
+
+   前置：npm run dev（5173）
    用法：node tools/check-lyric-exit.mjs [port]
    ========================================================================== */
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { pathToFileURL } from "node:url";
 
 const WEB = process.argv[2] ? String(process.argv[2]).replace(/\/$/, "") : "http://127.0.0.1:5173";
 const CDP_PORT = 9477;
@@ -126,10 +127,6 @@ async function evaluate(expression) {
   if (r.result?.exceptionDetails) errors.push(`eval: ${r.result.exceptionDetails.text}`);
   return r.result?.result?.value;
 }
-async function shot(name) {
-  const r = await send("Page.captureScreenshot", { format: "png" });
-  writeFileSync(join(OUT, `${name}.png`), Buffer.from(r.result.data, "base64"));
-}
 
 let pass = 0;
 let fail = 0;
@@ -140,31 +137,6 @@ function check(ok, label, detail = "") {
   } else {
     fail += 1;
     console.log(`  FAIL ${label}  ${detail}`);
-  }
-}
-
-/* --------------------------------------------------------------------------
-   [0] 魔法阵样式（画布渲染，DOM 里查不到文字）：退场判据本体
-   画布上的字只能截图给人工看，但“什么时候该退场”这条判据是纯函数，直接打它。
-   -------------------------------------------------------------------------- */
-console.log("\n[0] 魔法阵：上一句该不该退场（onSing 用的判据）");
-const mcPath = join(process.cwd(), "player-skins", "magic-circle", "skin.js");
-if (!existsSync(mcPath)) {
-  console.log("  SKIP 仓库里没有 player-skins/magic-circle");
-} else {
-  let judge = null;
-  try {
-    judge = (await import(pathToFileURL(mcPath).href)).shouldLeave;
-  } catch (err) {
-    console.log("  加载 skin.js 出错:", err?.message || err);
-  }
-  if (typeof judge !== "function") {
-    check(false, "skin.js 导出了 shouldLeave", String(judge));
-  } else {
-    check(judge(0, 1) === true, "正常推进 0→1 要退场（以前写成 prev > sing，恒 false）");
-    check(judge(3, 1) === true, "往回 seek 3→1 也要退场");
-    check(judge(-1, 0) === false, "第一句（prev = -1）不退场");
-    check(judge(2, 2) === false, "没换行就不退场");
   }
 }
 
@@ -325,49 +297,9 @@ try {
   check(fx?.out?.[2]?.exit === "", "第 3 行没当过当前行 → 不退场", JSON.stringify(fx?.out?.[2]));
   check(fx?.els2?.[1]?.exit === "1", "第 2 行交棒后也退场", JSON.stringify(fx?.els2));
 
-  console.log("\n[5] 魔法阵样式：连唱两句（截图供人工核对碎裂退场）");
-  // 行信息要在**切样式之前**读：魔法阵是画布渲染，没有 #pv-lyrics 这个 DOM
-  const plan = await evaluate(`
-    (() => {
-      const rows = [...document.querySelectorAll("#pv-lyrics .lyric")].map((el) => ({
-        i: Number(el.dataset.lyricIndex),
-        t: Number(el.dataset.time),
-        current: el.getAttribute("aria-current") === "true",
-      }));
-      const cur = rows.find((r) => r.current) || rows[0];
-      const next = rows.find((r) => cur && r.i === cur.i + 1) || rows[1] || null;
-      return cur && next ? { cur, next } : { error: "找不到可用的两句", n: rows.length };
-    })()
-  `);
-  const mc = await evaluate(`
-    (async () => {
-      const btn = document.querySelector('[data-pv-skin="magic-circle"]');
-      if (!btn) return { skipped: true };
-      btn.click();
-      await new Promise((r) => setTimeout(r, 1500));
-      return { skipped: false, skin: document.getElementById("playerview")?.dataset.skin };
-    })()
-  `);
-  if (mc?.skipped) {
-    console.log("  SKIP 仓库预览里没有 magic-circle");
-  } else if (plan?.error) {
-    check(false, "魔法阵：准备切句", JSON.stringify(plan));
-  } else {
-    await evaluate(seekExpr(Math.max(0, Number(plan.next.t) - 700)));
-    await sleep(620); // 位置 ≈ next.t - 80：这一句还亮着
-    await shot("mc-before");
-    await sleep(360); // 位置 ≈ next.t + 280：上一句正在碎裂 / 飘散
-    await shot("mc-exit");
-    await sleep(1700);
-    await shot("mc-settled");
-    console.log("   ", JSON.stringify({ ...mc, plan }), "→ 三张截图（开口前 / 退场中 / 落定）");
-    check(mc.skin === "magic-circle", "切到魔法阵样式", String(mc.skin));
-  }
-
   console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
   console.log(errors.length ? `—— 控制台报错 ${errors.length} 条 ——` : "—— 控制台无 error ——");
   for (const e of [...new Set(errors.map((x) => x.split("\n")[0]))].slice(0, 20)) console.log(" ", e);
-  console.log("截图目录:", OUT);
 } finally {
   try {
     ws.close();

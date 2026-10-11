@@ -38,6 +38,11 @@ type qqProvider struct {
 	baseURL string
 	// musicuURL musicu.fcg 的地址（同样可替换）。
 	musicuURL string
+	// noWordLevel 为真时不要字级（QRC）歌词。
+	//
+	// 用「反向」字段而不是 wordLevel：测试与调用方大量使用复合字面量构造本类型，
+	// 零值必须等于「行为与加入这个开关之前一致」（即要字级），否则会静默改变它们的语义。
+	noWordLevel bool
 }
 
 // QQ 的两套接口根地址。
@@ -70,7 +75,12 @@ func (p *qqProvider) Name() string { return "qq" }
 // 注意措辞是「可能」：同一个来源里只有一部分歌有 QRC，其余只有行级 LRC。
 // 聚合器不靠这个声明下结论，只拿它决定「要不要为这个来源多花一次请求」，
 // 真正的判据永远是抓回来的文本（Aggregator.Match 里的 lyrics.HasWordTiming）。
-func (p *qqProvider) HasWordLevel() bool { return true }
+//
+// 用户在设置里关掉字级歌词后返回 false —— 聚合器据此跳过它（见 WordLevelToggle）。
+func (p *qqProvider) HasWordLevel() bool { return !p.noWordLevel }
+
+// SetWordLevelEnabled 关掉后不再请求 QRC、也不再要密文（见 Fetch）。
+func (p *qqProvider) SetWordLevelEnabled(on bool) { p.noWordLevel = !on }
 
 func qqHeaders() map[string]string {
 	return map[string]string{
@@ -173,14 +183,17 @@ func (p *qqProvider) searchMusicu(ctx context.Context, keyword string) ([]Candid
 
 // fetchMusicu 取歌词。wantQRC 为真时要求逐字（QRC），拿不到就报错，
 // 让上层退到行级那一次调用。
-func (p *qqProvider) fetchMusicu(ctx context.Context, songMid string, wantQRC bool) (Result, error) {
+//
+// crypt=1 时 lyric 字段是 hex 密文（要过 qrcDecrypt）；关掉字级歌词后调用方传
+// crypt=0，直接要明文 —— 这样整条链路上不再出现「解析第三方私有编码」这一步。
+func (p *qqProvider) fetchMusicu(ctx context.Context, songMid string, wantQRC bool, crypt int) (Result, error) {
 	qrc := 0
 	if wantQRC {
 		qrc = 1
 	}
 	data, err := p.qqMusicuCall(ctx, "music.musichallSong.PlayLyricInfo", "GetPlayLyricInfo", map[string]any{
 		"format": "json", "songMid": songMid, "type": 1,
-		"crypt": 1, "lrc_t": 0, "qrc": qrc, "qrc_t": 0,
+		"crypt": crypt, "lrc_t": 0, "qrc": qrc, "qrc_t": 0,
 		"trans": 0, "trans_t": 0, "roma": 0, "roma_t": 0,
 	})
 	if err != nil {
@@ -196,8 +209,10 @@ func (p *qqProvider) fetchMusicu(ctx context.Context, songMid string, wantQRC bo
 	// 带 crypt=1 时 lyric 是 hex 密文（逐字/行级都一样）；不带 crypt 时是明文。
 	// 以「能不能解出文本」为准，不靠参数记忆：解不开就按明文处理。
 	text := raw
-	if plain, err := qrcDecrypt(raw); err == nil && strings.TrimSpace(plain) != "" {
-		text = plain
+	if crypt == 1 {
+		if plain, err := qrcDecrypt(raw); err == nil && strings.TrimSpace(plain) != "" {
+			text = plain
+		}
 	}
 	text = strings.TrimSpace(qqUnwrapLyric(text))
 	if text == "" {
@@ -209,8 +224,10 @@ func (p *qqProvider) fetchMusicu(ctx context.Context, songMid string, wantQRC bo
 		Source:   p.Name(),
 	}
 	if trans := strings.TrimSpace(qqString(data["trans"])); trans != "" {
-		if plain, err := qrcDecrypt(trans); err == nil && strings.TrimSpace(plain) != "" {
-			trans = plain
+		if crypt == 1 {
+			if plain, err := qrcDecrypt(trans); err == nil && strings.TrimSpace(plain) != "" {
+				trans = plain
+			}
 		}
 		if v := strings.TrimSpace(qqUnwrapLyric(trans)); v != "" {
 			res.Translation = v
@@ -343,16 +360,33 @@ func (p *qqProvider) Search(ctx context.Context, req SearchRequest) ([]Candidate
 // 三次尝试的顺序是有意义的：同一个候选，逐字版本信息最全（行级是它的子集），
 // 所以先把 qrc:1 试掉；拿不到逐字再退行级 —— 这正是需求里的
 // 「有逐字就播放逐字歌词，没有就逐行」。
+//
+// 关掉字级歌词（设置里的开关，见 WordLevelToggle）时只走「明文行级」这一条：
+// 不请求 qrc，也不要密文（crypt=0），失败再退老 cgi。
 func (p *qqProvider) Fetch(ctx context.Context, c Candidate) (Result, error) {
 	songMid := strings.TrimSpace(c.ID)
 	if songMid == "" {
 		return Result{}, fmt.Errorf("qq: 缺少 songmid")
 	}
-	res, qrcErr := p.fetchMusicu(ctx, songMid, true)
+	if p.noWordLevel {
+		res, lineErr := p.fetchMusicu(ctx, songMid, false, 0)
+		if lineErr == nil && strings.TrimSpace(res.LRC) != "" {
+			return res, nil
+		}
+		res, legacyErr := p.fetchLegacy(ctx, songMid)
+		if legacyErr == nil && strings.TrimSpace(res.LRC) != "" {
+			return res, nil
+		}
+		if lineErr != nil {
+			return Result{}, lineErr
+		}
+		return Result{}, legacyErr
+	}
+	res, qrcErr := p.fetchMusicu(ctx, songMid, true, 1)
 	if qrcErr == nil && strings.TrimSpace(res.LRC) != "" {
 		return res, nil
 	}
-	res, lineErr := p.fetchMusicu(ctx, songMid, false)
+	res, lineErr := p.fetchMusicu(ctx, songMid, false, 1)
 	if lineErr == nil && strings.TrimSpace(res.LRC) != "" {
 		return res, nil
 	}

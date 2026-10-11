@@ -15,6 +15,9 @@ import (
 // 三个聚合器各自独立成包（bilibili / lyricsfetch / coverfetch），
 // 因为它们依赖的都是「会变的第三方公开接口」：某个源失效时只改对应那个包。
 func newOnlineService(store *bootstrap.Store, client *bilibili.Client) *OnlineService {
+	// MusicBrainz 要求 UA 里带「能联系到维护者」的应用标识（见 internal/coverfetch/http.go），
+	// 版本号在 main 这一层才知道，所以在这里注入一次。
+	coverfetch.SetAppUserAgent("LMPlayer/" + appVersion + " (+https://github.com/nihaozyj7/localMusicPlayer)")
 	return NewOnlineService(
 		store,
 		client,

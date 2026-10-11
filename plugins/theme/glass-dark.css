@@ -1,0 +1,193 @@
+/* ==========================================================================
+   主题：玻璃拟态 · 深色（glass-dark）
+   --------------------------------------------------------------------------
+   取向：**午夜极光 + 磨砂玻璃**。
+
+     · 背景不是纯色，而是一整片带色相的极光光斑（紫 / 青 / 品红 / 湖绿），
+       铺在 body::before 那一层上。玻璃之所以看得出是玻璃，全靠**背后有东西
+       可以被糊**——底色一旦压成死黑，--glass-blur 再大也只是一块灰面板。
+     · 所有面板（侧栏 / 内容区 / 标题栏 / 底栏 / 各类浮层）都消费
+       --glass-bg / --glass-blur / --panel-blur，因此玻璃质感由这三个数统一
+       决定：底色半透明、模糊给到 34px、饱和度拉到 1.9（模糊会把颜色摊平，
+       不补饱和度玻璃会发灰）。
+     · 边缘靠三层写出「玻璃厚度」：1px 半透明亮边（--glass-border）、
+       顶部内高光（--glass-highlight）、外阴影把面板抬离背景（--glass-shadow）。
+     · 强调色只用一个冷蓝紫（--accent），其余彩色全部让给背景光斑 ——
+       玻璃面板上不放第二个彩色，画面才干净。
+
+   仅声明令牌，不写任何组件样式（改这里**不可能**移动任何元素）。
+
+   @theme-name 玻璃拟态 · 深色
+   @theme-mode dark
+   @theme-swatch #070a14 #121a2b #8ab4ff #eaf0ff #22d3ee
+   ========================================================================== */
+
+:root[data-theme="glass-dark"] {
+  color-scheme: dark;
+
+  /* —— 1. 表面 ——
+     窗口底是带一点蓝的「午夜」而不是纯黑：纯黑会把玻璃的暗部一起吃进去，
+     面板与背景的分界就没了。 */
+  --bg-app: #070a14;
+
+  /* 极光光斑层。四团不同色相的光错开位置与大小，避免看出「两个圆」；
+     末团湖绿压在左下角，给整片偏冷的画面留一点呼吸。 */
+  --bg-canvas:
+    radial-gradient(1220px 800px at 6% -14%, rgba(124, 92, 255, 0.44), transparent 58%),
+    radial-gradient(1000px 720px at 102% 2%, rgba(34, 211, 238, 0.3), transparent 56%),
+    radial-gradient(920px 780px at 64% 114%, rgba(244, 114, 182, 0.24), transparent 60%),
+    radial-gradient(720px 580px at -10% 86%, rgba(45, 212, 191, 0.18), transparent 62%);
+
+  /* 标题栏 / 底栏共用的一层极淡渐变：比默认稍亮一点，
+     玻璃壳的顶面才有一道看得见的「边」。 */
+  --bg-chrome-top: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.075) 0,
+    rgba(255, 255, 255, 0.02) 44%,
+    transparent 100%
+  );
+  --bg-chrome-bottom: linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.065) 0,
+    rgba(255, 255, 255, 0.016) 48%,
+    transparent 100%
+  );
+
+  --surface-1: rgba(255, 255, 255, 0.055);
+  --surface-2: rgba(255, 255, 255, 0.09);
+  --surface-3: rgba(255, 255, 255, 0.14);
+  --surface-hover: rgba(255, 255, 255, 0.08);
+  --surface-active: rgba(255, 255, 255, 0.13);
+
+  /* —— 2. 毛玻璃（本主题的主角）——
+     比默认（rgba(20,20,23,.62) / 22px）更**透**也更**糊**：
+     透是为了露出背后的极光，糊是为了把光斑化开成一层色雾。
+     --glass-saturate 1.9：backdrop-filter 的模糊会把色彩摊平，
+     不把饱和度补回来，玻璃面看着就是一坨灰。 */
+  --glass-bg: rgba(18, 24, 43, 0.44);
+  --glass-bg-strong: rgba(12, 17, 33, 0.62);
+  --glass-bg-weak: rgba(24, 31, 54, 0.3);
+  --glass-blur: 34px;
+  --glass-saturate: 1.9;
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-highlight: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.16) 0,
+    rgba(255, 255, 255, 0.02) 44%,
+    transparent 72%
+  );
+  /* 四层：大范围环境投影 + 近处接触投影 + 顶部 1px 内高光 + 内侧极淡描边。
+     少掉后两层，面板就是一贴纸；少掉前两层，面板浮不起来。 */
+  --glass-shadow:
+    0 24px 60px rgba(2, 6, 23, 0.55),
+    0 2px 10px rgba(2, 6, 23, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+
+  /* —— 2b. 拟态 ——
+     玻璃主题的「浮起」全靠柔和的暗投影（不要硬边），
+     凹槽则沿用深色内阴影；强调色按钮的投影带上自己的颜色，
+     像一块会发光的玻璃。 */
+  --neu-raised: 0 10px 26px -12px rgba(2, 6, 23, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --neu-raised-sm: 0 4px 12px -6px rgba(2, 6, 23, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --neu-inset: inset 0 2px 6px rgba(2, 6, 23, 0.5);
+  --neu-pressed: inset 0 2px 8px rgba(2, 6, 23, 0.62);
+  --neu-knob: 0 1px 4px rgba(2, 6, 23, 0.55);
+  --neu-accent: 0 6px 20px -4px color-mix(in srgb, var(--accent) 42%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  --neu-under: 0 10px 22px -16px rgba(2, 6, 23, 0.75);
+  --neu-edge-bottom: inset 0 -12px 24px -20px rgba(2, 6, 23, 0.7), inset 0 -1px 0 rgba(255, 255, 255, 0.09);
+  --neu-edge-top: inset 0 12px 24px -20px rgba(2, 6, 23, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+
+  /* —— 3. 文字 ——
+     不用纯白：玻璃面上的纯白字会「发光」，和背后的光斑抢注意力。
+     带一点蓝的 #eaf0ff 更贴这套冷色调。 */
+  --text-1: #eaf0ff;
+  --text-2: rgba(234, 240, 255, 0.68);
+  --text-3: rgba(234, 240, 255, 0.42);
+  --text-inverse: #070a14;
+
+  /* —— 4. 描边 —— */
+  --border-1: rgba(255, 255, 255, 0.1);
+  --border-2: rgba(255, 255, 255, 0.18);
+  --divider: rgba(255, 255, 255, 0.07);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 65%, transparent);
+
+  /* —— 5. 强调色：唯一的彩色 ——
+     #8ab4ff 对窗口底 9.5:1、对玻璃面更高；配深色字 9.1:1，
+     作为主按钮底色与选中态都稳。 */
+  --accent: #8ab4ff;
+  --accent-weak: rgba(138, 180, 255, 0.16);
+  --accent-weak-hover: rgba(138, 180, 255, 0.26);
+  --accent-text: #08101f;
+  --accent-contrast: #08101f;
+
+  /* —— 6. 点缀与状态：比默认亮一档，才压得住背景光斑 —— */
+  --heart: #ff7aa2;
+  --heart-off: var(--text-3);
+  --danger: #ff6b81;
+  --success: #4ade80;
+  --warning: #fbbf24;
+
+  /* —— 7. 播放页 ——
+     沉浸模式的压暗给得轻（0.40）：整窗背景本就是暗色光斑，
+     压太重会把极光糊掉。 */
+  --immersive-veil: rgba(4, 8, 18, 0.4);
+  --vinyl: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.09) 0 18%, transparent 19%),
+    repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 4px),
+    linear-gradient(145deg, #1b2340, #070a14 62%);
+
+  /* —— 8. 遮罩与浮层的模糊 ——
+     全屏遮罩糊得比默认更狠（16px）：它要压住一整屏玻璃，
+     糊不够就会变成「两层玻璃叠在一起」，看不出前后。 */
+  --scrim-bg: rgba(4, 7, 16, 0.48);
+  --scrim-blur: 16px;
+  --scrim-tint: rgba(255, 255, 255, 0.05);
+  --veil-blur: 8px;
+  --scan-blur: 6px;
+  --popover-blur: 18px;
+
+  /* —— 9. 封面虚化（本主题不铺封面，这组值只作为兜底）—— */
+  --cover-blur: 56px;
+  --cover-blur-strong: 60px;
+  --cover-saturate: 1.4;
+  --cover-brightness: 0.6;
+  --cover-veil: linear-gradient(180deg, rgba(7, 10, 20, 0.4) 0%, rgba(4, 6, 14, 0.76) 100%);
+
+  /* —— 10. 零散阴影与滤镜 —— */
+  --thumb-shadow: 0 1px 6px rgba(2, 6, 23, 0.55);
+  --accent-hover-filter: brightness(1.08);
+  --slider-idle-filter: brightness(0.66) saturate(0.85);
+
+  /* —— 11. 视觉强度 —— */
+  --op-strong: 0.9;
+  --op-icon: 0.8;
+  --op-dim: 0.7;
+  --op-soft: 0.6;
+  --op-hint: 0.55;
+  --op-half: 0.5;
+  --op-disabled: 0.45;
+  --op-dragging: 0.35;
+  --op-ghost: 0.25;
+
+  /* —— 12. 「定位到当前播放」的落点描边 —— */
+  --locate-dur: 1.4s;
+  --locate-ring: inset 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
+  --locate-ring-mid: inset 0 0 0 2px color-mix(in srgb, var(--accent) 48%, transparent);
+
+  /* —— 13. 圆角 ——
+     玻璃主题的圆角比默认那套「小圆角」大一档：磨砂面板配直角边
+     会显得又硬又薄。这里是视觉令牌，不改变任何元素的位置与尺寸。 */
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+  --btn-radius: var(--r-sm);
+
+  /* —— 14. 动效：比默认稍慢一点，玻璃的位移需要一点「重量」——
+     设置里关掉界面动画时 --dur 会被运行时令牌归零，
+     下面这些 calc 派生值跟着一起归零（见 tokens.css 的说明）。 */
+  --dur: 280ms;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}

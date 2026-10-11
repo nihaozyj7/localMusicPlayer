@@ -861,7 +861,11 @@ export async function handleSettingsAction(actEl, ctx = {}) {
 
     /* 安装：会替换程序文件并重启，所以要用户明确确认一次。
        不做「点了就装」—— 用户可能只是好奇点了一下，
-       而程序突然关掉再开（哪怕成功了）也是一种惊吓。 */
+       而程序突然关掉再开（哪怕成功了）也是一种惊吓。
+
+       没有 SHA-256 校验值时**再收紧一级**：光点「安装」不算，还要勾选一句
+       「我知道它没被校验过」。校验是防第三方代理投毒的唯一手段（见 docs/43 的 M5），
+       取不到校验和时用户至少要知道自己在装什么。 */
     case "update-install": {
       if (!isWails()) {
         toast("浏览器预览模式无法安装更新", { tone: "warning", duration: 3200 });
@@ -872,15 +876,25 @@ export async function handleSettingsAction(actEl, ctx = {}) {
         toast("还没有下载好可安装的更新", { tone: "warning", duration: 3200 });
         return;
       }
+      const unverified = !pending.verified;
       openModal({
-        title: "安装更新并重启？",
+        title: unverified ? "安装未校验的更新包？" : "安装更新并重启？",
         desc:
           `即将安装 ${pending.name}。程序会先退出，由引导脚本替换文件后自动重启。` +
           (pending.verified
             ? "安装包已通过 SHA-256 校验。"
-            : "注意：这一版没有可用的校验值，请确认来源可信。"),
-        okText: "安装并重启",
-        onOk: async () => {
+            : `注意：没有取到可用的 SHA-256 校验值${pending.mirrorId ? `（来源通道：${updateMirror(pending.mirrorId).name}）` : ""}，` +
+              "无法确认它与官方发布的是同一份文件。建议取消后改用「直连 GitHub」重新下载，或到发布页手动下载。"),
+        body: unverified
+          ? html`<label class="setting__hint">
+              <input type="checkbox" data-field="confirmUnverified" />
+              我确认这个安装包没有被校验过，并自行承担风险
+            </label>`
+          : nothing,
+        danger: unverified,
+        okText: unverified ? "仍然安装并重启" : "安装并重启",
+        onOk: async (values) => {
+          if (unverified && !values.confirmUnverified) return "请先勾选上面的确认项";
           const ok = await installUpdate();
           if (!ok) {
             toast(`安装失败：${state.update?.error || "未知原因"}`, { tone: "error", duration: 7000 });
@@ -960,8 +974,12 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       // 清空成 "" 是有效操作（= 删除密钥）。
       const next = actEl.value;
       if (key === "aiApiKey" && next === (state.config?.aiApiKey ?? "")) return;
+      const wasConfigured = aiConfigured();
       state.config[key] = next;
       ctx.commit?.();
+      // 从「没配」变成「配好了」的那一次，确认一次要发出去什么、发到哪
+      // （Base URL 通常在境外，见 docs/43 的 M2）。
+      if (!wasConfigured && aiConfigured()) await confirmAIFirstUse();
       return;
     }
 
@@ -1679,6 +1697,69 @@ export function ensureCoverProviders() {
     // 迁移前这里要手工找到那几处 DOM 就地改写（refreshOnlineCard / refreshCacheHints），
     // 现在由组件的依赖数组覆盖，不再需要「改哪一处文案」的隐性分工。
     requestAppUpdate();
+  });
+}
+
+/* --------------------------------------------------------------------------
+   AI 首次启用确认
+   --------------------------------------------------------------------------
+   启用 AI 之后，歌曲的标题 / 歌手 / 专辑 / 文件名会被发往**用户自己填写的**
+   接口地址（通常在境外，见 docs/43 的 M2）。这属于「向第三方提供信息」，
+   所以第一次真正配好（Base URL + Key 都有）时确认一次：
+   发什么、发到哪、怎么关 —— 三句话讲清楚，比事后再解释便宜得多。
+   -------------------------------------------------------------------------- */
+
+/** 「AI 已配置」的判据与 aiCard 一致：Base URL 与 Key 都要有。 */
+function aiConfigured() {
+  const cfg = state.config || {};
+  const keySet = Boolean(cfg.aiApiKeySet) || Boolean(String(cfg.aiApiKey || "").trim());
+  return Boolean(String(cfg.aiBaseUrl || "").trim() && keySet);
+}
+
+const AI_NOTICE_KEY = "music-player.ai.notice.v1";
+
+/** 用户是否已经确认过。localStorage 不可用时当作「没确认过」。 */
+function aiNoticeAccepted() {
+  try {
+    return localStorage.getItem(AI_NOTICE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 首次配置好 AI 时的确认弹窗。取消/关闭只是不再提示，不会回滚刚填的值。 */
+async function confirmAIFirstUse() {
+  if (aiNoticeAccepted()) return false;
+  return new Promise((resolve) => {
+    const remember = () => {
+      try {
+        localStorage.setItem(AI_NOTICE_KEY, "1");
+      } catch {
+        /* 存储不可用：不记录，下次再提示 */
+      }
+      resolve(true);
+    };
+    openModal({
+      title: "启用 AI 前请确认",
+      desc: `歌曲信息会发往你填写的接口地址，而不是本机：${String(state.config?.aiBaseUrl || "").trim()}`,
+      body: html`
+        <div class="about-note">
+          <div class="about-note__body">· 发送的内容：歌曲标题、歌手、专辑、时长，以及文件名（只有文件名，不含完整路径）。</div>
+          <div class="about-note__body">· 不发：曲库列表、播放记录、文件路径、任何设备标识。</div>
+          <div class="about-note__body">· 接口地址通常在境外：请自行确认该服务的隐私政策与数据处理方式。</div>
+          <div class="about-note__body">· 随时可关：清空 Base URL / API Key，或关掉 AI 的两个开关。</div>
+        </div>
+      `,
+      okText: "我已知晓，启用 AI",
+      cancelText: "稍后再说",
+      onOk: () => {
+        remember();
+        return true;
+      },
+      onCancel: () => {
+        resolve(false);
+      },
+    });
   });
 }
 

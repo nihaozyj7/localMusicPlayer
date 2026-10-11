@@ -1,0 +1,168 @@
+/* ==========================================================================
+   主题：活力满满 · 浅色（vibrant-light）
+   --------------------------------------------------------------------------
+   与 vibrant-dark 同一套取向的浅色版：**暖奶油底 + 品红主色 + 硬朗快节奏**。
+
+     · 底色不是中性白，是带红的暖奶油 #fff6f0。中性白配高饱和暖色背景
+       会让色斑看起来像「脏了的白墙」；带一点自己的色相，画面才是一体的。
+     · 面板是接近实心的白（0.76）+ 14px 模糊 —— 与 glass-light 的
+       「半透明玻璃」明确区分：这里是**哑光硬壳**，边界清清楚楚。
+     · 强调色 #c9247a：对白 5.2:1、对暖奶油底 4.9:1，作主按钮底色配白字
+       与作色用文本都过 AA。危险色刻意用暗红 #b02a37，
+       免得「主操作」和「删除」看起来是同一个按钮。
+     · 动效与深色版一致：190ms + 轻微回弹。
+
+   仅声明令牌，不写任何组件样式。
+
+   @theme-name 活力满满 · 浅色
+   @theme-mode light
+   @theme-swatch #fff6f0 #ffffff #ffd9c9 #2a1418 #c9247a
+   ========================================================================== */
+
+:root[data-theme="vibrant-light"] {
+  color-scheme: light;
+
+  /* —— 1. 表面 —— */
+  --bg-app: #fff6f0;
+
+  --bg-canvas:
+    radial-gradient(1200px 800px at 6% -12%, rgba(244, 63, 94, 0.2), transparent 60%),
+    radial-gradient(1000px 720px at 102% 2%, rgba(251, 146, 60, 0.24), transparent 58%),
+    radial-gradient(920px 780px at 62% 116%, rgba(201, 36, 122, 0.16), transparent 62%),
+    radial-gradient(700px 580px at -10% 88%, rgba(139, 92, 246, 0.14), transparent 64%);
+
+  --bg-chrome-top: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.78) 0,
+    rgba(255, 255, 255, 0.26) 44%,
+    transparent 100%
+  );
+  --bg-chrome-bottom: linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.7) 0,
+    rgba(255, 255, 255, 0.22) 48%,
+    transparent 100%
+  );
+
+  --surface-1: rgba(42, 20, 24, 0.04);
+  --surface-2: rgba(42, 20, 24, 0.065);
+  --surface-3: rgba(42, 20, 24, 0.1);
+  --surface-hover: rgba(42, 20, 24, 0.055);
+  --surface-active: rgba(42, 20, 24, 0.09);
+
+  /* —— 2. 面板：哑光硬壳 —— */
+  --glass-bg: rgba(255, 252, 250, 0.76);
+  --glass-bg-strong: rgba(255, 253, 251, 0.92);
+  --glass-bg-weak: rgba(255, 250, 247, 0.56);
+  --glass-blur: 14px;
+  --glass-saturate: 1.4;
+  --glass-border: rgba(255, 255, 255, 0.9);
+  --glass-highlight: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.95) 0,
+    rgba(255, 255, 255, 0.3) 44%,
+    transparent 72%
+  );
+  --glass-shadow:
+    0 16px 34px rgba(74, 30, 40, 0.16),
+    0 2px 7px rgba(74, 30, 40, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    inset 0 0 0 1px rgba(74, 30, 40, 0.04);
+
+  /* —— 2b. 拟态：暖灰投影 —— */
+  --neu-raised: 0 6px 18px -8px rgba(74, 30, 40, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  --neu-raised-sm: 0 3px 9px -4px rgba(74, 30, 40, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --neu-inset: inset 0 2px 5px rgba(74, 30, 40, 0.18);
+  --neu-pressed: inset 0 2px 7px rgba(74, 30, 40, 0.24);
+  --neu-knob: 0 1px 3px rgba(74, 30, 40, 0.3);
+  --neu-accent: 0 5px 18px -2px color-mix(in srgb, var(--accent) 45%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  --neu-under: 0 10px 20px -14px rgba(74, 30, 40, 0.38);
+  --neu-edge-bottom: inset 0 -12px 24px -20px rgba(74, 30, 40, 0.22), inset 0 -1px 0 rgba(255, 255, 255, 0.75);
+  --neu-edge-top: inset 0 12px 24px -20px rgba(74, 30, 40, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+
+  /* —— 3. 文字：暖黑 ——
+     #2a1418 带一点红，压在暖奶油底上比中性黑更「贴」。 */
+  --text-1: #2a1418;
+  --text-2: rgba(42, 20, 24, 0.64);
+  --text-3: rgba(42, 20, 24, 0.44);
+  --text-inverse: #fff6f0;
+
+  /* —— 4. 描边 —— */
+  --border-1: rgba(42, 20, 24, 0.1);
+  --border-2: rgba(42, 20, 24, 0.18);
+  --divider: rgba(42, 20, 24, 0.08);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
+
+  /* —— 5. 强调色：品红 ——
+     #c9247a 对白 5.2:1、对 #fff6f0 4.9:1。 */
+  --accent: #c9247a;
+  --accent-weak: rgba(201, 36, 122, 0.12);
+  --accent-weak-hover: rgba(201, 36, 122, 0.2);
+  --accent-text: #ffffff;
+  --accent-contrast: #ffffff;
+
+  /* —— 6. 点缀与状态 —— */
+  --heart: #d6236e;
+  --heart-off: var(--text-3);
+  --danger: #b02a37;
+  --success: #12795a;
+  --warning: #9a6608;
+
+  /* —— 7. 播放页 —— */
+  --immersive-veil: rgba(255, 250, 246, 0.52);
+  --vinyl: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.9) 0 18%, transparent 19%),
+    repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.4) 0 1px, transparent 1px 4px),
+    linear-gradient(145deg, #4a2a33, #241016 62%);
+
+  /* —— 8. 遮罩与浮层的模糊 ——
+     浅色遮罩仍是压暗色，只是比玻璃主题更轻（0.32）：
+     活力主题的层次靠明度对比，不靠把底下压黑。 */
+  --scrim-bg: rgba(42, 20, 24, 0.32);
+  --scrim-blur: 10px;
+  --scrim-tint: rgba(255, 255, 255, 0.55);
+  --veil-blur: 4px;
+  --scan-blur: 3px;
+  --popover-blur: 12px;
+
+  /* —— 9. 封面虚化（本主题不铺封面，这组值只作为兜底）—— */
+  --cover-blur: 52px;
+  --cover-blur-strong: 58px;
+  --cover-saturate: 1.3;
+  --cover-brightness: 0.92;
+  --cover-veil: linear-gradient(180deg, rgba(255, 246, 240, 0.5) 0%, rgba(250, 236, 228, 0.82) 100%);
+
+  /* —— 10. 零散阴影与滤镜 ——
+     浅底上的「未聚焦进度条」用降饱和 + 提亮，而不是压暗。 */
+  --thumb-shadow: 0 1px 5px rgba(74, 30, 40, 0.32);
+  --accent-hover-filter: brightness(0.9);
+  --slider-idle-filter: saturate(0.45) brightness(1.12);
+
+  /* —— 11. 视觉强度 —— */
+  --op-strong: 0.88;
+  --op-icon: 0.78;
+  --op-dim: 0.68;
+  --op-soft: 0.58;
+  --op-hint: 0.52;
+  --op-half: 0.47;
+  --op-disabled: 0.43;
+  --op-dragging: 0.33;
+  --op-ghost: 0.23;
+
+  /* —— 12. 「定位到当前播放」的落点描边 —— */
+  --locate-dur: 1.4s;
+  --locate-ring: inset 0 0 0 2px color-mix(in srgb, var(--accent) 58%, transparent);
+  --locate-ring-mid: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+
+  /* —— 13. 圆角：与 vibrant-dark 同一档 —— */
+  --r-xs: 8px;
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 22px;
+  --r-xl: 28px;
+  --btn-radius: var(--r-sm);
+
+  /* —— 14. 动效：与深色版一致 —— */
+  --dur: 190ms;
+  --ease: cubic-bezier(0.34, 1.4, 0.5, 1);
+}

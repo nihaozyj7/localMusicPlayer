@@ -10,6 +10,9 @@ internal/theme/builtin/
 *.exe
 *.exe~
 
+# 第三方主题与样式包：由作者自己决定风格与排版，不走本项目的格式化门禁
+plugins/
+
 # 生成物：格式化只会制造噪音
 docs/screenshots/
 

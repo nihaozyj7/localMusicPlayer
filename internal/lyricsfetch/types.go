@@ -100,6 +100,17 @@ type WordProvider interface {
 	HasWordLevel() bool
 }
 
+// WordLevelToggle 是 Provider 的**可选**能力：运行时关掉「字级歌词」这条路。
+//
+// 存在的理由：字级歌词只有 QQ 音乐（QRC）与酷狗（KRC）能给出，而这两家用的是
+// **第三方私有编码**——本包只做兼容性解析以便显示逐字时间轴。有些用户不希望
+// 程序去解析这类格式（见 docs/43 的 H2），关掉之后这些来源仍然提供行级歌词，
+// 只是不再请求、也不再解密那份字级载荷。
+type WordLevelToggle interface {
+	// SetWordLevelEnabled 打开/关闭该来源的字级歌词。
+	SetWordLevelEnabled(on bool)
+}
+
 // Aggregator 并发使用多个 Provider 完成搜索与自动匹配。
 type Aggregator struct {
 	providers []Provider
@@ -112,6 +123,14 @@ type Aggregator struct {
 	// 见 ProbeLyricsFormat），用户随后点「使用」时不该再下载一遍同一份歌词。
 	// 与 cache（按搜索请求缓存、供 Match 用）分开：键不同、寿命也不同。
 	fetched map[string]cachedResult
+
+	// wordLevelOn / wordLevelSet 记录上一次同步的「字级歌词」开关。
+	//
+	// 为什么要记：开关由调用方在**每个调用点**按当前配置同步过来（自动匹配挂在
+	// 切歌路径上，读配置必须是最新值），而同步动作只有在**值真的变了**的时候
+	// 才该清缓存 —— 否则每切一首歌都会把 24h 的结果缓存清空。
+	wordLevelOn  bool
+	wordLevelSet bool
 }
 
 type cachedResult struct {
@@ -155,6 +174,38 @@ func (a *Aggregator) Providers() []string {
 		out = append(out, p.Name())
 	}
 	return out
+}
+
+// SetWordLevelEnabled 运行时开关「字级（逐字）歌词」这条路。
+//
+// 语义：关掉之后声明了字级能力的来源（QQ / 酷狗）不再被要求多花一次请求，
+// 它们自己也改为只取行级歌词（不再解析 QRC / KRC 这类私有编码）。
+// 只有在值真的变化时才清缓存 —— 调用方会在每个调用点上按当前配置同步它。
+func (a *Aggregator) SetWordLevelEnabled(on bool) {
+	a.mu.Lock()
+	changed := a.wordLevelSet && a.wordLevelOn != on
+	a.wordLevelOn, a.wordLevelSet = on, true
+	a.mu.Unlock()
+
+	for _, p := range a.providers {
+		if t, ok := p.(WordLevelToggle); ok {
+			t.SetWordLevelEnabled(on)
+		}
+	}
+	if changed {
+		a.Invalidate()
+	}
+}
+
+// Invalidate 清空两级缓存（按搜索请求的匹配结果 + 按候选抓取的结果）。
+//
+// 用途：影响结果的设置变了（例如刚关掉字级歌词）之后，不能让旧结果继续生效 ——
+// cache 的寿命是 24h，不清就会出现「关了开关，这首还是逐字歌词」。
+func (a *Aggregator) Invalidate() {
+	a.mu.Lock()
+	a.cache = map[string]cachedResult{}
+	a.fetched = map[string]cachedResult{}
+	a.mu.Unlock()
 }
 
 // Search 并发查询所有 Provider，并按匹配度降序返回候选。

@@ -182,10 +182,19 @@ FFmpeg 官方的许可说明见 <https://ffmpeg.org/legal.html>。
 | --- | --- |
 | [LRCLIB](https://lrclib.net/) | 歌词 |
 | [网易云音乐](https://music.163.com/) | 歌词 / 封面备选来源 |
-| [QQ 音乐](https://y.qq.com/) | 歌词 / 封面备选来源 |
+| [QQ 音乐](https://y.qq.com/) | 歌词（逐字 / 逐行）/ 封面备选来源 |
+| [酷狗音乐](https://www.kugou.com/) | 歌词（逐字 / 逐行）来源 |
 | [iTunes Search API](https://performance-partners.apple.com/search-api) | 封面 |
 | [Deezer](https://developers.deezer.com/api) | 封面备选来源 |
 | [MusicBrainz](https://musicbrainz.org/) | 封面（配合 Cover Art Archive） |
 | [哔哩哔哩](https://www.bilibili.com/) | 在线试听与下载 |
 
 各服务的名称与商标归各自所有者。本项目与上述任何平台均无隶属或背书关系。
+
+两点补充说明：
+
+- QQ 音乐的 QRC 与酷狗的 KRC 是两家各自的**私有歌词编码**，本项目只做**兼容性解析**，
+  目的是在本机显示逐字时间轴；不涉及绕过任何访问控制。不希望使用这两个来源时，
+  可在「设置 → 下载与缓存」里关掉「优先使用逐字歌词」。
+- 歌词与封面同为受版权保护的作品：抓取到的内容仅供本机个人欣赏，请勿传播或商用。
+

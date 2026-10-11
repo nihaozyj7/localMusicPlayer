@@ -20,6 +20,22 @@ import (
 // 这些站点都会对空 UA / 脚本 UA 做拦截，用一个真实的桌面浏览器 UA 最省事。
 const UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
+// appUserAgent 是访问**要求「可联系的应用标识」**的接口时用的 UA。
+//
+// 为什么不能继续用上面那个浏览器 UA：MusicBrainz 明确要求 UA 里带应用名与联系方式
+// （见 https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting ），伪装成浏览器
+// 既不符合它的条款，也让对方在出问题时无法联系我们。默认值不含版本号（本包不知道
+// 应用版本），main 在装配时会用 SetAppUserAgent 覆盖成带版本的形式。
+var appUserAgent = "LMPlayer (+https://github.com/nihaozyj7/localMusicPlayer)"
+
+// SetAppUserAgent 覆盖应用标识 UA（建议形如 `LMPlayer/0.1.5 (+<仓库地址>)`）。
+// 传空串表示不修改。
+func SetAppUserAgent(ua string) {
+	if strings.TrimSpace(ua) != "" {
+		appUserAgent = strings.TrimSpace(ua)
+	}
+}
+
 // maxImageBytes 单张封面的下载上限。
 // 封面本来就是缩略图，2MB 足够；防止被第三方大图拖住内存。
 const maxImageBytes = 2 << 20

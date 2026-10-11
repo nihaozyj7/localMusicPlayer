@@ -41,6 +41,11 @@ type kugouProvider struct {
 	searchURL   string
 	lookupURL   string
 	downloadURL string
+	// noWordLevel 为真时不要字级（KRC）歌词，只取行级 LRC。
+	//
+	// 用「反向」字段而不是 wordLevel：测试与调用方用复合字面量构造本类型，
+	// 零值必须等于「行为与加入这个开关之前一致」（即要字级）。
+	noWordLevel bool
 }
 
 func NewKugou() Provider {
@@ -61,7 +66,12 @@ func (p *kugouProvider) Name() string { return "kugou" }
 //
 // 声明它的用处见 Aggregator.Match：自动匹配在拿到行级结果后，会为「声明了
 // 字级能力」的来源多花一次请求 —— 否则酷狗会被排在前面的行级来源永远压住。
-func (p *kugouProvider) HasWordLevel() bool { return true }
+//
+// 用户在设置里关掉字级歌词后返回 false（见 WordLevelToggle）。
+func (p *kugouProvider) HasWordLevel() bool { return !p.noWordLevel }
+
+// SetWordLevelEnabled 关掉后不再请求/解析 KRC（见 Fetch）。
+func (p *kugouProvider) SetWordLevelEnabled(on bool) { p.noWordLevel = !on }
 
 // kugouItem 一条酷狗搜索结果。
 //
@@ -215,9 +225,14 @@ func (p *kugouProvider) Fetch(ctx context.Context, c Candidate) (Result, error) 
 
 	// ② 先要 KRC（字级）；拿不到再退到 LRC（行级）。
 	//    「拿不到」是常态而不是故障：酷狗只有一部分歌有 KRC 歌词。
-	if text, err := p.download(ctx, best.ID, best.AccessKey, "krc"); err == nil {
-		if decoded, derr := decodeKRC(text); derr == nil && strings.TrimSpace(decoded) != "" {
-			return Result{LRC: decoded, Provider: p.Name(), Source: p.Name()}, nil
+	//
+	//    关掉字级歌词时直接跳过 KRC 那一步：KRC 是第三方私有编码（异或 + zlib），
+	//    不是我们要解析的东西（见 docs/43 的 H2）。
+	if !p.noWordLevel {
+		if text, err := p.download(ctx, best.ID, best.AccessKey, "krc"); err == nil {
+			if decoded, derr := decodeKRC(text); derr == nil && strings.TrimSpace(decoded) != "" {
+				return Result{LRC: decoded, Provider: p.Name(), Source: p.Name()}, nil
+			}
 		}
 	}
 	lrc, err := p.download(ctx, best.ID, best.AccessKey, "lrc")

@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 )
 
 // DeezerProvider 通过 Deezer 的公开搜索接口取封面。
@@ -107,15 +109,93 @@ func (p *DeezerProvider) Find(ctx context.Context, req Request) (FindResult, err
 //   - https://coverartarchive.org/release-group/<mbid>/front   （图片重定向到实际地址）
 //
 // 特点：完全开放、覆盖极广、有明确的实体 ID；图片资源由 Internet Archive 托管，稳定。
-// 局限：请求必须带可识别的 User-Agent（本包统一 UA 已满足），且限流 1 req/s，
-// 因此只在其他来源失败时才有实际意义 —— 它参与并发查询，超时/被限流都不影响别人。
-type MusicBrainzProvider struct{}
+//
+// 两条**条款要求**（不遵守会被 503 封禁，属于合同风险，见 docs/43 的 M4）：
+//   - 请求必须带能联系到维护者的应用标识 UA（用 appUserAgent，不是浏览器 UA）；
+//   - 平均不超过 1 请求/秒，因此请求前必须过 mbThrottle。
+//
+// 因为它慢，它只在其他来源失败时才有实际意义 —— 它参与并发查询，
+// 超时/被限流都不影响别人。
+type MusicBrainzProvider struct {
+	// BaseURL 接口根地址（测试时可替换）。
+	BaseURL string
+	// Throttle 该来源的节流器；nil 时用包级的 mbThrottle。
+	Throttle *rateLimiter
+}
 
 // NewMusicBrainz 创建 MusicBrainz 来源。
 func NewMusicBrainz() *MusicBrainzProvider { return &MusicBrainzProvider{} }
 
 // Name 来源标识。
 func (p *MusicBrainzProvider) Name() string { return "musicbrainz" }
+
+func (p *MusicBrainzProvider) base() string {
+	if strings.TrimSpace(p.BaseURL) == "" {
+		return "https://musicbrainz.org"
+	}
+	return strings.TrimRight(p.BaseURL, "/")
+}
+
+func (p *MusicBrainzProvider) throttle() *rateLimiter {
+	if p.Throttle != nil {
+		return p.Throttle
+	}
+	return mbThrottle
+}
+
+/* --------------------------------------------------------------------------
+   MusicBrainz 的节流器
+   --------------------------------------------------------------------------
+   MusicBrainz 的限流是「超过就 100% 拒绝」（平均 1 req/s，按 IP 计），不是
+   排队慢一点，所以必须在**发出请求之前**自己排队 —— 被拒了再重试只会更糟。
+   -------------------------------------------------------------------------- */
+
+// mbMinInterval 两次请求之间的最小间隔。取略大于 1s 的值，避免边界上擦线。
+const mbMinInterval = 1100 * time.Millisecond
+
+// mbThrottle 是 MusicBrainzProvider 默认使用的节流器（进程内串行排队）。
+var mbThrottle = &rateLimiter{interval: mbMinInterval}
+
+// rateLimiter 是一个进程内的最小间隔排队器。
+//
+// 实现要点：**先占位再等** —— 在锁里就把自己的发送时刻定下来并推进下一次的时刻，
+// 这样并发调用（聚合器是并发查询各来源的）不会算出同一个时刻一起冲出去。
+type rateLimiter struct {
+	mu       sync.Mutex
+	interval time.Duration
+	next     time.Time
+}
+
+// Wait 等到本调用被允许发出；ctx 取消时立刻返回其错误。
+func (l *rateLimiter) Wait(ctx context.Context) error {
+	if l == nil {
+		return nil
+	}
+	if l.interval <= 0 {
+		return nil
+	}
+	l.mu.Lock()
+	now := time.Now()
+	if l.next.Before(now) {
+		l.next = now
+	}
+	at := l.next
+	l.next = at.Add(l.interval)
+	l.mu.Unlock()
+
+	wait := time.Until(at)
+	if wait <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 // Find 查询封面。
 func (p *MusicBrainzProvider) Find(ctx context.Context, req Request) (FindResult, error) {
@@ -151,7 +231,13 @@ func (p *MusicBrainzProvider) Find(ctx context.Context, req Request) (FindResult
 			} `json:"artist-credit"`
 		} `json:"releases"`
 	}
-	if err := getJSON(ctx, "https://musicbrainz.org/ws/2/release?"+q.Encode(), &resp, nil); err != nil {
+	// 节流必须在这一步之前：getJSON 一旦发出去就晚了。
+	if err := p.throttle().Wait(ctx); err != nil {
+		return FindResult{}, err
+	}
+	// UA 用应用标识覆盖掉默认的浏览器 UA（getJSON 里 headers 在默认值之后应用）。
+	if err := getJSON(ctx, p.base()+"/ws/2/release?"+q.Encode(), &resp,
+		map[string]string{"User-Agent": appUserAgent}); err != nil {
 		return FindResult{}, err
 	}
 	if len(resp.Releases) == 0 {
