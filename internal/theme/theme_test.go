@@ -105,3 +105,55 @@ func TestManagerDelete(t *testing.T) {
 		t.Fatal("非法 id 应报错")
 	}
 }
+
+// 内置主题必须真的能被扫出来、且元信息完整 —— 设置界面的主题卡片全靠这几项：
+// 没有 name 卡片就是一行 id，没有 swatch 色卡就是一块灰，mode 错了
+// 「深色 / 浅色 / 跟随系统」会挑错主题。
+//
+// 检查对象取自扫描结果里的 Builtin 条目（而不是写死一份数量或清单），
+// 所以以后往 builtin/ 里加主题会自动被覆盖到，不会变成假红灯。
+func TestBuiltinThemesAreDiscoverable(t *testing.T) {
+	m, err := NewManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byID := map[string]Info{}
+	for _, info := range m.List() {
+		byID[info.ID] = info
+	}
+
+	builtinCount := 0
+	for _, info := range m.List() {
+		if !info.Builtin {
+			continue
+		}
+		builtinCount += 1
+		if info.Name == "" || info.Name == info.ID {
+			t.Errorf("%s 的显示名 = %q，期望文件头的 @theme-name", info.ID, info.Name)
+		}
+		if info.Mode != "dark" && info.Mode != "light" {
+			t.Errorf("%s 的 mode = %q，期望 dark / light", info.ID, info.Mode)
+		}
+		if len(info.Swatch) < 3 {
+			t.Errorf("%s 只有 %d 个色板色，色卡会是一块灰", info.ID, len(info.Swatch))
+		}
+		if css, err := m.CSS(info.ID); err != nil || strings.TrimSpace(css) == "" {
+			t.Errorf("%s 读不到 CSS：%v", info.ID, err)
+		}
+		if err := m.Delete(info.ID); err == nil {
+			t.Errorf("内置主题 %s 应拒绝删除", info.ID)
+		}
+	}
+	if builtinCount == 0 {
+		t.Fatal("一个内置主题都没扫到")
+	}
+
+	// 反向：这几款是随程序分发的既定主题，改名或误删主题文件会在这里失败
+	// （加新主题不受影响，上面的循环已经覆盖它了）。
+	for _, want := range []string{"dark-minimal", "light-minimal", "flat-dark", "flat-light", "cover-dark"} {
+		if _, ok := byID[want]; !ok {
+			t.Errorf("内置主题 %s 没出现在扫描结果里", want)
+		}
+	}
+}

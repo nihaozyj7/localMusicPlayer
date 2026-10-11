@@ -30,6 +30,20 @@ const BUILTIN_THEMES = [
     swatch: ["#f2f2f4", "#ffffff", "#d8d8dd", "#14141a", "#e8384f"],
   },
   {
+    id: "flat-dark",
+    name: "简约深色",
+    mode: "dark",
+    builtin: true,
+    swatch: ["#101113", "#1b1d21", "#3b4048", "#e6e8eb", "#8b9bb4"],
+  },
+  {
+    id: "flat-light",
+    name: "简约浅色",
+    mode: "light",
+    builtin: true,
+    swatch: ["#f5f6f7", "#ffffff", "#d7dae0", "#1a1c20", "#43536b"],
+  },
+  {
     id: "cover-dark",
     name: "封面取色 · 深色",
     mode: "dark",
@@ -75,7 +89,7 @@ export async function discoverThemes() {
   if (!isWails()) return registry;
   try {
     const res = await backend.listThemes();
-    // 后端一个主题都没返回只可能是调用出了岔子（内置三款由后端在启动时
+    // 后端一个主题都没返回只可能是调用出了岔子（内置主题由后端在启动时
     // 写入主题目录，正常情况下一定扫得到）。这时保持现状，不要清空列表。
     if (!Array.isArray(res) || !res.length) return registry;
 

@@ -206,10 +206,10 @@ func validHexColor(v string) string {
 	return v
 }
 
-// themeExists 判断主题是否真的存在（内置三款由后端写进主题目录，一并算上）。
+// themeExists 判断主题是否真的存在（内置主题由后端写进主题目录，一并算上）。
 func themeExists(mgr *theme.Manager, id string) bool {
-	switch id {
-	case "dark-minimal", "light-minimal", "cover-dark":
+	// 内置名单只认 theme 包那一份：mgr 为 nil（极端兜底路径）时也得认得出内置主题。
+	if theme.IsBuiltinID(id) {
 		return true
 	}
 	if mgr == nil {

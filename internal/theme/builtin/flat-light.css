@@ -1,0 +1,106 @@
+/* ==========================================================================
+   主题：简约浅色（flat-light）
+   --------------------------------------------------------------------------
+   与 flat-dark 是同一套取向的浅色版：**扁平 + 克制**。
+
+     · 不做材质：--glass-blur 归零、--bg-canvas 不画光晕、--neu-* 全部退成
+       1px 细线。层次只靠「浅灰窗口底 → 纯白面板 → 更白的浮层」的明度差给出。
+     · 不做彩色：只保留一个低饱和的蓝灰强调色（与深色主题同一色相，
+       浅色下压暗到 #43536b 才有对比），爱心与状态色一并降饱和。
+     · 圆角 / 尺寸 / 动效沿用 tokens.css 的默认值，这里只覆盖视觉令牌。
+
+   仅声明令牌，不写任何组件样式。复制本文件改名即可创建新主题。
+
+   @theme-name 简约浅色
+   @theme-mode light
+   @theme-builtin-rev 1
+   （内置主题修订号：本文件由程序维护，升级时会替换旧副本；要长期改请复制成新文件）
+   @theme-swatch #f5f6f7 #ffffff #d7dae0 #1a1c20 #43536b
+   ========================================================================== */
+
+:root[data-theme="flat-light"] {
+  color-scheme: light;
+
+  /* —— 1. 表面 ——
+     窗口底用浅灰而不是纯白：纯白会让「面板也是白」这件事看不出来，
+     扁平主题没有阴影可用，明度差是唯一的层级信号。 */
+  --bg-app: #f5f6f7;
+  --bg-canvas: none;
+  --bg-chrome-top: none;
+  --bg-chrome-bottom: none;
+  --surface-1: rgba(20, 22, 26, 0.035);
+  --surface-2: rgba(20, 22, 26, 0.055);
+  --surface-3: rgba(20, 22, 26, 0.085);
+  --surface-hover: rgba(20, 22, 26, 0.045);
+  --surface-active: rgba(20, 22, 26, 0.075);
+
+  /* —— 2. 面板：纯白不透明 + 无模糊 ——
+     卡片、侧栏、标题栏、浮层一律是白，靠 1px 描边与窗口底的灰分开。 */
+  --glass-bg: #ffffff;
+  --glass-bg-strong: #ffffff;
+  --glass-bg-weak: #fbfbfc;
+  --glass-blur: 0px;
+  --glass-saturate: 1;
+  --glass-border: rgba(20, 22, 26, 0.09);
+  --glass-highlight: none;
+  --glass-shadow: 0 1px 2px rgba(20, 22, 26, 0.07);
+
+  /* —— 3. 拟态全部关掉 ——
+     形状由元素自带的 1px 描边（var(--hairline)）画出，不再用阴影暗示。
+     两条 --neu-edge-* 例外：标题栏与底栏贴在一起时要有条分隔线。 */
+  --neu-raised: none;
+  --neu-raised-sm: none;
+  --neu-inset: none;
+  --neu-pressed: none;
+  --neu-knob: none;
+  --neu-under: 0 1px 0 var(--divider);
+  --neu-accent: none;
+  --neu-edge-bottom: inset 0 -1px 0 var(--divider);
+  --neu-edge-top: inset 0 1px 0 var(--divider);
+
+  /* —— 4. 文字 —— */
+  --text-1: #1a1c20;
+  --text-2: rgba(26, 28, 32, 0.6);
+  --text-3: rgba(26, 28, 32, 0.38);
+  --text-inverse: #ffffff;
+
+  /* —— 5. 描边 —— */
+  --border-1: rgba(20, 22, 26, 0.09);
+  --border-2: rgba(20, 22, 26, 0.18);
+  --divider: rgba(20, 22, 26, 0.07);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
+
+  /* —— 6. 强调色：唯一的色相 ——
+     与 flat-dark 同一色相（H≈216），浅色底上必须压暗：
+     #43536b 对白底 7.7:1，作为主按钮底色配白字同样 7.7:1。 */
+  --accent: #43536b;
+  --accent-weak: rgba(67, 83, 107, 0.12);
+  --accent-weak-hover: rgba(67, 83, 107, 0.2);
+  --accent-text: #ffffff;
+  --accent-contrast: #ffffff;
+
+  /* —— 7. 点缀与状态：降饱和，避免浅灰底上跳出高饱和色块 —— */
+  --heart: #b05f68;
+  --heart-off: var(--text-3);
+  --danger: #b04a4a;
+  --success: #3f7f5c;
+  --warning: #8a6a24;
+
+  /* —— 8. 播放页 —— */
+  --immersive-veil: rgba(255, 255, 255, 0.5);
+  --vinyl: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.7) 0 18%, transparent 19%),
+    linear-gradient(145deg, #2c2f34, #17191c 60%);
+
+  /* —— 9. 遮罩与小浮层：不模糊 ——
+     遮罩仍是一层半透明深色（与浅色主题的白色面板对比强烈，层次最清楚）。 */
+  --scrim-bg: rgba(20, 22, 26, 0.4);
+  --scrim-blur: 0px;
+  --veil-blur: 0px;
+  --scan-blur: 0px;
+  --popover-blur: 0px;
+
+  /* —— 10. 零散阴影与滤镜 —— */
+  --thumb-shadow: none;
+  --accent-hover-filter: brightness(0.92);
+  --slider-idle-filter: none;
+}

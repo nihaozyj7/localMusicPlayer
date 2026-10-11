@@ -83,7 +83,7 @@
  * @property {string} currentId - 当前主题 id（前端传入或按目录匹配）
  * @property {string} currentName - 当前主题显示名
  * @property {string} currentFile - 当前主题 CSS 绝对路径；空 = 没匹配到
- * @property {ThemeFileRef[] | null} files - 目录里已有的主题（含内置三款）
+ * @property {ThemeFileRef[] | null} files - 目录里已有的主题（含内置主题）
  */
 
 /**

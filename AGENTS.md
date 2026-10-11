@@ -163,7 +163,7 @@ frontend/src/js/
 ```
 src/styles/index.css      唯一样式入口（@import 顺序固定）
   base.css tokens.css utilities.css
-  themes/                 dark-minimal.css light-minimal.css cover-dark.css _template.css（只声明令牌）
+  themes/                 dark-minimal.css light-minimal.css flat-dark.css flat-light.css cover-dark.css _template.css（只声明令牌）
   components/             14 个组件样式（layout / sidebar / titlebar / playerview / playerbar / tracktable …）
 ```
 

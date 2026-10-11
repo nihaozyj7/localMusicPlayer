@@ -1,0 +1,113 @@
+/* ==========================================================================
+   主题：简约深色（flat-dark）
+   --------------------------------------------------------------------------
+   设计取向：**扁平 + 克制**。
+
+     · 不做材质：--glass-blur 归零、--bg-canvas 不画光晕、--neu-* 全部退成
+       1px 细线。层次只靠「窗口底 → 面板 → 浮层」三级中性灰的明度差给出。
+     · 不做彩色：除了一个低饱和的蓝灰强调色，界面里再没有第二种色相。
+       「配色克制」说的是色相数量，所以强调色的饱和度压在 20% 上下，
+       连爱心与状态色也一并降饱和，避免整块灰底里跳出几个高饱和的点。
+     · 圆角 / 尺寸 / 动效沿用 tokens.css 的默认值（本来就已经是「小圆角 + 短过渡」），
+       这里只覆盖视觉令牌，不动任何布局。
+
+   仅声明令牌，不写任何组件样式。复制本文件改名即可创建新主题。
+
+   @theme-name 简约深色
+   @theme-mode dark
+   @theme-builtin-rev 1
+   （内置主题修订号：本文件由程序维护，升级时会替换旧副本；要长期改请复制成新文件）
+   @theme-swatch #101113 #1b1d21 #3b4048 #e6e8eb #8b9bb4
+   ========================================================================== */
+
+:root[data-theme="flat-dark"] {
+  color-scheme: dark;
+
+  /* —— 1. 表面 ——
+     窗口底是一块中性近黑（带一点冷调，纯灰会显脏）；标题栏与底栏共用
+     同一块底色，因此不需要 --bg-chrome-* 那两条渐变。 */
+  --bg-app: #101113;
+  --bg-canvas: none;
+  --bg-chrome-top: none;
+  --bg-chrome-bottom: none;
+  --surface-1: rgba(255, 255, 255, 0.035);
+  --surface-2: rgba(255, 255, 255, 0.06);
+  --surface-3: rgba(255, 255, 255, 0.09);
+  --surface-hover: rgba(255, 255, 255, 0.05);
+  --surface-active: rgba(255, 255, 255, 0.085);
+
+  /* —— 2. 面板：不透明纯色 + 无模糊 ——
+     毛玻璃会让面板后面的内容透过来，观感随机；扁平主题改由「面板比底色
+     亮一档」这件事本身表达层级。想把模糊加回来只改 --glass-blur 一个值。
+     --glass-highlight 是叠在面板顶部的一条高光，这里一并去掉。 */
+  --glass-bg: #17191c;
+  --glass-bg-strong: #1b1d21;
+  --glass-bg-weak: #141619;
+  --glass-blur: 0px;
+  --glass-saturate: 1;
+  --glass-border: rgba(255, 255, 255, 0.075);
+  --glass-highlight: none;
+  --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+
+  /* —— 3. 拟态全部关掉 ——
+     这是扁平与拟态最大的分野：形状不再由阴影暗示，而由现成的 1px 描边
+     （.btn / input / .segmented 都自带 var(--hairline)）明确画出。
+     两条 --neu-edge-* 例外：标题栏与底栏贴在一起时必须有条分隔线。 */
+  --neu-raised: none;
+  --neu-raised-sm: none;
+  --neu-inset: none;
+  --neu-pressed: none;
+  --neu-knob: none;
+  --neu-under: 0 1px 0 var(--divider);
+  --neu-accent: none;
+  --neu-edge-bottom: inset 0 -1px 0 var(--divider);
+  --neu-edge-top: inset 0 1px 0 var(--divider);
+
+  /* —— 4. 文字 ——
+     三级灰的间距拉开一些：扁平界面没有阴影帮忙，层级全靠字色与底色差。 */
+  --text-1: #e6e8eb;
+  --text-2: rgba(230, 232, 235, 0.62);
+  --text-3: rgba(230, 232, 235, 0.36);
+  --text-inverse: #101113;
+
+  /* —— 5. 描边 —— */
+  --border-1: rgba(255, 255, 255, 0.075);
+  --border-2: rgba(255, 255, 255, 0.14);
+  --divider: rgba(255, 255, 255, 0.06);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 65%, transparent);
+
+  /* —— 6. 强调色：唯一的色相 ——
+     蓝灰（H≈218 / S≈22%），既是主按钮的底色（配深色文字，对比 6.7:1），
+     也是选中导航条、排序方向箭头、滑条填充的前景色。 */
+  --accent: #8b9bb4;
+  --accent-weak: rgba(139, 155, 180, 0.16);
+  --accent-weak-hover: rgba(139, 155, 180, 0.24);
+  --accent-text: #101113;
+  --accent-contrast: #101113;
+
+  /* —— 7. 点缀与状态：一律降饱和，避免灰底上跳出高饱和色块 —— */
+  --heart: #cf8b92;
+  --heart-off: var(--text-3);
+  --danger: #d4797a;
+  --success: #7fb894;
+  --warning: #c8ad72;
+
+  /* —— 8. 播放页 —— */
+  --immersive-veil: rgba(0, 0, 0, 0.45);
+  --vinyl: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.05) 0 18%, transparent 19%),
+    linear-gradient(145deg, #1b1d21, #0e0f11 60%);
+
+  /* —— 9. 遮罩与小浮层：不模糊，靠一层半透明深色压住底下 —— */
+  --scrim-bg: rgba(0, 0, 0, 0.5);
+  --scrim-blur: 0px;
+  --veil-blur: 0px;
+  --scan-blur: 0px;
+  --popover-blur: 0px;
+
+  /* —— 10. 零散阴影与滤镜 ——
+     滑条手柄不再投影；底栏进度条未聚焦时也不压暗 —— 扁平主题里
+     「要不要看得见」由颜色决定，不该再多一层亮度差。 */
+  --thumb-shadow: none;
+  --accent-hover-filter: brightness(0.94);
+  --slider-idle-filter: none;
+}

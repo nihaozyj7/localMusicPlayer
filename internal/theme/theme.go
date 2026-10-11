@@ -366,7 +366,19 @@ func (m *Manager) BuiltinIDs() []string {
 var builtinIDs = map[string]string{
 	"dark-minimal":  "深色 · 黑白极简",
 	"light-minimal": "浅色 · 黑白极简",
+	"flat-dark":     "简约深色",
+	"flat-light":    "简约浅色",
 	"cover-dark":    "封面取色 · 深色",
+}
+
+// IsBuiltinID 判断 id 是否为内置主题。
+//
+// 内置主题的**名单**只有 builtinIDs 这一处，不要再往调用方抄一份 id 列表：
+// early_theme.go 曾经自己维护过一个 switch，新增内置主题时漏改就会让
+// 「首帧主题」认不出它，表现为启动时先闪一下默认深色再切过来。
+func IsBuiltinID(id string) bool {
+	_, ok := builtinIDs[strings.TrimSpace(id)]
+	return ok
 }
 
 func parseTheme(base, css string) Info {

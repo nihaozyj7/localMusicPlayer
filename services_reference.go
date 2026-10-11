@@ -98,7 +98,7 @@ type ThemeReference struct {
 	CurrentID   string         `json:"currentId"`   // 当前主题 id（前端传入或按目录匹配）
 	CurrentName string         `json:"currentName"` // 当前主题显示名
 	CurrentFile string         `json:"currentFile"` // 当前主题 CSS 绝对路径；空 = 没匹配到
-	Files       []ThemeFileRef `json:"files"`       // 目录里已有的主题（含内置三款）
+	Files       []ThemeFileRef `json:"files"`       // 目录里已有的主题（含内置主题）
 }
 
 // Reference 收集主题参考资料；currentID 是当前生效的主题 id。

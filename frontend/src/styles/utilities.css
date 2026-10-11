@@ -70,8 +70,14 @@
   gap: var(--sp-2);
 }
 
-/* 主题色卡的小色块：具体颜色由运行时生成的样式表按 data-swatch 填充 */
-[data-swatch] {
+/* 主题色卡的小色块：具体颜色由运行时生成的样式表按 data-swatch 填充。
+   ★ 必须包一层 :where()（特异性归零）：兜底规则与运行时那条
+   `[data-swatch="0"]{background:#…}` 的特异性本来相同（都是 0,1,0），
+   谁生效就只看顺序 —— 而打包后 Vite 会把样式表 <link> 提到 <head> 末尾，
+   排到 index.html 里预置的 <style id="swatch-styles"> 之后，
+   于是兜底反过来盖掉了真颜色：**构建产物里所有主题的色卡永远是一块灰**。
+   （源码直跑时顺序是对的，所以只在 dist / 真机上看得出来。） */
+:where([data-swatch]) {
   display: block;
   background: var(--surface-3);
 }

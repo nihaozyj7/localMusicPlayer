@@ -104,14 +104,23 @@ func TestThemeReferencePointsAtExistingFiles(t *testing.T) {
 		t.Errorf("当前主题文件 = %q，期望 cover-dark.css", filepath.Base(ref.CurrentFile))
 	}
 
-	// 内置三款都要在参考列表里，并且路径都存在（AI 直接读它们当范例）
-	if len(ref.Files) < 3 {
-		t.Fatalf("参考主题数量 = %d，期望至少 3（内置三款）", len(ref.Files))
-	}
+	// 参考列表必须与主题目录的扫描结果一一对应：AI 拿它当范例，
+	// 漏掉一个就少一个范例。数量刻意不写死 —— 内置主题是会长出来的
+	// （见 internal/theme/theme.go#builtinIDs），写死只会在下次加主题时变成假红灯。
+	inList := map[string]bool{}
 	for _, f := range ref.Files {
+		inList[f.ID] = true
 		if _, err := os.Stat(f.File); err != nil {
 			t.Errorf("参考主题路径不可用 %q: %v", f.File, err)
 		}
+	}
+	for _, info := range mgr.List() {
+		if !inList[info.ID] {
+			t.Errorf("主题 %s 扫描得到、却不在参考列表里", info.ID)
+		}
+	}
+	if len(ref.Files) != len(mgr.List()) {
+		t.Errorf("参考主题数量 = %d，扫描结果 = %d，期望一致", len(ref.Files), len(mgr.List()))
 	}
 
 	// 主题不存在时不应编造路径
