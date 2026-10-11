@@ -144,6 +144,28 @@ func TestOnlineCoverTogglePersists(t *testing.T) {
 	}
 }
 
+// TestOnlineWordLyricsTogglePersists 「优先使用逐字歌词」开关要落盘。
+//
+// 这个开关决定要不要去解析第三方的私有歌词编码（QQ 的 QRC / 酷狗的 KRC，
+// 见 docs/43 的 H2）。如果它被静默丢弃，用户关掉之后重启又「自动打开」——
+// 那就等于这个开关根本不存在，而用户以为自己已经关掉了。
+func TestOnlineWordLyricsTogglePersists(t *testing.T) {
+	svc, _ := newCfgFixture(t)
+	if !svc.Get().OnlineWordLyrics {
+		t.Fatal("OnlineWordLyrics 默认应为 true（与加入开关之前的行为一致）")
+	}
+	if _, err := svc.Set(map[string]any{"onlineWordLyrics": false}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := bootstrap.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Get().OnlineWordLyrics {
+		t.Fatal("onlineWordLyrics=false 未落盘")
+	}
+}
+
 // TestAILyricsCleanTogglePersists 「自动匹配歌词时使用 AI 清洗元数据」开关要落盘。
 //
 // 这类布尔开关最容易踩设计约束 #8：前端 SYNCED_KEYS 里加了键，

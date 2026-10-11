@@ -326,6 +326,25 @@ You may obtain a copy of the License at
 [iTunes Search API](https://performance-partners.apple.com/search-api) · [Deezer](https://developers.deezer.com/api) ·
 [MusicBrainz](https://musicbrainz.org/) · [哔哩哔哩](https://www.bilibili.com/)
 
+### 联网与隐私
+
+界面里「设置 → 下载与缓存」有一个同名的「联网与隐私」区块（数据源同样是 `about-info.js`），
+列出**每一个会联网的功能、连到哪、什么时候发生、怎么关掉**。要点如下：
+
+| 功能 | 连到 | 什么时候 | 怎么关 |
+| :--- | :--- | :--- | :--- |
+| 在线搜索 / 试听 / 下载 | `api.bilibili.com`、`*.bilivideo.com` | 只在你主动搜索 / 试听 / 下载时 | 不用这些按钮 |
+| 歌词匹配 | `lrclib.net`、`music.163.com`、`u.y.qq.com`、`songsearch.kugou.com` 等 | 切歌时自动（本机没有可用歌词才联网） | 见下方「逐字歌词」开关 |
+| 封面匹配 | `itunes.apple.com`、`music.163.com`、`c.y.qq.com`、`api.deezer.com`、`musicbrainz.org` | 歌曲缺封面时自动 | 关闭「联网获取封面」（默认开） |
+| AI 元数据清洗 | 你自己填写的接口地址（通常境外） | 启用 AI 后：匹配歌词前 / 下载完成后 | 不填 Base URL 与 Key，或关掉两个 AI 开关（默认关） |
+| 检查更新 | `api.github.com`（下载走你选的加速代理） | 启动时静默检查一次 | 关闭「启动时自动检查更新」（默认开） |
+
+- **留在本机**：曲库、播放记录、歌单、收藏、缓存，全部只在本机；本程序没有服务器，也不上传任何数据；
+- **发出去的字段**：搜索关键词、歌曲标题 / 歌手 / 专辑 / 时长；AI 清洗额外带**文件名**（不含完整路径）；
+- **API Key**：只写入本机 `config.json`，界面回传时一律打码，不会发往你填写的接口以外的任何地方；
+- **逐字歌词**：QQ 音乐的 QRC 与酷狗的 KRC 是两家各自的私有编码，本项目只做兼容性解析（不绕过任何访问控制）。
+  不接受这一点时，可在「设置 → 下载与缓存」关掉「优先使用逐字歌词」，歌词仍可用，只是没有逐字高亮。
+
 ### 致谢
 
 感谢 [Go](https://go.dev/)、[Wails](https://v3.wails.io/)、[Lit](https://lit.dev/)、[Vite](https://vite.dev/)、

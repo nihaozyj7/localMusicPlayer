@@ -214,7 +214,10 @@ func TestQQWordLevelOnStillAsksForQRC(t *testing.T) {
 			} `json:"req"`
 		}
 		_ = json.Unmarshal(body, &probe)
-		param = probe.Req.Param
+		// 只记**第一次**请求的参数：后面还会退到行级与老 cgi，覆盖掉就测不到「先要逐字」了。
+		if param == nil && probe.Req.Param != nil {
+			param = probe.Req.Param
+		}
 		io.WriteString(w, `{"code":0,"req":{"code":0,"data":{"qrc":0,"crypt":1,"lyric":""}}}`)
 	}))
 	defer srv.Close()
