@@ -859,3 +859,32 @@ func (s *OnlineService) FetchLyrics(provider, id string) (map[string]any, error)
 		"provider": item.Provider,
 	}, nil
 }
+
+// ProbeLyricsFormat 只判断一个候选给的是「逐字」还是「逐行」，不改当前歌词。
+//
+// 歌词搜索界面用它给每个候选打标：**格式在抓取之前无从知道**（同一个来源
+// 也可能这首有逐字、那首没有），抓一次是最直接的答案。界面按顺序一个一个问，
+// 谁先问到谁先出标，不会因为探测拖慢搜索本身。
+//
+// 抓到的歌词会进聚合器的按候选缓存（见 lyricsfetch#Aggregator.Fetch），
+// 用户随后点「使用」时是命中缓存，不会再下载一遍同一份歌词。
+func (s *OnlineService) ProbeLyricsFormat(provider, id string) (map[string]any, error) {
+	if s.lyrics == nil {
+		return nil, fmt.Errorf("lyrics service disabled")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	item, err := s.lyrics.Fetch(ctx, provider, id)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(item.LRC) == "" {
+		return nil, fmt.Errorf("no lyrics returned")
+	}
+	format := lyricsfetch.FormatOf(item.LRC)
+	return map[string]any{
+		"provider":  provider,
+		"format":    string(format),
+		"wordLevel": format == lyricsfetch.FormatWord,
+	}, nil
+}

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"localmusicplayer/internal/lyrics"
 )
 
 // ErrNoMatch 表示没有找到足够可信的歌词。
@@ -57,11 +59,45 @@ type Result struct {
 	Candidate   Candidate `json:"candidate"`
 }
 
+// LyricFormat 歌词的精细度。
+//
+//   - 字级（FormatWord）：带逐字时间轴，增强 LRC / QRC / KRC / YRC 都算 ——
+//     判据统一用 lyrics.HasWordTiming（它认这几种写法）；
+//   - 行级（FormatLine）：只有整行时间轴，逐字高亮没得点。
+type LyricFormat string
+
+const (
+	FormatWord LyricFormat = "word"
+	FormatLine LyricFormat = "line"
+)
+
+// FormatOf 判断一段歌词文本是字级还是行级。
+//
+// 歌词搜索界面用它给每个候选打「逐字 / 逐行」的标：抓取之前无从知道格式，
+// 抓一次是最直接的答案（见 OnlineService.ProbeLyricsFormat）。
+func FormatOf(text string) LyricFormat {
+	if lyrics.HasWordTiming(text) {
+		return FormatWord
+	}
+	return FormatLine
+}
+
 // Provider 是单个歌词源。
 type Provider interface {
 	Name() string
 	Search(ctx context.Context, req SearchRequest) ([]Candidate, error)
 	Fetch(ctx context.Context, candidate Candidate) (Result, error)
+}
+
+// WordProvider 是 Provider 的**可选**能力：这个来源可能给出字级（逐字）歌词。
+//
+// 声明它的用处只有一个，但很关键：抓取之前无从知道某个候选是字级还是行级，
+// 而「有逐字就播逐字」要求自动匹配在拿到行级结果之后，还愿意为**可能给字级**
+// 的来源多花一次请求（见 Match）。没有这个声明，一个稳定但只能给行级的来源
+// 会永远压住有逐字的那个来源。
+type WordProvider interface {
+	// HasWordLevel 该来源是否可能返回带逐字时间轴的歌词。
+	HasWordLevel() bool
 }
 
 // Aggregator 并发使用多个 Provider 完成搜索与自动匹配。
@@ -70,6 +106,12 @@ type Aggregator struct {
 
 	mu    sync.RWMutex
 	cache map[string]cachedResult
+	// fetched 按「候选」（provider:id）缓存已抓到的歌词。
+	//
+	// 存在的理由：歌词搜索界面会先给每个候选**探一次格式**（逐字还是逐行，
+	// 见 ProbeLyricsFormat），用户随后点「使用」时不该再下载一遍同一份歌词。
+	// 与 cache（按搜索请求缓存、供 Match 用）分开：键不同、寿命也不同。
+	fetched map[string]cachedResult
 }
 
 type cachedResult struct {
@@ -77,25 +119,31 @@ type cachedResult struct {
 	at  time.Time
 }
 
-// NewAggregator 创建聚合器；不传 Provider 时使用内置的三个来源。
+// NewAggregator 创建聚合器；不传 Provider 时使用内置的四个来源。
 //
 // 顺序即优先级（同分时排前面的胜出）：
-//   - LRCLIB：国际化最好、有精确接口，且是唯一提供逐行时间轴的稳定来源；
+//   - LRCLIB：国际化最好、有精确接口，稳定但只有行级；
 //   - 网易云：华语覆盖最好，但网页搜索接口会被限流（HTTP 200 + code 405）；
-//   - QQ 音乐：华语覆盖同样好、接口稳定，正好补上网易云被限流时的缺口。
+//   - QQ 音乐：华语覆盖同样好、接口稳定，正好补上网易云被限流时的缺口；
+//   - 酷狗：唯一能匿名拿到**字级（逐字）**歌词的来源（见 kugou.go）。
 //
 // 为什么不再只有两个来源：网易云一旦被限流，实际上只剩 LRCLIB 一个来源，
 // 而 LRCLIB 对中文歌的覆盖（尤其是近几年的新歌）并不算好，用户就会觉得
 // 「歌词搜索老是失败」。多一个稳定来源是最直接的解法。
+//
+// 酷狗排在最后是刻意的：它的搜索接口要多走一步（反查 KRC）才拿到歌词，
+// 同分时不该把排在前面的稳定来源挤掉；字级优先由 Match 单独负责
+// （拿到行级之后会再试一次声明了字级能力的来源），不靠这里的顺序。
 func NewAggregator(providers ...Provider) *Aggregator {
 	if len(providers) == 0 {
 		providers = []Provider{
-			NewLRCLIB(), NewNetease(), NewQQ(),
+			NewLRCLIB(), NewNetease(), NewQQ(), NewKugou(),
 		}
 	}
 	return &Aggregator{
 		providers: providers,
 		cache:     map[string]cachedResult{},
+		fetched:   map[string]cachedResult{},
 	}
 }
 
@@ -232,11 +280,19 @@ const (
 //
 // 关于**字级（逐字）歌词**的取舍（需求：优先使用字级歌词）——
 // 抓取之前无从知道一个候选给的是行级还是字级，想挑字级就只能「抓到行级再去
-// 抓下一个候选」；而绝大多数来源给的就是行级，那等于把每次自动匹配都变成两次
+// 抓下一个候选」；而多数来源给的就是行级，那等于把每次自动匹配都变成两次
 // 请求。自动匹配跑在**切歌**路径上（25s 预算，实测慢一拍就会被当成「卡住了」），
-// 用稳定的一次请求去换一个多数时候不存在的字级并不划算。
+// 所以这里的做法是**有上限的两步**：
 //
-// 于是字级偏好放在另外两层，这里只负责「挑对版本」：
+//  1. 按分数顺序抓第一个候选（与原来完全一样，一次请求）；
+//  2. 拿到的是字级 → 直接用它；拿到的是行级 → 只为「声明了字级能力」的来源
+//     （WordProvider，目前是酷狗）再多花**一次**请求；那一次拿到字级就换成它，
+//     否则仍旧回退到第 1 步那份行级歌词。
+//
+// 也就是说「有逐字就播逐字、没有就播逐行」的代价最多是一次额外请求，
+// 且只在【最匹配的那个候选给的是行级】时才发生。
+//
+// 字级偏好还有另外两层，这里不是唯一的一处：
 //   - 同一个来源的返回里**优先取字级字段**（见 netease.go#neteaseLyricText）；
 //   - 本地来源之间**字级优先于行级**（见 internal/lyrics#Load）。
 func (a *Aggregator) Match(ctx context.Context, req SearchRequest) (Result, error) {
@@ -260,9 +316,20 @@ func (a *Aggregator) Match(ctx context.Context, req SearchRequest) (Result, erro
 		return Result{}, ErrNoMatch
 	}
 
+	// matchTries 最多抓几次：第一次是「版本最对的那个」，第二次留给字级。
+	const matchTries = 2
+	var fallback Result
 	var lastErr error
+	tries := 0
 	for _, c := range candidates {
 		if c.Score < 30 {
+			break
+		}
+		// 已经有一份行级结果在手时，只为可能给字级的来源继续花请求。
+		if fallback.LRC != "" && !a.wordCapable(c.Provider) {
+			continue
+		}
+		if tries >= matchTries {
 			break
 		}
 		p := a.provider(c.Provider)
@@ -270,6 +337,7 @@ func (a *Aggregator) Match(ctx context.Context, req SearchRequest) (Result, erro
 			continue
 		}
 		res, err := p.Fetch(ctx, c)
+		tries++
 		if err != nil {
 			lastErr = err
 			continue
@@ -285,13 +353,32 @@ func (a *Aggregator) Match(ctx context.Context, req SearchRequest) (Result, erro
 			res.Source = c.Provider
 		}
 		res.Candidate = c
-		a.setCache(key, res)
-		return res, nil
+		if lyrics.HasWordTiming(res.LRC) {
+			a.setCache(key, res)
+			return res, nil
+		}
+		if fallback.LRC == "" {
+			fallback = res
+		}
+	}
+	if fallback.LRC != "" {
+		a.setCache(key, fallback)
+		return fallback, nil
 	}
 	if lastErr != nil {
 		return Result{}, lastErr
 	}
 	return Result{}, ErrNoMatch
+}
+
+// wordCapable 该来源是否声明了「可能给字级歌词」。
+func (a *Aggregator) wordCapable(name string) bool {
+	p := a.provider(name)
+	if p == nil {
+		return false
+	}
+	wp, ok := p.(WordProvider)
+	return ok && wp.HasWordLevel()
 }
 
 // SearchByText 便于外部直接按标题/歌手搜索。
@@ -599,7 +686,14 @@ func lcsLen(a, b []rune) int {
 }
 
 // Fetch 按 provider+id 获取指定候选的歌词。
+//
+// 结果按**候选**缓存一小段时间：歌词搜索界面会先探格式（逐字还是逐行）、
+// 用户再点「使用」，两次请求的是同一份歌词，没有这层缓存就要白下载一遍。
 func (a *Aggregator) Fetch(ctx context.Context, providerName, id string) (Result, error) {
+	key := providerName + ":" + id
+	if v, ok := a.getFetched(key); ok {
+		return v, nil
+	}
 	p := a.provider(providerName)
 	if p == nil {
 		return Result{}, fmt.Errorf("unknown lyric provider: %s", providerName)
@@ -614,5 +708,40 @@ func (a *Aggregator) Fetch(ctx context.Context, providerName, id string) (Result
 	if res.Source == "" {
 		res.Source = providerName
 	}
+	a.setFetched(key, res)
 	return res, nil
+}
+
+const (
+	// fetchCacheTTL 按候选缓存的有效期：比 cache 短得多 —— 用户可能过一会儿
+	// 重新搜一次同一首歌，那时该拿上游的新结果（歌词是会改的）。
+	fetchCacheTTL = 10 * time.Minute
+	// maxFetchEntries 条数上限；满了先清过期，仍超限就整体清空（与 cache 一致）。
+	maxFetchEntries = 64
+)
+
+func (a *Aggregator) getFetched(key string) (Result, bool) {
+	a.mu.RLock()
+	v, ok := a.fetched[key]
+	a.mu.RUnlock()
+	if !ok || time.Since(v.at) > fetchCacheTTL {
+		return Result{}, false
+	}
+	return v.res, true
+}
+
+func (a *Aggregator) setFetched(key string, res Result) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.fetched) >= maxFetchEntries {
+		for k, v := range a.fetched {
+			if time.Since(v.at) > fetchCacheTTL {
+				delete(a.fetched, k)
+			}
+		}
+		if len(a.fetched) >= maxFetchEntries {
+			a.fetched = map[string]cachedResult{}
+		}
+	}
+	a.fetched[key] = cachedResult{res: res, at: time.Now()}
 }

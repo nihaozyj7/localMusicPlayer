@@ -103,6 +103,11 @@ class MpLyricsPanel extends MpElement {
     this._followHold = 0;
     this._followAutoUntil = 0;
     this._lastOnlineHint = "在线歌词来源";
+    // 候选歌词的格式（逐字 / 逐行）：provider:id → "word" | "line" | "fail"。
+    // 抓取之前无从知道格式，所以搜索完由 probeFormats 逐个探（见那里的说明）。
+    this._formats = new Map();
+    // 每次搜索递增：探测是逐条等待的，中途又搜一次时旧的一轮要能自己停下
+    this._searchSeq = 0;
   }
 
   onConnected() {
@@ -345,6 +350,7 @@ class MpLyricsPanel extends MpElement {
             <div class="candidate__main">
               <div class="candidate__title">${(c.title || "未命名") + " - " + (c.artist || "未知")}</div>
               <div class="candidate__sub">
+                ${this.formatChip(c)}
                 ${(c.provider || "") + " · score " + (c.score || 0) + " · " + fmtTime(c.duration)}
               </div>
             </div>
@@ -845,6 +851,60 @@ class MpLyricsPanel extends MpElement {
     }
   }
 
+  /**
+    候选歌词的格式标签：逐字 / 逐行 / 未知 / 检测中。
+
+    「逐字」用强调成功色：它是更好的那一份 —— 播放时能按字点亮（每个播放器
+    样式都支持）。「逐行」用普通灰调，不做贬义渲染：多数来源本来就只有行级。
+   */
+  formatChip(candidate) {
+    const format = this._formats.get(candidateKey(candidate));
+    if (format === "word") {
+      return html`<span class="candidate__format candidate__format--word" title="带逐字时间轴，播放时按字点亮"
+        >逐字</span
+      >`;
+    }
+    if (format === "line") {
+      return html`<span class="candidate__format" title="只有整行时间轴">逐行</span>`;
+    }
+    if (format === "fail") {
+      return html`<span class="candidate__format candidate__format--pending" title="这条取不到歌词内容">未知</span>`;
+    }
+    return html`<span class="candidate__format candidate__format--pending">检测中…</span>`;
+  }
+
+  /**
+    逐个探测候选的歌词格式（逐字还是逐行）。
+
+    为什么要有这一步：**抓取之前无从知道格式** —— 同一个来源有的歌有逐字、
+    有的只有行级（酷狗的 KRC 就只覆盖一部分歌）。探测只取歌词判格式，后端会把
+    结果按候选缓存下来，用户随后点「使用」是命中缓存、不会重复下载。
+
+    为什么是一条一条来而不是并发：这是在第三方接口上打请求，一次几十个并发
+    很容易被限流（网易云 405 就是这么来的）。逐条还有个好处 —— 谁先探到谁先
+    出标签，不用等全部探完。
+   */
+  async probeFormats(service, seq) {
+    if (!service?.ProbeLyricsFormat || !this._candidates.length) return;
+    // 网易云放最后：它被限流时会连着几条都探不出来，排在前面会拖住其它来源的标签
+    const queue = [...this._candidates].sort(
+      (a, b) => Number(a?.provider === "netease") - Number(b?.provider === "netease")
+    );
+    for (const candidate of queue) {
+      if (seq !== this._searchSeq) return; // 又搜了一次，这一轮作废
+      const key = candidateKey(candidate);
+      if (!key || this._formats.has(key)) continue;
+      try {
+        const res = await service.ProbeLyricsFormat(candidate.provider, candidate.id);
+        this._formats.set(key, res?.format === "word" ? "word" : "line");
+      } catch {
+        // 探不出来（这首歌其实没有歌词 / 来源暂时不通）只影响这一条的标签
+        this._formats.set(key, "fail");
+      }
+      bumpLyricsPanelTick();
+    }
+  }
+
   async searchLyrics() {
     const keyword = (this._onlineKeyword || "").trim();
     if (!keyword) {
@@ -856,6 +916,7 @@ class MpLyricsPanel extends MpElement {
       // 候选区直接进入「搜索失败」状态：只弹一条 toast 的话，空状态还停在
       // 「还没有开始搜索」，用户会以为是自己的关键词没生效
       this._candidates = [];
+      this._formats = new Map();
       this._onlineError = "在线歌词服务不可用（需要应用后端）";
       this._searched = true;
       bumpLyricsPanelTick();
@@ -875,8 +936,12 @@ class MpLyricsPanel extends MpElement {
         song ? song.duration : 0
       );
       this._candidates = Array.isArray(list) ? list : [];
+      // 新一批候选 = 格式重新探（旧的标签不能跟过来）
+      this._formats = new Map();
+      this._searchSeq += 1;
     } catch (err) {
       this._candidates = [];
+      this._formats = new Map();
       this._onlineError = String(err?.message || err);
     } finally {
       // 无论成败都算「搜过了」：空状态要能区分「没搜」和「搜了没有」
@@ -884,6 +949,8 @@ class MpLyricsPanel extends MpElement {
       this._searched = true;
       bumpLyricsPanelTick();
     }
+    // 候选已经列出来了 → 后台补格式标签（不 await：搜索本身不该等它）
+    void this.probeFormats(service, this._searchSeq);
   }
 
   async applyCandidate(index) {
@@ -1156,6 +1223,17 @@ function bumpLyricsPanelTick() {
 }
 
 const component = () => document.querySelector("mp-lyrics-panel");
+
+/**
+ * 候选的唯一键（provider + id）。
+ *
+ * 格式标签（逐字 / 逐行）就挂在这个键上：候选每次搜索都是新的数组，
+ * 但同一个候选下次搜出来仍然是同一个键，标签能直接复用。
+ */
+function candidateKey(candidate) {
+  if (!candidate || !candidate.provider || !candidate.id) return "";
+  return `${candidate.provider}:${candidate.id}`;
+}
 
 /* --------------------------------------------------------------------------
    入口

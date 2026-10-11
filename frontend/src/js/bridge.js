@@ -227,6 +227,9 @@ const backendImpl = {
   lyricsSave: (songId, lrc, source = "user", embed = null) =>
     call(bindings?.Lyrics?.Save, songId, lrc, source, embed),
   lyricsCached: (songId) => call(bindings?.Lyrics?.LoadCached, songId),
+  // 本地读到的是行级歌词时，后台问一次「有没有逐字版本」；
+  // 后端只在真拿到字级歌词时才写缓存（拿不到就返回空文本）
+  lyricsUpgradeWord: (songId) => call(bindings?.Lyrics?.UpgradeWordLyrics, songId),
   // 在线试听曲目没有本地文件，歌词只能在线匹配
   onlineLyrics: (title, artist, duration) => call(bindings?.Online?.Lyrics, title, artist, duration),
 

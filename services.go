@@ -623,7 +623,18 @@ type LyricsService struct {
 	online LyricsMatcher
 	// ai 元数据清洗（可选）
 	ai *AiService
+
+	// wordTried 「已经为逐字歌词联网试过的歌」→ 试过的时间。
+	//
+	// 为什么要有：UpgradeWordLyrics 跑在**切歌**路径上。不做记录的话，
+	// 每切到一首只有行级歌词的歌都会联网搜一次（多数结果是没有逐字），
+	// 既慢又白耗第三方接口的配额。一次运行里每首歌只试一次。
+	wordMu    sync.Mutex
+	wordTried map[string]time.Time
 }
+
+// wordUpgradeTTL 同一首歌「再试一次逐字」的最小间隔。
+const wordUpgradeTTL = 6 * time.Hour
 
 // LyricsMatcher 在线歌词匹配的最小接口。
 //
@@ -724,6 +735,91 @@ func (s *LyricsService) AutoMatch(songID string) (lyrics.Result, error) {
 		src = "online:" + provider
 	}
 	return lyrics.Result{LRC: lrc, Source: src, Title: matchedTitle, Artist: matchedArtist}, nil
+}
+
+// UpgradeWordLyrics 给「本地/缓存里只有行级」的歌在线找一份**字级（逐字）**歌词。
+//
+// 存在的理由（需求：有逐字就播逐字，没有才播逐行）：本地那三级——内嵌歌词、
+// 同名 .lrc、歌词缓存——给的绝大多数是行级，尤其是**老版本缓存下来的**那些
+// （当年拿到逐字也会被剥成行级）。没有这一步，用户永远看不到逐字歌词，
+// 哪怕在线来源手里就有。
+//
+// 只在**真的拿到字级**时才写缓存：internal/lyrics#Load 的选词规则是
+// 「字级结果优先于行级结果」，所以写进缓存之后每次打开都会优先用它，
+// 不需要另存一份「升级结果」，也不会跟用户设置的来源顺序打架。
+//
+// 拿不到逐字时返回 lrc 为空（不是错误）：「这首歌没有逐字版本」是正常结果，
+// 调用方保持原来的行级显示即可。
+//
+// 同一首歌在一次运行里只试一次（见 wordTried）。前端在后台调用，不挡播放。
+func (s *LyricsService) UpgradeWordLyrics(songID string) (map[string]any, error) {
+	none := map[string]any{"lrc": "", "wordLevel": false}
+	song, ok := s.songs(songID)
+	if !ok || s.online == nil {
+		return none, nil
+	}
+	if !lyrics.WantOnline(s.store.Get().LyricsSources) {
+		// 用户把 online 从来源里去掉 = 「只要本地歌词」，升级必须尊重这个意图
+		return none, nil
+	}
+	if !s.markWordTried(songID) {
+		return none, nil
+	}
+
+	title, artist := s.cleanMetaFor(song)
+	if strings.TrimSpace(title) == "" {
+		return none, nil
+	}
+	// 与 AutoMatch 同一条理由：文件名兜底的标题匹配在线歌词只会撞上别人的歌词。
+	if isPlaceholderTitle(title) && strings.TrimSpace(artist) == "" {
+		return none, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	// Match 自己就带字级优先（见 lyricsfetch#Match）：最匹配的候选若只有行级，
+	// 它会为声明了字级能力的来源多试一次。
+	lrc, provider, matchedTitle, matchedArtist, err := s.online.Match(ctx, title, artist, song.Duration)
+	if err != nil || strings.TrimSpace(lrc) == "" {
+		return none, nil
+	}
+	lrc = lyrics.NormalizeWordLevel(lrc)
+	if !lyrics.HasWordTiming(lrc) {
+		return none, nil
+	}
+
+	s.saveToCache(songID, lrc, "online:"+provider)
+	src := lyrics.SourceOnline
+	if provider != "" {
+		src = "online:" + provider
+	}
+	return map[string]any{
+		"lrc":       lrc,
+		"source":    src,
+		"provider":  provider,
+		"title":     matchedTitle,
+		"artist":    matchedArtist,
+		"wordLevel": true,
+	}, nil
+}
+
+// markWordTried 记录「这首歌为逐字试过了」；距上次不足 wordUpgradeTTL 时返回 false。
+func (s *LyricsService) markWordTried(songID string) bool {
+	s.wordMu.Lock()
+	defer s.wordMu.Unlock()
+	if s.wordTried == nil {
+		s.wordTried = map[string]time.Time{}
+	}
+	if at, ok := s.wordTried[songID]; ok && time.Since(at) < wordUpgradeTTL {
+		return false
+	}
+	// 上限保护：长时间挂着播放会累积到几千条，超限就整体清掉重来
+	// （清掉最坏只是某首歌多试一次，不会出错）。
+	if len(s.wordTried) >= 2048 {
+		s.wordTried = map[string]time.Time{}
+	}
+	s.wordTried[songID] = time.Now()
+	return true
 }
 
 // Save 保存用户手动匹配到的歌词：写缓存，并按设置决定是否嵌入音频文件。

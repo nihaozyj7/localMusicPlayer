@@ -192,6 +192,8 @@ async function getLyrics(song) {
 
   let text = "";
   let source = "none";
+  // 这段歌词是不是「本地三级」读出来的（决定要不要尝试升级成逐字，见文件末尾）
+  let fromLocal = false;
   // 先给出「正在装载」的空快照：本地三级读完之前界面不该是空的，
   // 更重要的是下面联网匹配可能要十几秒（AI 清洗元数据），
   // 那段时间里样式显示「歌词匹配中…」而不是「暂无歌词」。
@@ -207,6 +209,7 @@ async function getLyrics(song) {
       text = res;
       source = "backend";
     }
+    fromLocal = Boolean(text);
 
     // 2) 本地都没有 → 在线自动匹配（期间状态 = matching）
     if (!text && onlineLyricsEnabled()) {
@@ -234,7 +237,53 @@ async function getLyrics(song) {
 
   const payload = { lines: parseLrc(text), text, source, status: "ok" };
   lyricsCache.set(song.id, payload);
+
+  // 3) 本地读到的是**行级**歌词时，后台再问一次「这首歌有没有逐字版本」。
+  //
+  //    为什么必须有这一步：本地那三级（内嵌 / .lrc / 缓存）给的几乎都是行级，
+  //    老缓存更是当年拿到逐字也会被剥成行级存下来的 —— 不补救的话，用户
+  //    永远看不到逐字歌词，哪怕在线来源手里就有。
+  //
+  //    不 await：先把本地这份显示出来，升级成功由 upgradeWordLyrics 换掉
+  //    （样式、桌面歌词、歌词工作台一起跟着变）；失败则一切照旧。
+  if (isWails() && fromLocal && onlineLyricsEnabled() && !hasWordTiming(payload)) {
+    void upgradeWordLyrics(song);
+  }
   return payload;
+}
+
+/** 这份歌词里有没有逐字时间轴（解析结果里带 words 的行） */
+function hasWordTiming(payload) {
+  return Boolean(payload?.lines?.some((line) => Array.isArray(line.words) && line.words.length));
+}
+
+/**
+ * 后台把「只有行级」的歌词升级成逐字版本。
+ *
+ * 后端（Lyrics.UpgradeWordLyrics）只在**真的拿到字级歌词**时才写进缓存 ——
+ * internal/lyrics#Load 的选词规则是「字级优先于行级」，所以写进去之后每次
+ * 打开这首歌都会优先用它，包括重启之后；不需要前端记住任何东西。
+ *
+ * 拿不到逐字是常态（很多歌就是没有），这时后端返回空文本，这里什么都不做：
+ * 用户看到的仍是原来那份行级歌词，界面不弹错、播放不受影响。
+ *
+ * 同一个会话里每首歌最多走一次：成功后 lyricsCache 里已经是逐字那份，
+ * 失败后也不再重问（切歌回来直接命中缓存）。
+ */
+async function upgradeWordLyrics(song) {
+  try {
+    const res = await backend.lyricsUpgradeWord(song.id);
+    const lrc = typeof res?.lrc === "string" ? res.lrc : "";
+    if (!lrc) return;
+    const payload = { lines: parseLrc(lrc), text: lrc, source: res?.source || "online", status: "ok" };
+    // 再确认一次：后端保证了是字级，但这里是「逐字高亮」的入口，宁可多判一次
+    if (!hasWordTiming(payload)) return;
+    lyricsCache.set(song.id, payload);
+    lastPushed.lyricsText = null;
+    if (currentSong()?.id === song.id) push({ type: "lyrics", ...mediaSnapshot() });
+  } catch (err) {
+    console.warn("[lyrics] 逐字歌词升级失败", err);
+  }
 }
 
 /**

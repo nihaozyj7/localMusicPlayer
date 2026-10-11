@@ -65,3 +65,26 @@ export function LoadCached(songID) {
 export function Save(songID, lrc, source, embed) {
     return $Call.ByID(1749176124, songID, lrc, source, embed);
 }
+
+/**
+ * UpgradeWordLyrics 给「本地/缓存里只有行级」的歌在线找一份**字级（逐字）**歌词。
+ * 
+ * 存在的理由（需求：有逐字就播逐字，没有才播逐行）：本地那三级——内嵌歌词、
+ * 同名 .lrc、歌词缓存——给的绝大多数是行级，尤其是**老版本缓存下来的**那些
+ * （当年拿到逐字也会被剥成行级）。没有这一步，用户永远看不到逐字歌词，
+ * 哪怕在线来源手里就有。
+ * 
+ * 只在**真的拿到字级**时才写缓存：internal/lyrics#Load 的选词规则是
+ * 「字级结果优先于行级结果」，所以写进缓存之后每次打开都会优先用它，
+ * 不需要另存一份「升级结果」，也不会跟用户设置的来源顺序打架。
+ * 
+ * 拿不到逐字时返回 lrc 为空（不是错误）：「这首歌没有逐字版本」是正常结果，
+ * 调用方保持原来的行级显示即可。
+ * 
+ * 同一首歌在一次运行里只试一次（见 wordTried）。前端在后台调用，不挡播放。
+ * @param {string} songID
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function UpgradeWordLyrics(songID) {
+    return $Call.ByID(4008108251, songID);
+}

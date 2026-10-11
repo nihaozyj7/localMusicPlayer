@@ -19,8 +19,10 @@ const PROVIDER_NAMES = {
   // 而它没有任何测试守着，只靠人肉比对。现在两份清单由
   // frontend/tests/provider-names.test.js 对着 Go 源码逐一核对。
   lrclib: "LRCLIB",
-  // kugou / kuwo / migu 目前 Go 侧没有对应的 provider（保留给后续接入），
-  // 因此不在下面的分组清单里 —— 测试只要求「在用的 id 都有显示名」，
+  // kugou 已经接进来了（internal/lyricsfetch/kugou.go）：它是目前唯一能匿名
+  // 拿到**逐字**歌词的来源，在线歌词列表里常常就是「逐字」那一条。
+  // kuwo / migu 仍然没有对应的 provider（保留给后续接入），因此不在下面的
+  // 分组清单里 —— 测试只要求「在用的 id 都有显示名」，
   // 反向（表里有暂时用不到的条目）是允许的。
   kugou: "酷狗音乐",
   kuwo: "酷我音乐",
@@ -37,7 +39,7 @@ const PROVIDER_NAMES = {
 export const COVER_PROVIDERS = ["itunes", "netease", "qq", "deezer", "musicbrainz"];
 
 /** 歌词来源 id（后端 internal/lyricsfetch 在用的那些）。 */
-export const LYRICS_PROVIDERS = ["lrclib", "netease", "qq"];
+export const LYRICS_PROVIDERS = ["lrclib", "netease", "qq", "kugou"];
 
 /** 单个来源 id → 显示名；不认识的原样返回，至少不会显示空白 */
 export function providerName(id) {

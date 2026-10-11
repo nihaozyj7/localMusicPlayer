@@ -124,6 +124,23 @@ export function LyricsProviders() {
 }
 
 /**
+ * ProbeLyricsFormat 只判断一个候选给的是「逐字」还是「逐行」，不改当前歌词。
+ * 
+ * 歌词搜索界面用它给每个候选打标：**格式在抓取之前无从知道**（同一个来源
+ * 也可能这首有逐字、那首没有），抓一次是最直接的答案。界面按顺序一个一个问，
+ * 谁先问到谁先出标，不会因为探测拖慢搜索本身。
+ * 
+ * 抓到的歌词会进聚合器的按候选缓存（见 lyricsfetch#Aggregator.Fetch），
+ * 用户随后点「使用」时是命中缓存，不会再下载一遍同一份歌词。
+ * @param {string} provider
+ * @param {string} id
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function ProbeLyricsFormat(provider, id) {
+    return $Call.ByID(4049571679, provider, id);
+}
+
+/**
  * @param {string} keyword
  * @param {number} page
  * @param {number} pageSize

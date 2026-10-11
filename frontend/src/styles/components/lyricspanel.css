@@ -353,6 +353,30 @@
   color: var(--text-3);
 }
 
+/* —— 候选的格式标签（逐字 / 逐行 / 检测中）——
+   逐字是更好的那一份（播放时能按字点亮），用成功色标出来；逐行保持灰调，
+   不做贬义渲染 —— 多数来源本来就只有行级。还没探出结果时用虚线边框，
+   表示「还没问到」而不是「没有」。 */
+.candidate__format {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--sp-1);
+  margin-right: var(--sp-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.candidate__format--word {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.candidate__format--pending {
+  border-style: dashed;
+}
+
 /* --------------------------------------------------------------------------
    微调
    --------------------------------------------------------------------------

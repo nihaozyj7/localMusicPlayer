@@ -195,6 +195,7 @@ export const DATA_SOURCES = [
   { name: "LRCLIB", role: "歌词（无需鉴权的开放歌词库）", url: "https://lrclib.net/" },
   { name: "网易云音乐", role: "歌词 / 封面备选来源", url: "https://music.163.com/" },
   { name: "QQ 音乐", role: "歌词 / 封面备选来源", url: "https://y.qq.com/" },
+  { name: "酷狗音乐", role: "歌词（逐字 / 逐行）来源", url: "https://www.kugou.com/" },
   { name: "iTunes Search API", role: "封面（Apple 官方公开接口）", url: "https://performance-partners.apple.com/search-api" },
   { name: "Deezer", role: "封面备选来源", url: "https://developers.deezer.com/api" },
   { name: "MusicBrainz", role: "封面（配合 Cover Art Archive）", url: "https://musicbrainz.org/" },
@@ -213,7 +214,7 @@ export const THANKS = [
   },
   {
     title: "数据服务提供方",
-    body: "LRCLIB、网易云音乐、QQ 音乐、Apple、Deezer、MusicBrainz、哔哩哔哩 提供了歌词与封面等公开数据。本项目的调用均来自官方或公开接口，版权归各自权利人所有。",
+    body: "LRCLIB、网易云音乐、QQ 音乐、酷狗音乐、Apple、Deezer、MusicBrainz、哔哩哔哩 提供了歌词与封面等公开数据。本项目的调用均来自官方或公开接口，版权归各自权利人所有。",
   },
   {
     title: "每一位反馈者",

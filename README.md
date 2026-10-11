@@ -83,10 +83,12 @@ Go · Wails v3 · Lit 3 · Vite · FFmpeg
 
 ### 歌词
 
-- 四级回退：文件内嵌 → 同目录 `.lrc` → 程序缓存 → 在线自动匹配（LRCLIB / 网易云 / QQ 音乐）；
+- 四级回退：文件内嵌 → 同目录 `.lrc` → 程序缓存 → 在线自动匹配（LRCLIB / 网易云 / QQ 音乐 / 酷狗音乐）；
 - **字级（逐字）歌词**：认增强 LRC / QRC / KRC / 网易云 klyric·YRC 五种写法并统一成增强 LRC，
   **同一批歌词里字级优先于行级**，详情页按字点亮（只有写进歌曲文件时才剥成行级，
-  免得别的播放器把 `<00:12.000>` 当成正文）；歌词工作台的来源徽标会标「逐字」；
+  免得别的播放器把 `<00:12.000>` 当成正文）；歌词工作台的来源徽标会标「逐字」，
+  在线候选列表也会标出每一条是「逐字」还是「逐行」；本地只有行级歌词时，
+  会在后台去在线找一份逐字的（找到才替换，找不到就用原来的行级）；
 - **歌词工作台**：在线匹配 / 整首微调（±10s）/ 手动打轴（一边播放一边按空格）；
 - **桌面歌词**：独立的透明置顶窗口，鼠标移入才变成「正常窗口」并浮出样式下拉，位置会被记住；
 - **桌面背景歌词**：铺满桌面、垫在桌面图标之下。
@@ -319,6 +321,7 @@ You may obtain a copy of the License at
 在线能力调用了下面这些公开服务，版权归各自权利人所有，本项目与它们没有隶属或背书关系：
 
 [LRCLIB](https://lrclib.net/) · [网易云音乐](https://music.163.com/) · [QQ 音乐](https://y.qq.com/) ·
+[酷狗音乐](https://www.kugou.com/) ·
 [iTunes Search API](https://performance-partners.apple.com/search-api) · [Deezer](https://developers.deezer.com/api) ·
 [MusicBrainz](https://musicbrainz.org/) · [哔哩哔哩](https://www.bilibili.com/)
 

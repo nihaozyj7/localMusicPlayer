@@ -334,4 +334,101 @@ func TestLyricsSourcesPatchAddsCache(t *testing.T) {
 	}
 }
 
+/* --------------------------------------------------------------------------
+   逐字歌词的「升级」：本地只有行级时，去在线找一份字级（逐字）的
+   --------------------------------------------------------------------------
+   用户报过「完全看不见逐字歌词」。原因之一是本地那三级（内嵌 / .lrc / 缓存）
+   给的几乎都是行级，而老缓存当年是把逐字剥成行级存下来的 —— 于是即使在线
+   来源手里有逐字，界面上也永远看不到。这组测试守的就是那条补救路径。
+   -------------------------------------------------------------------------- */
+
+const wordLevelLRC = "[00:01.00]<00:01.000>逐<00:01.300>字<00:01.600>歌<00:01.900>词"
+
+// 只有行级时升级成功：结果落缓存，且**换一个服务实例**读到的就是字级那份
+// （internal/lyrics#Load 的规则是字级优先于行级）。
+func TestLyricsUpgradeWordLyricsSavesToCache(t *testing.T) {
+	f := newLyricsFixture(t)
+	// 先存一份行级（模拟老缓存：当年逐字被剥成了行级）
+	if _, err := f.svc.Save("t_m4a", "[00:01.00]行级歌词", "user", boolPtr(false)); err != nil {
+		t.Fatal(err)
+	}
+	f.match.lrc = wordLevelLRC
+
+	res, err := f.svc.UpgradeWordLyrics("t_m4a")
+	if err != nil {
+		t.Fatalf("UpgradeWordLyrics 失败: %v", err)
+	}
+	if res["wordLevel"] != true || strings.TrimSpace(res["lrc"].(string)) == "" {
+		t.Fatalf("应当拿到逐字歌词: %+v", res)
+	}
+
+	svc2 := f.reload(t)
+	got, err := svc2.Load("t_m4a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lyrics.HasWordTiming(got.LRC) {
+		t.Fatalf("重启后应当优先读到逐字那份，实际 %q", got.LRC)
+	}
+}
+
+// 在线那边也只有行级时：不写缓存、不改变原来的显示（返回空 lrc）。
+func TestLyricsUpgradeWordLyricsKeepsLineLevel(t *testing.T) {
+	f := newLyricsFixture(t)
+	if _, err := f.svc.Save("t_m4a", "[00:01.00]行级歌词", "user", boolPtr(false)); err != nil {
+		t.Fatal(err)
+	}
+	f.match.lrc = "[00:09.00]在线那份也只有行级"
+
+	res, err := f.svc.UpgradeWordLyrics("t_m4a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["lrc"] != "" || res["wordLevel"] != false {
+		t.Fatalf("拿不到逐字时应当什么都不改: %+v", res)
+	}
+	if got, ok := f.cache.Lyrics("t_m4a"); !ok || got != "[00:01.00]行级歌词" {
+		t.Fatalf("缓存被行级结果覆盖了: %q ok=%v", got, ok)
+	}
+}
+
+// 同一首歌在一次运行里只试一次：切歌来回切不该反复联网。
+func TestLyricsUpgradeWordLyricsTriesOnce(t *testing.T) {
+	f := newLyricsFixture(t)
+	f.match.lrc = wordLevelLRC
+	for i := 0; i < 3; i++ {
+		if _, err := f.svc.UpgradeWordLyrics("t_m4a"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f.match.calls != 1 {
+		t.Fatalf("同一首歌只该试一次，实际联网 %d 次", f.match.calls)
+	}
+}
+
+// 关掉 online 来源时不该联网（用户的意思就是「只要本地歌词」）。
+func TestLyricsUpgradeWordLyricsRespectsSources(t *testing.T) {
+	f := newLyricsFixture(t)
+	f.setConfig(t, map[string]any{"lyricsSources": []any{"embedded", "lrc-file", "cache"}})
+	f.match.lrc = wordLevelLRC
+	if _, err := f.svc.UpgradeWordLyrics("t_m4a"); err != nil {
+		t.Fatal(err)
+	}
+	if f.match.calls != 0 {
+		t.Fatalf("关掉 online 后不该联网，实际 %d 次", f.match.calls)
+	}
+}
+
+// 占位标题 + 未知歌手照样不搜（与 AutoMatch 同一条规则）。
+func TestLyricsUpgradeWordLyricsSkipsPlaceholder(t *testing.T) {
+	f := newLyricsFixture(t)
+	f.match.lrc = wordLevelLRC
+	if _, err := f.svc.UpgradeWordLyrics("t_plain"); err != nil {
+		t.Fatal(err)
+	}
+	if f.match.calls != 0 {
+		t.Fatalf("占位标题不该联网，实际 %d 次", f.match.calls)
+	}
+}
+
 func boolPtr(v bool) *bool { return &v }
