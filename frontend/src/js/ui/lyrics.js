@@ -13,7 +13,8 @@
 
 import { MpElement, define, html, nothing, repeat, requestAppUpdate, icon } from "./base.js";
 import { openModal, toast } from "./overlays.js";
-import { seek, songById, state, subscribe, togglePlay } from "../store.js";
+import { seekTo } from "../audio.js";
+import { songById, state, subscribe, togglePlay } from "../store.js";
 import {
   applyOnlineLyrics,
   currentLyricsInfo,
@@ -538,7 +539,6 @@ class MpLyricsPanel extends MpElement {
             data-act="nudge-seek"
             data-ms=${t}
             data-index=${i}
-            @click=${() => seek(t)}
           >
             <span class="nudge__time">${formatLrcTime(t).slice(1, -1)}</span>
             <span class="nudge__text">${lyricDisplayText(line)}</span>
@@ -640,11 +640,11 @@ class MpLyricsPanel extends MpElement {
             class="btn btn--sm"
             type="button"
             data-act="editor-back"
-            @click=${() => seek(Math.max(0, state.position - 5000))}
+            @click=${() => seekTo(Math.max(0, state.position - 5000))}
           >
             −5s
           </button>
-          <button class="btn btn--sm" type="button" data-act="editor-fwd" @click=${() => seek(state.position + 5000)}>
+          <button class="btn btn--sm" type="button" data-act="editor-fwd" @click=${() => seekTo(state.position + 5000)}>
             +5s
           </button>
           <span class="editor__clock" data-editor-clock>${formatLrcTime(state.position).slice(1, -1)}</span>
@@ -697,7 +697,7 @@ class MpLyricsPanel extends MpElement {
         if (!isTimed) cls.push("is-untimed");
         if (i === this._nowIndex) cls.push("is-now");
         return html`
-          <div class=${cls.join(" ")} data-act="editor-cursor" data-i=${i} @click=${() => setCursor(i)}>
+          <div class=${cls.join(" ")} data-act="editor-cursor" data-i=${i}>
             <span class="drow__no">${i + 1}</span>
             <button
               class="drow__time"
@@ -746,10 +746,12 @@ class MpLyricsPanel extends MpElement {
         closePanel();
         return;
       case "nudge-seek":
-        seek(Number(el.dataset.ms));
+        // 必须走 audio.seekTo（store.seek + 真正让后端跳转）：只改 state.position
+        // 的话，下一次进度通知会把位置拉回原处 —— 表现就是「进度条跳一下又跳回去」
+        seekTo(Number(el.dataset.ms));
         return;
       case "editor-cursor":
-        setCursor(i);
+        selectDraftRow(i);
         return;
       case "editor-tap":
         tapLine();
@@ -1387,6 +1389,24 @@ function setCursor(i) {
   bumpLyricsPanelTick();
 }
 
+/**
+ 点手动编辑列表里的某一行：选中它；**已经打过轴的行同时把播放跳过去**
+ （与微调预览「点一行就跳」保持一致 —— 只选中不跳的话，用户会以为点了没反应）。
+
+ 未打轴的行**不跳**：整份新文本刚贴进来时全片都是「未打轴」，
+ 点一下就被带到上一句的位置会非常烦人（要跳到上一句请点行内的时间徽标）。
+
+ 顺带把「用户刚点过」写进 `_followHold`：这块列表每 200ms 会把「当前播放行」
+ 滚进可视区，不挡住的话用户刚点中的那一行马上又被滚走。
+ */
+function selectDraftRow(i) {
+  setCursor(i);
+  const line = draft.lines[i];
+  if (line && typeof line.time === "number") seekTo(line.time);
+  const el = component();
+  if (el) el._followHold = Date.now() + 4000;
+}
+
 /** 打轴：把当前播放时间写进当前行，然后自动进入下一行 */
 function tapLine() {
   if (!draft.lines.length) {
@@ -1511,7 +1531,7 @@ function seekDraftLine(i) {
     toast("这一行还没有时间，无法跳转", { duration: 1600 });
     return;
   }
-  seek(ms);
+  seekTo(ms);
   setCursor(i);
 }
 

@@ -410,11 +410,24 @@ const edit = await evaluate(`(async () => {
   if (all.length) all[all.length - 1].click();
   await new Promise(r => setTimeout(r, 800));
   const editorScrolled = list.scrollTop > 0;
-  // 保存并应用 → 写进歌词缓存（预览模式下没有后端，只走内存那一层）
+  // 点「已打轴」的行 = 选中 + 跳到那一句（与微调预览一致）；最后一行是 00:40
+  const posAfterRowClick = window.__app.state.position;
+  const cursorAfterRowClick = p.querySelector(".drow.is-cursor .drow__no")?.textContent.trim();
+  // 保存并应用（40 行全都打过轴 → 没有确认框）→ 写进歌词缓存
   p.querySelector('[data-act="editor-save"]').click();
   await new Promise(r => setTimeout(r, 800));
   const savedSource = p.querySelector("[data-song-source]").textContent.trim();
-  return { editVisible, inlineTextarea, modalOpen, rows, editorScrolled, savedSource };
+  // 未打轴的行只选中、不跳（清掉第 1 行的时间再点它）
+  p.querySelector('.drow[data-i="0"] .drow__clear').click();
+  await new Promise(r => setTimeout(r, 400));
+  const posBeforeUntimed = window.__app.state.position;
+  p.querySelector('.drow[data-i="0"] .drow__text').click();
+  await new Promise(r => setTimeout(r, 500));
+  const untimedStayed = window.__app.state.position === posBeforeUntimed;
+  return {
+    editVisible, inlineTextarea, modalOpen, rows, editorScrolled,
+    posAfterRowClick, cursorAfterRowClick, untimedStayed, savedSource,
+  };
 })()`);
 check("lyrics-edit", edit);
 
