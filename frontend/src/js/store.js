@@ -2383,6 +2383,9 @@ const SYNCED_KEYS = [
   "skipSilenceTail",
   "trackGapSeconds",
   "effectPreset",
+  // ★ 过滤规则必须在这张清单上（漏了就永远推不给后端，重启时被后端那份盖回去）。
+  //   它的值**不在** state.config 里 —— 真源是 state.filterRules，见 buildConfigPatch。
+  "filterRules",
 ];
 
 let syncTimer = null;
@@ -2394,22 +2397,84 @@ function scheduleConfigSync() {
 }
 
 /**
- * 返回「后端回传的密钥占位串」。
+ * 后端**这一次**回传给前端的密钥占位串（打码值）。
  *
- * 后端不会把真密钥交给前端（services.go#maskSecret），而是回一个固定的
- * 占位串。前端的责任是：把这个值当成「这里本来有值，但我不该看到它」，
- * 既不显示、也不推回后端。
+ * 后端不会把真密钥交给前端（services.go#maskSecret），回的是打码串。前端要做的
+ * 只有一件事：**别把这个值原样推回去** —— 推回去等于把真密钥覆盖成打码串。
  *
- * 为什么不去硬编码那个占位串：它是 Go 侧的实现细节，前端复制一份常量
- * 就会在两处之间产生隐式耦合（改了一边忘另一边）。这里改用「配了密钥
- * 但值明显不是用户输入」的判断 —— 后端用 aiApiKeySet 明确告知「配了」，
- * 而 UI 的输入框永远是空的（用户不输入就没有新值），
- * 因此只要 aiApiKeySet 为真且当前值非空，就说明这个值来自后端回传。
+ * ★ 为什么必须记住「这次回传的那个值」，而不是再用「配了密钥且值非空」猜
+ *   （第六轮审查 N-15）：猜法的前提是「`state.config.aiApiKey` 里不是用户输入」，
+ *   可用户一旦在设置里输入新密钥，这个字段就是**新密钥本身** —— 于是
+ *   「值 === 猜出来的占位串」成立，新密钥被当成占位串丢掉。
+ *   实测：`buildConfigPatch({ config: { aiApiKey: "sk-new-key", aiApiKeySet: true } })`
+ *   返回的补丁里**没有** `aiApiKey`。症状是输入框失焦后提示「已保存」，后端却还在
+ *   用旧密钥 —— 用户在界面上根本换不掉密钥（密钥泄露时尤其要紧）。
+ *   记下真值再比较就精确了：只有「与后端给的那个字符串逐字相同」才丢，
+ *   用户输入的密钥天然不等于它（连「用户恰好输入了同样的打码串」这种极端情况
+ *   也只会被当成「没改」，不会再毁掉任何东西）。
  */
-function keyPlaceholderOf(config) {
-  if (!config || !config.aiApiKeySet) return null;
-  const v = config.aiApiKey;
-  return typeof v === "string" && v !== "" ? v : null;
+let backendMaskedApiKey = null;
+
+/**
+ * 记下后端（或本地快照）回传的密钥占位串。水合与快照恢复两处都要调，
+ * 否则启动早期那一次同步会拿着旧值比较。
+ *
+ * 不硬编码那个占位串的理由：它是 Go 侧的实现细节（`maskSecret`），
+ * 前端复制一份常量就会在两处之间产生隐式耦合（改了一边忘另一边）。
+ */
+export function noteMaskedApiKey(config) {
+  const v = config ? config.aiApiKey : null;
+  const configured = Boolean(config && config.aiApiKeySet);
+  backendMaskedApiKey = configured && typeof v === "string" && v !== "" ? v : null;
+  return backendMaskedApiKey;
+}
+
+/**
+ * 构造「要推给后端的配置补丁」。纯函数（只读传入的 state），所以能单测。
+ *
+ * ★ 过滤规则（`filterRules`）的值取自 `state.filterRules`，**不是**
+ *   `state.config.filterRules`：规则的真源是 `state.filterRules`（设置页编辑的就是
+ *   它，扫描时由后端 `filter.Apply` 生效），而 `state.config.filterRules` 只在启动
+ *   水合时被灌进来一次（`hydrateFromBackend` 的 `Object.assign`）。`rule-del` 会把
+ *   数组**整个换掉**（`filter` 返回新数组），镜像随即过期 —— 从镜像取值就会把
+ *   「删掉一条规则」推成旧规则，表现是「删了又回来了」。
+ *
+ *   为什么要有这道修复（第六轮审查 §4.6「过滤规则双真源」）：这条链以前整条是断的
+ *   —— `filterRules` 不在 SYNCED_KEYS 里，规则只写 localStorage 快照；而重启时
+ *   `hydrateFromBackend` 又拿后端那份（默认规则）覆盖本地，用户改完规则重启即失效。
+ */
+export function buildConfigPatch(state) {
+  const patch = {};
+  for (const key of SYNCED_KEYS) {
+    if (key === "filterRules") {
+      // 清空所有规则也要推（空数组是有效值），所以不能走下面那条 `in` 判断
+      patch.filterRules = state.filterRules || [];
+      continue;
+    }
+    if (key in state.config) patch[key] = state.config[key];
+  }
+  // ★ 绝不把密钥占位串推回后端。
+  //
+  // 后端 Get() 回传的 aiApiKey 是打码占位串（services.go#maskSecret），
+  // 不是真密钥。正常情况下 UI 不会把它写进 state.config（见 settings.js
+  // 的 ai-field 分支），但这里再加一道兜底：只要值不是用户**真正输入**的
+  // 新密钥，就不推 —— 漏了这一道，用户在设置里改任何一个开关都可能
+  // 顺手把自己的密钥覆盖成占位串。
+  // 用户想清除密钥时 UI 会传空串，属于有效操作，因此只拦「非空且未变更」。
+  //
+  // ★ 判据是「与**这次**后端回传的那个占位串逐字相同」（N-15），不是
+  //   「配了密钥且值非空」的猜测 —— 后者会把用户刚输入的新密钥一起丢掉，
+  //   于是密钥根本换不掉（详见 noteMaskedApiKey 的说明）。
+  if (typeof patch.aiApiKey === "string" && patch.aiApiKey !== "" && patch.aiApiKey === backendMaskedApiKey) {
+    delete patch.aiApiKey;
+  }
+  patch.playMode = state.playMode;
+  // 关闭「记忆音量」时不把音量推给后端，避免下次启动又被旧值覆盖
+  if (state.config.rememberVolume !== false) {
+    patch.volume = state.volume;
+    patch.muted = state.muted;
+  }
+  return patch;
 }
 
 /** 立即把需要落盘的配置推给后端 */
@@ -2422,38 +2487,15 @@ export async function flushConfigSync() {
     clearTimeout(syncTimer);
     syncTimer = null;
   }
-  const patch = {};
-  for (const key of SYNCED_KEYS) {
-    if (key in state.config) patch[key] = state.config[key];
-  }
-  // ★ 绝不把密钥占位串推回后端。
-  //
-  // 后端 Get() 回传的 aiApiKey 是打码占位串（services.go#maskSecret），
-  // 不是真密钥。正常情况下 UI 不会把它写进 state.config（见 settings.js
-  // 的 ai-field 分支），但这里再加一道兜底：只要值不是用户**真正输入**的
-  // 新密钥，就不推 —— 漏了这一道，用户在设置里改任何一个开关都可能
-  // 顺手把自己的密钥覆盖成占位串。
-  // 用户想清除密钥时 UI 会传空串，属于有效操作，因此只拦「非空且未变更」。
-  if (
-    typeof patch.aiApiKey === "string" &&
-    patch.aiApiKey !== "" &&
-    patch.aiApiKey === keyPlaceholderOf(state.config)
-  ) {
-    delete patch.aiApiKey;
-  }
-  patch.playMode = state.playMode;
-  // 关闭「记忆音量」时不把音量推给后端，避免下次启动又被旧值覆盖
-  if (state.config.rememberVolume !== false) {
-    patch.volume = state.volume;
-    patch.muted = state.muted;
-  }
+  const patch = buildConfigPatch(state);
   try {
     // 后端 Set 会回传**规范化过**的完整配置。这里只取两个字段：
     //   · aiBaseUrl         —— 规范化结果（补协议、去尾斜杠）要反映到输入框里；
     //   · aiBaseUrlProblem  —— 「这个地址不会被使用」的原因（后端算的，规则只有
     //                          一份；不取的话用户改完地址要等下次启动才会看到警告）。
-    // ★ 不要把整包并回 state.config：后端那份不含本地还没同步的键（例如
-    //   filterRules 就不在 SYNCED_KEYS 里），整包覆盖会把用户刚编辑的内容打回旧值。
+    // ★ 不要把整包并回 state.config：后端回传的是**它那份**快照，整包 Object.assign
+    //   会把本地还没同步过去的键、以及只属于前端的派生字段（aiBaseUrlProblem 之类）
+    //   一起打回旧值。只取上面明确列出的两个字段。
     const saved = await backend.setConfig(patch);
     if (saved && typeof saved === "object") {
       if (typeof saved.aiBaseUrl === "string") state.config.aiBaseUrl = saved.aiBaseUrl;
@@ -2471,6 +2513,9 @@ export async function flushConfigSync() {
 function applyPersisted(saved) {
   if (!saved) return;
   Object.assign(state.config, saved.config || {});
+  // 快照里的 aiApiKey 是上次启动时后端回传的打码串（writeSnapshot 存的就是 state.config）。
+  // 记下它，启动早期那次同步才不会把这个占位串推回后端（见 noteMaskedApiKey）。
+  noteMaskedApiKey(saved.config);
   state.view = saved.view || state.view;
   state.playlistId = saved.playlistId ?? null;
   state.pvMode = saved.pvMode || state.pvMode;
@@ -2606,6 +2651,9 @@ export async function hydrateFromBackend() {
   if (cfg) {
     // 后端配置为准（后端是唯一真源），视图类临时状态不受影响
     Object.assign(state.config, cfg);
+    // 记住后端这次回传的密钥打码串：它是「不许推回去」的那个值（见 buildConfigPatch）。
+    // 这一步不能只做一次 —— 每次水合都要用**这次**的值覆盖，否则比较的是上一次的串。
+    noteMaskedApiKey(cfg);
     state.playMode = cfg.playMode || state.playMode;
     // 「记忆音量」关闭时，后端存着的旧音量也不还原
     if (state.config.rememberVolume !== false) {

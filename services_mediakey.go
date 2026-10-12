@@ -34,7 +34,11 @@
 
    所以热键的职责只有一件事：**把「用户按了播放/暂停」这个意图转达给前端**，
    剩下的交给前端已有的 togglePlay 链路（它会改 state 并把结果推回后端）。
-   前端不在线（比如窗口还没建好）时，才退化为直接操作引擎。
+
+   前端**报到之前**（热键已注册、页面还没挂上监听，见 media-keys.js#startMediaKeys）
+   才退化为直接操作引擎 —— 这段窗口真实存在（热键在 ApplicationStarted 就注册了），
+   判据是「前端有没有调 FrontendReady 报到」，不是「有没有注入 emitter」
+   （后者在生产路径上恒为真，见第六轮审查 N-12）。
    ========================================================================== */
 
 package main
@@ -78,6 +82,12 @@ type MediaKeyService struct {
 	// emit 发事件给前端（可为 nil：此时退化为直接调用 onToggle）
 	emit func(name string, payload any)
 
+	// frontendReady 表示前端已经挂上 media:key 监听并报到（见 FrontendReady）。
+	// 只有它为真时按键才走「发事件给前端」这条路 —— emit 非 nil 并不等于
+	// 有人在听：生产路径上 emitter 在注册热键之前就注入好了，而页面要等装配完
+	// 才挂得上监听（第六轮审查 N-12 记的正是这段窗口）。
+	frontendReady bool
+
 	mu       sync.Mutex
 	hk       *hotkey.Hotkey
 	started  bool
@@ -97,6 +107,30 @@ func (s *MediaKeyService) setEmitter(emit func(name string, payload any)) {
 	s.mu.Lock()
 	s.emit = emit
 	s.mu.Unlock()
+}
+
+// FrontendReady 由前端在**挂上 media:key 监听之后**调用，表示「现在可以往我这里
+// 发事件了」。这是 Wails 绑定方法（前端 media-keys.js#startMediaKeys 就在订阅成功后
+// 调它一次）。
+//
+// 为什么需要这个握手（第六轮审查 N-12）：热键在 ApplicationStarted 就注册好了，
+// 而页面要装配到 startMediaKeys 那一行才挂得上监听 —— 中间那段按下的 ⏯ 以前是
+// 「发给空气」：emit 一直非 nil（生产路径上注册热键前就注入好了），事件发出去没人听，
+// 而退化分支的判据恰恰是「emit == nil」，所以那段窗口既不生效也不兜底。
+// 判据换成「前端报到过没有」之后，窗口内的按键会退化到直接操作引擎（见 dispatch），
+// 启动那一秒里的 ⏯ 也能生效。
+//
+// 单向：前端只会从「未报到」变成「已报到」。页面重载时订阅是「先卸再挂」
+// （startMediaKeys 第一行就是 stopMediaKeys），中间不需要、也不应该回退 ——
+// 回退只会重新打开一段丢键窗口。
+func (s *MediaKeyService) FrontendReady() {
+	s.mu.Lock()
+	already := s.frontendReady
+	s.frontendReady = true
+	s.mu.Unlock()
+	if !already {
+		log.Printf("[mediakey] 前端已就绪：按键改由前端 togglePlay 处理")
+	}
 }
 
 // Start 注册全局媒体键。返回是否注册成功。
@@ -144,26 +178,24 @@ func (s *MediaKeyService) listen(hk *hotkey.Hotkey) {
 func (s *MediaKeyService) dispatch() {
 	s.mu.Lock()
 	emit := s.emit
+	ready := s.frontendReady
 	onToggle := s.onToggle
 	s.mu.Unlock()
 
-	// 有前端就交给前端 toggle：它才是播放意图的真源（见文件顶部的说明）。
-	// 前端会自己决定是播还是停，并把结果同步回后端。
-	if emit != nil {
+	// 前端已报到（挂上监听并调过 FrontendReady）就交给它 toggle：它才是播放意图
+	// 的真源（见文件顶部的说明），会自己决定是播还是停并把结果同步回后端。
+	if emit != nil && ready {
 		emit(mediaKeyEvent, map[string]any{"action": mediaKeyToggleAction})
 		return
 	}
 
-	// onToggle 退化的触发条件只是「构造时没注入 emitter」，而生产路径上
-	// main.go#startMediaKeys 在建服务时**立刻**注入（svc.setEmitter(emit) 就在
-	// svc.Start() 上一行），所以这一段在真实运行里走不到 —— 保留它是因为
-	// MediaKeyService 是独立类型，构造方有权不注入 emitter（测试就是这么用的，
-	// 见 TestMediaKeyDispatchFallsBackWhenNoFrontend），此时按键不该被静默吞掉。
-	//
-	// ★ 原文写的是「前端还没就绪（窗口未建 / 事件通道未接）时退化」，这句是错的：
-	//   事件通道一直在，真正会丢键的是「页面还没订阅」的那一小段（热键在
-	//   ApplicationStarted 注册，前端要等界面装配完才挂监听）—— 那种情况下
-	//   emit != nil、事件发出去没人听，这段退化并不会兜住它。见登记项 N-12。
+	// 退化到直接操作引擎。两个场景共用这一条：
+	//   · 构造方压根没注入 emitter（MediaKeyService 是独立类型，测试就这么用，
+	//     见 TestMediaKeyDispatchFallsBackWhenNoFrontend）；
+	//   · 前端还没报到 —— 热键已注册、页面还没装配完（N-12 的窗口期）。
+	// ★ 判据必须是「前端报到过没有」，不能只看 emit 是否为 nil：生产路径上
+	//   emitter 在 Start() 之前就注入好了（main.go 的装配区），只看 emit 的话
+	//   窗口期的事件会发出去没人听，而这段兜底永远走不到。
 	if onToggle != nil {
 		onToggle()
 	}

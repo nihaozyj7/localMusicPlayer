@@ -6,8 +6,9 @@
    （b）与并行跑的其它测试互相干扰。
 
    所以只测「按下之后发生了什么」这一段纯逻辑：
-     · 前端在线  → 发 media:key 事件，**不**直接动引擎
-     · 前端不在线 → 退化为直接翻转
+     · 前端已报到 → 发 media:key 事件，**不**直接动引擎
+     · 前端还没报到（页面未装配完）→ 退化为直接翻转（N-12 的窗口期，按键不丢）
+     · 构造方压根没注入 emitter → 同样退化
      · 两个都没有 → 静默丢弃，不 panic
 
    真实按键链路由人工验证（跑起来按一下键盘）。
@@ -20,7 +21,7 @@ import (
 	"testing"
 )
 
-// TestMediaKeyDispatchEmitsToFrontend 验证「前端在线时只发事件、不碰引擎」。
+// TestMediaKeyDispatchEmitsToFrontend 验证「前端就绪后只发事件、不碰引擎」。
 //
 // 这是本模块最要紧的一条约束：后端如果自己动了引擎，前端下一次收到
 // 位置锚点就会按自己的 state.playing 把状态覆盖回去，体感是「按一下弹回去」。
@@ -43,6 +44,8 @@ func TestMediaKeyDispatchEmitsToFrontend(t *testing.T) {
 		gotPay, _ = payload.(map[string]any)
 		mu.Unlock()
 	})
+	// 前端挂上 media:key 监听之后会调这个（media-keys.js#startMediaKeys）
+	svc.FrontendReady()
 
 	svc.dispatch()
 
@@ -54,16 +57,81 @@ func TestMediaKeyDispatchEmitsToFrontend(t *testing.T) {
 	if gotPay == nil || gotPay["action"] != mediaKeyToggleAction {
 		t.Fatalf("载荷 = %v，期望 action=%q", gotPay, mediaKeyToggleAction)
 	}
-	// 前端在线时**不能**走退化路径，否则两边都会改状态
+	// 前端就绪时**不能**走退化路径，否则两边都会改状态
 	if fallback != 0 {
-		t.Fatalf("前端在线时不该走退化路径，实际调用了 %d 次", fallback)
+		t.Fatalf("前端就绪时不该走退化路径，实际调用了 %d 次", fallback)
 	}
 }
 
-// TestMediaKeyDispatchFallsBackWhenNoFrontend 验证前端缺席时的退化行为。
+// TestMediaKeyDispatchFallsBackBeforeFrontendReady 验证「前端还没报到」那段窗口
+// 里的按键不会丢 —— 这是第六轮审查 N-12 的回归用例。
 //
-// 场景：热键已注册，但界面还没装配完（startMediaKeys 挂在
-// ApplicationStarted 上，比前端 startMediaKeys 早）。此时按键不该被吞掉。
+// 场景（生产路径上真实存在，而且这是**唯一**会丢键的那段）：热键在
+// ApplicationStarted 就注册好了，而页面要装配到 media-keys.js#startMediaKeys
+// 才挂得上监听、才调 FrontendReady。这段时间里 emitter **早就注入过了**
+// （main.go 装配区一行 setEmitter），所以旧判据（`emit != nil`）会把事件发给
+// 空气：既没有前端来 toggle，也没走到引擎兜底，用户按 ⏯ 毫无反应。
+func TestMediaKeyDispatchFallsBackBeforeFrontendReady(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		emitted  int
+		fallback int
+	)
+
+	svc := NewMediaKeyService(func() {
+		mu.Lock()
+		fallback++
+		mu.Unlock()
+	})
+	svc.setEmitter(func(string, any) {
+		mu.Lock()
+		emitted++
+		mu.Unlock()
+	})
+	// 刻意**不**调 FrontendReady：正是热键已注册、页面还没装配完的那一刻
+
+	svc.dispatch()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if emitted != 0 {
+		t.Fatalf("前端还没报到就发了 %d 次事件 —— 发出去没人听，这一下白按", emitted)
+	}
+	if fallback != 1 {
+		t.Fatalf("前端未就绪时应退化调引擎一次（按键不丢），实际 %d 次", fallback)
+	}
+}
+
+// TestMediaKeyFrontendReadyIsOneWay 验证就绪标志是单向、幂等的，且报到之后
+// 事件只发一次（不会因为重复报到而叠加）。
+func TestMediaKeyFrontendReadyIsOneWay(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		emitted int
+	)
+
+	svc := NewMediaKeyService(nil)
+	svc.setEmitter(func(string, any) {
+		mu.Lock()
+		emitted++
+		mu.Unlock()
+	})
+
+	svc.FrontendReady()
+	svc.FrontendReady() // 页面重载时会再来一次：不该有任何副作用
+	svc.dispatch()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if emitted != 1 {
+		t.Fatalf("一次按键应只发一次事件，实际 %d 次", emitted)
+	}
+}
+
+// TestMediaKeyDispatchFallsBackWhenNoFrontend 验证「压根没注入 emitter」时的退化行为。
+//
+// 场景：MediaKeyService 是独立类型，构造方有权不注入 emitter（此时 emit == nil）。
+// 这种按键不该被静默吞掉。
 func TestMediaKeyDispatchFallsBackWhenNoFrontend(t *testing.T) {
 	var (
 		mu    sync.Mutex

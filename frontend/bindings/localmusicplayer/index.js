@@ -9,6 +9,7 @@ import * as DownloadService from "./downloadservice.js";
 import * as LibraryService from "./libraryservice.js";
 import * as LoudnessService from "./loudnessservice.js";
 import * as LyricsService from "./lyricsservice.js";
+import * as MediaKeyService from "./mediakeyservice.js";
 import * as MediaService from "./mediaservice.js";
 import * as OnlineService from "./onlineservice.js";
 import * as PackService from "./packservice.js";
@@ -27,6 +28,7 @@ export {
     LibraryService,
     LoudnessService,
     LyricsService,
+    MediaKeyService,
     MediaService,
     OnlineService,
     PackService,

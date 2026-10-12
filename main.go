@@ -234,6 +234,27 @@ func main() {
 	// desktop_wallpaper.go#desktopWallpaperFirstFrameColour）；它为 nil 也安全。
 	state.windowSvc = NewWindowService(store, themeMgr)
 	state.appSvc = NewAppService()
+	// 键盘媒体键（⏯）服务：**构造**在这里（注册给 Wails 需要非 nil 实例，前端
+	// 才能调 FrontendReady 报到），**注册系统热键**在 ApplicationStarted。
+	//
+	// 为什么不等到 ApplicationStarted 再一起建：那时 app 已经建好、服务列表已定，
+	// 再建实例就注册不进绑定了 —— 前端拿不到就绪握手的入口，N-12 那段「热键已注册、
+	// 页面还没订阅」的窗口就只能继续丢键（页面上按 ⏯ 毫无反应）。
+	state.mediaKeySvc = NewMediaKeyService(func() {
+		// 退化路径：前端还没报到（页面未装配完）时，按键直接作用于引擎，
+		// 至少不会白按一下。前端报到后走「发事件让它 toggle」——那是播放意图的真源。
+		if state.playerSvc == nil {
+			return
+		}
+		if state.playerSvc.Playing() {
+			state.playerSvc.Pause()
+		} else {
+			state.playerSvc.Play()
+		}
+	})
+	// 事件发送器现在就注入（emit 内部会挡掉「app 还没建好」的情况）：
+	// 注册热键后才注入的话，窗口期那几个按键会连退化路径都进不去。
+	state.mediaKeySvc.setEmitter(emit)
 	state.loudnessSvc = NewLoudnessService(loudMgr, lib)
 	// 响度服务要能解析在线试听曲目，否则它们完全不受响度均衡约束
 	// （曲库里查不到 ⇒ Get/Measure 直接以「歌曲不存在」失败）。
@@ -328,6 +349,9 @@ func main() {
 			application.NewService(packSvc),
 			application.NewService(NewConfigService(store)),
 			application.NewService(state.appSvc),
+			// 键盘媒体键（见 services_mediakey.go）。前端订阅到 media:key 之后
+			// 会调 FrontendReady 报到 —— 这个绑定就是握手的入口（N-12）。
+			application.NewService(state.mediaKeySvc),
 			application.NewService(NewMediaService(mediaSrv, songs)),
 			application.NewService(playerSvc),
 			application.NewService(state.loudnessSvc),
@@ -621,10 +645,12 @@ func main() {
 
 		// 键盘媒体键（⏯）：注册成系统级全局热键，所以最小化/失焦/缩托盘都能响应。
 		//
-		// 放在这里而不是 main 的开头：热键回调会去调前端 togglePlay，
-		// 而前端要等界面装配完才挂得上监听（见 media-keys.js#startMediaKeys）——
-		// 注册得太早，早期那几次按键只会走「前端不在线」的退化分支。
-		startMediaKeys(state)
+		// 服务本身在装配区就建好了（要注册给 Wails，前端才能调 FrontendReady），
+		// 这里只做「注册热键」这一步。此刻前端还没装配完、也就还没报到，所以这段
+		// 窗口里的按键由服务退化到引擎直接处理（见 services_mediakey.go#dispatch）。
+		if state.mediaKeySvc != nil {
+			state.mediaKeySvc.Start()
+		}
 	})
 
 	// 主窗口关闭 = 退出应用：桌面歌词与桌面背景歌词都是独立的额外窗口，
@@ -775,31 +801,11 @@ func startPlayerTick() {
 	}()
 }
 
-// startMediaKeys 注册键盘播放/暂停键（⏯）的全局热键。
+// 媒体键服务本身的构造/装配见 run() 里的装配区（那里要把它交给
+// application.NewService 注册绑定），本文件不再单独提供一个「建 + 启」的函数：
+// 构造与启动分开之后，启动这一步就在 ApplicationStarted 里直接调 Start()。
 //
 // 为什么是全局热键而不是网页的 MediaSession：本项目的播放跑在 Go 进程里，
 // 后端接管时页面上根本没有 <audio> 元素，而 MediaSession 只有在有媒体元素
 // 播放时才会把媒体键回调下来 —— 那条路在本项目里不成立。详见
 // services_mediakey.go 文件顶部的完整说明。
-//
-// 注册失败（被别的播放器独占、平台不支持）只记日志，不影响程序启动。
-func startMediaKeys(st *appState) {
-	if st == nil {
-		return
-	}
-	svc := NewMediaKeyService(func() {
-		// 退化路径：前端还没挂上监听时，至少让按键直接作用于引擎。
-		// 正常情况走不到这里 —— 前端在线时是按「发事件让它 toggle」处理的。
-		if st.playerSvc == nil {
-			return
-		}
-		if st.playerSvc.Playing() {
-			st.playerSvc.Pause()
-		} else {
-			st.playerSvc.Play()
-		}
-	})
-	svc.setEmitter(emit)
-	st.mediaKeySvc = svc
-	svc.Start()
-}

@@ -66,6 +66,10 @@ export async function connect() {
 
     bindings = {
       App: mod.AppService,
+      // 键盘媒体键（⏯）。键名必须与 index.js 的导出名一致（MediaKeyService），
+      // 调用处用的简称是 MediaKeys —— 这个映射是手写字符串键，拼错不会被构建拦住。
+      // 见 services_mediakey.go（N-12 加的就绪握手 FrontendReady 走这里）。
+      MediaKeys: mod.MediaKeyService,
       Library: mod.LibraryService,
       Playlist: mod.PlaylistService,
       Lyrics: mod.LyricsService,
@@ -200,6 +204,11 @@ const backendImpl = {
   // WebView 管理（没有地址栏、也不是用户习惯的浏览器），所以必须交给宿主
   // 进程调 ShellExecute；后端只放行 http / https（见 AppService.OpenURL）。
   openExternalUrl: (url) => call(bindings?.App?.OpenURL, String(url)),
+  // 键盘媒体键（⏯）的「就绪报到」：前端挂上 media:key 监听之后调它一次，
+  // 后端据此决定按键是「发事件给前端 togglePlay」还是「直接动引擎」。
+  // 为什么必须有这一步见 Go 侧 services_mediakey.go#FrontendReady（第六轮 N-12）：
+  // 热键在页面装配完之前就注册好了，那段窗口里的按键以前会发出去没人听。
+  mediaKeysReady: () => call(bindings?.MediaKeys?.FrontendReady),
 
   /* ---- 曲库 ---- */
   scan: (folderIds = []) => call(bindings?.Library?.Scan, folderIds),

@@ -91,7 +91,7 @@ func (c *Client) Search(ctx context.Context, keyword string, page, pageSize int)
 			} `json:"result"`
 		} `json:"data"`
 	}
-	if err := c.getJSON(ctx, defaultBaseURL+"/x/web-interface/wbi/search/type", params, &resp, true); err != nil {
+	if err := c.getJSON(ctx, c.base()+"/x/web-interface/wbi/search/type", params, &resp, true); err != nil {
 		return nil, err
 	}
 	if resp.Code != 0 {

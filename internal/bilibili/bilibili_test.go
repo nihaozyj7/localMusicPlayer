@@ -14,10 +14,15 @@ import (
 /* ==========================================================================
    bilibili 包的离线纯函数测试（审查报告第 19 条：整包零测试）
 
-   为什么只测纯函数：`Client` 的接口地址是包内常量（`defaultBaseURL`），
-   没有可注入的 base URL，所以 HTTP 层在离线环境里打不通、也不该在 CI 里
-   打真实接口。但**最容易悄悄写错、且一旦错了没有任何症状**的部分恰恰是
-   纯函数：WBI 签名的字符重排表、encodeURIComponent 的编码规则、时长解析。
+   为什么这里只测纯函数：`Client` 的接口地址曾经是包内常量（`defaultBaseURL`）且
+   被直接拼进 URL，没有可注入的 base URL，所以 HTTP 层在离线环境里打不通。
+
+   ★ 这一点已在第六轮审查 N-8 里改掉：`Client.BaseURL` 现在是**可替换字段**
+   （空则回落默认值），请求装配（拼 URL、带 cookie/UA、WBI 签名、降级重试与
+   各错误分支）由 `request_test.go` 用 httptest 假服务器覆盖 —— 那才是「能不能
+   搜到」最关键的一段。这里继续只放纯函数测试 —— **最容易悄悄写错、且一旦错了
+   没有任何症状**的部分恰恰是纯函数：WBI 签名的字符重排表、encodeURIComponent
+   的编码规则、时长解析。
 
    金标准来自两处**独立实现**（都不是本仓库的代码）：
      · WBI 字符重排 → B 站官方 JS 实现 / bilibili-API-collect 文档的示例密钥，
@@ -514,10 +519,21 @@ func TestAudioURLAndBackupHelpers(t *testing.T) {
 	}
 }
 
-// TestBaseURLIsHTTPS 接口根地址必须是 https：明文 http 会被中间人改写搜索结果。
+// TestBaseURLIsHTTPS 生产装配用的接口根地址必须是 https：
+// 明文 http 会被中间人改写搜索结果。
+//
+// ★ N-8 之后 BaseURL 是**可替换字段**（测试指向 httptest 时要能改），
+// 所以这条守的是「NewClient 装出来的默认值」—— 字段可以被测试改，
+// 但生产默认值必须是 https，且不能用空字段绕过（空字段回落到的也是它）。
 func TestBaseURLIsHTTPS(t *testing.T) {
 	c := NewClient()
-	if !strings.HasPrefix(c.BaseURL(), "https://") {
-		t.Errorf("BaseURL() = %q，必须是 https", c.BaseURL())
+	if !strings.HasPrefix(c.BaseURL, "https://") {
+		t.Errorf("NewClient().BaseURL = %q，必须是 https", c.BaseURL)
+	}
+	if got := (&Client{}).base(); !strings.HasPrefix(got, "https://") {
+		t.Errorf("空 BaseURL 应回落到 https 默认值，实际 %q", got)
+	}
+	if got := (&Client{BaseURL: "https://example.com/"}).base(); got != "https://example.com" {
+		t.Errorf("base() 应去掉尾部斜杠，实际 %q", got)
 	}
 }

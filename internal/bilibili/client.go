@@ -35,6 +35,12 @@ func truncateBody(b []byte) string {
 }
 
 const (
+	// defaultBaseURL 是生产环境的接口根地址。
+	//
+	// ★ 实测它必须是 https：明文 http 会被中间人改写搜索结果（有 TestBaseURLIsHTTPS
+	// 守着）。**不要**在这里写死之后又用常量拼 URL —— 那样这个包的网络逻辑就没法
+	// 指向 httptest，只能一直零测试（第六轮审查 N-8）。所有拼 URL 的地方都用
+	// c.base()，它默认回落到这里。
 	defaultBaseURL = "https://api.bilibili.com"
 	desktopUA      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
@@ -44,6 +50,13 @@ const (
 // 搜索与播放地址接口现在需要 WBI 签名；本客户端会自动获取 wbi_img 密钥、
 // 缓存 12 小时，并在请求前完成签名。
 type Client struct {
+	// BaseURL 接口根地址（测试时可替换，指向 httptest 假服务器）。
+	//
+	// 留空表示用 defaultBaseURL —— 生产装配（NewClient）会显式写上默认值。
+	// 它是**导出字段**而不是常量：请求装配（拼 URL、带 cookie/UA、降级重试）
+	// 是「能不能搜到」里最要紧的一段，常量把它挡在测试之外（N-8）。
+	BaseURL string
+
 	hc    *http.Client
 	ua    string
 	buvid string
@@ -60,13 +73,19 @@ func NewClient() *Client {
 		hc: &http.Client{
 			Timeout: 20 * time.Second,
 		},
-		ua:    desktopUA,
-		buvid: randomBuvid3(),
+		BaseURL: defaultBaseURL,
+		ua:      desktopUA,
+		buvid:   randomBuvid3(),
 	}
 }
 
-// BaseURL 暴露 API 根地址，便于测试时替换（未导出字段无法从外部覆盖时使用）。
-func (c *Client) BaseURL() string { return defaultBaseURL }
+// base 返回实际使用的接口根地址（去掉尾部的「/」，便于直接拼路径）。
+func (c *Client) base() string {
+	if strings.TrimSpace(c.BaseURL) == "" {
+		return defaultBaseURL
+	}
+	return strings.TrimRight(c.BaseURL, "/")
+}
 
 func randomBuvid3() string {
 	var b [16]byte
@@ -151,7 +170,7 @@ func (c *Client) ensureWBI(ctx context.Context) error {
 			} `json:"wbi_img"`
 		} `json:"data"`
 	}
-	if err := c.getJSON(ctx, defaultBaseURL+"/x/web-interface/nav", nil, &nav, false); err != nil {
+	if err := c.getJSON(ctx, c.base()+"/x/web-interface/nav", nil, &nav, false); err != nil {
 		return err
 	}
 	img := pathBaseNoExt(nav.Data.WbiImg.ImgURL)

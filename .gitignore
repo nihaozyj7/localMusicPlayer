@@ -29,6 +29,16 @@ bin/
 # wails3 generate bindings 的临时目录（构建脚本的中间产物，用完应清理）
 frontend/.bindings-tmp-*/
 
+# Vite 依赖预打包缓存（dep pre-bundle）：内容随 Vite 版本、依赖树与锁文件而变
+#（_metadata.json 里就是 configHash / lockfileHash / browserHash 三个指纹），
+# 是纯本地派生数据，入库只会制造无意义的 diff。第六轮审查 N-10：
+# frontend/.vite/deps/{_metadata.json,package.json} 曾**被 git 跟踪**（本机没有
+# 任何能挡住它们的规则，`*.js` 也一样不是被规则挡住的），已用
+# `git rm -r --cached frontend/.vite` 摘出索引；这条规则防止再长回来。
+# 想复核：`git ls-files frontend/.vite`（应为空）
+#         `git check-ignore -v frontend/.vite/deps/_metadata.json`（应命中本规则）
+frontend/.vite/
+
 # 前端构建产物：frontend/dist 由 tools/build-frontend.mjs 每次全量重建，
 # 体积很小（约 300KB）且 Go 的 go:embed 需要它存在，因此选择入库。
 # 想改成不入库的话，取消下面两行注释即可（那样克隆后需先跑一次构建脚本）。

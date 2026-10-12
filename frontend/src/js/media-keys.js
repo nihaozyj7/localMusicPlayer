@@ -24,7 +24,7 @@
    （真正会被挂起的是页面渲染，而 togglePlay 只改状态、不做布局。）
    ========================================================================== */
 
-import { on } from "./bridge.js";
+import { backend, on } from "./bridge.js";
 import { togglePlay } from "./store.js";
 
 /** 取消订阅函数（热重载/退出时清掉） */
@@ -49,6 +49,20 @@ export function startMediaKeys() {
         // 避免键位演进时旧前端直接报错。
         break;
     }
+  });
+
+  // ★ 订阅挂上之后**必须**向后端报到一次（第六轮审查 N-12）。
+  //
+  // 后端的全局热键在 ApplicationStarted 就注册好了，而这里要等界面装配到本行
+  // 才挂得上监听 —— 中间那一段（冷启动约一秒）按下的 ⏯ 以前会被后端当成
+  // 「前端在线」发成事件，但没人听，于是白按一下。报到之后后端才把按键交给
+  // 前端 togglePlay；在此之前它退化到直接操作引擎（那段窗口里按键照样生效）。
+  //
+  // 必须 .catch：后端没起来（浏览器预览、旧版 Go 进程）时不能变成没人接的
+  // promise —— 仓库门禁 no-fire-and-forget.test.js 盯的就是这类写法。
+  // call() 在后端未连接时返回 null，因此链式 catch 前先包一层 Promise 判断。
+  Promise.resolve(backend.mediaKeysReady()).catch((err) => {
+    console.warn("[media-keys] 向后端报到失败（媒体键在此之前按引擎兜底处理）", err);
   });
 }
 

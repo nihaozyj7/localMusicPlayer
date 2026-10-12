@@ -105,7 +105,7 @@ func (c *Client) View(ctx context.Context, bvid string) (*ViewInfo, error) {
 		} `json:"data"`
 	}
 	params := url.Values{"bvid": {bvid}}
-	if err := c.getJSON(ctx, defaultBaseURL+"/x/web-interface/view", params, &resp, false); err != nil {
+	if err := c.getJSON(ctx, c.base()+"/x/web-interface/view", params, &resp, false); err != nil {
 		return nil, err
 	}
 	if resp.Code != 0 {
@@ -150,8 +150,8 @@ func (c *Client) ResolveAudio(ctx context.Context, bvid string) (*AudioStream, e
 		endpoint string
 		withWBI  bool
 	}{
-		{defaultBaseURL + "/x/player/wbi/playurl", true},
-		{defaultBaseURL + "/x/player/playurl", false},
+		{c.base() + "/x/player/wbi/playurl", true},
+		{c.base() + "/x/player/playurl", false},
 	} {
 		params := cloneValues(baseParams)
 		if err := c.getJSON(ctx, attempt.endpoint, params, &resp, attempt.withWBI); err != nil {
