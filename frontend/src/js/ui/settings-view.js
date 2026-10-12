@@ -855,7 +855,7 @@ class MpSettingsLayer extends MpElement {
         <button class="themes__add" type="button" data-act="theme-help">
           ${icon("plus")}
           <span>添加自定义主题</span>
-          <span class="u-num u-fs-xs">从仓库获取，也可以导入或让 AI 写一个</span>
+          <span class="u-num u-fs-xs">导入本地文件，也可以从仓库获取或让 AI 写一个</span>
         </button>
       </div>
       <div class="card__body">
@@ -1085,7 +1085,7 @@ class MpSettingsLayer extends MpElement {
         <button class="themes__add" type="button" data-act="skin-help">
           ${icon("plus")}
           <span>自定义样式</span>
-          <span class="u-num u-fs-xs">从仓库获取，也可以导入或让 AI 写一个</span>
+          <span class="u-num u-fs-xs">导入本地文件，也可以从仓库获取或让 AI 写一个</span>
         </button>
       </div>
       ${

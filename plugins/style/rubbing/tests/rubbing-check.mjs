@@ -15,14 +15,23 @@
 
      node plugins/style/rubbing/tests/rubbing-check.mjs
 
+   加 `--shot <目录>` 会在断言之外**多截 4 张整页 PNG**（灰字刚压出来 → 第一个字快填满 →
+   逐字推进 → 整句填满），给"逐粒填充灰字"留一份肉眼可核对的证据。
+
    为什么要换掉 rAF：headless 下合成器不给 BeginFrame（实测 rAF 一次都不来），
    样式自己的帧循环会一帧都不跑。换成定时器后它与合成器无关，能稳定推进；
-   画布像素 / 计算样式直接读，不依赖截图。
+   画布像素 / 计算样式直接读，**断言**不依赖截图（截图只是给人看的附录）。
 
    这一款特有的验收点（别的样式没有的）：
      · 画布上**真的出现了非背景像素**（粒子确实画出来了，不是空画布）；
+     · **灰字底层一直在**（按"半透明 + 近灰 + 够亮"三条从画布上单独量出来）—— 这是
+       "颗粒堆成字之后看不出是啥"那条反馈的判据：读得出来靠的是底层灰字，不是粒子的密度；
+     · 灰字与粒子目标点是**同一套几何**（`data-base` vs 掩码中心映射点）；
+     · 在**同一个字**的时间窗里连续采样，`data-fill`（已落定粒子的比例）**严格单调增加**
+       —— "一粒一粒填"而不是"整块云一起飞"，也就是"跟不上节奏"那条反馈的判据；
+     · 点击**不再跳进度**（界面上只有当前这一句）；
      · 已唱部分**在画面上从左往右推进**（亮像素的质心 x 递增）；
-     · 暂停后**质心继续下落**（重力落地，不是冻结）—— 这是设计稿的硬要求；
+     · 暂停后**沙继续下落**（灰尘往下沉，不是冻结）—— 这是设计稿的硬要求；
      · 帧耗时超预算时 `data-lod` **真的退档**（探针 P5 的自适应降级）；
      · dpr 2 时 backing store 翻倍而 CSS 尺寸不变。
 
@@ -32,7 +41,7 @@
 
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -107,7 +116,7 @@ const COVER2 = makeCover("#e8d9a0", "#3a5a2a");
 const DEFAULT_COVER = makeCover("#2b4fa8", "#12100e");
 
 /* 契约形态的歌词：前两行有完整 words、第 3 行没有（必须退回整行一起亮）。
-   时间取整秒级 —— 视觉比声音慢 70ms、墙钟还会继续外推，
+   时间取整秒级 —— 填充的提前量只有 90ms、墙钟还会继续外推，
    断言只落在"明显已经唱到 / 明显还没唱到"的位置上。 */
 const LINES = [
   { time: 0, text: "第一句已经唱过", words: [0, 1000, 2000, 3000, 4000, 5000, 5500] },
@@ -235,6 +244,8 @@ function inkStats(canvas, alpha) {
   let bright = 0;
   let sx = 0;
   let sy = 0;
+  // 16 列 × 4 行的粗直方图（诊断用：看清"亮的到底是哪一块"）
+  const hist = new Array(64).fill(0);
   for (let y = 0; y < h; y += 1) {
     for (let x = 0; x < w; x += 1) {
       const al = d[(y * w + x) * 4 + 3] / 255;
@@ -243,14 +254,94 @@ function inkStats(canvas, alpha) {
         bright += 1;
         sx += x;
         sy += y;
+        const cx = Math.min(15, Math.floor((x / w) * 16));
+        const cy = Math.min(3, Math.floor((y / h) * 4));
+        hist[cy * 16 + cx] += 1;
       }
     }
   }
-  return { any, bright, meanX: bright ? sx / bright : -1, meanY: bright ? sy / bright : -1 };
+  return { any, bright, meanX: bright ? sx / bright : -1, meanY: bright ? sy / bright : -1, hist };
 }
 
 function inkOf(inst, alpha) {
   return inkStats(inst.rb.querySelector(".rb__canvas"), alpha);
+}
+
+/**
+ * 灰字底层统计：**半透明、近灰、而且够亮**的像素 —— 就是"还没被彩色颗粒填到的字"。
+ *
+ * 这是「颗粒堆成字之后看不出是啥」那条反馈的判据。各层占一个不重叠的 alpha 窗口，
+ * 所以能按 alpha 把它们分开量：
+ *   灰尘 0.18（暗） · 灰字 0.52（本函数） · 飞行中 0.8 · 已落定 1.0
+ * 近灰判定用 max-min ≤ 30（封面色相被强制拉进可见彩度带，彩色颗粒过不了这一关）；
+ * 亮度下限是必须的：两粒暗灰沙叠起来会到 0.33 且近似中性色（米白那种颜料），
+ * 不加亮度这一条就会把"叠在一起的沙"误判成灰字。
+ */
+function baseStats(canvas) {
+  const g = canvas.getContext("2d", { willReadFrequently: true });
+  const w = canvas.width;
+  const h = canvas.height;
+  const d = g.getImageData(0, 0, w, h).data;
+  let n = 0;
+  let sx = 0;
+  let sy = 0;
+  let minX = w;
+  let maxX = -1;
+  let minY = h;
+  let maxY = -1;
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const i = (y * w + x) * 4;
+      const al = d[i + 3] / 255;
+      if (al < 0.32 || al > 0.7) continue;
+      const r = d[i];
+      const gg = d[i + 1];
+      const b = d[i + 2];
+      if (Math.max(r, gg, b) - Math.min(r, gg, b) > 30) continue;
+      if ((r + gg + b) / 3 < 110) continue;
+      n += 1;
+      sx += x;
+      sy += y;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  return { n, meanX: n ? sx / n : -1, meanY: n ? sy / n : -1, box: n ? [minX, minY, maxX, maxY] : null };
+}
+
+function baseOf(inst) {
+  return baseStats(inst.rb.querySelector(".rb__canvas"));
+}
+
+/**
+ * 灰尘统计：alpha ∈ [0.12, 0.5] 且**够暗**的像素（单粒 0.18、两粒重叠 0.33）。
+ * 灰字 0.52 / 飞行 0.8 / 落定 1.0 都被排除；暗度这一条也是必须的 ——
+ * 灰字的抗锯齿边缘同样落在 0.1~0.5 里，不挡掉就会把"沙下沉"量成"灰字不动"。
+ */
+function dustStats(canvas) {
+  const g = canvas.getContext("2d", { willReadFrequently: true });
+  const w = canvas.width;
+  const h = canvas.height;
+  const d = g.getImageData(0, 0, w, h).data;
+  let n = 0;
+  let sy = 0;
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const i = (y * w + x) * 4;
+      const al = d[i + 3] / 255;
+      if (al < 0.12 || al > 0.5) continue;
+      if ((d[i] + d[i + 1] + d[i + 2]) / 3 > 110) continue;
+      n += 1;
+      sy += y;
+    }
+  }
+  return { n, meanY: n ? sy / n : -1 };
+}
+
+function dustOf(inst) {
+  return dustStats(inst.rb.querySelector(".rb__canvas"));
 }
 
 const report = {};
@@ -302,11 +393,45 @@ async function scenarioA() {
     bgImgSrc: (bgRoot.querySelector(".rbbg__img")?.getAttribute("src") || "").slice(0, 22),
     canvasCursor: computed(cvs, "cursor"),
     canvasFilter: computed(cvs, "filter"),
-    dustOpacity: computed(a.rb.querySelector(".rb__dust"), "opacity"),
+    baseAttr: a.rb.dataset.base || "",
   };
 
   // 画布上真的画了东西（这是 canvas 类样式最容易"看着挂了其实是空画布"的地方）
   out.inkIdle = inkOf(a);
+  // ★ 反馈 1：灰字底层必须一直在、而且一眼能读出来（粒子还没填到的时候也读得出来）
+  out.baseIdle = baseOf(a);
+  out.baseGeom = (out.mounted.baseAttr || "").split(",").map(Number);
+
+  // ★ 反馈 3/4：逐粒填充 —— 在**同一个字**的时间窗里连续采样，
+  // 已经落定的像素必须严格单调增加（"一粒一粒填"而不是"整块云一起飞"）。
+  // 用 paused 采样：墙钟不外推，位置就是给的那个数，窗口才对得上。
+  out.fill = [];
+  for (const ms of [100, 320, 540, 760, 980]) {
+    a.host.setPosition(ms, false);
+    push(a, { type: "progress", position: ms, duration: 240000, playing: false });
+    await wait(140);
+    out.fill.push({
+      ms,
+      fill: Number(a.rb.dataset.fill || "0"),
+      ink: inkStats(cvs, 0.9).bright,
+      base: baseStats(cvs).n,
+    });
+  }
+  a.host.setPosition(0, true);
+  push(a, { type: "progress", position: 0, duration: 240000, playing: true });
+  await wait(200);
+
+  // ★ 反馈 4 的"填满"判据：整句唱完时，灰字底层必须有**大半**被颗粒盖掉。
+  // 量的是同一句的笔画像素在"刚开始唱"与"整句唱完"两个时刻的灰字量之比。
+  // 这条在颗粒还是 1.85×1.85 的时候只有 30% —— 看起来是"往灰字上撒了彩砂"，
+  // 不是"把灰字填成彩色的"（见 field.GRAIN 的注释）。
+  out.cover = [];
+  for (const ms of [200, 6200]) {
+    a.host.setPosition(ms, true);
+    push(a, { type: "progress", position: ms, duration: 240000, playing: true });
+    await wait(320);
+    out.cover.push({ ms, lit: a.rb.dataset.lit, fill: a.rb.dataset.fill, base: baseStats(cvs).n });
+  }
 
   // 取色上报（400ms 防抖）
   await wait(500);
@@ -317,11 +442,12 @@ async function scenarioA() {
     accent: prop(a.rb, "--rb-accent"),
   };
 
-  // 逐字进度：亮像素从左边往右边推进
+  // 逐字进度：亮像素从左边往右边推进（用 0.95 以上：只量**已落定**的颗粒，
+  // 飞行途中的沙铺满整条带，会把质心拉平）
   await at(a, 300);
-  out.early = { lit: a.rb.dataset.lit, glyphs: a.rb.dataset.glyphs, ink: inkOf(a) };
+  out.early = { lit: a.rb.dataset.lit, glyphs: a.rb.dataset.glyphs, ink: inkOf(a, 0.95) };
   await at(a, 5000);
-  out.mid = { lit: a.rb.dataset.lit, ink: inkOf(a) };
+  out.mid = { lit: a.rb.dataset.lit, ink: inkOf(a, 0.95) };
   await at(a, 9500);
   out.line1 = { line: a.rb.dataset.line, lit: a.rb.dataset.lit, glyphs: a.rb.dataset.glyphs, ink: inkOf(a) };
   out.tcAfter = a.rb.querySelector(".rb__tc").textContent;
@@ -338,14 +464,22 @@ async function scenarioA() {
   await wait(400);
   out.turbIdle = prop(a.rb, "--rb-turb");
 
-  // 交互：点字形带跳回本句
+  // 交互：指针磁铁还在（interactive:true），但**点击不再跳进度**
   const band = a.rb.getBoundingClientRect();
-  const rectTop = Number(prop(a.rb, "--rb-x") || 0);
+  cvs.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      clientX: band.left + band.width / 2,
+      clientY: band.top + band.height * 0.45,
+    })
+  );
+  cvs.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
   cvs.dispatchEvent(
     new MouseEvent("click", { bubbles: true, clientX: band.left + band.width / 2, clientY: band.top + band.height * 0.45 })
   );
-  out.seeks = a.host.rec.seeks.slice();
-  out.pointerRect = rectTop;
+  await wait(150);
+  out.clickSeeks = a.host.rec.seeks.slice();
+  out.afterPointer = inkOf(a);
 
   // 空态：无歌词
   a.host.setLines([], "loading");
@@ -354,29 +488,31 @@ async function scenarioA() {
   out.empty = {
     text: a.rb.querySelector(".rb__empty").textContent,
     emptyHidden: a.rb.querySelector(".rb__empty").hidden,
-    dustHidden: a.rb.querySelector(".rb__dust").hidden,
     canvasHidden: cvs.hidden,
     data: a.rb.dataset.empty,
+    // ★ 没有歌词时必须真的把灰字底层清掉（否则会留一句上一首的灰字）
+    base: baseOf(a),
   };
   a.host.setLines(LINES, "ok");
   push(a, { type: "lyrics" });
   await wait(200);
-  out.restored = { data: a.rb.dataset.empty, dustHidden: a.rb.querySelector(".rb__dust").hidden };
+  out.restored = { data: a.rb.dataset.empty, base: baseOf(a) };
 
-  // showLyrics:false → 只留沙（不显示文案，也不显示印痕）
+  // showLyrics:false → 一个字都不显示（沙还在飘）
   a.host.setOptions({ showLyrics: false });
   push(a, { type: "options" });
   await wait(300);
   out.noLyrics = {
     data: a.rb.dataset.empty,
     emptyHidden: a.rb.querySelector(".rb__empty").hidden,
-    dustHidden: a.rb.querySelector(".rb__dust").hidden,
+    canvasHidden: cvs.hidden,
+    base: baseOf(a),
     ink: inkOf(a),
   };
   a.host.setOptions({ showLyrics: true });
   push(a, { type: "options" });
   await wait(300);
-  out.lyricsBack = { data: a.rb.dataset.empty, dustHidden: a.rb.querySelector(".rb__dust").hidden };
+  out.lyricsBack = { data: a.rb.dataset.empty, canvasHidden: cvs.hidden, base: baseOf(a) };
 
   // 换封面：背景层换图 + 配色变量变化
   a.host.media.cover = COVER2;
@@ -390,14 +526,14 @@ async function scenarioA() {
     backdrops: a.host.rec.backdrops.length,
   };
 
-  // 暂停：重力落地（质心继续下落，不是冻结）
+  // 暂停：灰尘往下沉（质心继续下落，不是冻结）
   a.host.setSpectrum(null);
   await at(a, 9500, true);
-  const inkBefore = inkOf(a, 0.02);
+  const dustBefore = dustOf(a);
   a.host.setPosition(9500, false);
   push(a, { type: "progress", position: 9500, duration: 240000, playing: false });
   await wait(900);
-  out.pause = { before: inkBefore.meanY, after: inkOf(a, 0.02).meanY };
+  out.pause = { before: dustBefore.meanY, after: dustOf(a).meanY, n: dustBefore.n };
 
   // 暂停 6 秒后停帧（宿主约定）
   await wait(6000);
@@ -453,18 +589,21 @@ async function scenarioB() {
     staticAttr: b.rb.dataset.static || "",
     interactiveAttr: b.rb.dataset.interactive || "",
     canvasTransform: computed(b.rb.querySelector(".rb__canvas"), "transform"),
-    dustFilter: computed(b.rb.querySelector(".rb__dust"), "filter"),
+    base: baseOf(b),
     ink: inkOf(b),
     lit: b.rb.dataset.lit,
     glyphs: b.rb.dataset.glyphs,
   };
   // 暂停 + 瞬移：进度补丁来了要立刻重画一帧（但依然不进循环）
   const paintsBefore = b.host.rec.spectrumCalls;
-  await at(b, 10500, false);
+  await at(b, 11500, false);
   out.paintsAfterPush = b.host.rec.spectrumCalls - paintsBefore;
   out.lit2 = b.rb.dataset.lit;
   out.ink2 = inkOf(b);
-  // interactive:false → 点字形带不该跳转
+  // interactive:false → 指针事件完全不接、点击更不该跳转
+  b.rb
+    .querySelector(".rb__canvas")
+    .dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 100, clientY: 300 }));
   b.rb
     .querySelector(".rb__canvas")
     .dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 100, clientY: 300 }));
@@ -559,13 +698,14 @@ async function scenarioC() {
   push(narrow, { type: "resize", width: 360, height: 700 });
   await wait(600);
   const nc = narrow.rb.querySelector(".rb__canvas");
-  const dust = narrow.rb.querySelector(".rb__dust").getBoundingClientRect();
+  const nb = baseOf(narrow);
   out.narrow = {
     canvasCss: [Math.round(nc.getBoundingClientRect().width), Math.round(nc.getBoundingClientRect().height)],
     backing: [nc.width, nc.height],
     pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
     rootOverflow: narrow.rb.scrollWidth - narrow.rb.clientWidth,
-    dust: [Math.round(dust.left), Math.round(dust.right)],
+    base: nb.n,
+    box: nb.box,
     ink: inkOf(narrow),
   };
   skin.destroy(narrow.host.ctx);
@@ -614,7 +754,43 @@ async function run() {
   return report;
 }
 
-window.__rb = { run };
+/* --------------------------------------------------------------------------
+   截图模式（可选，见文件头的 --shot）：挂一个干净实例，按关键时刻把画面推到位，
+   由 Node 侧用 CDP Page.captureScreenshot 抓整页。
+   ★ 必须 playing:true —— 暂停会触发"灰尘下沉到地板"，截出来不是正常观感。
+   -------------------------------------------------------------------------- */
+async function shotInit() {
+  const rafOrig = window.requestAnimationFrame;
+  const cafOrig = window.cancelAnimationFrame;
+  window.requestAnimationFrame = (cb) =>
+    setTimeout(() => {
+      counters.frames += 1;
+      cb(performance.now());
+    }, 8);
+  window.cancelAnimationFrame = (tid) => clearTimeout(tid);
+  counters.frames = 0;
+  window.__shotInst = mountInstance({});
+  window.__shotOrig = { rafOrig, cafOrig };
+  await wait(600);
+  return true;
+}
+
+async function shotAt(ms, hold) {
+  const inst = window.__shotInst;
+  inst.host.setPosition(ms, true);
+  push(inst, { type: "progress", position: ms, duration: 240000, playing: true });
+  await wait(hold || 400);
+  return {
+    lit: inst.rb.dataset.lit,
+    fill: inst.rb.dataset.fill,
+    line: inst.rb.dataset.line,
+    tc: inst.rb.querySelector(".rb__tc").textContent,
+    base: baseOf(inst).n,
+    ink: inkOf(inst, 0.6).any,
+  };
+}
+
+window.__rb = { run, shotInit, shotAt };
 </script>
 </body>
 </html>`;
@@ -658,6 +834,9 @@ if (!EDGE) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const OUT = join(tmpdir(), "rubbing-check-" + Date.now());
   mkdirSync(OUT, { recursive: true });
+  // 可选截图目录：node …/rubbing-check.mjs --shot .tmp-rubbing-shots
+  const shotArg = process.argv.indexOf("--shot");
+  const SHOT_DIR = shotArg >= 0 && process.argv[shotArg + 1] ? resolve(process.argv[shotArg + 1]) : "";
 
   // 随机端口：上一次跑挂了留下的 Edge 可能还占着固定端口，
   // 那样新实例绑不上，CDP 会连到**旧进程**的 about:blank 上（表现为"页面没准备好"）
@@ -815,8 +994,8 @@ if (!EDGE) {
       check(!A.error, "样式能挂载并渲染", j(A.error || "") + " " + (A.stack || ""));
       check(A.mounted?.hasRb === true, "舞台根里出现了 .rb");
       check(
-        j(A.mounted?.layers) === j(["rb__canvas", "rb__dust", "rb__empty", "rb__hud"]),
-        "叠层顺序（画布在下、HUD 在上）",
+        j(A.mounted?.layers) === j(["rb__canvas", "rb__empty", "rb__hud"]),
+        "叠层顺序（画布在下、HUD 在上；灰字底层已经画在画布里，没有 DOM 文本层）",
         j(A.mounted?.layers)
       );
       check(A.mounted?.title === "旧梦一场", "曲名进了 HUD", j(A.mounted?.title));
@@ -856,12 +1035,58 @@ if (!EDGE) {
 
       console.log("\n[2] 粒子真的画出来了");
       check((A.inkIdle?.any || 0) > 200, "画布上有成片的粒子像素", j(A.inkIdle));
-      check((A.inkIdle?.bright || 0) > 0, "第一批字已经点亮（有高亮粒子）", j(A.inkIdle));
-      // 亮像素 = 被吸引到字形上的粒子；暗像素 = 灰尘。两者必须同时存在（不然就是"一张糊图"）
+      check(/^\d+,\d+,\d+$/.test(A.mounted?.baseAttr || ""), "灰字底层的几何（x,y,fontSize）被暴露出来（自检/排查用）", j(A.mounted?.baseAttr));
       check(
-        (A.inkIdle?.any || 0) > (A.inkIdle?.bright || 0) * 1.2,
-        "灰尘（暗）与已唱（亮）同时存在",
-        j({ any: A.inkIdle?.any, bright: A.inkIdle?.bright })
+        A.baseGeom?.[0] > 0 && A.baseGeom?.[0] < 1100 && A.baseGeom?.[1] > 0 && A.baseGeom?.[1] < 700 && A.baseGeom?.[2] > 40,
+        "灰字落在画布内、字号够大（一眼能读）",
+        j(A.baseGeom)
+      );
+
+      console.log("\n[2b] 反馈 1：灰字底层一直在，颗粒只是把它盖成彩色");
+      // 半透明且近灰的像素 = 还没被颗粒填到的字。这是"看不出是啥"那条反馈的判据：
+      // 有字（>1500 像素、铺开成整句宽）、无歌词时立刻消失。
+      check((A.baseIdle?.n || 0) > 1500, "画布上有一层读得出来的灰字（不是只有一堆粒子）", j(A.baseIdle));
+      check(
+        (A.baseIdle?.box?.[2] || 0) - (A.baseIdle?.box?.[0] || 0) > 300,
+        "灰字铺开成整句宽度（是字，不是一团）",
+        j(A.baseIdle?.box)
+      );
+      check(
+        (A.baseIdle?.box?.[3] || 0) - (A.baseIdle?.box?.[1] || 0) > 40,
+        "灰字有正常字高",
+        j(A.baseIdle?.box)
+      );
+
+      console.log("\n[2c] 反馈 3/4：颗粒是一粒一粒把字填满的（同一个字内单调推进）");
+      const fills = (A.fill || []).map((f) => f.fill);
+      const fillPx = (A.fill || []).map((f) => f.ink);
+      check(fills.length === 5 && fills.every((v) => typeof v === "number"), "取到了同一个字窗内的连续采样", j(A.fill));
+      let monotone = fills.length === 5;
+      for (let i = 1; i < fills.length; i += 1) if (!(fills[i] > fills[i - 1])) monotone = false;
+      check(monotone, "已填到位的颗粒比例逐次严格增加（逐粒填充，不是整块一起落）", j(fills));
+      check(fills[0] < fills[4] * 0.5, "窗口开头大部分还没填上、结尾几乎填满", j(fills));
+      // 像素数会随"落地的闪光"起落，所以只要求整体上是涨的
+      check(fillPx[4] > fillPx[0], "已落定像素整体上随进度增长", j(fillPx));
+      // 灰字必须**一直在**（每个采样都远大于零）、随填充被盖掉一部分
+      // （整体减少），但不能凭空消失或凭空多出来（±25% 抖动是尘埃遮挡造成的）
+      const bases = (A.fill || []).map((f) => f.base);
+      check(
+        bases.length === 5 && bases.every((v) => v > 1000) && bases[4] < bases[0],
+        "灰字全程都在，并且随填充被盖掉一部分（填的是覆盖，不是把灰字挪走）",
+        j(bases)
+      );
+      check(
+        bases.every((v) => Math.abs(v - bases[0]) < bases[0] * 0.25),
+        "灰字量级稳定（没有整片消失或重复叠加）",
+        j(bases)
+      );
+      // ★ 整句尺度：唱完时必须盖掉大半（这一条是"填满"的定义，不是手感）
+      const cover = (A.cover || []).map((c) => c.base);
+      const covered = cover.length === 2 && cover[0] > 0 ? 1 - cover[1] / cover[0] : 0;
+      check(
+        covered >= 0.5,
+        "整句唱完时灰字被盖掉大半（填满，不是撒了几粒麻点）",
+        j({ cover: A.cover, covered: Number(covered.toFixed(3)) })
       );
 
       console.log("\n[3] 封面取色 → 宿主壳配色");
@@ -912,25 +1137,33 @@ if (!EDGE) {
       console.log("\n[5] 频谱 / 交互 / 空态");
       check(Number(A.turbHigh) > 0.5, "低频喂进了湍流变量", j({ high: A.turbHigh, idle: A.turbIdle }));
       check(Number(A.turbIdle) === 0, "拿不到频谱时湍流回到 0", j(A.turbIdle));
-      check((A.seeks || []).length === 1 && A.seeks[0] === 14000, "点字形带跳回本句起点", j(A.seeks));
+      // ★ 反馈 2：点击不再跳进度（界面上只有当前这一句，跳转没有意义）
+      check((A.clickSeeks || []).length === 0, "点击字形带不再跳进度", j(A.clickSeeks));
+      check((A.afterPointer?.any || 0) > 200, "指针磁铁事件之后画面照画", j(A.afterPointer));
       check(
         A.empty?.text === "歌词匹配中…" && A.empty?.emptyHidden === false && A.empty?.canvasHidden === true && A.empty?.data === "1",
         "无歌词时显示空态文案并收起画布",
         j(A.empty)
       );
-      check(A.restored?.data === "0" && A.restored?.dustHidden === false, "歌词回来后被正常恢复", j(A.restored));
+      check((A.empty?.base?.n || 0) < 200, "无歌词时灰字底层被清掉（不留上一首的残字）", j(A.empty?.base));
+      check(A.restored?.data === "0" && (A.restored?.base?.n || 0) > 1000, "歌词回来后被正常恢复", j(A.restored));
       check(
-        A.noLyrics?.data === "1" && A.noLyrics?.emptyHidden === true && A.noLyrics?.dustHidden === true && (A.noLyrics?.ink?.any || 0) > 200,
-        "showLyrics:false 时只留沙、不显示任何文字",
+        A.noLyrics?.data === "1" && A.noLyrics?.emptyHidden === true && A.noLyrics?.canvasHidden === true,
+        "showLyrics:false 时收起画布与文案",
         j(A.noLyrics)
       );
-      check(A.lyricsBack?.data === "0" && A.lyricsBack?.dustHidden === false, "打开歌词后恢复印痕", j(A.lyricsBack));
+      check(
+        (A.noLyrics?.ink?.bright || 0) < 80 && (A.noLyrics?.base?.n || 0) < 200,
+        "showLyrics:false 时一个字都不显示，只剩沙",
+        j({ ink: A.noLyrics?.ink, base: A.noLyrics?.base?.n })
+      );
+      check(A.lyricsBack?.data === "0" && (A.lyricsBack?.base?.n || 0) > 1000, "打开歌词后灰字回来", j(A.lyricsBack));
 
-      console.log("\n[6] 暂停 = 重力落地（不是冻结）");
+      console.log("\n[6] 暂停 = 灰尘下沉（不是冻结）");
       check(
         (A.pause?.after || 0) > (A.pause?.before || 0) + 3,
-        "暂停后质心继续下落",
-        j({ before: Math.round(A.pause?.before || 0), after: Math.round(A.pause?.after || 0) })
+        "暂停后沙的质心继续下落",
+        j({ before: Math.round(A.pause?.before || 0), after: Math.round(A.pause?.after || 0), n: A.pause?.n, hist: A.pause?.hist })
       );
       check(A.idle?.dataIdle === true && A.idle?.frozen === true, "暂停 6 秒后停帧", j(A.idle));
       check(A.visibleFrames > 10, "回前台帧循环醒过来", j(A.visibleFrames));
@@ -945,11 +1178,11 @@ if (!EDGE) {
       console.log("\n[8] animations:false / reducedMotion（静态但完整）");
       check(!B.error, "静态档不报错", j(B.error || "") + " " + (B.stack || ""));
       check((B.paintsAfterMount || 0) === 0 && (B.framesAfterMount || 0) === 0, "挂载后一帧都不画（不进循环）", j({ paints: B.paintsAfterMount, frames: B.framesAfterMount }));
-      check((B.ink?.any || 0) > 200 && (B.ink?.bright || 0) > 0, "但画布上仍然有正确的画面（瞬移后画一帧）", j(B.ink));
+      check((B.ink?.any || 0) > 200 && (B.base?.n || 0) > 1000, "但画布上仍然有正确的画面（灰字 + 粒子，瞬移后画一帧）", j({ ink: B.ink, base: B.base?.n }));
       check(B.staticAttr === "1" && B.interactiveAttr === "0", "静态档属性正确", j({ static: B.staticAttr, interactive: B.interactiveAttr }));
-      check(B.canvasTransform === "none" && !/blur/.test(B.dustFilter || ""), "静态档关掉了过渡与模糊", j({ transform: B.canvasTransform, filter: B.dustFilter }));
+      check(B.canvasTransform === "none", "静态档关掉了画布过渡", j(B.canvasTransform));
       check((B.paintsAfterPush || 0) === 0 && Number(B.lit2) > Number(B.lit || 0), "进度补丁来了只重画一帧、逐字进度照样推进", j({ lit: B.lit, lit2: B.lit2 }));
-      check((B.seeks || []).length === 0, "interactive:false 时点击不跳转", j(B.seeks));
+      check((B.seeks || []).length === 0, "interactive:false / 点击都不跳转", j(B.seeks));
       check(B.cursor !== "crosshair", "interactive:false 时没有磁铁光标", j(B.cursor));
       check((B.paintsStillFlat || 0) === 0, "静态档长时间也不会有帧", j(B.paintsStillFlat));
 
@@ -966,14 +1199,35 @@ if (!EDGE) {
       check(C.narrow?.backing?.[0] === 360 && C.narrow?.canvasCss?.[0] === 360, "窄窗口下画布跟着舞台缩放", j(C.narrow?.canvasCss));
       check(C.narrow?.pageOverflow <= 1 && C.narrow?.rootOverflow <= 0, "窄窗口不横向溢出", j({ page: C.narrow?.pageOverflow, root: C.narrow?.rootOverflow }));
       check(
-        (C.narrow?.dust?.[0] || -1) >= 0 && (C.narrow?.dust?.[1] || 9999) <= 360,
-        "印痕层没有跑出舞台",
-        j(C.narrow?.dust)
+        (C.narrow?.box?.[0] || -1) >= 0 && (C.narrow?.box?.[2] || 9999) <= 360 && (C.narrow?.base || 0) > 100,
+        "窄窗口下灰字仍然在舞台内（没有跑出去、也不是空的）",
+        j({ box: C.narrow?.box, base: C.narrow?.base })
       );
       check((C.narrow?.ink?.any || 0) > 100, "窄窗口下粒子照画", j(C.narrow?.ink));
 
       console.log("\n[10] 控制台必须干净");
       check(errors.length === 0, "无未捕获异常 / console.error", errors.slice(0, 3).join(" | "));
+
+      // ── 可选：截图（--shot <目录>）。给"逐粒填充灰字"留一份肉眼可核对的证据 ──
+      if (SHOT_DIR) {
+        mkdirSync(SHOT_DIR, { recursive: true });
+        await evaluate("window.__rb.shotInit()");
+        // 第一句 words = [0,1000,…,5500]：0.1s 时第 1 个字刚开始填、0.9s 快填满、
+        // 2.6s 前两个字填完第三个在填、6.2s 整句都已填完（等下一句）
+        const marks = [
+          { ms: 100, hold: 260, slug: "a-第一个字-刚开始填" },
+          { ms: 900, hold: 300, slug: "b-第一个字-快填满" },
+          { ms: 2600, hold: 400, slug: "c-逐字推进" },
+          { ms: 6200, hold: 400, slug: "d-整句填满" },
+        ];
+        for (const mk of marks) {
+          const info = await evaluate(`window.__rb.shotAt(${mk.ms}, ${mk.hold})`);
+          const shot = await send("Page.captureScreenshot", { format: "png" });
+          const file = join(SHOT_DIR, `${mk.slug}.png`);
+          writeFileSync(file, Buffer.from(shot.result.data, "base64"));
+          console.log(`  📷 ${file}  ${j(info)}`);
+        }
+      }
     } catch (err) {
       fail += 1;
       console.error("  FAIL 自检本身中断：", err && err.message ? err.message : err);

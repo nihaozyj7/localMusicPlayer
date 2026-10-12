@@ -32,7 +32,7 @@ import { animationDurationValue, setRuntimeToken, replaceStyleRules } from "./ru
 // 那组三选一（见 desktop-mode.js 与 ui/panels.js），所以这里不引 desktop-mode。
 
 import { availableSkins, reloadSkins, removeSkin, setPlayerViewMode, skinLoadFailures } from "./playerhost.js";
-// 「添加自定义主题 / 样式包」的分页弹层（从仓库获取 / 从本地导入）。
+// 「添加自定义主题 / 样式包」的分页弹层（从本地导入 / 从仓库获取，本地导入为默认页）。
 // 单个方向的依赖：ui/packstore.js 不反向引 settings.js ——
 // 「从本地导入」那一页的按钮动作仍由下面的 bindPromptActions 处理。
 import { openPackDialog } from "./ui/packstore.js";
@@ -640,7 +640,8 @@ function bindPromptActions(root, ctx = {}) {
 /**
  * 打开「用 AI 创建播放界面样式（皮肤）」的引导弹层。
  *
- * 弹层现在是两个 tab（从仓库获取 / 从本地导入），本函数负责**「从本地导入」那一页**：
+ * 弹层现在是两个 tab（从本地导入 / 从仓库获取），本函数负责**「从本地导入」那一页**
+ * —— 它也是默认停的那一页：
  * 引导文字 + 复制提示词 + 导入样式包两个按钮。装完之后要让设置卡片重画，
  * 所以把 ctx 的 commit / render 通过 onChanged 传进组件。
  */

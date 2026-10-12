@@ -195,14 +195,20 @@ export function accentOf(lut, fallback = [185, 163, 126]) {
  * 一次性把"封面位图"整理成粒子要用的一切。
  *
  * @param {Uint8ClampedArray|number[]|null} data RGBA 位图（通常是 64×64 或 96×96 的采样画布）
- * @returns {{lut:number[][], dominant:number[], accent:number[], sample:{rgb:Uint8Array,n:number}, hasCover:boolean}}
+ * @returns {{lut:number[][], ramp:number[][], dominant:number[], accent:number[], sample:{rgb:Uint8Array,n:number}, hasCover:boolean}}
  */
-export function paletteFrom(data, w, h, { levels = LUT_LEVELS, fallback = { dark: [13, 12, 11], light: [232, 226, 214], accent: [185, 163, 126] } } = {}) {
+export function paletteFrom(
+  data,
+  w,
+  h,
+  { levels = LUT_LEVELS, buckets = 6, fallback = { dark: [13, 12, 11], light: [232, 226, 214], accent: [185, 163, 126] } } = {}
+) {
   const sample = data && data.length ? samplePixels(data, w, h, { step: 2 }) : { rgb: new Uint8Array(0), n: 0 };
   const lut = buildLut(sample, { levels, dark: fallback.dark, light: fallback.light });
+  const ramp = vividRamp(sample, { buckets });
   const dominant = dominantOf(sample) || mix(fallback.dark, fallback.light, 0.5);
   const accent = accentOf(lut, fallback.accent);
-  return { lut, dominant, accent, sample, hasCover: sample.n > 0 };
+  return { lut, ramp, dominant, accent, sample, hasCover: sample.n > 0 };
 }
 
 /** 阶梯取色：t ∈ [0,1]（0 = 最暗一层）。 */
@@ -221,6 +227,188 @@ export function lutByLuma(lut, lum) {
 export function packRgb(rgb) {
   return ((clamp(Math.round(rgb[0]), 0, 255) << 16) | (clamp(Math.round(rgb[1]), 0, 255) << 8) | clamp(Math.round(rgb[2]), 0, 255)) >>> 0;
 }
+
+/* ==========================================================================
+   多色沙：封面色相 → 一档"看得见"的彩色阶梯
+   --------------------------------------------------------------------------
+   ★ 这里解决的问题：**旧版粒子是"按封面亮度取灰阶"的**。
+     封面越暗，粒子越暗；压在近黑的底上（背景是 blur + brightness(.46) +
+     暗纱之后的合成色）就只剩一团看不清的深灰 —— "聚集成字后看不出是啥"
+     的一半原因来自这里。
+
+   新口径：**亮度不再决定粒子颜色，只决定它的亮度档（灰尘 / 飞行 / 落定）**；
+   颜色只取封面的**色相**，并且强制拉进一个可见的饱和度/明度带。于是：
+
+     · 暗封面也能有彩色颗粒（不会被封面的暗部带跑）；
+     · 同一句话天然是多色的（封面的色相是多样的）；
+     · 灰阶封面（黑白照片）色相无从谈起 → 用 PIGMENTS 这组传统颜料兜底。
+   ========================================================================== */
+
+/** 封面没有彩度时的兜底多色沙：朱砂 / 藤黄 / 石青 / 石绿 / 赭石 / 米白 */
+export const PIGMENTS = [
+  [201, 84, 46],
+  [216, 165, 60],
+  [74, 132, 184],
+  [78, 154, 120],
+  [176, 118, 74],
+  [230, 220, 196],
+];
+
+/** 色相直方图的桶数（12 桶 ≈ 每桶 30°，够分开"红橙黄绿青蓝紫"）。 */
+export const HUE_BINS = 12;
+
+/** rgb → hsl（h ∈ [0,1)，s/l ∈ [0,1]）。 */
+export function rgbToHsl(rgb) {
+  const r = clamp(rgb[0], 0, 255) / 255;
+  const g = clamp(rgb[1], 0, 255) / 255;
+  const b = clamp(rgb[2], 0, 255) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d === 0) return [0, 0, l];
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  return [h, s, l];
+}
+
+/** hsl → rgb（h 可以是任意实数，内部取模）。 */
+export function hslToRgb(h, s, l) {
+  const hh = ((Number(h) % 1) + 1) % 1;
+  const ss = clamp01(s);
+  const ll = clamp01(l);
+  if (ss === 0) {
+    const v = ll * 255;
+    return [v, v, v];
+  }
+  const q = ll < 0.5 ? ll * (1 + ss) : ll + ss - ll * ss;
+  const p = 2 * ll - q;
+  const f = (t) => {
+    let x = t;
+    if (x < 0) x += 1;
+    if (x > 1) x -= 1;
+    if (x < 1 / 6) return p + (q - p) * 6 * x;
+    if (x < 1 / 2) return q;
+    if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
+    return p;
+  };
+  return [f(hh + 1 / 3) * 255, f(hh) * 255, f(hh - 1 / 3) * 255];
+}
+
+/** 色相（0..1）。灰阶像素返回 0（调用方自己判断彩度够不够）。 */
+export function hueOf(rgb) {
+  return rgbToHsl(rgb)[0];
+}
+
+/** 两个色相之间的环形距离（0..0.5）。 */
+export function hueDistance(a, b) {
+  const d = Math.abs((((Number(a) || 0) - (Number(b) || 0)) % 1) + 1) % 1;
+  return d > 0.5 ? 1 - d : d;
+}
+
+/**
+ * 封面采样 → `buckets` 档**彩色**阶梯。
+ *
+ * 做法：按色相分桶统计（权重 = 彩度，灰像素几乎不计），挑出彼此隔开的主色相，
+ * 再把它们的饱和度/明度强拉进可见带；不够 `buckets` 档就用 PIGMENTS 补齐。
+ * 没有封面（或完全灰阶）时整档都是 PIGMENTS。
+ *
+ * @param {{rgb:Uint8Array,n:number}|null} sample samplePixels() 的结果
+ * @returns {number[][]} 长度 buckets 的 RGB 数组
+ */
+export function vividRamp(sample, { buckets = 6, fallback = PIGMENTS, satMin = 0.36, satMax = 0.82, lumMin = 0.5, lumMax = 0.72 } = {}) {
+  const n = Math.max(2, Math.round(buckets));
+  const rgb = sample?.rgb || new Uint8Array(0);
+  const total = Number(sample?.n) || 0;
+  const sumR = new Float64Array(HUE_BINS);
+  const sumG = new Float64Array(HUE_BINS);
+  const sumB = new Float64Array(HUE_BINS);
+  const weight = new Float64Array(HUE_BINS);
+  for (let i = 0; i < total; i += 1) {
+    const c = [rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]];
+    const sat = saturation(c);
+    const bin = clamp(Math.floor(hueOf(c) * HUE_BINS), 0, HUE_BINS - 1);
+    const w = sat * sat; // 灰像素几乎不计：色相对它们没有意义
+    sumR[bin] += c[0] * w;
+    sumG[bin] += c[1] * w;
+    sumB[bin] += c[2] * w;
+    weight[bin] += w;
+  }
+  const picks = [];
+  const order = Array.from({ length: HUE_BINS }, (_, i) => i).sort((a, b) => weight[b] - weight[a]);
+  for (const bin of order) {
+    if (picks.length >= n) break;
+    if (!(weight[bin] > 0)) continue;
+    // 与已选色相隔不到 1.5 个桶（≈45°）就跳过：要的是"多色"，不是一串近似色
+    if (picks.some((p) => hueDistance(p.bin / HUE_BINS, bin / HUE_BINS) < 1.5 / HUE_BINS)) continue;
+    picks.push({ bin, rgb: [sumR[bin] / weight[bin], sumG[bin] / weight[bin], sumB[bin] / weight[bin]] });
+  }
+  // 补齐（封面色相太少 / 完全没有封面）
+  const extra = [];
+  for (let i = 0; picks.length + extra.length < n && i < fallback.length * 3 && fallback.length; i += 1) {
+    const c = fallback[i % fallback.length];
+    const h = hueOf(c);
+    if (picks.some((p) => hueDistance(p.bin / HUE_BINS, h) < 1.5 / HUE_BINS)) continue;
+    if (extra.some((p) => hueDistance(p.h, h) < 1.5 / HUE_BINS)) continue;
+    extra.push({ h, rgb: c });
+  }
+  for (let i = 0; fallback.length && picks.length + extra.length < n; i += 1) {
+    const c = fallback[i % fallback.length];
+    extra.push({ h: hueOf(c), rgb: c });
+  }
+  const all = picks
+    .map((p) => ({ h: p.bin / HUE_BINS, rgb: p.rgb }))
+    .concat(extra.map((p) => ({ h: p.h, rgb: p.rgb })))
+    .sort((a, b) => a.h - b.h);
+  const span = lumMax - lumMin;
+  return all.slice(0, n).map((p, k) => {
+    const hsl = rgbToHsl(p.rgb);
+    const s = clamp(Math.max(hsl[1], 0.22) * 1.5 + 0.22, satMin, satMax);
+    const l = clamp(lumMin + (span * k) / Math.max(1, n - 1), lumMin, lumMax);
+    return hslToRgb(hsl[0], s, l);
+  });
+}
+
+/** 在阶梯里找与给定颜色**色相最近**的一档（灰阶返回 -1，交给调用方随机）。 */
+export function nearestHue(ramp, rgb, { graySat = 0.08 } = {}) {
+  const list = Array.isArray(ramp) ? ramp : [];
+  if (!list.length) return -1;
+  if (!rgb || saturation(rgb) < graySat) return -1;
+  const h = hueOf(rgb);
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < list.length; i += 1) {
+    const d = hueDistance(h, hueOf(list[i]));
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/**
+ * 一个目标点该用第几档颜色。
+ *
+ * · 有封面像素 → 用它**在这个相对位置上**的色相吸附到最近一档
+ *   （保留"字是用这张封面的像素堆出来的"这层含义）；
+ * · 灰阶/无封面 → 随机一档；
+ * · 再按 `speckle` 的概率随机抖一档 → 画面是**多色颗粒**，不是一整片同色。
+ *
+ * @returns {number} 0..ramp.length-1
+ */
+export function bucketForPixel(ramp, rgb, rnd, { speckle = 0.34, graySat = 0.08 } = {}) {
+  const n = Math.max(1, (ramp || []).length);
+  const pick = () => Math.min(n - 1, Math.max(0, Math.floor(clamp01(rnd()) * n) % n));
+  let b = nearestHue(ramp, rgb, { graySat });
+  if (b < 0) b = pick();
+  if (rnd() < speckle) b = pick();
+  return b;
+}
+
 
 /* ==========================================================================
    宿主壳 / HUD 真正压着的那层底

@@ -1,10 +1,25 @@
 /* ==========================================================================
    rubbing/skin.js — 第三方样式「拓印」
    --------------------------------------------------------------------------
-   一句话：**歌词是用这张封面的像素堆出来的。**
-   当前这句歌词被离屏渲染成掩码 → 在笔画上抽一万来个目标点 → 每个粒子从
-   封面的**同一个相对位置**取色 → 弹簧把它们磁吸到笔画上。唱到第 k 个字素
-   时，属于它的粒子才被强吸引（未唱到的只是淡淡的灰尘）。
+   一句话：**在纸上先压出一行灰字，再用这张封面的彩色颗粒一粒一粒把它填满。**
+
+   与上一版的区别（都是按实际观感反馈改的）：
+
+     · **灰字底层**：整句歌词先以灰色 fillText 画在画布上（位置与字号由
+       glyph.baseGeometry 给出 —— 和粒子目标点**共用同一个掩码、同一次
+       fitPoints 缩放**），所以字一直都在、一眼就能读出来；
+     · **逐粒填充**：粒子的位置是**歌曲位置的纯函数**（`field.step`），
+       每一粒有自己的 `inkAt`（何时起飞）与 `fly`（飞多久）。唱到哪，哪里的
+       灰字就被彩色颗粒盖住 —— 逐字、逐行是"填"出来的，不是"聚"出来的；
+     · **跟得上节奏**：单粒落定时间 ≤ fly（默认 150~240ms），且 `inkAt` 落在
+       "字素窗口 − fly"之内，所以一个字唱完时它的粒子**一定已经全部落定**；
+       旧版弹簧的时间常数约 2.5s，永远在半路；
+     · **看得清**：粒子颜色不再按封面亮度取灰阶（暗封面会取到一团深灰），
+       而是取封面色相并拉进可见的饱和度/明度带（`palette.vividRamp`），
+       同一句话天然是多色的；
+     · **真的填满**：落定的颗粒半径 ×1.85（`field.GRAIN`）—— 粒子数按舞台面积算，
+       一句话的笔画面积是它的二十倍，颗粒不放大就只能盖住 30%，那是"撒彩砂"；
+     · **点击不再跳进度**：界面上只有当前这一句，跳转没有意义 —— 已移除。
 
    极限轴：**图像数据化 + 粒子物理**。设计规格见
    plugins/style/pending-designs.md 02。
@@ -12,8 +27,8 @@
    与宿主的分工（契约 v3）：
      · 数据只从 ctx 拿，动作只走 ctx.actions；本包零裸包名 import；
      · 整窗背景层的内容是本包填的（容器是宿主的），卸载时自己清空并隐藏；
-     · 歌词：本包自己的离屏渲染 + 粒子；字素切分走 ctx.sdk.splitGraphemes
-       （必须与宿主同一份切法，否则 words 下标对不上）；
+     · 字素切分走 ctx.sdk.splitGraphemes（必须与宿主同一份切法，
+       否则 words 下标对不上）；
      · 宿主壳配色只有一条合法通道：清单 colors + ctx.actions.reportBackdrop()。
 
    ★ 子模块必须 `await import()` 并透传入口的 ?t= token
@@ -21,16 +36,16 @@
      会去请求没有 token 的 `/skins/rubbing/lib/*.js` → 403。浏览器预览没有
      query，透传空串，退化成普通相对导入。
 
-   ★ 性能纪律（本款是六款里唯一"每帧画上万个图元"的）
+   ★ 性能纪律（本款是七款里唯一"每帧画上万个图元"的）
      · 粒子状态全在定长类型化数组里（SoA），运行期零分配、零 new；
-     · 画布绘制按 **色桶 × 亮度档** 分批（18 次 fillStyle + N 次 fillRect），
-       绝不逐粒子上色（那会变成每帧上万次字符串拼接）；
+     · 画布绘制按 **色桶 × 状态档** 分批（6 × 3 = 18 次 fillStyle + N 次 fillRect），
+       绝不逐粒子上色；
+     · 灰字底层是每帧一次 fillText（比再画一万个点便宜得多，且永远清晰）；
      · 自己量每帧的画布耗时（EMA），连续两帧超预算就退档
-       （lod 0→3：粒子数 ×1 / ×0.66 / ×0.45 / ×0.30，后两档同时半分辨率）
-       —— 这是探针 P5「4K + dpr2 的填充率会不会顶到上限」的答案；
-     · 只有一条 rAF；暂停 6 秒停帧（暂停期间是**重力落地**，不是冻结）；
+       （lod 0→3：粒子数 ×1 / ×0.66 / ×0.45 / ×0.30，后两档同时半分辨率）；
+     · 只有一条 rAF；暂停 6 秒停帧（暂停期间灰尘继续下沉，不是冻结）；
        performance 档按清单 budgetFps 限帧；animations:false / 减少动效时
-       粒子瞬移到目标，只画一帧。
+       粒子直接落在目标上，只画一帧。
    ========================================================================== */
 
 const Q = new URL(import.meta.url).search;
@@ -42,29 +57,39 @@ const field = await load("field.js");
 
 /** 暂停后停帧的时长（宿主约定，见 docs/37） */
 const IDLE_STOP_MS = 6000;
-/** 画面比声音略慢一点，避免"字先亮、声后到" */
-const VISUAL_LAG_MS = 70;
+/**
+ * 填充的**提前量**：让颗粒比声音早一点点落定。
+ * 落定本身还要 fly（150~240ms），两者相抵之后画面与歌声基本同时到。
+ */
+const FILL_LEAD_MS = 90;
 /** 清单 performance.budgetFps 的同源值 */
 const BUDGET_FPS = 45;
 /** 封面采样画布（色板与粒子取色都从这张来；96 以上收益很小） */
 const COVER_N = 64;
-/** 字形掩码分辨率（越高目标点越细，代价只是一次性的一次离屏渲染） */
-const MASK_W = 560;
-const MASK_H = 180;
-/** 颜色桶数（LUT 取样点）与亮度档数 */
+/** 字形掩码尺寸：跟随字形带，缩放到差不多 1:1 —— 灰字清晰、目标点也细 */
+const MASK_MIN_W = 420;
+const MASK_MAX_W = 1280;
+const MASK_MIN_H = 150;
+const MASK_MAX_H = 460;
+/** 掩码字号占掩码高度的比例（再宽的句子会自动缩到掩码宽度的 96%） */
+const MASK_FONT_RATIO = 0.78;
+/** 颜色桶数（vividRamp 的档数）与状态档数（灰尘/飞行/落定） */
 const BUCKETS = 6;
-const LEVELS = 3;
+const LEVELS = field.LEVELS;
+/** 灰字底层的底色不透明度（在近黑底上约 4:1，100px 以上的字足够读） */
+const BASE_ALPHA = 0.52;
 /** 目标点缓存的条数（一句一条；前后句来回跳时不重算） */
 const CACHE_MAX = 8;
 /** 下一句提前算好的提前量 */
 const PREFETCH_MS = 240;
+/** 切句时的画面淡入时长（用指数趋近，与帧率无关） */
+const FADE_RATE = 11;
 
 const FONT_STACK = '"Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif';
 
 const SHELL = `
   <div class="rb">
     <canvas class="rb__canvas" aria-hidden="true"></canvas>
-    <div class="rb__dust" aria-hidden="true"></div>
     <div class="rb__empty"></div>
     <div class="rb__hud">
       <div class="rb__title"></div>
@@ -86,11 +111,20 @@ const BG_SHELL = `
 
 const TICKS = 48;
 
+/** 空歌词列表的**稳定引用**（用它做 `===` 判断才不会每次推送都重算行号） */
+const EMPTY_LINES = Object.freeze([]);
+
 /** 当前实例（换样式会先 destroy 再 mount） */
 let S = null;
 
 function nowMs() {
   return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+}
+
+function clamp(v, a, b) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return a;
+  return n < a ? a : n > b ? b : n;
 }
 
 export default {
@@ -104,7 +138,6 @@ export default {
 
     const elRoot = rb.querySelector(".rb");
     const elCanvas = rb.querySelector(".rb__canvas");
-    const elDust = rb.querySelector(".rb__dust");
     const elEmpty = rb.querySelector(".rb__empty");
     const elTitle = rb.querySelector(".rb__title");
     // ★ 只写 .rb__artist：写整行的 textContent 会把时间码与角标一起抹掉
@@ -151,8 +184,14 @@ export default {
       lineIndex: -1,
       text: "",
       graphemes: [],
-      levels: new Float32Array(1),
-      uniformLine: false,
+      words: null,
+      uniformLine: true,
+      spans: { start: new Float32Array(0), end: new Float32Array(0), uniform: true },
+      base: null,
+      baseColor: "#e8e2d6",
+      hasLyrics: false,
+      pos: 0,
+      bass: 0,
       // 粒子
       pool: null,
       count: 0,
@@ -165,20 +204,27 @@ export default {
       coverKey: "",
       pal: null,
       coverData: null,
-      // 离屏
+      // 离屏掩码
       off: null,
       off2d: null,
-      g2d: null,
+      offW: 0,
+      offH: 0,
+      passRgb: null,
       passColors: [],
+      fadeDrawn: -1,
+      fade: 1,
+      sink: 0,
       pointer: { x: 0, y: 0, active: false },
       // 计时器
-      scatterTimer: 0,
+      burstTimer: 0,
       backdropTimer: 0,
       backdropPending: null,
       prefetchTimer: 0,
       lastTc: "",
       lastTick: -1,
       lastLit: "",
+      lastBase: "",
+      lastFill: -1,
       emptyText: "@@",
       cache: new Map(),
       rng: glyph.mulberry32(0x5eed1234),
@@ -189,6 +235,7 @@ export default {
     const song = () => ctx.track?.() || html.EMPTY_TRACK || {};
     const lyrics = () => media().lyrics || {};
     const env = () => ctx.env?.() || { width: 0, height: 0, dpr: 1, reducedMotion: false };
+    const lyricsLine = () => (st.lineIndex >= 0 ? st.lines[st.lineIndex] : null);
 
     /** 只写变化过的自定义属性（每帧写 5 个变量也是白花的） */
     const vars = new Map();
@@ -201,7 +248,7 @@ export default {
 
     /* ---------------------------------------------------------------------
        时钟：位置 + 墙钟外推（进度补丁 4Hz 且位置被量化到 250ms，
-       不外推的话字是一跳一跳亮的）
+       不外推的话填充是一跳一跳的）
        --------------------------------------------------------------------- */
     const clock = {
       pos: 0,
@@ -295,13 +342,13 @@ export default {
       const backdrop = palette.backdropUnderCover(pal.dominant);
       setVar("--rb-bg", palette.toHex(backdrop));
       setVar("--rb-accent", palette.toHex(pal.accent));
-      // 壳文字色：在亮/暗两套里挑**对比度更高**的那套（底可能是近黑也可能是
-      // 被用户自定义的暗纱抬亮的颜色，只按"亮不亮"二分会在临界值上挑错）
+      // 壳文字色 / 灰字底层色：在亮/暗两套里挑**对比度更高**的那套
       const light = [242, 236, 224];
       const dark = [18, 16, 14];
       const fg =
         palette.contrastWith(backdrop, light) >= palette.contrastWith(backdrop, dark) ? light : dark;
       setVar("--rb-fg", palette.toHex(fg));
+      st.baseColor = palette.toHex(fg);
       buildPassColors();
       st.backdropPending = {
         bg: palette.toHex(backdrop),
@@ -321,27 +368,39 @@ export default {
       }, 400);
     }
 
-    /** 18 个批次的填充色：6 个色桶 × 3 个亮度档，全部预拼好字符串 */
+    /**
+     * 18 个批次的填充色：6 个色桶 × 3 个状态档（灰尘 / 飞行 / 落定）。
+     *
+     * ★ 颜色只由**色桶**决定（多色沙来自封面的色相），亮度与不透明度只由
+     *   **状态档**决定 —— 旧版按封面亮度取灰阶，暗封面会取到一团看不清的深灰。
+     */
     function buildPassColors() {
-      const lum = st.pal ? st.pal.lut : [[13, 12, 11], [232, 226, 214]];
-      const cols = new Array(BUCKETS * LEVELS);
+      const ramp = st.pal?.ramp?.length ? st.pal.ramp : palette.PIGMENTS;
+      const rgb = new Array(BUCKETS * LEVELS);
       for (let b = 0; b < BUCKETS; b += 1) {
-        const base = palette.lutAt(lum, 0.12 + (b / (BUCKETS - 1)) * 0.8);
-        for (let lv = 0; lv < LEVELS; lv += 1) {
-          let c = base;
-          let a = 0.34;
-          if (lv === 1) {
-            a = 0.72;
-          } else if (lv === 2) {
-            c = palette.mix(base, [255, 246, 232], 0.34);
-            a = 0.95;
-          } else {
-            c = palette.mix(base, [18, 16, 14], 0.45);
-          }
-          cols[b * LEVELS + lv] = `rgba(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])},${a})`;
-        }
+        const base = ramp[b % ramp.length] || [200, 200, 200];
+        // 灰尘：压暗、压淡（它是"纸上的沙"，不该盖住灰字）
+        rgb[b * LEVELS + field.LEVEL_DUST] = [...palette.mix(base, [12, 11, 10], 0.68), 0.18];
+        // 飞行中：本色
+        rgb[b * LEVELS + field.LEVEL_FLY] = [...base, 0.8];
+        // 落定：稍微提亮（字要立起来）
+        rgb[b * LEVELS + field.LEVEL_INK] = [...palette.mix(base, [255, 248, 236], 0.3), 1];
       }
-      st.passColors = cols;
+      st.passRgb = rgb;
+      st.fadeDrawn = -1;
+      applyPassFade();
+    }
+
+    /** 切句淡入：把 18 条 rgba 字符串按当前 fade 重拼（只在 fade 变化时做） */
+    function applyPassFade() {
+      const f = st.fade;
+      const out = new Array(st.passRgb.length);
+      for (let i = 0; i < st.passRgb.length; i += 1) {
+        const c = st.passRgb[i];
+        out[i] = `rgba(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])},${(c[3] * f).toFixed(3)})`;
+      }
+      st.passColors = out;
+      st.fadeDrawn = f;
     }
 
     /** 封面 → 采样画布 → 色板（每首歌只做一次） */
@@ -365,7 +424,12 @@ export default {
         g.drawImage(img, 0, 0, COVER_N, COVER_N);
         const data = g.getImageData(0, 0, COVER_N, COVER_N).data;
         st.coverData = data;
-        applyPalette(palette.paletteFrom(data, COVER_N, COVER_N, { fallback: { dark: [13, 12, 11], light: [232, 226, 214], accent: [185, 163, 126] } }));
+        applyPalette(
+          palette.paletteFrom(data, COVER_N, COVER_N, {
+            buckets: BUCKETS,
+            fallback: { dark: [13, 12, 11], light: [232, 226, 214], accent: [185, 163, 126] },
+          })
+        );
         // 换封面 = 整幅画换色 → 重新给目标点上色
         if (st.text) {
           st.cache.clear();
@@ -374,75 +438,140 @@ export default {
       } catch {
         st.coverData = null;
         applyPalette(
-          palette.paletteFrom(null, COVER_N, COVER_N, { fallback: { dark: [13, 12, 11], light: [232, 226, 214], accent: [185, 163, 126] } })
+          palette.paletteFrom(null, COVER_N, COVER_N, {
+            buckets: BUCKETS,
+            fallback: { dark: [13, 12, 11], light: [232, 226, 214], accent: [185, 163, 126] },
+          })
         );
       }
     }
 
     /* ---------------------------------------------------------------------
-       文字 → 目标点
+       文字 → 目标点（几何）
        --------------------------------------------------------------------- */
-    function ensureOffscreen() {
-      if (st.off) return;
+    /** 掩码尺寸跟随字形带：缩放比接近 1 → 灰字清晰、目标点也细 */
+    function maskDims() {
+      return {
+        w: Math.round(clamp(st.rect.w, MASK_MIN_W, MASK_MAX_W)),
+        h: Math.round(clamp(st.rect.h * 0.9, MASK_MIN_H, MASK_MAX_H)),
+      };
+    }
+
+    function ensureOffscreen(w, h) {
+      if (st.off && st.offW === w && st.offH === h) return;
       st.off = document.createElement("canvas");
-      st.off.width = MASK_W;
-      st.off.height = MASK_H;
+      st.off.width = w;
+      st.off.height = h;
+      st.offW = w;
+      st.offH = h;
       st.off2d = st.off.getContext("2d", { willReadFrequently: true });
     }
 
-    /** 把一行文字画进离屏画布并抽出目标点（一次性，带缓存） */
-    function computeTargets(text, graphemes, { force = false } = {}) {
+    /**
+     * 把一行文字画进离屏画布并抽出目标点（一次性，带缓存）。
+     *
+     * @param {string} text
+     * @param {number} graphemes 该行的字素数（决定按 x 切几段）
+     * @param {{force?:boolean, apply?:boolean}} [opts] apply:false 只填缓存、
+     *   不动粒子池 —— 预取下一句时必须这样，否则粒子会提前 240ms 跑到下一句的字形上
+     */
+    function computeTargets(text, graphemes, { force = false, apply = true } = {}) {
       const count = st.count || particleTarget();
       const key = `${text}|${count}|${st.rect.w}x${st.rect.h}|${st.coverKey ? "c" : "d"}`;
-      const hit = st.cache.get(key);
-      if (hit && !force) {
-        applyTargets(hit, count);
-        return hit;
+      let entry = force ? null : st.cache.get(key);
+      if (!entry) {
+        entry = buildEntry(text, graphemes, count);
+        if (entry) {
+          if (st.cache.size >= CACHE_MAX) st.cache.delete(st.cache.keys().next().value);
+          st.cache.set(key, entry);
+        }
       }
-      ensureOffscreen();
+      if (!entry) return null;
+      // ★ 几何与时刻表**必须一起换**：applyGeometry 会重写 pool.g / st.groupOf，
+      //   而"哪一粒属于哪个字、什么时候起飞"是读 st.groupOf 算出来的。只换几何
+      //   不重排时刻表，粒子就会按**旧的随机分组**去飞 —— 表现是每个字都有几粒
+      //   提前落定、整行一起亮，逐字效果静默失效（曾经就是这样：换封面时重新
+      //   建了 entry，却只调了 applyGeometry）。
+      if (apply) {
+        applyGeometry(entry, count);
+        applyInk();
+      }
+      return entry;
+    }
+
+    /* ---------------------------------------------------------------------
+       工具
+       --------------------------------------------------------------------- */
+
+    /** FNV-1a 32 位：把字符串变成稳定的随机种子（同输入永远同输出） */
+    function hashSeed(s) {
+      let h = 2166136261;
+      for (let i = 0; i < s.length; i += 1) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return h >>> 0;
+    }
+
+    /** 离屏渲染 → 掩码 → 目标点 / 分组 / 色桶 / 灰字几何 */
+    function buildEntry(text, graphemes, count) {
+      // ★ graphemes 可能是字素数组（splitGraphemes 的返回），也可能是个数。
+      //   直接把数组喂进 Math.max / 数学运算会得到 NaN，而 NaN 写进 Uint8Array
+      //   会全变成 0 —— 表现是"整行在一个窗口里填完"，逐字效果静默消失。
+      const gn = Array.isArray(graphemes) ? graphemes.length : Math.round(Number(graphemes) || 0);
+      const md = maskDims();
+      ensureOffscreen(md.w, md.h);
       const g = st.off2d;
       if (!g || !text) return null;
-      g.clearRect(0, 0, MASK_W, MASK_H);
+      // ★ 这一"层"的全部随机性都来自按 (文本, 粒子数, 掩码尺寸) 派生的**确定性**
+      //   随机流：换封面会重建 entry（色桶要从新封面取色），如果这里用每次都往前
+      //   走的全局 rng，重建后目标点会整体换一套 —— 封面加载完那一下画面会跳。
+      const rnd = glyph.mulberry32(hashSeed(`${text}|${count}|${md.w}x${md.h}`));
+      g.clearRect(0, 0, md.w, md.h);
       g.textAlign = "center";
       g.textBaseline = "middle";
       g.fillStyle = "#fff";
-      let size = Math.min(MASK_H * 0.74, 132);
+      let size = Math.min(md.h * MASK_FONT_RATIO, 240);
       g.font = `600 ${size}px ${FONT_STACK}`;
       const w0 = g.measureText(text).width || 1;
-      if (w0 > MASK_W * 0.96) {
-        size = Math.max(11, size * ((MASK_W * 0.96) / w0));
+      if (w0 > md.w * 0.96) {
+        size = Math.max(11, size * ((md.w * 0.96) / w0));
         g.font = `600 ${size}px ${FONT_STACK}`;
       }
-      g.fillText(text, MASK_W / 2, MASK_H / 2);
-      const data = g.getImageData(0, 0, MASK_W, MASK_H).data;
-      const cov = glyph.coverageFromAlpha(data, MASK_W, MASK_H, { alphaMin: 40, dilate: 1 });
-      const stats = glyph.maskStats(cov.mask, MASK_W, MASK_H);
+      g.fillText(text, md.w / 2, md.h / 2);
+      const data = g.getImageData(0, 0, md.w, md.h).data;
+      const cov = glyph.coverageFromAlpha(data, md.w, md.h, { alphaMin: glyph.INK_ALPHA, dilate: 1 });
+      const stats = glyph.maskStats(cov.mask, md.w, md.h);
       const idx = glyph.inkIndex(cov.mask);
-      const norm = glyph.pickTargets(idx, { w: MASK_W, h: MASK_H }, count, st.rng, st.px);
-      const pts = glyph.fitPoints(norm, count, st.rect, stats, st.px);
-      const groupOf = glyph.groupByX(norm, count, Math.max(1, graphemes.length));
+      const norm = glyph.pickTargets(idx, { w: md.w, h: md.h }, count, rnd, st.px);
+      // ★ 这三个都必须在 fitPoints 之前做完：fitPoints 会**原地**把 st.px
+      //   从归一化坐标改写成舞台像素坐标（norm 是它的视图）。
+      const groupOf = glyph.groupByX(norm, count, Math.max(1, gn));
+      // 每粒色桶：封面同位像素的色相 → 最近的彩色档；缺失/灰阶 → 随机
+      const ramp = st.pal?.ramp?.length ? st.pal.ramp : palette.PIGMENTS;
       const buckets = new Int32Array(count);
       const cd = st.coverData;
       for (let k = 0; k < count; k += 1) {
-        let lum = 0.55;
+        let px = null;
         if (cd) {
           const u = Math.min(COVER_N - 1, Math.max(0, Math.floor(norm[k * 2] * COVER_N)));
           const v = Math.min(COVER_N - 1, Math.max(0, Math.floor(norm[k * 2 + 1] * COVER_N)));
           const i = (v * COVER_N + u) * 4;
-          lum = palette.luma([cd[i], cd[i + 1], cd[i + 2]]);
+          px = [cd[i], cd[i + 1], cd[i + 2]];
         }
-        buckets[k] = Math.max(0, Math.min(BUCKETS - 1, Math.floor(lum * BUCKETS)));
+        buckets[k] = palette.bucketForPixel(ramp, px, rnd);
       }
-      const entry = { pts: Float32Array.from(pts), groupOf, buckets, stats, size };
-      if (st.cache.size >= CACHE_MAX) st.cache.delete(st.cache.keys().next().value);
-      st.cache.set(key, entry);
-      applyTargets(entry, count);
-      return entry;
+      const pts = glyph.fitPoints(norm, count, st.rect, stats, st.px);
+      const base = glyph.baseGeometry(stats, st.rect, { w: md.w, h: md.h }, size);
+      base.alpha = BASE_ALPHA;
+      return { pts: Float32Array.from(pts), groupOf, buckets, stats, size, base };
     }
 
-    /** 目标点写进粒子池 + 按"封面同位像素"的亮度上色 */
-    function applyTargets(entry, count) {
-      if (!entry || !st.pool) return;
+    /** 目标点写进粒子池 + 记下灰字几何 */
+    function applyGeometry(entry, count) {
+      st.base = entry.base;
+      setBaseAttr(entry.base);
+      if (!st.pool) return;
       for (let i = 0; i < count; i += 1) {
         const k = i % (entry.pts.length >> 1);
         st.px[i * 2] = entry.pts[k * 2];
@@ -451,54 +580,104 @@ export default {
         st.buckets[i] = entry.buckets[k];
       }
       field.assignTargets(st.pool, count, st.px, st.groupOf, { colors: st.buckets });
-      field.markLit(st.pool, count, glyph.litGroups(lyricsLine()?.words, st.graphemes.length, clock.value(nowMs())));
     }
 
-    const lyricsLine = () => (st.lineIndex >= 0 ? st.lines[st.lineIndex] : null);
+    /** 逐粒填充时刻表（依赖当前这句的 words，换句才重排） */
+    function applyInk() {
+      const g = st.graphemes.length;
+      st.spans = glyph.charSpans(st.uniformLine ? null : st.words, g, {
+        lineStart: Number(lyricsLine()?.time) || 0,
+        lineEnd: nextLineTime(st.lines, st.lineIndex),
+      });
+      if (!st.pool) return;
+      if (!g) {
+        field.clearFill(st.pool, st.count);
+        return;
+      }
+      // 时刻表也用确定性随机流：几何没变时重排的结果与上次逐粒相同，
+      // 于是"重新算一遍"永远不会有副作用（换封面 / 改尺寸都能安全重入）。
+      const rnd = glyph.mulberry32(hashSeed(`ink|${st.text}|${g}|${st.count}`));
+      glyph.inkSchedule(st.groupOf, st.count, st.spans, rnd, st.pool.inkAt, st.pool.fly, {
+        flyMs: 150,
+        flyJitterMs: 90,
+        minWindowMs: glyph.MIN_WINDOW_MS,
+        leadMs: FILL_LEAD_MS,
+      });
+    }
+
+    /** 尺寸 / 粒子数变了：目标点与时刻表都得按新几何重算（computeTargets 会一起换） */
+    function refreshGeometry() {
+      if (!st.text) {
+        st.base = null;
+        setBaseAttr(null);
+        return;
+      }
+      computeTargets(st.text, st.graphemes);
+    }
+
+    /**
+     * 把灰字底层的几何挂到 dataset 上（自检与排查用）。
+     * ★ 这是这一款唯一"读得出来"的东西：灰字是画在画布里的，
+     *   没有 DOM 文本层可以查，所以必须自己报出来。
+     */
+    function setBaseAttr(base) {
+      const v = base
+        ? `${Math.round(base.x)},${Math.round(base.y)},${Math.round(base.fontSize)}`
+        : "";
+      if (st.lastBase === v) return;
+      st.lastBase = v;
+      if (v) elRoot.dataset.base = v;
+      else delete elRoot.dataset.base;
+    }
 
     /** 歌词行 + 空态（无歌 / 无歌词 / 加载中 / 匹配失败都要有明确画面） */
     function syncLines({ force = false } = {}) {
       const ly = lyrics() || {};
-      const lines = Array.isArray(ly.lines) ? ly.lines : [];
-      if (force || lines.length !== st.lines.length) {
+      const lines = Array.isArray(ly.lines) ? ly.lines : EMPTY_LINES;
+      if (force || lines !== st.lines) {
         st.lines = lines;
         st.lineIndex = -1;
-        st.cache.clear();
+        if (force) st.cache.clear();
       }
       const has = !!(song().id && lines.length) && opts().showLyrics !== false;
-      const text = has || opts().showLyrics === false ? "" : song().id ? html.lyricsEmptyText?.(ly) || "" : html.lyricsEmptyText?.({ status: "none" }) || "";
+      const text = has
+        ? ""
+        : opts().showLyrics === false
+          ? ""
+          : song().id
+            ? html.lyricsEmptyText?.(ly) || ""
+            : html.lyricsEmptyText?.({ status: "none" }) || "";
       if (text !== st.emptyText) {
         st.emptyText = text;
         elEmpty.textContent = text;
       }
       elEmpty.hidden = has || !text;
-      elDust.hidden = !has;
       elCanvas.hidden = !has;
       elRoot.dataset.empty = has ? "0" : "1";
+      // ★ 只有"真的有歌词要显示"时才让帧循环跟踪行号 ——
+      //   否则 showLyrics:false 时帧循环会在下一帧把行重新选回来、把灰字又画出来
+      st.hasLyrics = has;
       if (!has) {
         st.text = "";
         st.graphemes = [];
+        st.words = null;
+        st.uniformLine = true;
         st.lineIndex = -1;
-        elDust.textContent = "";
-        if (st.pool) {
-          // 空态：整池退化成"灰尘"，画面上仍然有沙（不是白屏）
-          for (let i = 0; i < st.count; i += 1) {
-            st.pool.g[i] = -1;
-            st.pool.lit[i] = 0;
-          }
-        }
+        st.base = null;
+        setBaseAttr(null);
+        if (st.pool) field.clearFill(st.pool, st.count);
       }
       return has;
     }
 
-    /** 当前行使粒子"散一次"，再用新材料聚拢（切句的动作） */
-    function scatterLine() {
+    /** 当前行使灰尘"散一次"，再用新目标重新排布（切句的动作） */
+    function burstLine() {
       const c = st.count || particleTarget();
-      field.scatter(st.pool, c, st.rng, field.PHYS.scatter);
+      field.burst(st.pool, c, st.rng, 300);
       setVar("--rb-flux", "1");
-      if (st.scatterTimer) clearTimeout(st.scatterTimer);
-      st.scatterTimer = setTimeout(() => {
-        st.scatterTimer = 0;
+      if (st.burstTimer) clearTimeout(st.burstTimer);
+      st.burstTimer = setTimeout(() => {
+        st.burstTimer = 0;
         if (st.alive) setVar("--rb-flux", "0");
       }, 420);
     }
@@ -511,19 +690,30 @@ export default {
       st.lineIndex = index;
       st.text = text;
       st.graphemes = graphemes;
-      st.uniformLine = !(Array.isArray(line?.words) && line.words.length === graphemes.length);
-      st.levels = new Float32Array(Math.max(1, graphemes.length));
-      elDust.textContent = text;
+      st.words = Array.isArray(line?.words) ? line.words.map((v) => Number(v) || 0) : null;
+      st.uniformLine = !(st.words && st.words.length === graphemes.length);
       if (!st.pool) ensurePool();
       if (text) computeTargets(text, graphemes);
-      if (changed && animate && st.animations) scatterLine();
-      // 下一句提前算好，切句时就不必在同一帧里做离屏渲染
+      else {
+        st.base = null;
+        setBaseAttr(null);
+        applyInk(); // 没有文字：把整池退回成沙（computeTargets 没被调用，得自己来）
+      }
+      if (changed && animate && st.animations) {
+        st.fade = 0.25;
+        burstLine();
+      }
+      elRoot.dataset.glyphs = String(graphemes.length);
+      elRoot.dataset.line = String(index);
+      // 下一句提前离屏渲染好（**只填缓存**，不动粒子池）
       if (st.prefetchTimer) clearTimeout(st.prefetchTimer);
       const next = st.lines[index + 1];
       if (next?.text) {
         st.prefetchTimer = setTimeout(() => {
           st.prefetchTimer = 0;
-          if (st.alive) computeTargets(String(next.text), ctx.sdk.splitGraphemes(String(next.text)));
+          if (!st.alive || !st.text) return;
+          const nt = String(next.text);
+          computeTargets(nt, ctx.sdk.splitGraphemes(nt), { apply: false });
         }, PREFETCH_MS);
       }
     }
@@ -577,24 +767,37 @@ export default {
       g.clearRect(0, 0, st.rw, st.rh);
       const n = st.count;
       const pool = st.pool;
-      const levels = st.levels;
-      const uniform = st.uniformLine;
-      const passes = BUCKETS * LEVELS;
-      // 每个粒子的批次：色桶 × 亮度档（未唱到 = 0 档）
-      for (let i = 0; i < n; i += 1) {
-        const gidx = pool.g[i];
-        let lv = 0;
-        if (pool.lit[i]) {
-          const l = uniform ? 1 : levels[gidx] || 0;
-          lv = l >= 0.72 ? 2 : l >= 0.18 ? 1 : 0;
-        }
-        st.pass[i] = pool.c[i] * LEVELS + lv;
+      const fade = st.fade;
+      // ── 1) 灰字底层 ────────────────────────────────────────────────
+      // 位置/字号与粒子目标点同源（glyph.baseGeometry），所以粒子一定落在字上。
+      // 它一直画着：**没被填到的部分就是灰的、但仍然读得清**。
+      if (st.base && st.base.alpha > 0.01) {
+        g.globalAlpha = st.base.alpha * fade;
+        g.fillStyle = st.baseColor;
+        g.font = `600 ${st.base.fontSize}px ${FONT_STACK}`;
+        g.textAlign = "center";
+        g.textBaseline = "middle";
+        g.fillText(st.text, st.base.x, st.base.y);
+        g.globalAlpha = 1;
       }
+      // ── 2) 彩色颗粒 ────────────────────────────────────────────────
+      const pos = st.pos;
+      let inked = 0;
+      for (let i = 0; i < n; i += 1) {
+        const e = pool.ev[i];
+        if (e >= 1) inked += 1;
+        st.pass[i] = pool.c[i] * LEVELS + (e <= 0 ? field.LEVEL_DUST : e >= 1 ? field.LEVEL_INK : field.LEVEL_FLY);
+      }
+      setFill(inked, n);
+      const passes = BUCKETS * LEVELS;
       for (let p = 0; p < passes; p += 1) {
+        // 批次号 = 色桶 × 档数 + 档位，所以 p % LEVELS 就是档位（见 field.GRAIN）
+        const gain = field.GRAIN[p % LEVELS];
         g.fillStyle = st.passColors[p] || "rgba(200,200,200,.5)";
         for (let i = 0; i < n; i += 1) {
           if (st.pass[i] !== p) continue;
-          const r = pool.r[i];
+          const r =
+            pool.r[i] * gain * (1 + field.LAND_FLASH * field.landFlash(pos, pool.inkAt[i], pool.fly[i]));
           g.fillRect(pool.x[i] - r * 0.5, pool.y[i] - r * 0.5, r, r);
         }
       }
@@ -609,20 +812,29 @@ export default {
         elRoot.dataset.lod = String(lod);
         resizeCanvas();
         st.count = particleTarget();
+        refreshGeometry();
         if (!st.animations) snapToTargets();
       }
     }
 
-    /** animations:false / 减少动效：粒子瞬移到目标，只画这一帧 */
+    /** animations:false / 减少动效：粒子正好落在目标上，只画这一帧 */
     function snapToTargets() {
       if (!st.pool) return;
-      updateProgress(Math.max(0, clock.value(nowMs()) - VISUAL_LAG_MS));
-      for (let i = 0; i < st.count; i += 1) {
-        st.pool.x[i] = st.pool.tx[i];
-        st.pool.y[i] = st.pool.ty[i];
-        st.pool.vx[i] = 0;
-        st.pool.vy[i] = 0;
-      }
+      const pos = Math.max(0, clock.value(nowMs()) + FILL_LEAD_MS);
+      st.pos = pos;
+      // ★ 静态档（关动效）不读频谱：它一帧就画完了，读频谱等于白叫一次宿主
+      //   （自检用"频谱调用次数"当"画了几帧"，静态档必须是 0 才不会误报）
+      st.bass = 0;
+      updateProgress(pos);
+      field.restJitter(st.pool, st.count);
+      field.step(st.pool, st.count, 1 / 60, {
+        pos,
+        bass: 0,
+        paused: !clock.playing,
+        sink: clock.playing ? 0 : 1,
+        floor: st.rh - 6,
+        turbulence: false,
+      });
       drawFrame();
     }
 
@@ -641,13 +853,45 @@ export default {
         return;
       }
       const dtMs = st.lastFrame ? now - st.lastFrame : 16;
+      const dt = dtMs / 1000;
       st.lastFrame = now;
       st.last = now;
-      const pos = Math.max(0, clock.value(now) - VISUAL_LAG_MS);
-      stepWorld(pos, dtMs / 1000);
+      const playing = clock.playing;
+      st.sink = field.sinkStep(st.sink, !playing, dt);
+      // 填充用"歌曲位置 + 提前量"，与墙钟外推同一口径
+      const pos = Math.max(0, clock.value(now) + FILL_LEAD_MS);
+      st.pos = pos;
+      st.bass = bassOf();
+      // 当前句：换行是**唯一**会重算目标点/时刻表的入口
+      if (st.hasLyrics) {
+        const idx = lineIndexAt(st.lines, pos);
+        if (idx !== st.lineIndex) setActiveLine(idx);
+      }
+      updateProgress(pos);
+      if (st.pointer.active && st.interactive) {
+        field.applyMagnet(st.pool, st.count, {
+          x: st.pointer.x,
+          y: st.pointer.y,
+          radius: 74,
+          strength: 6200,
+        });
+      }
+      field.step(st.pool, st.count, dt, {
+        pos,
+        bass: st.bass,
+        paused: !playing,
+        sink: st.sink,
+        floor: st.rh - 6,
+      });
+      // 切句淡入（指数趋近，与帧率无关）
+      if (st.fade < 1) {
+        st.fade = Math.min(1, st.fade + (1 - st.fade) * (1 - Math.exp(-FADE_RATE * dt)));
+        if (1 - st.fade < 0.01) st.fade = 1;
+      }
+      if (Math.abs(st.fade - st.fadeDrawn) > 0.03) applyPassFade();
       drawFrame();
       if (st.animations === false) return;
-      if (!clock.playing && field.idleExpired(st.lastActive, now, IDLE_STOP_MS)) {
+      if (!playing && field.idleExpired(st.lastActive, now, IDLE_STOP_MS)) {
         st.idle = true;
         elRoot.dataset.idle = "1";
         return;
@@ -655,30 +899,13 @@ export default {
       st.raf = requestAnimationFrame(frame);
     }
 
-    /** 逐字进度：档位 + 该亮的字素 + 自检用的可观测属性（只在变化时写 DOM） */
+    /** 逐粒填充进度 + 自检用的可观测读数（只在变化时写 DOM） */
     function updateProgress(pos) {
       const g = st.graphemes.length;
-      const cur = lyricsLine();
       if (g <= 0) return;
-      if (st.uniformLine) {
-        // 没有字级歌词（或下标对不上）：整行一起亮
-        for (let i = 0; i < g; i += 1) st.levels[i] = 1;
-        field.markLit(st.pool, st.count, g);
-        setLit(g, g);
-        return;
-      }
-      const lv = glyph.glyphLevels(cur?.words, g, pos, {
-        lineEnd: nextLineTime(st.lines, st.lineIndex),
-      });
-      let changed = false;
-      for (let i = 0; i < g; i += 1) {
-        if (Math.abs((st.levels[i] || 0) - lv[i]) > 0.02) changed = true;
-        st.levels[i] = lv[i];
-      }
-      const lit = glyph.litGroups(cur?.words, g, pos);
-      field.markLit(st.pool, st.count, lit);
-      if (changed) setVar("--rb-progress", lv[g - 1].toFixed(2));
+      const lit = st.uniformLine ? g : glyph.litGroups(st.words, g, pos);
       setLit(lit, g);
+      setVar("--rb-turb", (st.bass || 0).toFixed(3));
     }
 
     /** data-lit / data-glyphs：自检与排查用的可观测读数（值不变就不写） */
@@ -691,31 +918,19 @@ export default {
       }
     }
 
-    /** 一帧的世界推进：找当前行 → 逐字档 → 物理 */
-    function stepWorld(pos, dt) {
-      const line = lineIndexAt(st.lines, pos);
-      if (line !== st.lineIndex) setActiveLine(line);
-      const cur = lyricsLine();
-      if (cur && st.lineIndex >= 0 && elRoot.dataset.line !== String(st.lineIndex)) {
-        elRoot.dataset.line = String(st.lineIndex);
-      }
-      updateProgress(pos);
-      const bass = bassOf();
-      setVar("--rb-turb", bass.toFixed(3));
-      if (st.pointer.active && st.interactive) {
-        field.applyMagnet(st.pool, st.count, {
-          x: st.pointer.x,
-          y: st.pointer.y,
-          radius: 74,
-          strength: 6200,
-        });
-      }
-      field.step(st.pool, st.count, dt, {
-        bass,
-        paused: !clock.playing,
-        floor: st.rh - 6,
-      });
-      paintTimecode(pos, nowMs());
+    /**
+     * data-fill：**已经填到位的粒子比例**（0..1，千分之一分档才写 DOM）。
+     *
+     * 为什么要有这个读数：像素数不能当"填充进度"用 —— 刚落定的粒子会闪一下
+     * （落地的半径放大 LAND_FLASH 倍），像素数会随闪光起落，"逐粒填充"就被
+     * 闪光的噪声盖住了。这个比例是严格单调的：`ev = ease((pos-inkAt)/fly)`
+     * 对每个粒子都随 pos 非减。
+     */
+    function setFill(inked, total) {
+      const v = total > 0 ? Math.round((inked / total) * 1000) : 0;
+      if (st.lastFill === v) return;
+      st.lastFill = v;
+      elRoot.dataset.fill = (v / 1000).toFixed(3);
     }
 
     const spectrum = () => {
@@ -737,7 +952,7 @@ export default {
     }
 
     function requestPaint() {
-      // 任何一次宿主推送都能把循环拉起来（S6）
+      // 任何一次宿主推送都能把循环拉起来
       wake();
     }
 
@@ -774,12 +989,14 @@ export default {
       elRoot.dataset.interactive = st.interactive ? "1" : "0";
       resizeCanvas();
       ensurePool();
+      refreshGeometry();
       if (!st.animations) snapToTargets();
       else wake();
     }
 
     /* ---------------------------------------------------------------------
        交互：指针磁铁（interactive:false 时完全没有）
+       ★ 这里**没有**点击跳进度：界面上只有当前这一句，跳转没有意义。
        --------------------------------------------------------------------- */
     const onMove = (ev) => {
       if (!st.interactive) return;
@@ -791,20 +1008,9 @@ export default {
     const onLeave = () => {
       st.pointer.active = false;
     };
-    const onClick = (ev) => {
-      if (!st.interactive) return;
-      const line = lyricsLine();
-      if (!line) return;
-      const r = elCanvas.getBoundingClientRect();
-      const band = st.rect;
-      const y = ev.clientY - r.top;
-      if (y < band.y - 24 || y > band.y + band.h + 24) return; // 只在字形带上响应
-      ctx.actions?.seek?.(Number(line.time) || 0);
-    };
 
     elCanvas.addEventListener("pointermove", onMove);
     elCanvas.addEventListener("pointerleave", onLeave);
-    elCanvas.addEventListener("click", onClick);
 
     /* ---------------------------------------------------------------------
        首帧
@@ -816,7 +1022,12 @@ export default {
       tick.dataset.on = "0";
       elTicks.appendChild(tick);
     }
-    buildPassColors();
+    applyPalette(
+      palette.paletteFrom(null, COVER_N, COVER_N, {
+        buckets: BUCKETS,
+        fallback: { dark: [13, 12, 11], light: [232, 226, 214], accent: [185, 163, 126] },
+      })
+    );
     applyEnv();
     elRoot.dataset.lod = "0";
     st.lines = Array.isArray(lyrics().lines) ? lyrics().lines : [];
@@ -827,7 +1038,7 @@ export default {
     clock.set(pb0.position || 0, pb0.playing !== false, nowMs());
     st.duration = Number(song().duration) || Number(pb0.duration) || 0;
     setActiveLine(lineIndexAt(st.lines, clock.value(nowMs())), { animate: false });
-    paintTimecode(Math.max(0, clock.value(nowMs()) - VISUAL_LAG_MS), nowMs());
+    paintTimecode(Math.max(0, clock.value(nowMs()) + FILL_LEAD_MS), nowMs());
     if (st.animations) wake();
     else snapToTargets();
 
@@ -836,7 +1047,6 @@ export default {
       st,
       elRoot,
       elCanvas,
-      elDust,
       elEmpty,
       elTicks,
       bgRoot,
@@ -846,7 +1056,6 @@ export default {
       song,
       onMove,
       onLeave,
-      onClick,
       applyEnv,
       paintSong,
       syncLines,
@@ -943,16 +1152,15 @@ export default {
    */
   destroy(ctx) {
     if (!S) return;
-    const { st, elRoot, elCanvas, bgRoot, onMove, onLeave, onClick } = S;
+    const { st, elRoot, elCanvas, bgRoot, onMove, onLeave } = S;
     st.alive = false;
     if (st.raf) cancelAnimationFrame(st.raf);
-    if (st.scatterTimer) clearTimeout(st.scatterTimer);
+    if (st.burstTimer) clearTimeout(st.burstTimer);
     if (st.backdropTimer) clearTimeout(st.backdropTimer);
     if (st.prefetchTimer) clearTimeout(st.prefetchTimer);
     st.raf = 0;
     elCanvas.removeEventListener("pointermove", onMove);
     elCanvas.removeEventListener("pointerleave", onLeave);
-    elCanvas.removeEventListener("click", onClick);
     st.cache.clear();
     st.pool = null;
     st.pass = null;
@@ -963,7 +1171,9 @@ export default {
     st.off = null;
     st.off2d = null;
     st.g2d = null;
+    st.passRgb = null;
     st.passColors = [];
+    st.base = null;
     elRoot.removeAttribute("style");
     elRoot.innerHTML = "";
     if (bgRoot) {

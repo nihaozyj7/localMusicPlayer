@@ -127,6 +127,75 @@ test("色板: 取色与打包", () => {
 });
 
 /* ==========================================================================
+   一之三、多色沙：粒子颜色**不再由封面亮度决定**
+   --------------------------------------------------------------------------
+   回归：旧版按封面亮度取灰阶，暗封面 → 一团深灰压近黑底 → "聚集成字后看不出
+   是啥"。新口径是"只取封面色相、强制拉进可见的 S/L 带"，所以要钉死三件事：
+     · 任何封面（含纯黑）出来的色阶都必须**亮得起来、带得住彩**；
+     · 灰阶封面走颜料兜底，不能整片同色；
+     · 每粒取桶必须是"封面色相吸附 + 随机抖动"，而不是全池一个色。
+   ========================================================================== */
+
+test("多色: hsl 往返与色相距离", () => {
+  const [h, s, l] = pal.rgbToHsl([255, 0, 0]);
+  assert.ok(Math.abs(h) < 1e-6, "纯红在色相 0");
+  assert.equal(Math.round(l * 100), 50);
+  for (const c of [[255, 0, 0], [0, 128, 255], [12, 34, 56], [255, 255, 255], [0, 0, 0]]) {
+    const [hh, ss, ll] = pal.rgbToHsl(c);
+    const back = pal.hslToRgb(hh, ss, ll);
+    for (let i = 0; i < 3; i += 1) assert.ok(Math.abs(back[i] - c[i]) < 1.5, `${c} 往返失真：${back}`);
+  }
+  assert.ok(pal.hueDistance(0.1, 0.9) < 0.25, "跨 0 的色相距离要是环形的");
+  assert.ok(Math.abs(pal.hueDistance(0, 0.5) - 0.5) < 1e-6);
+  assert.ok(pal.hueDistance(0.3, 0.3) === 0);
+});
+
+test("多色: 暗封面也能给出又亮又彩的色阶", () => {
+  // 一个"近黑 + 一点点暗蓝"的封面：正是会把旧版拖进黑洞的那类
+  const dark = makeBitmap(32, 32, (x) => (x < 24 ? [8, 10, 14, 255] : [30, 60, 120, 255]));
+  const ramp = pal.vividRamp(pal.samplePixels(dark, 32, 32, { step: 1 }), { buckets: 6 });
+  assert.equal(ramp.length, 6);
+  for (const c of ramp) {
+    assert.ok(pal.luma(c) > 0.18, `粒子色必须亮得起来（压在近黑底上要看得见），实际 ${pal.luma(c).toFixed(3)}`);
+    assert.ok(pal.saturation(c) > 0.25, `粒子色必须带得住彩，实际 ${pal.saturation(c).toFixed(3)}`);
+  }
+});
+
+test("多色: 灰阶封面 / 完全没有封面时走颜料兜底并且是多色", () => {
+  const gray = makeBitmap(16, 16, (x) => [x * 16, x * 16, x * 16, 255]);
+  for (const sample of [pal.samplePixels(gray, 16, 16, { step: 1 }), null, { rgb: new Uint8Array(0), n: 0 }]) {
+    const ramp = pal.vividRamp(sample, { buckets: 6 });
+    assert.equal(ramp.length, 6);
+    for (const c of ramp) assert.ok(pal.saturation(c) > 0.2, "兜底也必须是彩色的（这是「多色」这条需求的下限）");
+    // 至少要有 3 种**看得出差别**的色相，否则就退化成单色沙了
+    const hues = new Set(ramp.map((c) => Math.round(pal.hueOf(c) * 12)));
+    assert.ok(hues.size >= 3, `兜底色阶至少要有 3 种色相，实际 ${hues.size}`);
+  }
+});
+
+test("多色: 每粒取桶 = 封面同位色相吸附 + 随机抖动", () => {
+  const ramp = pal.PIGMENTS.slice(0, 6);
+  const rnd = gl.mulberry32(21);
+  // 灰阶像素没有色相可言 → 随机
+  const seen = new Set();
+  for (let i = 0; i < 200; i += 1) seen.add(pal.bucketForPixel(ramp, [128, 128, 128], rnd));
+  assert.ok(seen.size >= 4, `灰阶像素应当散到多档，实际 ${seen.size}`);
+  // 有彩度的像素 → 吸附到色相最近的那一档
+  const red = [230, 40, 30];
+  const want = pal.nearestHue(ramp, red);
+  let hit = 0;
+  for (let i = 0; i < 400; i += 1) if (pal.bucketForPixel(ramp, red, rnd, { speckle: 0 }) === want) hit += 1;
+  assert.equal(hit, 400, "speckle=0 时必须全部吸附到同一档（封面色相是有意义的）");
+  // 越界 / 空阶梯不许崩
+  assert.equal(pal.nearestHue([], red), -1);
+  assert.equal(pal.nearestHue(ramp, null), -1);
+  for (let i = 0; i < 50; i += 1) {
+    const b = pal.bucketForPixel(ramp, red, rnd);
+    assert.ok(b >= 0 && b < ramp.length);
+  }
+});
+
+/* ==========================================================================
    一之二、选字色的依据：**实际画出来的底**（回归：亮封面下 UI 整片消失）
    --------------------------------------------------------------------------
    背景是「封面 → blur + brightness(.46) → 暗纱」之后的合成色，而早期版本拿
@@ -300,6 +369,16 @@ test("字形: 按 x 等墨量切段（笔画多的字分到更多粒子）", () 
   const single = gl.groupByX(pts, count, 1);
   assert.ok(single.every((v) => v === 0), "只有一个字素时全部归 0 组");
   assert.equal(gl.groupByX(new Float32Array(0), 0, 4).length, 0);
+  // ★ 非数字的 groups 必须退化成"一组"，不能静默变成 0 组：
+  //   NaN 写进 Uint8Array 全是 0，再被 inkSchedule 读成"全属第 0 个字"，
+  //   表现就是整行在一个窗口里填完（逐字效果消失，而且不报错）。
+  for (const bad of [NaN, undefined, null, {}, "abc", [1, 2, 3]]) {
+    const out = gl.groupByX(pts, count, bad);
+    assert.equal(out.length, count);
+    assert.ok(out.every((v) => v === 0), `groups=${String(bad)} 应当退化成一组`);
+  }
+  assert.equal(gl.litGroups([0, 1, 2], [0, 1, 2].length, 5), 3, "字素数组也能当个数用");
+  assert.equal(gl.charSpans(null, [0, 1, 2].length, { lineEnd: 4000 }).start.length, 3);
 });
 
 test("字形: 末字时长取相邻间隔的中位数（长间奏不会亮十几秒）", () => {
@@ -313,29 +392,84 @@ test("字形: 末字时长取相邻间隔的中位数（长间奏不会亮十几
   assert.equal(gl.tailMs(null, 0), 400);
 });
 
-test("字形: 逐字亮度（ramp + 末字夹在句内 + 无字级歌词整行亮）", () => {
+test("字形: 灰字底层与粒子目标点是同一套几何", () => {
+  const mask = { w: 100, h: 40 };
+  const stats = { ink: 100, cx: 0.5, cy: 0.5, x0: 20, y0: 10, x1: 69, y1: 29, w: 100, h: 40 };
+  const rect = { x: 0, y: 0, w: 200, h: 100 };
+  const base = gl.baseGeometry(stats, rect, mask, 30);
+  // 掩码里文字画在 (50, 20)；fitPoints 把掩码 (20,10) 映射到 rect 里的居中位置
+  const mw = stats.x1 - stats.x0 + 1; // 50
+  const mh = stats.y1 - stats.y0 + 1; // 20
+  const s = Math.min(rect.w / mw, rect.h / mh); // min(4, 5) = 4
+  const dx = (rect.w - mw * s) / 2; // 0
+  const dy = (rect.h - mh * s) / 2; // 10
+  assert.equal(base.scale, s);
+  assert.equal(base.fontSize, 30 * s);
+  assert.equal(base.x, dx + (mask.w / 2 - stats.x0) * s);
+  assert.equal(base.y, dy + (mask.h / 2 - stats.y0) * s);
+  // ★ 与 fitPoints 必须落在同一点上（这是"粒子填在灰字上"的全部依据）
+  const fitted = gl.fitPoints(new Float32Array([mask.w / 2 / mask.w, mask.h / 2 / mask.h]), 1, rect, stats, new Float32Array(2));
+  assert.ok(Math.abs(fitted[0] - base.x) < 1e-4, `灰字原点 x 必须等于掩码中心的映射点，${fitted[0]} vs ${base.x}`);
+  assert.ok(Math.abs(fitted[1] - base.y) < 1e-4, `灰字原点 y 必须等于掩码中心的映射点，${fitted[1]} vs ${base.y}`);
+  // 空掩码也不能炸
+  const empty = gl.baseGeometry(gl.maskStats(new Uint8Array(100), 10, 10), rect, { w: 10, h: 10 }, 12);
+  assert.ok(Number.isFinite(empty.x) && empty.fontSize > 0);
+});
+
+test("字形: 字素时间窗（末字用相邻间隔中位数收口）", () => {
   const words = [0, 1000, 2000];
-  assert.deepEqual(Array.from(gl.glyphLevels(words, 3, -10)), [0, 0, 0], "还没开口");
-  assert.deepEqual(Array.from(gl.glyphLevels(words, 3, 1000)), [1, 0, 0], "到下一个字的时刻本字刚好满");
-  assert.ok(Math.abs(gl.glyphLevels(words, 3, 500)[0] - 0.5) < 1e-6, "半个字时长应当走到一半");
-  const half = gl.glyphLevels(words, 3, 1500);
-  assert.equal(half[0], 1);
-  assert.ok(Math.abs(half[1] - 0.5) < 1e-6);
-  const mid = gl.glyphLevels(words, 3, 2500);
-  assert.ok(Math.abs(mid[2] - 0.5) < 1e-6, `末字应当走到一半，实际 ${mid[2]}`);
-  const done = gl.glyphLevels(words, 3, 3100);
-  assert.equal(done[2], 1, "末字必须在 tail 内唱完");
-  // ★ 长间奏：如果拿"行尾"当结束，pos=6000 时末字只有 0.22
-  const late = gl.glyphLevels(words, 3, 6000, { lineEnd: 20000 });
-  assert.equal(late[2], 1, "长间奏里最后一个字也必须在一句之内唱完");
-  // 行尾比 tail 短时，以行尾为准（不能亮到下一行开始之后）
-  const clipped = gl.glyphLevels(words, 3, 2200, { lineEnd: 2100 });
-  assert.ok(clipped[2] <= 1 && clipped[2] > 0.5, `行尾要能夹住，实际 ${clipped[2]}`);
-  // 没有字级歌词（或字素数对不上）→ 整行一起亮
-  const uni = gl.glyphLevels(null, 4, 100);
-  assert.deepEqual(Array.from(uni), [1, 1, 1, 1]);
-  const mism = gl.glyphLevels([0, 500], 3, 100);
-  assert.deepEqual(Array.from(mism), [1, 1, 1], "words 与字素数对不上时回退成整行");
+  const s = gl.charSpans(words, 3, { lineStart: 0, lineEnd: 20000 });
+  assert.deepEqual(Array.from(s.start), [0, 1000, 2000]);
+  assert.deepEqual(Array.from(s.end), [1000, 2000, 3000], "每个字的结束 = 下一个字的开始");
+  assert.equal(s.uniform, false);
+  // ★ 长间奏：末字必须在一句之内结束，不能被 20 秒的行尾带跑
+  assert.equal(s.end[2], 3000, "末字结束时间必须由中位间隔决定，而不是行尾");
+  // 行尾比 tail 短时以行尾为准
+  const clipped = gl.charSpans(words, 3, { lineStart: 0, lineEnd: 2100 });
+  assert.equal(clipped.end[2], 2100);
+  // 没有字级歌词 / 字素数对不上 → 整行共用一个窗口
+  const uni = gl.charSpans(null, 4, { lineStart: 500, lineEnd: 4000 });
+  assert.equal(uni.uniform, true);
+  assert.deepEqual(Array.from(uni.start), [500, 500, 500, 500]);
+  for (const e of uni.end) assert.equal(e, 500 + 1400, "整行铺满：默认 1400ms 上限（行为 3500ms×0.6 > 上限）");
+  const short = gl.charSpans(null, 2, { lineStart: 0, lineEnd: 800 });
+  for (const e of short.end) assert.equal(e, 600, "行很短时用 600ms 下限（否则整行会一瞬间糊上去）");
+  const mism = gl.charSpans([0, 500], 3, { lineStart: 0, lineEnd: 5000 });
+  assert.equal(mism.uniform, true, "words 与字素数对不上时必须回退成整行");
+  const none = gl.charSpans(null, 0, { lineStart: 0, lineEnd: 5000 });
+  assert.equal(none.start.length, 0);
+});
+
+test("字形: 逐粒填充时刻表（每粒错开 + 一定在该字结束前落定）", () => {
+  const spans = gl.charSpans([0, 1000, 2000], 3, { lineStart: 0, lineEnd: 20000 });
+  const count = 300;
+  const groupOf = new Uint8Array(count);
+  for (let i = 0; i < count; i += 1) groupOf[i] = i % 3;
+  const inkAt = new Float32Array(count);
+  const fly = new Float32Array(count);
+  const n = gl.inkSchedule(groupOf, count, spans, gl.mulberry32(7), inkAt, fly);
+  assert.equal(n, count);
+  for (let i = 0; i < count; i += 1) {
+    const g = groupOf[i];
+    assert.ok(inkAt[i] >= spans.start[g] - 1e-6, "起飞时刻不能早于本字开始");
+    assert.ok(
+      inkAt[i] + fly[i] <= spans.end[g] + 1e-6,
+      `第 ${i} 粒落定时刻 ${inkAt[i] + fly[i]} 超过本字结束 ${spans.end[g]}（这就叫"跟不上节奏"）`
+    );
+    assert.ok(fly[i] >= 150 && fly[i] <= 240, "飞行时长要有界");
+  }
+  // 同一组内部必须错开：整组同时起飞就退化成"整块云一起飞"
+  const inGroup0 = [];
+  for (let i = 0; i < count; i += 1) if (groupOf[i] === 0) inGroup0.push(inkAt[i]);
+  assert.ok(new Set(inGroup0.map((v) => v.toFixed(3))).size > inGroup0.length * 0.8, "同组内每粒的时刻必须错开");
+  assert.ok(Math.max(...inGroup0) - Math.min(...inGroup0) > 100, "同组内应当铺开一段可见的填充过程");
+  // 可重复
+  const again = new Float32Array(count);
+  gl.inkSchedule(groupOf, count, spans, gl.mulberry32(7), again, new Float32Array(count));
+  assert.deepEqual(Array.from(again), Array.from(inkAt));
+  // 没有字素 → 永远不落
+  gl.inkSchedule(groupOf, count, { start: new Float32Array(0), end: new Float32Array(0) }, gl.mulberry32(1), inkAt, fly);
+  assert.ok(inkAt.every((v) => v === Infinity));
 });
 
 test("字形: 已唱到的字素数", () => {
@@ -357,17 +491,18 @@ const RECT = { x: 0, y: 0, w: 200, h: 100 };
 test("粒子场: 池子是定长类型化数组（没有对象、没有每帧分配）", () => {
   const p = fd.createPool(1000);
   assert.equal(p.cap, 1000);
-  for (const k of ["x", "y", "vx", "vy", "tx", "ty", "r", "ph"]) {
+  for (const k of ["x", "y", "vx", "vy", "jx", "jy", "tx", "ty", "ox", "oy", "inkAt", "fly", "ev", "r", "ph"]) {
     assert.ok(p[k] instanceof Float32Array, `${k} 应当是 Float32Array`);
     assert.equal(p[k].length, 1000);
   }
   assert.ok(p.c instanceof Int32Array);
   assert.ok(p.g instanceof Int16Array);
-  assert.ok(p.lit instanceof Uint8Array);
   assert.equal(fd.createPool(0).cap, 1, "至少一个粒子");
+  // ★ 不再有"状态对象"：落定与否由 inkAt/fly/ev 三个数算出来
+  for (const dead of ["lit", "sx", "sy", "f0x"]) assert.equal(p[dead], undefined, `不该再有 ${dead}（老版的弹簧状态）`);
 });
 
-test("粒子场: 撒点 / 目标点 / 灰尘 / 上色", () => {
+test("粒子场: 撒点 / 目标点 / 灰尘位 / 上色", () => {
   const p = fd.createPool(64);
   const n = fd.seedPool(p, 40, gl.mulberry32(3), RECT);
   assert.equal(n, 40);
@@ -376,7 +511,12 @@ test("粒子场: 撒点 / 目标点 / 灰尘 / 上色", () => {
     assert.ok(p.x[i] >= 0 && p.x[i] <= 200, "x 必须落在矩形里");
     assert.ok(p.y[i] >= 0 && p.y[i] <= 100);
     assert.equal(p.g[i], -1, "刚撒下的粒子还没有归属");
-    assert.equal(p.lit[i], 0);
+    assert.equal(p.ev[i], 0, "还没开唱：进度为 0");
+    assert.equal(p.inkAt[i], Infinity, "还没排时刻表");
+    // 灰尘位是**相对目标点的偏移**，而且不该就贴在目标点上（否则看不出"飞过去"）
+    const d = Math.hypot(p.ox[i], p.oy[i]);
+    assert.ok(d >= 35 && d <= 300, `灰尘位偏移应当在 70~300px 的一圈里（纵向压扁 0.55），实际 ${d.toFixed(1)}`);
+    assert.ok(d > 30, "灰尘必须有可见的位移量");
   }
   // 目标点循环复用（粒子比点多时）
   const pts = new Float32Array([10, 20, 30, 40]);
@@ -390,31 +530,29 @@ test("粒子场: 撒点 / 目标点 / 灰尘 / 上色", () => {
   assert.equal(p.c[0], 2);
   assert.equal(p.c[1], 5);
   assert.equal(fd.assignTargets(p, 40, new Float32Array(0), null), 0, "没有目标点就什么都不做");
-  // 灰尘段
+  // 扩池段
   fd.seedDust(p, 40, 50, gl.mulberry32(9), RECT);
   for (let i = 40; i < 50; i += 1) assert.equal(p.g[i], -1);
   assert.equal(p.g[41], -1);
+  // 空态：整池摊平
+  fd.clearFill(p, 40);
+  for (let i = 0; i < 40; i += 1) {
+    assert.equal(p.ev[i], 0);
+    assert.equal(p.inkAt[i], Infinity);
+  }
 });
 
-test("粒子场: 上锁 / 撒沙 / 磁铁", () => {
+test("粒子场: 撒沙 / 回位 / 磁铁", () => {
   const p = fd.createPool(32);
   fd.seedPool(p, 32, gl.mulberry32(5), RECT);
-  const groups = new Uint8Array(32);
-  for (let i = 0; i < 32; i += 1) groups[i] = i % 4;
-  const pts = new Float32Array(64);
-  for (let i = 0; i < 32; i += 1) {
-    pts[i * 2] = 100;
-    pts[i * 2 + 1] = 50;
-  }
-  fd.assignTargets(p, 32, pts, groups);
-  const changed = fd.markLit(p, 32, 2);
-  assert.equal(changed, 16, "两组（16 个）应当被点亮");
-  assert.equal(fd.markLit(p, 32, 2), 0, "第二次调用不该再报变化");
-  assert.equal(fd.markLit(p, 32, 4), 16, "整行点亮时剩下的也要跟着亮");
-
   const before = p.vx[0];
-  fd.scatter(p, 32, gl.mulberry32(11), 400);
+  fd.burst(p, 32, gl.mulberry32(11), 400);
   assert.notEqual(p.vx[0], before, "撒沙必须给到速度");
+  fd.restJitter(p, 32);
+  for (let i = 0; i < 32; i += 1) {
+    assert.equal(p.vx[i], 0);
+    assert.equal(p.jx[i], 0);
+  }
 
   const q = fd.createPool(8);
   fd.seedPool(q, 8, gl.mulberry32(1), { x: 0, y: 0, w: 10, h: 10 });
@@ -429,18 +567,37 @@ test("粒子场: 上锁 / 撒沙 / 磁铁", () => {
   assert.equal(q.vx[1], 0, "半径外的不许动");
 });
 
-test("粒子场: 弹簧会收敛到目标，不会抖散", () => {
+test("粒子场: 填充进度是歌曲位置的纯函数（拖进度条不会错位）", () => {
   const p = fd.createPool(1);
   fd.seedPool(p, 1, gl.mulberry32(1), RECT);
-  p.x[0] = 0;
-  p.y[0] = 0;
   p.tx[0] = 180;
   p.ty[0] = 80;
-  p.g[0] = 0;
-  p.lit[0] = 1;
-  for (let i = 0; i < 240; i += 1) fd.step(p, 1, 1 / 60, { bass: 0 });
-  const d = Math.hypot(p.tx[0] - p.x[0], p.ty[0] - p.y[0]);
-  assert.ok(d < 2, `240 帧后应当基本就位，实际还差 ${d.toFixed(2)}px`);
+  p.ox[0] = -120;
+  p.oy[0] = 0;
+  p.inkAt[0] = 1000;
+  p.fly[0] = 200;
+  fd.restJitter(p, 1);
+
+  // 还没到点：待在灰尘位
+  fd.step(p, 1, 1 / 60, { pos: 500 });
+  assert.equal(p.ev[0], 0);
+  assert.ok(Math.abs(p.x[0] - (180 - 120)) < 1e-4, `还没到点应当停在灰尘位，实际 ${p.x[0]}`);
+
+  // 半路：进度在 (0,1)，位置在两处之间
+  fd.step(p, 1, 1 / 60, { pos: 1100 });
+  assert.ok(p.ev[0] > 0 && p.ev[0] < 1, `半路 ev 应当在 (0,1)，实际 ${p.ev[0]}`);
+  assert.ok(p.x[0] > 60 && p.x[0] < 180);
+
+  // ★ fly 是**上界**：不论 dt 多大，同一 pos 给同一位置
+  fd.step(p, 1, 1 / 60, { pos: 1200 });
+  const a = [p.x[0], p.y[0], p.ev[0]];
+  fd.step(p, 1, 1, { pos: 1200 });
+  assert.ok(Math.abs(p.x[0] - a[0]) < 1e-4, "位置只由 pos 决定，不该受 dt 影响");
+
+  // 落定
+  fd.step(p, 1, 1 / 60, { pos: 99999 });
+  assert.equal(p.ev[0], 1);
+  assert.ok(Math.abs(p.x[0] - 180) < 1e-3, `落定后必须正好在目标点上，实际差 ${Math.abs(p.x[0] - 180).toFixed(3)}px`);
   assert.ok(Number.isFinite(p.x[0]) && Number.isFinite(p.y[0]), "不允许 NaN");
 });
 
@@ -451,62 +608,90 @@ test("粒子场: dt 会被钳住（切后台回来不能一次积分几秒）", 
     fd.seedPool(p, 1, gl.mulberry32(1), RECT);
     p.tx[0] = 150;
     p.ty[0] = 90;
-    p.lit[0] = 1;
-    p.x[0] = 0;
-    p.y[0] = 0;
+    p.inkAt[0] = 0;
+    p.fly[0] = 100;
+    p.ph[0] = 1;
   }
-  fd.step(a, 1, 3, { bass: 0 }); // 3 秒
-  fd.step(b, 1, fd.PHYS.maxDt, { bass: 0 }); // 被钳到的上限
-  assert.ok(Math.abs(a.x[0] - b.x[0]) < 1e-6, "3 秒必须被钳成 maxDt");
-  assert.ok(a.x[0] < 150, "一帧不可能直接到目标（否则就是瞬移）");
+  fd.step(a, 1, 3, { bass: 1 }); // 3 秒
+  fd.step(b, 1, fd.PHYS.maxDt, { bass: 1 }); // 被钳到的上限
+  assert.ok(Math.abs(a.jx[0] - b.jx[0]) < 1e-6, "3 秒必须被钳成 maxDt");
+  assert.ok(Math.abs(a.jx[0]) <= fd.PHYS.jitterMax + 1e-6, "抖动幅度必须有上限（否则画面会被撕开）");
 });
 
-test("粒子场: 暂停时重力接管并在地板上堆积", () => {
+test("粒子场: 暂停时灰尘往地板沉，已落定的字留在纸上", () => {
   const p = fd.createPool(64);
   fd.seedPool(p, 64, gl.mulberry32(2), { x: 0, y: 0, w: 300, h: 300 });
   for (let i = 0; i < 64; i += 1) {
-    p.x[i] = 150;
-    p.y[i] = 20 + (i % 8) * 3;
     p.tx[i] = 150;
     p.ty[i] = 20;
+    p.ox[i] = 0;
+    p.oy[i] = 0;
+    p.jx[i] = 0;
+    p.jy[i] = 0;
     p.vx[i] = 0;
     p.vy[i] = 0;
+    // 前一半还没唱到（灰尘），后一半已经落定（彩色的字）
+    p.inkAt[i] = i < 32 ? Infinity : -10000;
+    p.fly[i] = 100;
   }
+  // 先落一次位：让"灰尘"和"已唱到"都先各自就位
+  fd.step(p, 64, 1 / 60, { pos: 0, sink: 0, floor: 200 });
   const c0 = fd.centroid(p, 64);
-  for (let i = 0; i < 120; i += 1) fd.step(p, 64, 1 / 60, { paused: true, floor: 200 });
+  assert.ok(Math.abs(c0.y - 20) < 1e-3, `落位后质心应当在字形带上，实际 ${c0.y}`);
+  let sink = 0;
+  for (let i = 0; i < 180; i += 1) {
+    sink = fd.sinkStep(sink, true, 1 / 60);
+    fd.step(p, 64, 1 / 60, { pos: 0, paused: true, sink, floor: 200 });
+  }
   const c1 = fd.centroid(p, 64);
-  assert.ok(c1.y > c0.y + 20, `暂停后质心应当下落，实际 ${c0.y.toFixed(1)} → ${c1.y.toFixed(1)}`);
-  for (let i = 0; i < 64; i += 1) {
-    assert.ok(p.y[i] <= 200 + 1e-6, "不能穿过地板");
-    assert.ok(Number.isFinite(p.y[i]));
+  assert.ok(c1.y > c0.y + 20, `暂停后灰尘应当往下沉，实际质心 ${c0.y.toFixed(1)} → ${c1.y.toFixed(1)}`);
+  for (let i = 32; i < 64; i += 1) {
+    assert.ok(Math.abs(p.y[i] - 20) < 1e-3, "已经填好的字不许被暂停带走（否则字会散掉）");
   }
-  for (let i = 0; i < 600; i += 1) fd.step(p, 64, 1 / 60, { paused: true, floor: 200 });
-  for (let i = 0; i < 64; i += 1) {
-    assert.ok(Math.abs(p.vy[i]) < 40, "堆积后速度必须收住（不能永远弹）");
+  for (let i = 0; i < 64; i += 1) assert.ok(Number.isFinite(p.y[i]), "不允许 NaN");
+  // 恢复播放：灰尘回到字形带附近
+  for (let i = 0; i < 300; i += 1) {
+    sink = fd.sinkStep(sink, false, 1 / 60);
+    fd.step(p, 64, 1 / 60, { pos: 0, paused: false, sink, floor: 200 });
   }
+  assert.ok(fd.centroid(p, 64).y < c1.y - 20, "恢复播放后灰尘要回到字附近");
 });
 
-test("粒子场: 湍流只在有低频时起作用", () => {
+test("粒子场: 湍流只在有低频时起作用，且落定后必须收住", () => {
   const quiet = fd.createPool(1);
   const loud = fd.createPool(1);
   for (const p of [quiet, loud]) {
     fd.seedPool(p, 1, gl.mulberry32(4), RECT);
-    p.x[0] = 100;
-    p.y[0] = 50;
     p.tx[0] = 100;
     p.ty[0] = 50;
+    p.ox[0] = 0;
+    p.oy[0] = 0;
+    p.inkAt[0] = Infinity; // 灰尘：抖动全量
     p.vx[0] = 0;
     p.vy[0] = 0;
   }
   for (let i = 0; i < 30; i += 1) {
-    fd.step(quiet, 1, 1 / 60, { bass: 0 });
-    fd.step(loud, 1, 1 / 60, { bass: 1 });
+    fd.step(quiet, 1, 1 / 60, { pos: 0, bass: 0 });
+    fd.step(loud, 1, 1 / 60, { pos: 0, bass: 1 });
   }
   assert.ok(Math.abs(quiet.vx[0]) < Math.abs(loud.vx[0]) + 1e-9, "有低频时抖动应当更大");
   assert.ok(Math.abs(loud.vx[0]) > 1, "低频为该给到可见的冲量");
+  // ★ 可读性：落定后的粒子抖动必须被压到极小（否则字会糊）
+  const ink = fd.createPool(1);
+  fd.seedPool(ink, 1, gl.mulberry32(4), RECT);
+  ink.tx[0] = 100;
+  ink.ty[0] = 50;
+  ink.inkAt[0] = -10000;
+  ink.fly[0] = 100;
+  let maxOff = 0;
+  for (let i = 0; i < 120; i += 1) {
+    fd.step(ink, 1, 1 / 60, { pos: 0, bass: 1 });
+    maxOff = Math.max(maxOff, Math.abs(ink.x[0] - 100), Math.abs(ink.y[0] - 50));
+  }
+  assert.ok(maxOff < 4, `已落定的粒子离笔画不该超过 4px（可读性），实际 ${maxOff.toFixed(2)}px`);
 });
 
-test("粒子场: 质心 / 就位率 / 分辨率", () => {
+test("粒子场: 质心 / 就位率 / 平均填充 / 分辨率", () => {
   const p = fd.createPool(4);
   p.cap = 4;
   p.x.set([0, 10, 0, 10]);
@@ -520,18 +705,24 @@ test("粒子场: 质心 / 就位率 / 分辨率", () => {
   p.x[0] = 50;
   assert.equal(fd.settledRatio(p, 4, 1), 0.75);
   assert.equal(fd.settledRatio(fd.createPool(2), 0), 0, "没有粒子时不能除零");
+  p.ev.set([1, 0.5, 1, 0]);
+  assert.equal(fd.meanFill(p, 4), 0.625);
+  assert.equal(fd.inkedRatio(p, 4), 0.5);
   assert.equal(fd.resolutionScale(true), 0.5);
   assert.equal(fd.resolutionScale(false), 1);
+  assert.ok(fd.landFlash(100, 0, 100) > 0.9, "刚落定的一瞬要给到闪光");
+  assert.equal(fd.landFlash(10000, 0, 100), 0, "老早落定的不该还在闪");
 });
 
 test("粒子场: 粒子数按面积自适应且在 clamp 区间里", () => {
-  assert.equal(fd.countForArea(1100 * 700, 1), 3850);
-  assert.equal(fd.countForArea(1100 * 700, 2), 7700, "dpr2 要翻倍");
+  assert.equal(fd.countForArea(1100 * 700, 1), 4968);
+  assert.equal(fd.countForArea(1100 * 700, 2), 9935, "dpr2 要翻倍");
   assert.equal(fd.countForArea(3840 * 2160, 2), fd.MAX_PARTICLES, "4K+dpr2 顶到上限");
   assert.equal(fd.countForArea(100, 1), fd.MIN_PARTICLES, "再小也要有下限");
   assert.equal(fd.countForArea(0, 1), fd.MIN_PARTICLES);
-  assert.equal(fd.countForArea(1100 * 700, 1, { performanceMode: true }), 1283, "performance 档 ÷3");
+  assert.equal(fd.countForArea(1100 * 700, 1, { performanceMode: true }), 1656, "performance 档 ÷3");
   assert.equal(fd.countForArea(1100 * 700, 1, { performanceMode: true }) < fd.countForArea(1100 * 700, 1), true);
+  assert.ok(fd.MIN_PARTICLES >= 4000, "下限要够密：粒子现在负责把灰字填成彩色");
 });
 
 test("粒子场: 帧预算与自适应降级（探针 P5 的控制器）", () => {
@@ -576,9 +767,16 @@ test("粒子场: 停帧 / 限帧 / 时间码 / 频段", () => {
   assert.equal(fd.avgRange(null, 0, 8), 0);
   assert.equal(fd.maxRange(new Float32Array(0), 0, 4), 0);
   assert.equal(fd.avgRange(bands, 200, 300), 0, "越界范围要给 0 而不是 NaN");
-  assert.equal(fd.litTint(0), 0);
-  assert.equal(fd.litTint(1), 1);
-  assert.ok(fd.litTint(0.5) > 0.4 && fd.litTint(0.5) < 0.6);
+  // 暂停下沉量：指数趋近，与帧率无关
+  let s1 = 0;
+  for (let i = 0; i < 60; i += 1) s1 = fd.sinkStep(s1, true, 1 / 60);
+  let s2 = 0;
+  for (let i = 0; i < 120; i += 1) s2 = fd.sinkStep(s2, true, 1 / 120);
+  assert.ok(Math.abs(s1 - s2) < 1e-9, "同样的墙钟时长必须给同样的下沉量（与帧率无关）");
+  assert.ok(s1 > 0.8 && s1 < 1, `1 秒应当沉得差不多，实际 ${s1.toFixed(3)}`);
+  assert.equal(fd.sinkStep(1, false, 0), 1, "dt=0 不动");
+  for (let i = 0; i < 300; i += 1) s1 = fd.sinkStep(s1, false, 1 / 60);
+  assert.ok(s1 < 0.01, "恢复播放要浮回来");
 });
 
 /* ==========================================================================
@@ -681,7 +879,6 @@ test("契约: 只用契约里存在的 ctx 能力，且清单能力与用法一�
     "ctx.actions",
     "ctx.defaultCover",
     "ctx.sdk.splitGraphemes",
-    "ctx.actions?.seek",
     "ctx.actions?.reportBackdrop",
     "ctx.playback?.()",
     "ctx.track?.()",
@@ -700,7 +897,12 @@ test("契约: 只用契约里存在的 ctx 能力，且清单能力与用法一�
   const manifest = JSON.parse(readPkg("skin.json"));
   assert.equal(manifest.capabilities.spectrum, src.includes("ctx.spectrum"), "spectrum 能力与用法不一致");
   assert.equal(manifest.capabilities.background, src.includes("ctx.backgroundRoot"), "background 能力与用法不一致");
-  assert.equal(manifest.capabilities.interactive, src.includes("ctx.actions?.seek"), "interactive 能力与用法不一致");
+  // interactive 现在的唯一用途是"指针磁铁"（宿主在只读舞台上会把它关掉）
+  assert.equal(manifest.capabilities.interactive, src.includes("pointermove"), "interactive 能力与用法不一致");
+  // ★ 这一款不再有点击跳进度：界面上只有当前这一句，跳转没有意义
+  assert.ok(!src.includes("ctx.actions?.seek"), "不许再点字形跳进度（已经移除）");
+  assert.ok(!/actions\?*\.seek/.test(src), "不许再调 seek");
+  assert.ok(!/addEventListener\("click"/.test(src), "不许再挂 click 监听");
 });
 
 test("契约: 帧循环纪律（一条 rAF / 不做轮询 / 尊重 animations）", () => {
@@ -743,19 +945,23 @@ test("契约: CSS 没有会被宿主包层静默吃掉的写法", () => {
     }
   }
 
-  // 这一款特有的硬约束：filter 只允许出现在三处（画布对比度、灰尘微糊、背景大图）
-  const allowedFilter = /\.rb__canvas|\.rb__dust|\.rbbg__img/;
+  // 这一款特有的硬约束：filter 只允许出现在两处（画布对比度、背景大图）
+  // —— 灰字底层是画在画布上的，这里已经没有"模糊的灰尘层"了
+  const allowedFilter = /\.rb__canvas|\.rbbg__img/;
   for (const c of css.split("}")) {
     if (!/(^|[;{\s])filter\s*:/.test(c)) continue;
     const rule = c.split("{")[0].trim();
-    assert.ok(allowedFilter.test(rule), `filter 只允许出现在 .rb__canvas / .rb__dust / .rbbg__img 上，实际：${rule}`);
+    assert.ok(allowedFilter.test(rule), `filter 只允许出现在 .rb__canvas / .rbbg__img 上，实际：${rule}`);
   }
   // 全屏大半径模糊只允许在背景层（docs/36：每帧全屏大模糊是最贵的操作之一）
   for (const c of css.split("}")) {
     if (!/blur\(/.test(c)) continue;
     const rule = c.split("{")[0].trim();
-    assert.ok(/\.rbbg__img|\.rb__dust/.test(rule), `blur 只允许出现在背景图与灰尘层上，实际：${rule}`);
+    assert.ok(/\.rbbg__img/.test(rule), `blur 只允许出现在背景图上，实际：${rule}`);
   }
+  // 灰字底层不能退回成 DOM 文本层：那样没法保证和粒子落在同一个像素上
+  assert.ok(!/\.rb__dust/.test(css), "灰字底层必须画在画布上（不能再用 DOM 文本层）");
+  assert.ok(!/\.rb__dust/.test(readPkg("skin.js")), "JS 里也不许再有灰尘文本层");
   // 画布必须铺满舞台
   assert.match(css, /\.rb__canvas\s*\{[^}]*position:\s*absolute/, "画布必须绝对定位铺满舞台");
 });

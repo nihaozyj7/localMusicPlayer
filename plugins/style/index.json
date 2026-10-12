@@ -301,9 +301,9 @@
       "id": "rubbing",
       "dir": "rubbing",
       "name": "拓印",
-      "version": "1.0.0",
+      "version": "2.0.0",
       "author": "第三方样式",
-      "description": "歌词是用这张封面的像素堆出来的：上万个彩色颗粒磁吸成字，唱到哪句就聚到哪句。",
+      "description": "先在纸上压出一行灰字，再用这张封面的多色颗粒一粒一粒把它填满：唱到哪个字，哪个字就显影。",
       "apiVersion": "3.0",
       "swatch": [
         "#0d0c0b",
@@ -313,8 +313,8 @@
       "files": [
         {
           "path": "rubbing/README.md",
-          "size": 8242,
-          "sha256": "4c69647f3804e7c654d3c1c248b7d10acfc53f0b301c550a6e6783dfac096670"
+          "size": 13024,
+          "sha256": "0cfc90447e0432ee6e206f850dc0fcb307232cbb79646ff0c26af7b85b2533d5"
         },
         {
           "path": "rubbing/assets/icon.svg",
@@ -323,33 +323,33 @@
         },
         {
           "path": "rubbing/lib/field.js",
-          "size": 13490,
-          "sha256": "a88c38714e0da4eeb3deb16b6cc8fa403cc299d99ebcff5fd21d82c60f4ecb43"
+          "size": 18421,
+          "sha256": "d9d58e40c7d277fbd051c66299e1b7d6e494f6cd4136b1f6ffe3b2898dac7cbb"
         },
         {
           "path": "rubbing/lib/glyph.js",
-          "size": 9368,
-          "sha256": "686419413c630ae8cdcd315696d827e12c4d82c7bebc5474b304c2b5a4e747aa"
+          "size": 14823,
+          "sha256": "4f004d05a86b78b5661d8ec0ff20ac5b1f42989ee87cc8f382a108fdf970b8bd"
         },
         {
           "path": "rubbing/lib/palette.js",
-          "size": 11562,
-          "sha256": "70cdcc23f471aeeea586a7e528bb337e32979b39cb8c1c531059d899458807dd"
+          "size": 18946,
+          "sha256": "2cacbc71dd44f744514ca50a2a06f628e571b6fe148dd2ea7638bd540f7844e1"
         },
         {
           "path": "rubbing/skin.css",
-          "size": 6688,
-          "sha256": "ce04c9c825d2ce15abc9d98bf239c4f0b628ffdf2a8bfe9a69c167695bc5587c"
+          "size": 5931,
+          "sha256": "440e0798d0833731bda48ea1be950a421b84e234434a5237c8fc4d4d96a29d18"
         },
         {
           "path": "rubbing/skin.js",
-          "size": 36328,
-          "sha256": "b5480816d1efb893ad966d26e8cfe30cbad1cdbb9a891eb18ddd875e93813743"
+          "size": 46185,
+          "sha256": "6bc16c4f41f0b3b4bfb2ac2b64d2cfc1b388954e40f8c0c1c281ea543668c877"
         },
         {
           "path": "rubbing/skin.json",
-          "size": 548,
-          "sha256": "dbfbacbeba82df79efda8d5305361799cead1206d0112ffb7fd65ad5077c4ecd"
+          "size": 566,
+          "sha256": "10e48154d5458580d9a68f8636062d8114bd7f967531d488e391aa08ed493bc9"
         }
       ]
     },

@@ -6,6 +6,9 @@
        `.playerview[data-skin="rubbing"]` 前缀，也不要写 :root/html/body；
      · 想影响宿主壳的观感只有一条合法通道：清单 colors + reportBackdrop。
    ★ 视觉数值集中在这里（颜色走变量），JS 只改属性、不拼样式串。
+   ★ 灰字底层是**画在画布上**的（位置与字号由 JS 从字形掩码算出来，
+     与粒子目标点同源，见 lib/glyph.js#baseGeometry）—— 这里没有文字层，
+     因为 DOM 文本没法保证和粒子落在同一个像素上。
    ========================================================================== */
 
 .rb {
@@ -17,7 +20,6 @@
   --rb-lit: 0;
   --rb-turb: 0;
   --rb-flux: 0;
-  --rb-progress: 0;
 
   position: absolute;
   inset: 0;
@@ -30,44 +32,17 @@
     radial-gradient(90% 70% at 90% 100%, rgba(0, 0, 0, 0.25), transparent 70%);
 }
 
-/* 主画布：铺满舞台，位于灰尘层之下 */
+/* 主画布：铺满舞台。灰字底层 + 彩色颗粒都在这上面 */
 .rb__canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   display: block;
-  /* 沙的观感：粒子本身很小，靠这一层极轻的对比度与外发光让"密处成字" */
+  /* 沙的观感：粒子本身很小，靠这一层极轻的对比度让"密处成字" */
   filter: contrast(1.06);
 }
 .rb__canvas[hidden] {
-  display: none;
-}
-
-/* 未唱到的字：极淡的轮廓（DOM 文本，比用粒子画一遍便宜得多） */
-.rb__dust {
-  position: absolute;
-  left: 6%;
-  right: 6%;
-  top: 30%;
-  height: 44%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  font-size: clamp(30px, 5.2vw, 76px);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  line-height: 1.25;
-  color: var(--rb-fg);
-  /* 未唱到的字只做"印痕"：整句唱完之后印痕淡下去，画面只剩沙 */
-  opacity: calc(0.15 + 0.06 * var(--rb-turb) - 0.07 * var(--rb-progress));
-  /* 未唱到的字只做"印痕"：模糊一点点，像纸背透出来的 */
-  filter: blur(1.1px);
-  pointer-events: none;
-  user-select: none;
-}
-.rb__dust[hidden] {
   display: none;
 }
 
@@ -164,10 +139,6 @@
 }
 
 /* 关动效 / 减少动效：一切都是安静的，_但画面仍然完整_ */
-.rb[data-static="1"] .rb__dust {
-  filter: none;
-  opacity: 0.14;
-}
 .rb[data-static="1"] .rb__canvas {
   transition: none;
   transform: none;
@@ -179,13 +150,6 @@
 /* performance 档：颗粒感靠色阶，不再叠对比度滤镜（省一次全屏合成） */
 .rb[data-perf="1"] .rb__canvas {
   filter: none;
-}
-
-/* 降级档位（JS 写 data-lod）：纯粹给自检与排查看，也顺手压低发光 */
-.rb[data-lod="2"] .rb__dust,
-.rb[data-lod="3"] .rb__dust {
-  filter: none;
-  opacity: 0.22;
 }
 
 /* 空态：画布留一点点沙当氛围，其余收敛 */

@@ -2,15 +2,17 @@
 /* ==========================================================================
    ui/packstore.js — 「添加自定义主题 / 播放界面样式」的分页弹层
    --------------------------------------------------------------------------
-   两个 tab：
+   两个 tab（书写顺序 = 显示顺序）：
 
+     · 从本地导入 —— 保留原来那套「复制 AI 提示词 + 选择文件夹导入」的引导，
+       是**第一个 tab，也是打开弹层时的默认页**；
      · 从仓库获取 —— 读远端的 plugins/<kind>/index.json（见 internal/packstore），
-       列出仓库里有什么，带「安装 / 更新 / 已安装」状态，点一下装到本机；
-     · 从本地导入 —— 保留原来那套「复制 AI 提示词 + 选择文件夹导入」的引导。
+       列出仓库里有什么，带「安装 / 更新 / 已安装」状态，点一下装到本机。
 
    为什么要把原来的引导弹层改成两个 tab：加进仓库获取之后，「自己要一个」与
-   「去仓库拿一个」是并列的两件事，平铺在一屏里会互相稀释。用户点这个按钮时
-   心里的问题只有一个 ——「我要去哪儿弄一个主题」，所以**默认停在「从仓库获取」**。
+   「去仓库拿一个」是并列的两件事，平铺在一屏里会互相稀释。
+   为什么本地导入排第一：它是**离线也成立**的路径（断网、仓库地址不可达、自建插件
+   都不受影响），仓库获取是需要联网的可选增强，不该排在必选路径前面。
 
    为什么组件自己管状态，而不放进 store：
      这些状态（远端清单、正在装哪一个、地址草稿）只在这个弹层活着的时候有意义，
@@ -112,7 +114,7 @@ class MpPackStore extends MpElement {
     /** 装完之后通知调用方（设置卡片要重画） @type {null | (() => void)} */
     this.onChanged = null;
 
-    this._tab = "repo";
+    this._tab = "local";
     /** idle | preview | loading | ok | error */
     this._status = "idle";
     /** @type {PackItem[]} */
@@ -136,10 +138,10 @@ class MpPackStore extends MpElement {
     this.kind = opts.kind === "style" ? "style" : "theme";
     this.localBody = opts.localBody ?? nothing;
     this.onChanged = opts.onChanged ?? null;
-    // 默认停在「从仓库获取」：用户点「添加自定义主题」想知道的是「去哪弄一个」
-    this._tab = "repo";
-    void this._loadSource();
-    void this.load(false);
+    // 默认停在「从本地导入」：它不依赖网络，是这个弹层里唯一永远可用的那页
+    this._tab = "local";
+    // 仓库清单不在这里拉：用户可能根本不去第二页，见 _ensureRepo
+    this._status = "idle";
   }
 
   /* ------------------------------------------------------------------------
@@ -148,6 +150,18 @@ class MpPackStore extends MpElement {
 
   get _kindLabel() {
     return this.kind === "style" ? "样式包" : "主题";
+  }
+
+  /**
+   * 首次切到「从仓库获取」时才拉清单。
+   *
+   * 默认页是「从本地导入」，而拉清单要联网、要等后端 —— 用户只是来导入一个
+   * 本地文件时，不该替他发这次请求。切到第二页才取，失败也只在那一页里显示。
+   */
+  _ensureRepo() {
+    if (this._status !== "idle") return;
+    void this._loadSource();
+    void this.load(false);
   }
 
   /**
@@ -335,7 +349,7 @@ class MpPackStore extends MpElement {
   render() {
     return html` <div class="packdlg">
       <div class="packtabs" role="tablist">
-        ${this._tabButton("repo", "从仓库获取")} ${this._tabButton("local", "从本地导入")}
+        ${this._tabButton("local", "从本地导入")} ${this._tabButton("repo", "从仓库获取")}
       </div>
       ${this._tab === "repo" ? this._repoPanel() : this.localBody}
     </div>`;
@@ -352,6 +366,7 @@ class MpPackStore extends MpElement {
       aria-selected=${String(active)}
       @click=${() => {
         this._tab = id;
+        if (id === "repo") this._ensureRepo();
         this.requestUpdate();
       }}
     >
