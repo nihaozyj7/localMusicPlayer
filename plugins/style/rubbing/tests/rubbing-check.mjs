@@ -767,20 +767,22 @@ if (!EDGE) {
     }
     const j = (v) => JSON.stringify(v);
 
-    /** WCAG 对比度（独立算一遍当"第二意见"） */
-    function contrast(hexA, hexB) {
+    /** WCAG 相对亮度（独立算一遍当"第二意见"） */
+    function luma(hex) {
       const lin = (c) => {
         const v = c / 255;
         return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
       };
-      const lum = (h) => {
-        const r = parseInt(h.slice(1, 3), 16);
-        const g = parseInt(h.slice(3, 5), 16);
-        const b = parseInt(h.slice(5, 7), 16);
-        return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-      };
-      const la = lum(hexA);
-      const lb = lum(hexB);
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    }
+
+    /** WCAG 对比度（独立算一遍当"第二意见"） */
+    function contrast(hexA, hexB) {
+      const la = luma(hexA);
+      const lb = luma(hexB);
       return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
     }
 
@@ -871,6 +873,25 @@ if (!EDGE) {
         pal.bg && pal.fg && contrast(pal.bg, pal.fg) >= 3.9,
         "上报配色的对比度够用（壳文字读得清）",
         j(pal.bg && pal.fg ? contrast(pal.bg, pal.fg).toFixed(2) : "")
+      );
+      // 回归（真机暴露的那次）：上报的 bg 必须是"实际画出来的底"（封面压暗 + 暗纱 → 近黑），
+      // 不是封面主色本身；否则亮封面下会选出深色字，宿主壳与 HUD 一起看不见。
+      check(
+        pal.bg && luma(pal.bg) < 0.08,
+        "上报的 bg 是合成底（近黑），不是封面主色",
+        j({ bg: pal.bg, luma: pal.bg ? luma(pal.bg).toFixed(3) : "" })
+      );
+      check(
+        pal.fg && luma(pal.fg) > 0.5,
+        "近乎黑的底上选的是亮色字",
+        j({ fg: pal.fg, luma: pal.fg ? luma(pal.fg).toFixed(3) : "" })
+      );
+      // accent 必须一起报：宿主壳的进度条 / 音量条 / 播放键 / 播放模式按钮走 --accent 家族
+      check(/^#[0-9a-f]{6}$/.test(pal.accent || ""), "上报的 accent 是 hex", j(pal.accent));
+      check(
+        pal.accent && pal.accent === A.bgVars?.accent,
+        "上报的 accent 与画面里的 --rb-accent 同源（不是清单里的静态专色）",
+        j({ reported: pal.accent, stage: A.bgVars?.accent })
       );
       check(/^#[0-9a-f]{6}$/.test(A.bgVars?.bg || "") && /^#[0-9a-f]{6}$/.test(A.bgVars?.accent || ""), "取色变量已落到舞台根", j(A.bgVars));
       check((A.coverSwap?.changed || false) === true && (A.coverSwap?.backdrops || 0) > (A.backdrops || []).length - 1, "换封面后配色跟着变、又上报了一次", j(A.coverSwap));

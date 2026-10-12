@@ -287,19 +287,30 @@ export default {
        --------------------------------------------------------------------- */
     function applyPalette(pal) {
       st.pal = pal;
-      setVar("--rb-bg", palette.toHex(pal.dominant));
+      // ★ 选字色的依据必须是"实际画出来的底"，不是封面本身：
+      //   整窗背景是 .rbbg__img（blur + brightness(.46)）叠 .rbbg__veil 暗纱，
+      //   再亮的封面压完也是近黑。拿未压暗的封面主色选色，会在亮封面下选出
+      //   "深色字"压在近黑底上（~1.1:1）—— 宿主壳与 HUD 一起看不见。
+      //   换算与理由见 palette.js#backdropUnderCover。
+      const backdrop = palette.backdropUnderCover(pal.dominant);
+      setVar("--rb-bg", palette.toHex(backdrop));
       setVar("--rb-accent", palette.toHex(pal.accent));
-      // 壳文字色：在亮/暗两套里挑**对比度更高**的那套（封面主色可能是中间灰，
-      // 只按"亮不亮"二分会在临界值上挑出看不清的那个）
+      // 壳文字色：在亮/暗两套里挑**对比度更高**的那套（底可能是近黑也可能是
+      // 被用户自定义的暗纱抬亮的颜色，只按"亮不亮"二分会在临界值上挑错）
       const light = [242, 236, 224];
       const dark = [18, 16, 14];
       const fg =
-        palette.contrastWith(pal.dominant, light) >= palette.contrastWith(pal.dominant, dark) ? light : dark;
+        palette.contrastWith(backdrop, light) >= palette.contrastWith(backdrop, dark) ? light : dark;
       setVar("--rb-fg", palette.toHex(fg));
       buildPassColors();
       st.backdropPending = {
-        bg: palette.toHex(pal.dominant),
+        bg: palette.toHex(backdrop),
         fg: palette.toHex(fg),
+        // ★ accent 必须一起报：宿主壳的进度条 / 音量条 / 播放键 / 播放模式按钮
+        //   走的是 --accent 家族（见宿主 tokens.css「强调色家族」）。不报的话它们
+        //   会永远停在清单里那个静态专色上 —— 与当前封面、与画面里用 --rb-accent
+        //   画出来的东西都不是一个色，看起来就是"别的控件是另一个颜色"。
+        accent: palette.toHex(pal.accent),
       };
       if (st.backdropTimer) return; // ≥300ms 防抖：轮播/连换封面不会打爆 IPC
       st.backdropTimer = setTimeout(() => {

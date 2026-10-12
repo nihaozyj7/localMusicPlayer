@@ -222,6 +222,54 @@ export function packRgb(rgb) {
   return ((clamp(Math.round(rgb[0]), 0, 255) << 16) | (clamp(Math.round(rgb[1]), 0, 255) << 8) | clamp(Math.round(rgb[2]), 0, 255)) >>> 0;
 }
 
+/* ==========================================================================
+   宿主壳 / HUD 真正压着的那层底
+   --------------------------------------------------------------------------
+   ★ 这里解决的问题：**别拿封面本身当"画面的底色"去选字色。**
+
+   拓印的整窗背景不是封面原图，而是 skin.css 里这条链的结果：
+     .rbbg__img    blur(34px) saturate(.85) brightness(.46)
+     .rbbg__veil   暗纱 rgba(8,7,6, .72 → .5 → .86)（顶 → 中 → 底）
+   也就是说：**再亮的封面压完也是近黑**（纯白封面合成出来只有 ~#261c19）。
+
+   早期版本直接拿 `pal.dominant` 当选色依据，于是封面主色比 ~0.17 亮时就会
+   选出"深色字"，配到近黑的底上（实测亮封面下 ~1.1:1）——宿主壳（标题栏 /
+   底栏 / 侧栏）与 HUD 的字会一起消失。宿主那边还看不出来：它只按"声明的
+   bg"算对比度，而声明的正是那个亮色封面主色（算出 7:1，看着完全达标）。
+
+   参数取自上面那条链 —— **改 skin.css 的数值时必须同步改这里**。
+   ========================================================================== */
+
+/** 整窗背景图被压暗的倍数（= .rbbg__img 的 brightness） */
+export const BACKDROP_BRIGHTNESS = 0.46;
+/**
+ * 暗纱最薄的那一段的 alpha（= .rbbg__veil 顶部）。
+ *
+ * 取**最薄**处是有意为之：那是背景最亮的地方，按它选字色是保守解；
+ * 中部 .5→.86 与中央暗角只会更暗，对比度只会更高。
+ */
+export const BACKDROP_VEIL = 0.72;
+/** 暗纱的颜色（= .rbbg__veil 的 rgba(8, 7, 6, …)） */
+export const BACKDROP_VEIL_RGB = [8, 7, 6];
+
+/**
+ * 封面取样色 → 「宿主壳 / HUD 实际压在它上面」的那个颜色。
+ *
+ * @param {number[]|null|undefined} rgb 封面取样色（调用方给主色）；非法/缺省按清单底色处理
+ * @param {{brightness?:number, veil?:number, veilRgb?:number[]}} [opts] 覆写链上参数（自检用）
+ * @returns {number[]} `[r, g, b]`（浮点，调用方自己 toHex）
+ */
+export function backdropUnderCover(
+  rgb,
+  { brightness = BACKDROP_BRIGHTNESS, veil = BACKDROP_VEIL, veilRgb = BACKDROP_VEIL_RGB } = {}
+) {
+  const src = Array.isArray(rgb) && rgb.length >= 3 ? rgb : [13, 12, 11];
+  const a = clamp01(veil);
+  // 纱叠在被压暗的图上：结果 = 图 × brightness × (1 - α) + 纱色 × α
+  const k = clamp01(brightness) * (1 - a);
+  return [0, 1, 2].map((i) => src[i] * k + veilRgb[i] * a);
+}
+
 /** 颜色对比度（HUD 文字是否该反白）。 */
 export function contrastWith(rgb, bg = [13, 12, 11]) {
   const lin = (v) => {

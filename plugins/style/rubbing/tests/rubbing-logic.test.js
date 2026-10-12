@@ -127,6 +127,74 @@ test("色板: 取色与打包", () => {
 });
 
 /* ==========================================================================
+   一之二、选字色的依据：**实际画出来的底**（回归：亮封面下 UI 整片消失）
+   --------------------------------------------------------------------------
+   背景是「封面 → blur + brightness(.46) → 暗纱」之后的合成色，而早期版本拿
+   未压暗的封面主色去选字色 —— 封面比 ~0.17 亮就选出深色字，压在近黑的底上
+   只有 ~1.1:1，宿主壳与 HUD 一起看不见。下面这组断言把两件事钉住：
+     · 合成底一定是近黑、字色一定是亮色、对比度达标；
+     · 参数与 skin.css 同源（改 CSS 忘了改常量会在这里亮红灯）。
+   ========================================================================== */
+
+/** 从 skin.css 里读一个数值当"第二意见"，避免常量与样式悄悄分叉 */
+const CSS_TEXT = readPkg("skin.css");
+const CSS_BRIGHTNESS = Number((/\.rbbg__img[\s\S]{0,200}?brightness\(([\d.]+)\)/.exec(CSS_TEXT) || [])[1]);
+const CSS_VEIL = Number((/rgba\(8,\s*7,\s*6,\s*([\d.]+)\)/.exec(CSS_TEXT) || [])[1]);
+
+test("色板: 选字色用合成底（亮封面也不会选出深色字）", () => {
+  const light = [242, 236, 224];
+  const dark = [18, 16, 14];
+  const cases = [
+    [255, 255, 255], // 纯白封面（最坏情况）
+    [232, 217, 160],
+    [212, 84, 30],
+    [43, 79, 168],
+    [128, 128, 128], // 中间灰
+    [40, 40, 40],
+    [0, 0, 0],
+    null, // 无封面：按清单底色
+  ];
+  for (const c of cases) {
+    const back = pal.backdropUnderCover(c);
+    assert.equal(back.length, 3);
+    // 注意：pal.luma 是"加权平均"（不做线性化），255/255 的白封面合成出来是 ~38/255
+    // （≈0.15），这已经是**最亮**的情况了；正常封面都在 0.03 以下。
+    assert.ok(pal.luma(back) < 0.2, `${c} 的合成底必须是近黑，实际亮度 ${pal.luma(back).toFixed(3)}`);
+    const crLight = pal.contrastWith(back, light);
+    const crDark = pal.contrastWith(back, dark);
+    const fg = crLight >= crDark ? light : dark;
+    assert.deepEqual(fg, light, `${c} 的合成底上必须选亮色字`);
+    assert.ok(crLight >= 4.5, `对比度要达标（≥4.5），实际 ${crLight.toFixed(2)}`);
+  }
+
+  // 回归样本：同一个亮封面，用"未压暗的主色"会诱使选出深色字（旧 bug），
+  // 用合成底则一定是亮色字。两条一起写，谁把依据改回去都会失败。
+  const white = [255, 255, 255];
+  assert.ok(
+    pal.contrastWith(white, dark) > pal.contrastWith(white, light),
+    "亮色主色本身确实会诱使选出深色字（这是那个 bug 的入口）"
+  );
+  const back = pal.backdropUnderCover(white);
+  assert.ok(
+    pal.contrastWith(back, dark) < pal.contrastWith(back, light),
+    "合成底上必须反过来选亮色字"
+  );
+
+  // 参数与 skin.css 同源
+  assert.equal(pal.BACKDROP_BRIGHTNESS, CSS_BRIGHTNESS, "BACKDROP_BRIGHTNESS 必须等于 .rbbg__img 的 brightness");
+  assert.equal(pal.BACKDROP_VEIL, CSS_VEIL, "BACKDROP_VEIL 必须等于顶部暗纱的 alpha");
+  assert.deepEqual(pal.BACKDROP_VEIL_RGB, [8, 7, 6], "暗纱颜色必须与 .rbbg__veil 一致");
+  assert.ok(pal.BACKDROP_VEIL > 0 && pal.BACKDROP_VEIL < 1, "暗纱 alpha 要在 (0,1) 内");
+});
+
+test("契约: 选字色与上报都走合成底，且 accent 一起报给宿主", () => {
+  const js = readPkg("skin.js");
+  assert.match(js, /backdropUnderCover\(pal\.dominant\)/, "选字色必须走合成底");
+  assert.ok(!/contrastWith\(pal\.dominant/.test(js), "不许再拿未压暗的封面主色选字色");
+  assert.match(js, /accent:\s*palette\.toHex\(pal\.accent\)/, "reportBackdrop 必须带上 accent（宿主壳的强调色家族）");
+});
+
+/* ==========================================================================
    二、字形 → 目标点
    ========================================================================== */
 

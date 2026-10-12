@@ -47,7 +47,16 @@ Copy-Item -Recurse -Force plugins\style\rubbing\* $dst
 | 灰尘层 | 整句 DOM 文本，极淡 + 1.1px 模糊（比用粒子再画一遍便宜得多） | 同上 |
 | 整窗背景 | 封面第二份 `blur(34px)` + 面纱 + CSS 点阵砂纸颗粒 | `ctx.media().cover` |
 | HUD | 曲名 / 艺人·专辑 / 试听角标 / 时间码 / 48 格进度刻度（只在变化时写 DOM） | `ctx.track()` `ctx.playback()` |
-| 宿主壳配色 | `reportBackdrop({bg, fg})`（400ms 防抖）+ 清单 `colors` 兜底 | 封面取色 |
+| 宿主壳配色 | `reportBackdrop({bg, fg, accent})`（400ms 防抖）+ 清单 `colors` 兜底 | 封面取色 |
+
+> **配色口径（2026-10 修订）**：上报给宿主的 `bg`、以及 HUD 自己用的 `--rb-fg` 所依据的底，
+> **不是封面本身**，而是「封面 → `.rbbg__img` 的 `blur(34px) brightness(0.46)` → `.rbbg__veil` 暗纱」
+> 之后的**合成色**（再亮的封面压完也是近黑）。换算在 `lib/palette.js#backdropUnderCover`，
+> 参数与 `skin.css` 同源（纯逻辑自检会比对两侧）。
+> 早期版本拿未压暗的封面主色当选色依据 —— 封面比 ~0.17 亮就选出深色字，压在近黑的底上
+> （实测 ~1.1:1），宿主壳（标题栏 / 底栏 / 侧栏）与 HUD 一起看不见。`accent` 现在也一起上报：
+> 宿主壳的进度条 / 音量条 / 播放键 / 播放模式按钮走 `--accent` 家族，不报就会永远停在清单里
+> 那个静态专色上、与封面无关。
 
 封面是 data URL 或同源 `/online/cover` 代理，`drawImage` + `getImageData` 不会被污染（无需 `crossOrigin`）。
 
@@ -60,7 +69,7 @@ Copy-Item -Recurse -Force plugins\style\rubbing\* $dst
 | `ctx.env()` | `width` / `height` / `dpr` / `reducedMotion` |
 | `ctx.track()` / `ctx.media()` / `ctx.playback()` | 曲目、封面、歌词、进度 |
 | `ctx.spectrum()` | 128 段对数谱（拉取式，宿主已节流到 ~30Hz，**音量后取谱**） |
-| `ctx.actions.seek` / `reportBackdrop` | 点字形带跳到本句；把封面配色上报给宿主壳 |
+| `ctx.actions.seek` / `reportBackdrop` | 点字形带跳到本句；把**合成底 + 字色 + 封面强调色**上报给宿主壳 |
 | `ctx.sdk.splitGraphemes` / `html.*` | 字素切分（必须与 `words` 下标同一份切法）/ 空态文案、封面兜底 |
 
 **没有用**的东西（都是坑，见 `pending-designs.md` §1.3）：`ctx.assets`、`ctx.log`、

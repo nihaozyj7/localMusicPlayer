@@ -313,8 +313,8 @@
       "files": [
         {
           "path": "rubbing/README.md",
-          "size": 7356,
-          "sha256": "ae317c70d40cdb145a4e3fc2592b91f08051c745dbcb97ed78b0f5e6d7a40002"
+          "size": 8242,
+          "sha256": "4c69647f3804e7c654d3c1c248b7d10acfc53f0b301c550a6e6783dfac096670"
         },
         {
           "path": "rubbing/assets/icon.svg",
@@ -333,8 +333,8 @@
         },
         {
           "path": "rubbing/lib/palette.js",
-          "size": 9014,
-          "sha256": "9bf4f2ed4c0370ae6a54a8fcca575fde80ec785db2f895baa98776e26210dd4c"
+          "size": 11562,
+          "sha256": "70cdcc23f471aeeea586a7e528bb337e32979b39cb8c1c531059d899458807dd"
         },
         {
           "path": "rubbing/skin.css",
@@ -343,8 +343,8 @@
         },
         {
           "path": "rubbing/skin.js",
-          "size": 35338,
-          "sha256": "1ecf377437564343e3b5665fdcbf3ff1eb8b04634c629f5b1a80ba9eb3ef9f15"
+          "size": 36328,
+          "sha256": "b5480816d1efb893ad966d26e8cfe30cbad1cdbb9a891eb18ddd875e93813743"
         },
         {
           "path": "rubbing/skin.json",
