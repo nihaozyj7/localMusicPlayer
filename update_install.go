@@ -52,16 +52,29 @@ type installPlan struct {
 //
 // 用 CRLF 行尾：cmd.exe 对 LF-only 的批处理文件在某些情况下会解析出错
 // （尤其是带 goto/label 的脚本），这是 Windows 批处理的经典坑。
+//
+// ★ 路径不是原样拼进去的：`%` 在引号里照样被 cmd 当变量展开（见 batPercent），
+// 提示行还要额外挡 `& | < > ^ ( )`（见 batEchoText）。两条路径都可能带中文、
+// 空格、`%`（用户名/目录名），这不是理论问题。
 func buildInstallScript(plan installPlan) string {
-	src := plan.SourcePath
-	dst := plan.TargetPath
-	backup := dst + ".old"
+	srcRaw := plan.SourcePath
+	dstRaw := plan.TargetPath
+	backupRaw := dstRaw + ".old"
+
+	// 进脚本（都在引号里）用的转义形式
+	src := batPercent(srcRaw)
+	dst := batPercent(dstRaw)
+	backup := batPercent(backupRaw)
 
 	var lines []string
 	lines = append(lines,
 		"@echo off",
 		"chcp 65001 >nul 2>&1",
-		"setlocal",
+		// 显式关掉延迟展开：`!` 在延迟展开下是特殊字符，而 Windows 文件名里
+		// 允许出现 `!`。默认虽然就是关的，但注册表
+		// HKCU\Software\Microsoft\Command Processor\DelayedExpansion=1
+		// 会让每个 cmd 实例都打开它，setlocal 继承该状态 —— 写死了才不靠用户环境。
+		"setlocal DisableDelayedExpansion",
 		"rem ===== LMPlayer 自动更新引导脚本（可安全删除） =====",
 		"rem 它由 LMPlayer 生成，唯一职责是：等旧进程退出 → 替换 exe → 重启。",
 		"",
@@ -101,7 +114,7 @@ func buildInstallScript(plan installPlan) string {
 		"echo   LMPlayer 更新失败：无法替换程序文件。",
 		"echo   旧版本已恢复，可以继续使用。",
 		"echo   安装包位置：",
-		fmt.Sprintf("echo     %s", src),
+		fmt.Sprintf("echo     %s", batEchoText(srcRaw)),
 		"echo.",
 		"pause",
 		"",
@@ -116,6 +129,37 @@ func buildInstallScript(plan installPlan) string {
 	return strings.Join(lines, "\r\n") + "\r\n"
 }
 
+// batPercent 把字面量里的 `%` 转义成 `%%`（.bat 里转义百分号的唯一办法）。
+//
+// 为什么必须做：cmd.exe 在**双引号内同样展开 `%VAR%`** —— 引号只挡得住
+// 空格与 `& | < >` 这类命令分隔符，挡不住百分号。而 Windows 允许文件名里
+// 出现 `%`，用户目录完全可能是 `C:\100% 音乐\LMPlayer\`，安装包路径也可能
+// 带 `%TEMP%` 这样的字面量。不转义的表现是路径被展开成别的东西，
+// 脚本去操作一个不存在的文件 —— 对更新流程来说就是「这次更新失败」。
+func batPercent(s string) string {
+	return strings.ReplaceAll(s, "%", "%%")
+}
+
+// batEchoText 转义要 `echo` 给用户看的一段文本。
+//
+// 除了 `%`，`echo` 之后仍然有特殊含义的是命令分隔符与重定向符
+// （`& | < > ^ ( )`）：路径里带 `&` 时，不加 `^` 会把这一行**拆成两条命令**，
+// 用户只会看到半句提示，后半段还可能被当成命令执行。加 `^` 后原样打印。
+//
+// 注意 `^` 必须放在最后判断：它是转义符本身，先加会把后面加的 `^` 再转义一次。
+func batEchoText(s string) string {
+	s = batPercent(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '&', '|', '<', '>', '^', '(', ')':
+			b.WriteByte('^')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // formatArgs 把重启参数拼成 ` "a" "b"`（每个都加引号，含空格也不会被拆开）。
 func formatArgs(args []string) string {
 	if len(args) == 0 {
@@ -125,7 +169,8 @@ func formatArgs(args []string) string {
 	for _, a := range args {
 		// 参数里的引号会破坏下面的拼接，直接丢掉并加引号兜底。
 		clean := strings.ReplaceAll(a, "\"", "")
-		fmt.Fprintf(&b, " \"%s\"", clean)
+		// `%` 同样要转义：它在引号内也会被 cmd 展开。
+		fmt.Fprintf(&b, " \"%s\"", batPercent(clean))
 	}
 	return b.String()
 }
@@ -143,6 +188,20 @@ func prepareInstall(plan installPlan) (string, error) {
 	}
 	if strings.TrimSpace(plan.TargetPath) == "" {
 		return "", fmt.Errorf("无法定位当前程序路径")
+	}
+	// 这两个字符在 cmd 的引号参数里**没有**合法转义方式：
+	//   · `"` 会直接闭合参数、把后面的内容变成新命令（路径里不可能有它）；
+	//   · 换行会让这行批处理提前结束（路径里也不可能有它）。
+	// 与其赌它们不出现，不如在这里明确拒绝 —— 拒绝的代价是「这次更新没做」，
+	// 放过去的代价是「脚本执行了半条被拼出来的命令」。
+	for _, p := range []struct{ what, path string }{
+		{"安装包路径", plan.SourcePath},
+		{"程序路径", plan.TargetPath},
+	} {
+		if i := strings.IndexAny(p.path, "\"\r\n"); i >= 0 {
+			return "", fmt.Errorf("%s里含有无法安全写入批处理脚本的字符 %q：%s",
+				p.what, p.path[i], p.path)
+		}
 	}
 
 	script := buildInstallScript(plan)

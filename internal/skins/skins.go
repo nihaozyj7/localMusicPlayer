@@ -771,6 +771,17 @@ func (m *Manager) serveData(w http.ResponseWriter, r *http.Request, rel string) 
 		http.NotFound(w, r)
 		return
 	}
+	// ★ 上面那两道都是**字符串**判断，管不住链接：样式目录是用户数据目录，
+	//   里面一个符号链接 / 目录联接（Windows 上 `mklink /J` 连管理员权限都
+	//   不需要）就能让 /skins/<id>/x.js 实际读到目录外的文件 —— 而这是同源
+	//   页面里的第三方样式 JS 可以直接 fetch 的地址（读配置、读用户主目录）。
+	//   链接指向**根目录之内**属正常用法，所以判据是「解析后是否越界」；
+	//   Windows 目录联接因无法解析而一律不服务，理由见 resolveWithinDir。
+	full, ok := resolveWithinDir(root, rel)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
 	info, err := os.Stat(full)
 	if err != nil || info.IsDir() {
 		// 目录不列目录、不做 index：样式是「一个目录一个包」，
@@ -807,6 +818,10 @@ func hasHiddenSegment(rel string) bool {
 }
 
 // withinDir 判断 target 是否落在 dir 之内（相等也算，虽然调用方已排除目录）。
+//
+// ★ 它只比较**字符串**：`dir/link/x.js` 在字符串上是在目录内，但如果 link
+// 是指向别处的链接，文件系统里的真实位置就在目录外 —— 要挡住那种情况必须
+// 先解析链接，见 resolveWithinDir。
 func withinDir(dir, target string) bool {
 	rel, err := filepath.Rel(dir, target)
 	if err != nil {
@@ -814,4 +829,60 @@ func withinDir(dir, target string) bool {
 	}
 	rel = filepath.ToSlash(rel)
 	return rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+// hasLinkComponent 报告 root 到 rel 的这条路径上（含最后一段）有没有链接
+// （符号链接 / Windows 目录联接）。
+//
+// 只看 root 之下的部分：样式根目录自己是不是链接与本模块无关 —— 它就是信任
+// 边界，边界之内的文件本来就要发出去。也不看各级父目录，因为那属于「数据目录
+// 放在哪」的问题，用户把 %APPDATA% 换成联接是常见配置，不能因此拦掉整个功能。
+func hasLinkComponent(root, rel string) bool {
+	cur := root
+	for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+		if seg == "" {
+			continue
+		}
+		cur = filepath.Join(cur, seg)
+		if pathIsLink(cur) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveWithinDir 解析 rel 上可能存在的链接（符号链接 / Windows 目录联接），
+// 确认解析后的**真实路径**仍然落在 root 之内，返回该真实路径。
+//
+// 为什么需要（第六轮审查 §2.7「/skins 托管不解析符号链接」）：样式目录是
+// 用户数据目录，里面的一个链接就能把 /skins/<id>/… 变成任意本地文件的读取口
+// —— 同源页面里的第三方样式 JS 可以直接 fetch 这些地址。
+//
+// 两条分支，判据都是「能不能证明它安全」（与 internal/metacache/embed.go 同一条
+// 原则：证明不了就不做）：
+//  1. 路径上没有任何链接 → 字符串判断（withinDir）已经足够，**不做任何系统
+//     调用**。这一条很重要：绝大多数请求走这里，顺带保证 EvalSymlinks 的行为
+//     变化（或它在某些机器上解析不了目录联接）不会影响正常资源。
+//  2. 有链接 → 解析真实路径；解析失败（含 Windows 目录联接 —— 实测
+//     `filepath.EvalSymlinks` 解析不了联接内部的文件，报 "The system cannot
+//     find the path specified"）或解析后越界，一律拒绝。也就是说：**Windows
+//     上的目录联接一律不服务**，宁可让「把包放别的盘再链过来」这种非受支持
+//     用法失效，也不留一条读任意本地文件的口子。
+func resolveWithinDir(root, rel string) (string, bool) {
+	full := filepath.Join(root, filepath.FromSlash(rel))
+	if !hasLinkComponent(root, rel) {
+		return full, true
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", false
+	}
+	realFull, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return "", false
+	}
+	if !withinDir(realRoot, realFull) {
+		return "", false
+	}
+	return realFull, true
 }

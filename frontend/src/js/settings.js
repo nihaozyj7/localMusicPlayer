@@ -26,7 +26,7 @@ import { aiVendorHint, aiVendorLabel } from "./ai-vendors.js";
 import { updateMirror } from "./about-info.js";
 import { applyResolvedTheme, discoverThemes, listThemes, removeTheme } from "./theme.js";
 import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
-import { applyEffectPreset, applyPlaybackOptions } from "./audio.js";
+import { applyPlaybackOptions } from "./audio.js";
 import { animationDurationValue, setRuntimeToken, replaceStyleRules } from "./runtime-tokens.js";
 // 桌面歌词 / 桌面背景歌词的开关已经不在设置页：唯一入口是底栏「选项」里
 // 那组三选一（见 desktop-mode.js 与 ui/panels.js），所以这里不引 desktop-mode。
@@ -1896,14 +1896,6 @@ export function handleSettingControl(actEl, ctx = {}) {
       if (segKey === "loudnessMode") {
         // 模式切换后需要重新拉取补偿增益表（off→on 或 track↔album）
         refreshLoudnessGains();
-      }
-      if (segKey === "effectPreset") {
-        // 音效立即生效：后端在下一个音频缓冲（约 23ms）内完成切换，
-        // 并自带 30ms 交叉淡化，所以不需要重启播放。
-        //
-        // 这里**不等待** promise：切档位必须手感即时，而失败也只影响
-        // 声音（applyEffectPreset 内部会 warn），不该让界面卡住。
-        applyEffectPreset();
       }
       if (segKey === "windowCorners") {
         // 圆角是运行期可写的 DWM 属性：立刻推给后端，点完就能看到（不用重启）

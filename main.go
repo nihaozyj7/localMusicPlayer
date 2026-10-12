@@ -359,6 +359,7 @@ func main() {
 				// 同样要在静态资源之前拦下来（见 boot_frame.go）
 				bootFrame := bootFrameHandler(store)
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					setDocumentCSPHeader(w, r.URL.Path)
 					// 前端的「首帧画好了，可以露面了」信号。
 					//
 					// 刻意走普通 HTTP 请求，而不是 Wails 的 JS→Go 绑定：那条链路
@@ -701,6 +702,24 @@ func main() {
 	if err := app.Run(); err != nil {
 		log.Fatalf("app exit: %v", err)
 	}
+}
+
+// setDocumentCSPHeader 给 HTML 文档的响应补上 `frame-ancestors 'none'`。
+//
+// 为什么只能在这里做：`frame-ancestors` 是 CSP 里的**仅响应头**指令 —— 写在
+// `<meta http-equiv="Content-Security-Policy">` 里会被浏览器直接忽略（控制台会
+// 报 "ignored when delivered via a <meta> element"）。所以三个页面的 meta CSP
+// 里都不含它（见 frontend/src/index.html 的注释），由这条响应头补上。
+//
+// 只给文档加：这条指令对静态子资源没有意义。判据是「路径是 / 或以 .html 结尾」，
+// 与 asset server 的文档路由一致（大小写不敏感 —— Windows 上 URL 大小写随意）。
+//
+// 它是纵深防御：本机任何页面都不能把播放器嵌进 iframe 做点击劫持。
+func setDocumentCSPHeader(w http.ResponseWriter, path string) {
+	if path != "/" && !strings.HasSuffix(strings.ToLower(path), ".html") {
+		return
+	}
+	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 }
 
 func startWatchers() {

@@ -33,8 +33,8 @@
     },
     {
       "match": "本机不能创建目录联接",
-      "reason": "Windows 上创建目录联接（mklink /J）需要权限；平台不满足时的正常跳过。",
-      "max": 3
+      "reason": "Windows 上创建目录联接（mklink /J）需要权限；平台不满足时的正常跳过。上限 6 = library 包里用 makeJunction 的用例数（第六轮审查 N-5 新增 2 个后重数；此前写的是 3，而当时已有 4 处调用点 —— 这个上限在「Windows 但不允许 mklink」的机器上本来是红的）。本机（Windows 10/11 普通用户）与 CI（Linux，整个文件带 //go:build windows）都不会真的跳过。",
+      "max": 6
     },
     {
       "match": "本机不能创建符号链接",

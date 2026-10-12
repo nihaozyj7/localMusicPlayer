@@ -5,8 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data: blob: file:; media-src 'self' blob: file:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws:"
+      content="default-src 'self'; img-src 'self' data: blob: file:; media-src 'self' blob: file:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"
     />
+    <!--
+      ★ CSP 的两条硬规矩（第六轮审查 §2.5，别改回去）：
+
+      1. connect-src 里**不许**再出现裸 `ws:`。裸方案名 = 允许连任意目标的
+         WebSocket（ws://evil.example 也放行），而同源页面里跑着第三方样式包
+         的 JS —— 在 fetch/img 都被锁死的情况下，它是唯一的数据外发通道。
+         同一源的 WebSocket 由 `'self'` 覆盖（CSP3 明确："'self'" 对
+         ws:/wss: 按同主机同端口匹配），所以 Vite 的 HMR 在开发期照样连得上。
+      2. object-src / base-uri / form-action 三件套补齐：本应用不加载任何插件
+         对象、不靠 <base> 解析相对地址、也没有表单要提交。
+      另：frame-ancestors 故意**不写在这里** —— 它只对
+      「随文档一起下发的响应头」生效，写在 <meta> 里会被浏览器直接忽略
+      （控制台会报 "ignored when delivered via a <meta> element"）。
+      由 Go 侧给 HTML 响应加响应头，见 main.go 的 assets 中间件。
+    -->
     <!--
       注意：img-src 只有 'self' —— 在线封面**不能**直接写第三方地址，
       必须走后端代理（/online/cover?...，见 services_online.go）。
@@ -106,10 +121,10 @@
         }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-BoFdrYOK.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/bridge-B5ZHfSUK.js">
-    <link rel="modulepreload" crossorigin href="/assets/base-CUrO2kqB.js">
-    <link rel="modulepreload" crossorigin href="/assets/skinhost-Ck_gKWPm.js">
+    <script type="module" crossorigin src="/assets/index-QaTHGB_c.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/bridge-CWWIRda1.js">
+    <link rel="modulepreload" crossorigin href="/assets/base-CY7lhaIN.js">
+    <link rel="modulepreload" crossorigin href="/assets/skinhost-rqHlHrO7.js">
     <link rel="stylesheet" crossorigin href="/assets/style-Ddg4T7B4.css">
   </head>
 <body>

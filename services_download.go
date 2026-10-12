@@ -857,49 +857,13 @@ func migrateDir(oldDir, newDir string) (moved, skipped int, failed []string) {
 			skipped++
 			continue
 		}
-		if err := moveFile(src, dst); err != nil {
+		if err := onlinecache.MoveFile(src, dst); err != nil {
 			failed = append(failed, fmt.Sprintf("%s（%v）", e.Name(), err))
 			continue
 		}
 		moved++
 	}
 	return moved, skipped, failed
-}
-
-// moveFile 优先用 Rename；跨盘符时退化成复制 + 删除。
-func moveFile(src, dst string) error {
-	if err := os.Rename(src, dst); err == nil {
-		return nil
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	tmp := dst + ".migrating"
-	out, err := os.Create(tmp)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := out.Sync(); err != nil {
-		_ = out.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return os.Remove(src)
 }
 
 // samePath 判断两个路径是否指向同一个地方（大小写与冗余分隔符无关）。

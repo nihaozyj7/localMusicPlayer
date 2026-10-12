@@ -1643,7 +1643,6 @@ type WindowService struct {
 	mainGeomSeq     uint64
 	mainGeomMoved   bool
 	mainGeomResized bool
-	mainGeomUserTouched atomic.Bool
 	// ★ 这里原有三个「用户是否动过窗口」的原子量（mainGeomUserTouched /
 	//   mainGeomSelfMove / mainGeomTrackingReady）。它们只被写入、从没被读过
 	//   —— 唯一的使用者 restoreMainWindowMaximizedWhenReady 的注释自己就写着

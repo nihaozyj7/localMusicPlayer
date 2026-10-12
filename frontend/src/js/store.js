@@ -41,7 +41,6 @@ const DEFAULT_CONFIG = {
   //   设置界面、曲库列表不挂皮肤、没有 rAF 循环，天然满帧，不受它影响。
   // 与 Go 侧 bootstrap.Config.SkinPerformanceMode 保持一致。
   skinPerformanceMode: "smooth",
-  sidebarWidth: 232,
   accentFromCover: false,
   // 封面取色的结果（#rrggbb）。由前端解码封面得到，然后随配置写回后端 ——
   // 后端在页面加载前用它生成首帧主题（见 early_theme.go），
@@ -430,20 +429,49 @@ const SIZE_OPS = {
   eq: (a, b) => a === b,
 };
 
+/**
+ * 把「数值 + 单位」换算成字节阈值；空值/非法值返回 NaN（= 这条规则不生效）。
+ *
+ * ★ 契约：与 Go 侧 internal/filter/filter.go#normalizeSize 逐条对齐，改一边请改两边。
+ * 两端的共同约定是「**不生效**」用一个不会与合法阈值撞车的值表示：
+ * Go 用负数哨兵（-1，因为 0 是合法阈值），这里用 NaN。
+ *
+ * 这段代码修的是第六轮审查 N-1：原来 `Number("")` = **0**，于是
+ * `value: ""` + `op: "gt"` = 「size > 0」= 排除所有非空文件（设置页点「添加规则」
+ * 新建的 size 规则 value 就是空串），而同一份配置在后端只是「规则不生效」——
+ * 同一份规则在设置页预览与真实扫描下给出相反结果。
+ */
 function normalizeSize(value, unit) {
-  const n = Number(String(value).replace(/[^\d.]/g, ""));
-  if (!Number.isFinite(n)) return NaN;
-  switch ((unit || "B").toUpperCase()) {
+  const cleaned = String(value ?? "").replace(/[^\d.+-]/g, "");
+  if (cleaned === "") return NaN; // 空值 = 规则失效（Go 侧返回 -1）
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return NaN; // 非法 = 规则失效
+  let mult = 1;
+  switch (String(unit || "B").toUpperCase()) {
     case "KB":
-      return n * 1024;
+      mult = 1024;
+      break;
     case "MB":
-      return n * 1024 * 1024;
+      mult = 1024 * 1024;
+      break;
     case "GB":
-      return n * 1024 * 1024 * 1024;
+      mult = 1024 * 1024 * 1024;
+      break;
     default:
-      return n;
+      mult = 1;
   }
+  // 向零截断：Go 的 int64() 与 Math.trunc 同义。不截断的话 1.1KB = 1126.4
+  // 会让两端的 eq 判定在 size = 1126 上给出相反结果。
+  const bytes = Math.trunc(n * mult);
+  // 超出 int64 表示范围 → 规则失效（与 Go 侧显式拒绝越界浮点对齐）。
+  // 判据用 2^63 而不是 MAX_SAFE_INTEGER：后者（2^53-1）会把 1e18 这种
+  // Go 侧完全接受的阈值也误判成失效。
+  if (!(bytes < twoTo63 && bytes >= -twoTo63)) return NaN;
+  return bytes;
 }
+
+/** 2^63 —— 与 Go 侧 filter.go#twoTo63 同一个边界 */
+const twoTo63 = 9223372036854775808;
 
 /** 编译用户输入的正则；非法时返回 null（界面提示错误，不崩溃） */
 export function compileRegex(pattern, flags = "i") {
@@ -494,7 +522,9 @@ function matchCompiled(song, compiled) {
     let hit = false;
 
     if (rule.type === "size") {
-      if (!Number.isFinite(c.bytes)) continue;
+      // 非有限值（空值/非法值/越界）与负数都表示「这条规则不生效」，
+      // 与 Go 侧 matchCompiled 的 `if c.bytes < 0 { continue }` 同一个判据。
+      if (!Number.isFinite(c.bytes) || c.bytes < 0) continue;
       const fn = SIZE_OPS[rule.op] || SIZE_OPS.lt;
       hit = fn(song.size, c.bytes);
     } else if (rule.type === "regex") {

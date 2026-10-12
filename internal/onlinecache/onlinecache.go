@@ -86,6 +86,12 @@ const cacheBudgetBytes = 512 << 20
 // 各个写者互不覆盖（见 writeAtomic）。
 const partSuffix = ".part"
 
+// movingSuffix 是「跨盘符搬运」那个临时文件的后缀（正式名 + "." + 随机后缀 + 它）。
+//
+// 与 partSuffix 同一条不变量：**临时文件名必须唯一，不能只由目标名决定**。
+// 见 copyThenRemove 的说明。
+const movingSuffix = ".moving"
+
 // namePattern 限制缓存文件名形态：字母数字/下划线/连字符 + 已知音频扩展名。
 //
 // 这是**目录穿越的第一道防线**：bvid 来自 URL 查询参数，直接把
@@ -312,21 +318,30 @@ func (s *Store) writeAtomic(path string, r io.Reader) (int64, error) {
 // 正在写的文件往下截断（见 writeAtomic 的说明）。
 // 返回的文件由调用方负责改名落盘或删除。
 func createPart(path string) (*os.File, error) {
+	return createUnique(path, partSuffix)
+}
+
+// createUnique 独占创建一个「<目标名>.<随机后缀><suffix>」形态的临时文件。
+//
+// 唯一性由随机后缀 + O_EXCL 共同保证：调用方拿到的文件在这个进程之外
+// 也可能被别人占着（残留文件、另一个进程），O_EXCL 会把这种情况变成
+// 「换个名字重试」而不是「打开别人的文件往下写」。
+func createUnique(path, suffix string) (*os.File, error) {
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)
 	// 随机后缀 + O_EXCL 之后，撞车概率已经可以忽略；这里仍然重试，
 	// 是为了不让「随机数源异常」变成「缓存永远写不进去」。
 	for attempt := 0; attempt < 16; attempt++ {
-		name := base + "." + randomSuffix() + partSuffix
+		name := base + "." + randomSuffix() + suffix
 		f, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err == nil {
 			return f, nil
 		}
 		if !errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("创建缓存文件失败: %w", err)
+			return nil, fmt.Errorf("创建临时文件失败: %w", err)
 		}
 	}
-	return nil, errors.New("创建缓存文件失败：临时文件名连续冲突")
+	return nil, errors.New("创建临时文件失败：临时文件名连续冲突")
 }
 
 // partCounter 是 randomSuffix 在随机源不可用时的退化序号。
@@ -410,29 +425,68 @@ func (s *Store) MovePath(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	if err := moveFile(src, dst); err != nil {
+	if err := MoveFile(src, dst); err != nil {
 		return err
 	}
 	s.forget(nameOf(src))
 	return nil
 }
 
-// moveFile 优先 Rename；跨盘符时退化为复制 + 删除。
-func moveFile(src, dst string) error {
+// MoveFile 把一个文件搬到 dst：优先 os.Rename（同盘符时原子完成），
+// 跨盘符 Rename 会失败，此时退化为「复制 + 删除」，复制没成功就绝不动原文件。
+//
+// ★ 临时文件名必须唯一，不能写死成 `dst + ".moving"`（第六轮审查 N-3）。
+//
+// 为什么：固定名是**所有调用者共享**的一个名字 —— 两个搬运同时指向同一个 dst
+// 时（下载侧在真正 Move 之前会先把 `uniquePath` 预留的占位文件删掉，预留窗口
+// 并不覆盖搬运本身；目录迁移那边也可能被点两次），两个 os.Create 会截断对方
+// 正在写的文件，字节交错后改名出去的是**谁都不是**的坏文件，而目标名会被当成
+// 一份完好的下载。（同一个教训在写缓存那条路上已经吃过一次：见 writeAtomic。）
+//
+// 另外，固定名一旦被别的什么东西占住（残留文件、被占用、恰是个目录），
+// 这条回退路径就会**永久失败**；随机名 + O_EXCL 把这种情况变成换个名字重试。
+func MoveFile(src, dst string) error {
 	if err := os.Rename(src, dst); err == nil {
 		return nil
 	}
+	return copyThenRemove(src, dst)
+}
+
+// copyThenRemove 是跨盘符那一条回退路径：复制到独占的临时文件，成功后原子改名。
+//
+// 单独拆出来是为了**能被测到**：正常机器上同一个盘符内 Rename 永远成功，
+// 这条路径平时跑不到，而它恰恰是最容易写错的一条（见 MoveFile 的说明）。
+//
+// ★ 源文件句柄必须在 os.Remove(src) **之前**关掉（第六轮审查 N-3 顺带发现）：
+// Windows 不允许删除正被打开的文件（`being used by another process`），而
+// 旧实现写的是 `defer in.Close()` —— defer 活到函数返回之后，函数最后一步
+// 却是删源文件，于是这条回退路径**永远**在最后一步失败：复制和改名其实都
+// 成功了，函数却报错，调用方当成「搬运失败」把刚搬好的文件删掉重下（下载）
+// 或报「迁移失败」（换下载目录）。也就是说跨盘符搬运此前根本走不通。
+func copyThenRemove(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	tmp := dst + ".moving"
-	out, err := os.Create(tmp)
+	if err := copyAndSync(in, dst); err != nil {
+		_ = in.Close()
+		return err
+	}
+	if err := in.Close(); err != nil {
+		return err
+	}
+	return os.Remove(src)
+}
+
+// copyAndSync 把 r 的内容写进 dst 的**独占**临时文件，落盘后原子改名到 dst。
+func copyAndSync(r io.Reader, dst string) error {
+	out, err := createUnique(dst, movingSuffix)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	tmp := out.Name()
+
+	if _, err := io.Copy(out, r); err != nil {
 		_ = out.Close()
 		_ = os.Remove(tmp)
 		return err
@@ -450,7 +504,7 @@ func moveFile(src, dst string) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return os.Remove(src)
+	return nil
 }
 
 // Remove 删掉某个 bvid 的缓存（含可能存在的半成品）。

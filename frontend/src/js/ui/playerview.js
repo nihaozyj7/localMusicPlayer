@@ -14,6 +14,7 @@
 
 import { MpElement, define, html, nothing, repeat, icon } from "./base.js";
 import { toast } from "./overlays.js";
+import { cssUrl } from "../utils.js";
 import { commit, currentSong, state, subscribe } from "../store.js";
 import { coverVersion } from "../store.js";
 import {
@@ -154,7 +155,9 @@ class MpPlayerview extends MpElement {
    */
   skinIcon(skin) {
     if (skin.iconUrl) {
-      return html`<i class="skin-icon" style=${`--skin-icon:url("${skin.iconUrl}")`}></i>`;
+      // ★ 必须走 cssUrl：地址来自第三方样式包的清单（skin.json 的 icon.file），
+      // 直接插进 url("…") 会被 `")` 闭合出 CSS 注入（见 utils.js#cssUrl）。
+      return html`<i class="skin-icon" style=${`--skin-icon:${cssUrl(skin.iconUrl)}`}></i>`;
     }
     return icon(skin.icon || "disc");
   }

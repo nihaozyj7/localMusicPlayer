@@ -63,6 +63,7 @@
  * @property {boolean} coverCarousel - —— 封面轮播（播放详情页）—— CoverCarousel 是否轮播多张封面。 刻意做成**全局偏好**而不是每首一份：一首歌有几张封面是数据， 「要不要轮着看」是习惯；放进每首歌里会出现「这首开、那首关」， 用户根本记不住自己在哪首开的。
  * @property {number} coverCarouselInterval - CoverCarouselInterval 轮播间隔（秒），下限 2 秒，默认 10 秒。
  * @property {string} aiBaseUrl - —— AI 元数据清洗（设置 → AI 元数据）——
+ * @property {string} [aiBaseUrlProblem] - AIBaseURLProblem 是派生字段：只在序列化给前端时被填充，不落盘。 装的是「这个接口地址不会被使用」的原因（由 NormalizeAIBaseURL 算出来， 出错信息本身不回显地址）。为什么要把它交给前端：地址不合法时程序会 **拒绝发送密钥**（services_ai.go#ExtractMeta），如果界面上不说明原因， 用户看到的就是「AI 莫名其妙不工作」—— 例如把地址填成局域网模型服务的 `http://192.168.x.x:1234`，而这正是必须拒绝的（密钥会明文出网卡）。 ★ 规则只有一份（Go 侧），前端不再自己实现一遍：两边各写一套校验必然会 漂移，而这里的漂移代价是「界面说没问题、后端却拒绝发请求」。
  * @property {string} aiApiKey - AIAPIKey 是密钥本身。**只用于持久化与后端调用，不原样交给前端**： ConfigService.Get 会把它打码（见 services.go#maskSecret）。 前端判断「配没配」应当看下面的 AIAPIKeySet。
  * @property {boolean} [aiApiKeySet] - AIAPIKeySet 是派生字段：只在序列化给前端时被填充，不落盘。 为什么单独给一个布尔位：密钥被打码之后前端无法再区分 「没配」与「配了但我不告诉你」，没有它 AI 卡片的状态提示会失真。
  * @property {boolean} aiThinking

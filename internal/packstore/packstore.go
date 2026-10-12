@@ -354,7 +354,7 @@ func (c *Client) Install(ctx context.Context, kind string, item Item, target Tar
 	}
 
 	// 防呆：确认拉到的确实像个主题 / 样式包
-	if err := sanityCheck(kind, target.Prefix, planMap(plan, bodies)); err != nil {
+	if err := sanityCheck(kind, planMap(plan, bodies)); err != nil {
 		return res, err
 	}
 
@@ -400,11 +400,12 @@ func planMap(plan []plannedFile, bodies [][]byte) plannedLike {
 // 写的是同一份」。把它们对错位（比如样式包目录改了名、index.json 忘了重新生成）
 // 是完全可能的，而后果是**装进去一个程序认不出来的东西**：主题列表里不出现，
 // 样式列表里也不出现，用户唯一的感受是「点了安装，什么也没发生」。
-func sanityCheck(kind, prefix string, files plannedLike) error {
-	prefix = strings.TrimSuffix(prefix, "/")
-	if prefix != "" {
-		prefix += "/"
-	}
+//
+// 参数里没有 prefix：`planMap` 给的表**已经是**去掉前缀后的相对路径
+// （见 installOne 里 `rel = strings.TrimPrefix(clean, p)`），早先这里收了一个
+// prefix 并对它做归一化，却从未使用 —— 第六轮审查（登记项 172）删掉了这个只写
+// 不读的参数，避免读者以为「检查时还按前缀匹配过」。
+func sanityCheck(kind string, files plannedLike) error {
 	switch kind {
 	case KindTheme:
 		for name, data := range files {

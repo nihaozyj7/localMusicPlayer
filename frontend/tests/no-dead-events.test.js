@@ -43,9 +43,7 @@ function walk(dir) {
 
 /** 去掉注释与字符串外的噪声：解释规则时写出的示例不该被当成真实调用。 */
 function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+  return src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 }
 
 test("src 里 emit 出的每个通道名都有订阅者", () => {
@@ -76,6 +74,6 @@ test("src 里 emit 出的每个通道名都有订阅者", () => {
       "以下事件通道发出去没有任何订阅者（死通道）：",
       ...dead.map((d) => `  ${d}`),
       "要么补上订阅方，要么删掉发送方 —— 留着它只会让人以为「这里通知过播放链路」。",
-    ].join("\n"),
+    ].join("\n")
   );
 });

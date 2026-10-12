@@ -660,6 +660,17 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 	for _, s := range res.Kept {
 		newSongs[s.ID] = s
 	}
+	// ★ 读不全的文件夹不能拿「本次没找到」当「被删了」（第六轮审查 N-6）。
+	// 明细见 staleSongsForFailedFolders 的说明。
+	stale := staleSongsForFailedFolders(m.songs, newSongs, folders, statuses)
+	if len(stale) > 0 {
+		// 保留的旧条目也要按**当前**过滤规则再过一遍：用户完全可能在文件夹掉线
+		// 期间改了规则，曲库始终只应包含通过规则的歌（不能让绕开过滤的旧条目留下）。
+		stale = filter.Apply(stale, cfg.FilterRules).Kept
+	}
+	for _, s := range stale {
+		newSongs[s.ID] = s
+	}
 	added := 0
 	for id := range newSongs {
 		if !prevIDs[id] {
@@ -687,6 +698,16 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 		folderPaths[i] = m.folders[i].Path
 	}
 	counts := countSongsInFolders(res.Kept, folderPaths)
+	// 读不全的文件夹：曲目数要把保留的旧条目一起算上，否则界面一边显示
+	// 「路径不存在 / 部分子目录读不到」，一边显示「0 首」，与曲库里实际留着的对不上。
+	// 只有真的出现读不全的文件夹时才有循环体（stale 为空则外层也空转）。
+	for i := range folderPaths {
+		for _, s := range stale {
+			if isUnder(s.Path, folderPaths[i]) {
+				counts[i]++
+			}
+		}
+	}
 	for i := range m.folders {
 		if status, ok := statuses[m.folders[i].ID]; ok {
 			m.folders[i].Status = status
@@ -732,8 +753,12 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 	_ = m.SaveCache()
 
 	out := ScanResult{
-		Found:    res.Total,
-		Kept:     len(res.Kept),
+		Found: res.Total,
+		// ★ Kept 用**扫描后曲库的实际大小**，而不是本次「找到并通过过滤」的条数。
+		// 正常路径下两者相等（每个通过过滤的条目都进了 newSongs）；只有文件夹
+		// 读不全时才会不同 —— 那时旧条目被保留着，报 res.Kept 会让界面弹出
+		//「扫描完成：保留 0 首」而曲库里有 2 首（第六轮审查 N-6）。
+		Kept:     len(newSongs),
 		Excluded: res.Excluded,
 		Added:    added,
 		Removed:  removed,
@@ -741,6 +766,51 @@ func (m *Manager) Scan(ctx context.Context, force bool) (ScanResult, error) {
 	}
 	m.notifyChanged(out)
 	return out, nil
+}
+
+// staleSongsForFailedFolders 返回「本次没找到、但因为所属文件夹读不全而不能
+// 当作已删除」的旧曲目。
+//
+// ★ 为什么需要它（第六轮审查 N-6）：
+// 全量扫描以前是拿本次结果**整体覆盖** `m.songs`（`m.songs = newSongs`）。
+// 可 `walkFolder` 在「网络盘掉线 / 目录被独占 / 权限被改」这类**瞬时**故障下
+// 会如实返回 denied / error / partial / missing —— 结果就是那一个文件夹的歌
+// 从曲库里消失：界面只多一个状态提示（「路径不存在」之类），歌已经没了，而且
+// 紧接着就被写进缓存；下次扫描成功之前，用户的歌单/收藏里那一批全是断链。
+//
+// 判据只有一条：**这个文件夹这次读全了吗**。没读全就没资格判定「谁被删了」，
+// 于是把那些文件夹下本次没找到的旧条目原样留着 —— 它们既不会被统计成
+// `Removed`，也不会从缓存里消失。
+//
+// 不会变成清不掉的幽灵：用户真的删掉文件夹时，走的是「从曲库移除文件夹」，
+// 那个路径不再是扫描根（`statuses` 里根本没有它），下次扫描照旧正常移除。
+func staleSongsForFailedFolders(
+	old, found map[string]bootstrap.Song,
+	folders []bootstrap.Folder,
+	statuses map[string]string,
+) []bootstrap.Song {
+	var untrusted []string
+	for _, f := range folders {
+		if status, ok := statuses[f.ID]; ok && status != statusOK {
+			untrusted = append(untrusted, f.Path)
+		}
+	}
+	if len(untrusted) == 0 {
+		return nil
+	}
+	var out []bootstrap.Song
+	for id, s := range old {
+		if _, ok := found[id]; ok {
+			continue // 这次也读到了：以新结果为准
+		}
+		for _, p := range untrusted {
+			if isUnder(s.Path, p) {
+				out = append(out, s)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // RescanPaths 只重新读取指定路径（文件夹监听触发的增量更新）。
@@ -768,13 +838,20 @@ func (m *Manager) RescanPaths(ctx context.Context, paths []string) (ScanResult, 
 	// 收集受影响的目录
 	dirs := map[string]bool{}
 	for _, p := range paths {
-		dirs[filepath.Dir(p)] = true
+		dirs[rescanDir(filepath.Dir(p), folders)] = true
 	}
 	candidates := []candidate{}
 	statuses := map[string]string{}
+	// ★ 读不全的目录（第六轮审查 N-6）：本次「没找到」不等于「被删了」。
+	// 记下来，下面替换旧条目时绕开它们 —— 否则网络盘掉一下就把那个目录的歌删干净
+	//（全量扫描侧同理，见 staleSongsForFailedFolders）。
+	untrusted := map[string]bool{}
 	for dir := range dirs {
 		files, status := walkFolder(dir)
 		candidates = append(candidates, files...)
+		if status != statusOK {
+			untrusted[dir] = true
+		}
 		for _, f := range folders {
 			if isUnder(dir, f.Path) {
 				statuses[f.ID] = status
@@ -795,6 +872,9 @@ func (m *Manager) RescanPaths(ctx context.Context, paths []string) (ScanResult, 
 	affectedBefore := map[string]bool{}
 	for id, s := range oldSongs {
 		for dir := range dirs {
+			if untrusted[dir] {
+				continue // 这个目录没读全：它下面的旧条目不能按「本次没找到」删掉
+			}
 			if isUnder(s.Path, dir) {
 				affectedBefore[id] = true
 				break
@@ -1253,6 +1333,126 @@ func linkLoopsBack(path string, e fs.DirEntry) bool {
 	return false
 }
 
+// resolveLinkTarget 解析一个目录链接 / 联接（junction）的目标，返回规范化的绝对路径。
+//
+// 解析不出来（不是链接、坏链接、或拿到的是没法归一化的形态）返回 ""，
+// 调用方一律按「它不是指向别处的链接」处理 —— 跟随它，与修复前行为一致。
+//
+// ★ 实测（探针见 walk_folder_junction_windows_test.go 的文件头）：
+// `os.Readlink(junction)` **能**返回目标的普通绝对路径（`C:\…\Music\A`），
+// 而 `filepath.EvalSymlinks(junction)` 是把链接路径原样返回（不解析）。
+// 也就是说「链接目标是否落在扫描根内部」这件事是可以做的，不必去调
+// GetFinalPathNameByHandle（第六轮审查 N-5 的说明里以为必须走那条路）。
+func resolveLinkTarget(path string) string {
+	target, err := os.Readlink(path)
+	if err != nil {
+		return ""
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ""
+	}
+	// 不同 Windows 版本 / Go 版本可能给出 NT 对象路径形态（`\??\C:\…`）
+	// 或扩展长度路径（`\\?\C:\…`）：去掉前缀再归一化。
+	for _, prefix := range []string{`\??\`, `\\?\`, `//?/`} {
+		if strings.HasPrefix(target, prefix) {
+			target = target[len(prefix):]
+			break
+		}
+	}
+	if !filepath.IsAbs(target) {
+		// 相对目标是合法的（junction 可以存相对路径），按「相对链接所在目录」解释
+		target = filepath.Join(filepath.Dir(path), target)
+	}
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(abs)
+}
+
+// linkTargetsInside 判断链接目标是否落在 root（含根本身）内部。
+//
+// 两侧都先折叠大小写（Windows）再用 isUnder：junction 目标回来的大小写
+// 常与扫描根原文不同，字符串比较会把同一个目录判成两个。
+func linkTargetsInside(root, target string) bool {
+	if root == "" || target == "" {
+		return false
+	}
+	return isUnder(foldPath(target), foldPath(root))
+}
+
+// rescanDir 把「事件所在的目录」规范化：路径里有哪一层是**指向某个扫描根内部**
+// 的目录链接，就用链接目标替换那一层再扫。
+//
+// ★ 为什么增量重扫也必须做这件事（第六轮审查 N-5）：
+// 监听按**文件路径**入队（watcher.go#handle），而增量重扫扫的是「文件所在目录」
+// 而不是整个扫描根 —— 那是刻意的性能取舍（见 RescanPaths 里那段说明：整个根 ×
+// 全库是 O(文件夹 × 曲目)，且整段在写锁内）。若那个目录是从一个树内链接走下来的
+// （事件名带着链接路径，例如 `root\linkA\sub\x.mp3`），扫出来的歌就会带着链接
+// 路径再进库一次 —— 与 walkFolder 跳过树内链接是同一条不变量，只是入口不同。
+//
+// 逐层往上找第一层「链接且目标在扫描根内部」；没找到就原样返回。
+func rescanDir(dir string, folders []bootstrap.Folder) string {
+	for p := dir; ; {
+		if target := resolveLinkTarget(p); target != "" && targetInsideFolders(target, folders) {
+			rest, err := filepath.Rel(p, dir)
+			if err == nil && rest != "." && rest != "" {
+				return filepath.Join(target, rest) // 事件在链接的下一层子目录里
+			}
+			return target
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return dir
+		}
+		p = parent
+	}
+}
+
+// targetInsideFolders 判断一个（链接解析出来的）路径是否落在任何扫描根之下。
+// 扫描根自己也可能是链接，因此两侧都试：原文与解引用后的位置。
+func targetInsideFolders(target string, folders []bootstrap.Folder) bool {
+	folded := foldPath(target)
+	for _, f := range folders {
+		if isUnder(folded, foldPath(f.Path)) {
+			return true
+		}
+		if root := resolveLinkTarget(f.Path); root != "" && isUnder(folded, foldPath(root)) {
+			return true
+		}
+	}
+	return false
+}
+
+// skipLinkReason 判断这个目录链接该不该跟随：目标落在**本次扫描根内部**时返回
+// 原因（空字符串表示可以跟随）。
+//
+// ★ 为什么必须跳过（第六轮审查 N-5）：`root\A` 与 `root\linkA → root\A` 并存时，
+// 目标自己会被正常走到，跟着链接再走一遍就**把同一批歌以两个路径各进库一次** ——
+// 同一首歌两条记录，路径不同、StableID 也不同（歌单/收藏里看着像两首）。
+//
+// 判据是「目标是否在扫描根之下」，因此与遍历顺序**无关**：无论链接先被读到还是
+// 后被读到，歌都记在真实目录那条路径上（顺序相关的那种「按目录身份去重」会
+// 取决于谁先被读到 —— 链接先读到就把歌记到链接路径上，链接删了歌就没了）。
+//
+// 指到扫描根**之外**的链接仍然跟随：那是把别的盘/别的目录并进曲库的正常用法
+// （第 7 条修复刻意支持的场景，见 TestWalkFolderJunctionSubdirIsTraversed）。
+func (w *folderWalker) skipLinkReason(path string, e fs.DirEntry) string {
+	if e.IsDir() {
+		return "" // 普通目录不可能指向别处
+	}
+	target := resolveLinkTarget(path)
+	if target == "" {
+		return "" // 不是链接 / 解析不出来：按修复前的行为跟随
+	}
+	if linkTargetsInside(w.root, target) || linkTargetsInside(w.rootAlso, target) {
+		return fmt.Sprintf("它的目标 %s 落在本扫描根内部（%s），跟随它会让同一批歌以两个路径各进库一次",
+			target, w.root)
+	}
+	return ""
+}
+
 // folderWalker 一次扫描根的遍历器。
 //
 // ★ 为什么不用 filepath.WalkDir：它按 Lstat 的型别决定要不要下钻，看不到
@@ -1263,7 +1463,11 @@ func linkLoopsBack(path string, e fs.DirEntry) bool {
 //     （跳过它、状态降级为 partial），而不是把两者一起吞成 ok。
 type folderWalker struct {
 	root string
-	out  []candidate
+	// rootAlso 是扫描根**解引用之后**的位置（根自己就是链接时才有值，否则为 ""）。
+	// 用于「根是链接」时判断树内链接：`root\link → 目标\A` 的 `目标\A` 不在
+	// root 的字面前缀下，却是根内部的东西。
+	rootAlso string
+	out      []candidate
 	// partial 表示有子目录没读成：本次结果可能不完整，状态要降级成 partial。
 	// 定义收紧到「目录读不了」这一件事 —— 坏链接（目标不存在）只记日志，
 	// 它不是一个「读不了的目录」。
@@ -1298,6 +1502,10 @@ func (w *folderWalker) walk(dir string) error {
 				continue
 			}
 			if linkLoopsBack(path, e) {
+				continue
+			}
+			if reason := w.skipLinkReason(path, e); reason != "" {
+				log.Printf("[library] 跳过目录链接 %s：%s", path, reason)
 				continue
 			}
 			if err := w.walk(path); err != nil {
@@ -1352,7 +1560,7 @@ func walkFolderWith(root string, readDir func(string) ([]fs.DirEntry, error)) ([
 		return out, statusMissing
 	}
 
-	w := &folderWalker{root: root, out: out, readDir: readDir}
+	w := &folderWalker{root: root, rootAlso: resolveLinkTarget(root), out: out, readDir: readDir}
 	if err := w.walk(root); err != nil {
 		if os.IsPermission(err) {
 			return w.out, statusDenied

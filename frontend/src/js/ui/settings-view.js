@@ -20,7 +20,7 @@ import { MpElement, define, html, nothing, icon } from "./base.js";
 import { animationMs, setRuntimeToken } from "../runtime-tokens.js";
 import { toast } from "./overlays.js";
 import { applyRules, commit, compileRegex, flushConfigSync, state } from "../store.js";
-import { fmtCount, fmtSize, rafThrottle } from "../utils.js";
+import { cssUrl, fmtCount, fmtSize, rafThrottle } from "../utils.js";
 import { providerFallbackLabel, providerName } from "../provider-names.js";
 import {
   APP_COPYRIGHT,
@@ -1146,7 +1146,9 @@ class MpSettingsLayer extends MpElement {
    */
   skinIcon(s) {
     if (s.iconUrl) {
-      return html`<i class="skin-icon" style=${`--skin-icon:url("${s.iconUrl}")`}></i>`;
+      // ★ 必须走 cssUrl：地址来自第三方样式包的清单（skin.json 的 icon.file），
+      // 直接插进 url("…") 会被 `")` 闭合出 CSS 注入（见 utils.js#cssUrl）。
+      return html`<i class="skin-icon" style=${`--skin-icon:${cssUrl(s.iconUrl)}`}></i>`;
     }
     return icon(s.icon || "disc");
   }

@@ -592,8 +592,9 @@ func (s *OnlineService) proxyStream(w http.ResponseWriter, r *http.Request, stre
 // teeToCache 把响应体同时写进试听缓存并回给调用方。
 //
 // 返回的 reader 只负责「转发」；写盘在**旁路 goroutine** 里进行。
-// ⚠️ 注意 io.Pipe 是无缓冲的，所以「磁盘慢」仍然会让转发变慢（写端要等读端消费），
-// 这条路只是把写盘挪出了转发 goroutine，并没有真正解耦 —— 见 pipeTee 的已知限制。
+// 两侧之间是**有界内存缓冲**（bytePipe，见 cachePipeBufferBytes）：
+// 磁盘抖动（杀软扫描 / 寻道 / 索引器占用）由缓冲吸收，转发不必等写盘；
+// 缓冲满了仍然回压 —— 磁盘持续比网络慢时宁可慢，也不让内存无上限增长。
 //
 // ★ 调用方必须 Close 返回值（见下面的 pipeTee.Close 与返回语句处的 defer）。
 func (s *OnlineService) teeToCache(stream *bilibili.AudioStream, body io.Reader) *pipeTee {
@@ -605,15 +606,15 @@ func (s *OnlineService) teeToCache(stream *bilibili.AudioStream, body io.Reader)
 	//
 	// 旧实现把「缓存已存在」的判断放在 WriteTo 内部：它会直接 return，
 	// 而此时 pipe 已经套在返回路径上了 —— 没有任何人在读 pipe 的读端。
-	// io.Pipe 没有缓冲，写端一旦没有读者就会**永久阻塞**，于是
-	// TeeReader 的每一次 pw.Write 都卡死，连带把 io.Copy(w, body) 卡死：
+	// 管道一旦没有读者，写端就会一直等下去，于是
+	// TeeReader 的每一次 Write 都卡死，连带把 io.Copy(w, body) 卡死：
 	// 表现是「第二次播放同一首在线歌曲时，进度条走到某处就再也不动了」。
 	// （Lookup 顺带刷新 LRU，所以这里用它而不是再 stat 一次。）
 	if _, hit := s.files.Lookup(stream.BVID, "m4a"); hit {
 		return &pipeTee{r: body}
 	}
 
-	pr, pw := io.Pipe()
+	pr, pw := newBytePipe(cachePipeBufferBytes)
 	// 先把 pipeTee（连同 teeSink）建好，旁路 goroutine 才引用得到同一个 sink。
 	teed := newPipeTee(body, pw)
 	go s.cacheStream(stream, path, pr, teed.sink)
@@ -622,18 +623,30 @@ func (s *OnlineService) teeToCache(stream *bilibili.AudioStream, body io.Reader)
 	return teed
 }
 
+// cachePipeBufferBytes 是「边转发边写缓存」这条旁路的内存缓冲上限（第六轮审查 N-2）。
+//
+// 为什么需要：原来用 io.Pipe，它**没有缓冲** —— 写端要等读端把字节取走才返回，
+// 而读端的下一步就是写盘，于是「磁盘慢」顺着 TeeReader 一路传回转发侧，播放跟着卡。
+// 缓存是**可选**的加速手段，绝不该让播放卡顿。
+//
+// 为什么是 2 MiB：一次试听的 m4a 典型 3~6 MiB，2 MiB 足以吸收**抖动**
+// （杀软扫描、机械盘寻道、fsync、目录被索引器占用，量级在毫秒到几十毫秒），
+// 而不是做一整首歌的内存副本。磁盘持续比网络慢时仍然回压：
+// 宁可这一首缓存得慢一点，也不能让内存随试听并发无上限增长。
+const cachePipeBufferBytes = 2 << 20
+
 // cacheStream 是试听缓存的**旁路**：消费 pipe 读端、写盘、登记缓存。
 //
 // 单独抽成方法是为了能直接测它：下面这个死锁发生在两个 goroutine 之间
 // （转发侧与旁路），不把旁路真的跑起来就测不出来。见 online_tee_test.go 的 ③。
-func (s *OnlineService) cacheStream(stream *bilibili.AudioStream, path string, pr *io.PipeReader, sink *teeSink) {
-	// ★ 旁路退出前必须**主动**放掉 pipe，否则转发侧会永久卡死。
+func (s *OnlineService) cacheStream(stream *bilibili.AudioStream, path string, pr *bytePipeReader, sink *teeSink) {
+	// ★ 旁路退出前必须**主动**放掉管道，否则转发侧会卡住。
 	//
-	// io.Pipe 没有缓冲：写端要一直等到「有人读」或「管道被关」才返回。旁路这里
-	// 一旦退出（缓存目录不可写 / 磁盘满 / 被清理，WriteTo 会直接报错返回），
-	// 读端就再没人读 —— 若不同时放掉管道，转发侧的 pw.Write 会永远等下去，
-	// io.Copy(w, body) 跟着卡死，用户看到的是「这一首试听停在某处，只能切歌」。
-	// 缓存只是可选加速手段，绝不该有这个后果。
+	// 管道是有界的（bytePipe）：写端要一直等到「缓冲区有空位」或「管道被关」
+	// 才返回。旁路这里一旦退出（缓存目录不可写 / 磁盘满 / 被清理，WriteTo 会
+	// 直接报错返回），读端就再没人读 —— 若不同时放掉管道，转发侧的写会一直
+	// 等下去（缓冲区满之后），io.Copy(w, body) 跟着卡死，用户看到的是
+	// 「这一首试听停在某处，只能切歌」。缓存只是可选加速手段，绝不该有这个后果。
 	//
 	// 下面两句是两种等价的「放掉管道」方式，**至少要有一种**（实测缺了就会卡死，
 	// 见 online_tee_test.go 的 TestCacheStreamFailureDoesNotStallTransfer）：
@@ -657,17 +670,17 @@ func (s *OnlineService) cacheStream(stream *bilibili.AudioStream, path string, p
 //
 // 它存在的唯一目的是**保证旁路 goroutine 一定能退出、且它的死活绝不回头影响转发**：
 //
-//   - io.Pipe 的写端不关，读者（s.files.WriteTo 里的 io.Copy）就永远等不到 EOF ——
+//   - 管道的写端不关，读者（s.files.WriteTo 里的 io.Copy）就永远等不到 EOF ——
 //     客户端提前断开（用户切歌、关窗口、拖动进度条重发请求）时，转发侧其实是在
 //     写端失败的，Read 根本不会返回错误，于是那个 goroutine 加上半成品 .part
 //     文件就会一直留着。每断开一次泄漏一个。
-//   - 反过来，旁路**先**退出（缓存目录不可写 / 磁盘满 / 被清理）时 pipe 就没有读者，
-//     转发侧的写会**永久阻塞**，io.Copy(w, body) 跟着卡死：现象是「这一首试听
-//     永远停在某个位置，只能切歌」。这一路以前完全没有防护，由 teeSink 兜住。
+//   - 反过来，旁路**先**退出（缓存目录不可写 / 磁盘满 / 被清理）时管道就没有读者，
+//     转发侧的写在缓冲区写满后会一直等，io.Copy(w, body) 跟着卡死：现象是
+//     「这一首试听永远停在某个位置，只能切歌」。这一路以前完全没有防护，由 teeSink 兜住。
 //
-// ⚠️ 已知限制（另立条目，不在本次修复范围）：io.Pipe 无缓冲，因此**落盘慢会让
-// 转发同样慢** —— 它并没有真正把磁盘和播放解耦，只是把写盘挪到了另一个 goroutine。
-// 想彻底解耦需要一层有界缓冲（内存占用随之上升），是需要单独决策的设计问题。
+// 与磁盘的解耦程度：管道是**有界缓冲**的（bytePipe + cachePipeBufferBytes），
+// 落盘抖动被缓冲吸收，转发不必等写盘；磁盘持续慢过网络时仍然回压（这是刻意的，
+// 见 cachePipeBufferBytes 的说明）。
 type pipeTee struct {
 	r    io.Reader
 	sink *teeSink // nil 表示这条路径不写缓存
@@ -675,7 +688,7 @@ type pipeTee struct {
 
 // newPipeTee 组装「转发 + 旁路写盘」：写端必须包成 teeSink 后再交给 TeeReader，
 // 否则缓存写失败会演变成转发侧的死锁（见 teeSink 的说明）。
-func newPipeTee(body io.Reader, pw *io.PipeWriter) *pipeTee {
+func newPipeTee(body io.Reader, pw *bytePipeWriter) *pipeTee {
 	sink := &teeSink{pw: pw}
 	return &pipeTee{r: io.TeeReader(body, sink), sink: sink}
 }
@@ -707,21 +720,21 @@ func (t *pipeTee) finish(cause error) {
 	t.sink.stop(cause) // 中止：旁路清掉 .part
 }
 
-// teeSink 是喂给 io.TeeReader 的写端：pipe 还活着就写进去，pipe 已经退役就**丢弃**。
+// teeSink 是喂给 io.TeeReader 的写端：管道还活着就写进去，管道已经退役就**丢弃**。
 //
-// ★ 为什么不能直接把 *io.PipeWriter 交给 TeeReader：
+// ★ 为什么不能直接把管道的写端交给 TeeReader：
 //
-//  1. 旁路 goroutine 提前退出（缓存写失败）后，pipe 再无读者。io.Pipe 没有缓冲，
-//     此时 pw.Write 会**永久阻塞**，TeeReader.Read 不返回 → io.Copy(w, body) 卡死，
+//  1. 旁路 goroutine 提前退出（缓存写失败）后，管道再无读者。缓冲区写满之后，
+//     Write 会一直等下去，TeeReader.Read 不返回 → io.Copy(w, body) 卡死，
 //     而这条路是「试听正在播放」的唯一数据通道：缓存写不进去，播放也跟着死。
-//  2. 那让旁路在退出前 Close 读端行不行？不行：读端一关，pw.Write 会返回
+//  2. 那让旁路在退出前 Close 读端行不行？不行：读端一关，Write 会返回
 //     ErrClosedPipe，TeeReader 把它当作**本次 Read 的错误**往上抛，io.Copy 立刻
 //     中止 —— 等于「缓存失败就把播放掐断」，同样不可接受。
 //
-// 所以「要不要继续喂缓存」这件事必须由写端自己决定：一旦 pipe 退役（无论谁先退出），
+// 所以「要不要继续喂缓存」这件事必须由写端自己决定：一旦管道退役（无论谁先退出），
 // 后续字节一律丢弃并报告写入成功，转发与播放不受任何影响。
 type teeSink struct {
-	pw   *io.PipeWriter
+	pw   *bytePipeWriter
 	done atomic.Bool
 }
 

@@ -154,8 +154,16 @@ func (s *MediaKeyService) dispatch() {
 		return
 	}
 
-	// 前端还没就绪（窗口未建 / 事件通道未接）时退化为直接操作引擎，
-	// 至少让「按下有反应」，而不是静默丢弃。
+	// onToggle 退化的触发条件只是「构造时没注入 emitter」，而生产路径上
+	// main.go#startMediaKeys 在建服务时**立刻**注入（svc.setEmitter(emit) 就在
+	// svc.Start() 上一行），所以这一段在真实运行里走不到 —— 保留它是因为
+	// MediaKeyService 是独立类型，构造方有权不注入 emitter（测试就是这么用的，
+	// 见 TestMediaKeyDispatchFallsBackWhenNoFrontend），此时按键不该被静默吞掉。
+	//
+	// ★ 原文写的是「前端还没就绪（窗口未建 / 事件通道未接）时退化」，这句是错的：
+	//   事件通道一直在，真正会丢键的是「页面还没订阅」的那一小段（热键在
+	//   ApplicationStarted 注册，前端要等界面装配完才挂监听）—— 那种情况下
+	//   emit != nil、事件发出去没人听，这段退化并不会兜住它。见登记项 N-12。
 	if onToggle != nil {
 		onToggle()
 	}

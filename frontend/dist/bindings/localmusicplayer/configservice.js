@@ -43,6 +43,12 @@ export function Path() {
 
 /**
  * Reset 恢复默认配置（保留文件夹列表）
+ * 
+ * ★ 数据目录与**配置文件路径必须从当前配置上取**，绝不能照抄 DefaultConfig() 的
+ * 那一份：默认值里的 ConfigPath 是空的（它由 NewStore 在运行时按 DataDir 拼出来），
+ * 照抄等于把「往哪儿落盘」一起清掉 —— 之后所有设置改动都只改内存、重启即丢，
+ * 而报错是 `rename .3.tmp : The system cannot find the path specified`，
+ * 完全看不出根因（历史故障，见审查报告第 9 条）。
  * @returns {$CancellablePromise<bootstrap$0.Config>}
  */
 export function Reset() {

@@ -16,19 +16,26 @@ import (
 /* ==========================================================================
    试听转发（边播边缓存）的两个死结
    --------------------------------------------------------------------------
-   背景：试听时音频字节要「一边转发给播放器、一边写进缓存」，用 io.Pipe 把
+   背景：试听时音频字节要「一边转发给播放器、一边写进缓存」，用管道把
    写盘放到旁路 goroutine（磁盘慢不拖累播放）。这套设计有两个真实缺陷：
 
-   ① 缓存已经存在时仍然套了 TeeReader。io.Pipe **没有缓冲**：写端一旦没有
-      读者就会永久阻塞。旧实现把「已有缓存」的判断放在 WriteTo 内部直接
-      return —— pipe 的读端再也没人读，于是 TeeReader 的每次写都卡死，
-      连带 io.Copy(w, body) 卡死。现象是「第二次播同一首在线歌曲，进度条
-      走到某处就不动了」。
+   ① 缓存已经存在时仍然套了 TeeReader。管道**没有读者**时写端要一直等：
+      旧实现把「已有缓存」的判断放在 WriteTo 内部直接 return —— 管道的读端
+      再也没人读，于是 TeeReader 的每次写都卡死，连带 io.Copy(w, body) 卡死。
+      现象是「第二次播同一首在线歌曲，进度条走到某处就不动了」。
 
-   ② 转发侧从不关闭 pipe 写端。客户端提前断开（切歌 / 关窗口）时，
+   ② 转发侧从不关闭管道写端。客户端提前断开（切歌 / 关窗口）时，
       io.Copy 是在**写端**失败的，转发侧读不到 EOF —— 旁路 goroutine 永远
       等不到 EOF，半成品 .part 也永远留在缓存目录里。每断开一次泄漏一个。
+
+   ★ 这些用例统一用 teeTestPipeBuffer = 0（**无缓冲**，语义等价 io.Pipe）：
+     它们守的是「管道退役后转发不受影响」这套逻辑本身，而无缓冲是**更难**的
+     那一档 —— 有缓冲时同一个 payload 会被缓冲直接吃掉，根本走不到退役分支。
+     缓冲自身的行为另见 byte_pipe_test.go 与 TestBytePipeAbsorbsSlowCache。
    ========================================================================== */
+
+// teeTestPipeBuffer = 0：无缓冲（对照旧实现的最坏情况，见文件头说明）。
+const teeTestPipeBuffer = 0
 
 // TestTeeToCacheDoesNotHangWhenAlreadyCached 守 ①。
 func TestTeeToCacheDoesNotHangWhenAlreadyCached(t *testing.T) {
@@ -72,7 +79,7 @@ func TestTeeToCacheDoesNotHangWhenAlreadyCached(t *testing.T) {
 // 不关的话旁路 goroutine 等不到 EOF，缓存文件永远不会落盘。
 func TestPipeTeeEOFClosesWriter(t *testing.T) {
 	payload := []byte("cache-me-please")
-	pr, pw := io.Pipe()
+	pr, pw := newBytePipe(teeTestPipeBuffer)
 	tee := newPipeTee(bytes.NewReader(payload), pw)
 
 	got := make(chan []byte, 1)
@@ -110,7 +117,7 @@ func TestPipeTeeEOFClosesWriter(t *testing.T) {
 
 // TestPipeTeeCloseUnblocksAbortedTransfer 守 ②。
 func TestPipeTeeCloseUnblocksAbortedTransfer(t *testing.T) {
-	pr, pw := io.Pipe()
+	pr, pw := newBytePipe(teeTestPipeBuffer)
 	tee := newPipeTee(bytes.NewReader(make([]byte, 500_000)), pw)
 
 	finished := make(chan error, 1)
@@ -171,7 +178,7 @@ func TestPipeTeeWithoutPipeForwardsPlainly(t *testing.T) {
 
 // TestTeeSinkDiscardsAfterCacheGaveUp ③ 的最短路径：旁路已经退出，写入必须丢弃而不是阻塞。
 func TestTeeSinkDiscardsAfterCacheGaveUp(t *testing.T) {
-	pr, pw := io.Pipe()
+	pr, pw := newBytePipe(teeTestPipeBuffer)
 	// ★ pr 故意**只在测试结束时**关闭：旧实现的旁路 goroutine 就是这样 ——
 	// WriteTo 直接 return，读端既不读也不关。若测试自己在旁路里先关读端，
 	// 卡死就会变成「写端报错」，测不出真正的**永久阻塞**（那是用户看到的现象）。
@@ -211,7 +218,7 @@ func TestTeeSinkDiscardsAfterCacheGaveUp(t *testing.T) {
 // 缓存写到一半失败，**播放仍必须收到完整字节**（缓存失败不能变成播放中断）。
 func TestCacheWriteFailureMidStreamDoesNotBreakPlayback(t *testing.T) {
 	payload := bytes.Repeat([]byte("C"), 400_000)
-	pr, pw := io.Pipe()
+	pr, pw := newBytePipe(teeTestPipeBuffer)
 	defer pr.Close() // 同上一个用例：不在旁路里关，忠实还原旧实现
 	tee := newPipeTee(bytes.NewReader(payload), pw)
 
@@ -247,7 +254,7 @@ func TestCacheWriteFailureMidStreamDoesNotBreakPlayback(t *testing.T) {
 // （别为了修死锁把 tee 本身修没了）。
 func TestTeeSinkKeepsDeliveringWhileCacheAlive(t *testing.T) {
 	payload := []byte("both-sides-must-see-this")
-	pr, pw := io.Pipe()
+	pr, pw := newBytePipe(teeTestPipeBuffer)
 	tee := newPipeTee(bytes.NewReader(payload), pw)
 
 	cached := make(chan []byte, 1)
@@ -270,6 +277,54 @@ func TestTeeSinkKeepsDeliveringWhileCacheAlive(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("正常路径下旁路没收到字节：tee 被修坏了")
+	}
+}
+
+// TestTransferDoesNotWaitForStalledCache 是 N-2 在**转发路径**上的回归守卫。
+//
+// 用生产常量（cachePipeBufferBytes）建管道，缓存侧一个字节都不读 —— 模拟
+// 磁盘卡住（杀软扫描 / 寻道 / 索引器占用 / 网络盘抖动）。转发侧仍然必须能
+// 送完「一个缓冲区」的内容：这段延迟必须与磁盘无关。
+//
+// 修复前（io.Pipe 无缓冲）这里的第一个 Read 就会卡住，表现为试听停住不动。
+func TestTransferDoesNotWaitForStalledCache(t *testing.T) {
+	pr, pw := newBytePipe(cachePipeBufferBytes)
+	defer pr.Close() // 缓存侧就是不读：测试结束时放掉管道即可
+
+	// ★ 负载大小**不跟随** cachePipeBufferBytes：写死 256KiB，这样有人把缓冲
+	// 调小（甚至调成 0 = 退回 io.Pipe）时，这条用例会真的红；若跟随常量，
+	// 调成 0 时负载也变成 0 字节，用例会假通过（第一版就是这么写错的）。
+	payload := bytes.Repeat([]byte("Z"), 256<<10)
+	tee := newPipeTee(bytes.NewReader(payload), pw)
+
+	done := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(tee)
+		done <- b
+	}()
+
+	select {
+	case b := <-done:
+		if len(b) != len(payload) {
+			t.Fatalf("转发字节数 = %d，期望 %d", len(b), len(payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("缓存侧完全停滞时转发也被卡住了 —— 这正是 N-2 的现象" +
+			"（磁盘慢 → 播放卡），说明两侧之间没有可用的缓冲")
+	}
+}
+
+// TestCachePipeBufferIsMeaningful 钉住缓冲量这个**设计取值**：
+// 太小吸收不了磁盘抖动（N-2 会以更隐蔽的形式回来），太大等于给每路试听
+// 预留几十兆内存。取值理由写在 cachePipeBufferBytes 的注释里。
+func TestCachePipeBufferIsMeaningful(t *testing.T) {
+	if cachePipeBufferBytes < 1<<20 {
+		t.Fatalf("缓冲只有 %d 字节：吸收不了一次杀软扫描 / 磁盘寻道，"+
+			"「磁盘慢就卡播放」会以更隐蔽的形式回来", cachePipeBufferBytes)
+	}
+	if cachePipeBufferBytes > 8<<20 {
+		t.Fatalf("缓冲有 %d 字节：每路试听都占这么多内存，代价过大",
+			cachePipeBufferBytes)
 	}
 }
 

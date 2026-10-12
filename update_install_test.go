@@ -198,6 +198,154 @@ func TestPrepareInstallRejectsMissingInputs(t *testing.T) {
 	}
 }
 
+/* --------------------------------------------------------------------------
+   批处理转义（第六轮审查 §2.7「.bat 安装脚本直接拼路径」）
+
+   cmd.exe 的两条规矩决定了下面这些用例：
+     · 双引号**挡不住** `%VAR%` 展开，所以路径里的 `%` 必须写成 `%%`；
+     · `echo` 之后的 `& | < > ^ ( )` 仍然有语法含义（`&` 会把一行拆成两条
+       命令），要加 `^`；
+     · `!` 只在延迟展开下特殊，脚本已显式 `setlocal DisableDelayedExpansion`。
+   -------------------------------------------------------------------------- */
+
+func TestBatPercentEscapesPercentSign(t *testing.T) {
+	cases := map[string]string{
+		`C:\Users\100% User\app.exe`: `C:\Users\100%% User\app.exe`,
+		`C:\%TEMP%\lmplayer.exe`:     `C:\%%TEMP%%\lmplayer.exe`,
+		`C:\plain\path.exe`:          `C:\plain\path.exe`,
+	}
+	for in, want := range cases {
+		if got := batPercent(in); got != want {
+			t.Errorf("batPercent(%q) = %q，期望 %q", in, got, want)
+		}
+	}
+}
+
+func TestBatEchoTextEscapesCmdSeparators(t *testing.T) {
+	cases := map[string]string{
+		`a&b`: `a^&b`,
+		// `(` / `)` 也加 `^`（echo 解析后仍是原字符），`^` 自己转义成 `^^`。
+		`C:\x(1)^y`:        `C:\x^(1^)^^y`,
+		`50% & more`:       `50%% ^& more`,
+		`no specials here`: `no specials here`,
+	}
+	for in, want := range cases {
+		if got := batEchoText(in); got != want {
+			t.Errorf("batEchoText(%q) = %q，期望 %q", in, got, want)
+		}
+	}
+}
+
+func TestInstallScriptEscapesPercentInEveryPath(t *testing.T) {
+	plan := installPlan{
+		SourcePath: `C:\Users\100% User\Downloads\LMPlayer-v0.2.0.exe`,
+		TargetPath: `C:\Users\100% User\AppData\Local\LMPlayer\lmplayer.exe`,
+		ScriptPath: `C:\tmp\apply-update.bat`,
+	}
+	script := buildInstallScript(plan)
+
+	// 三个路径（源 / 目标 / 备份）都必须以 %% 的形式出现。
+	for _, want := range []string{
+		`100%% User\Downloads`,
+		`100%% User\AppData`,
+		`100%% User\AppData\Local\LMPlayer\lmplayer.exe.old`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("脚本里没有转义后的路径片段 %q\n---\n%s", want, script)
+		}
+	}
+	// 反例：未转义的 `100% User` 一旦出现，cmd 就会把它当变量展开。
+	if strings.Contains(script, `100% User`) {
+		t.Errorf("脚本里出现了未转义的 `100%% User`（cmd 会展开成别的东西）\n---\n%s", script)
+	}
+}
+
+func TestInstallScriptEscapesAmpersandInHint(t *testing.T) {
+	plan := installPlan{
+		SourcePath: `C:\Downloads\A&B\LMPlayer.exe`,
+		TargetPath: `C:\Apps\LMPlayer\lmplayer.exe`,
+		ScriptPath: `C:\tmp\apply-update.bat`,
+	}
+	script := buildInstallScript(plan)
+
+	// 提示行里必须转义 `&`，否则这一行会被拆成两条命令、用户只看到半句。
+	var hint string
+	for _, line := range strings.Split(script, "\r\n") {
+		if strings.HasPrefix(line, "echo     ") {
+			hint = line
+			break
+		}
+	}
+	if hint == "" {
+		t.Fatalf("脚本里没有「安装包位置」提示行\n---\n%s", script)
+	}
+	if !strings.Contains(hint, `A^&B`) {
+		t.Errorf("提示行里的 & 没有被转义：%q", hint)
+	}
+	// 引号内的命令行**不需要**转义（引号已经让它变成普通字符），
+	// 多转义一个 ^ 反而会让路径多出一个字符。
+	if !strings.Contains(script, `"C:\Downloads\A&B\LMPlayer.exe"`) {
+		t.Errorf("引号内的路径不该被改写\n---\n%s", script)
+	}
+}
+
+func TestInstallScriptDisablesDelayedExpansion(t *testing.T) {
+	script := buildInstallScript(samplePlan(t))
+	// `!` 在延迟展开下是特殊字符，而注册表可以让每个 cmd 都打开延迟展开。
+	if !strings.Contains(script, "setlocal DisableDelayedExpansion") {
+		t.Error("脚本必须显式关掉延迟展开，否则路径里的 ! 会被吃掉")
+	}
+}
+
+func TestInstallScriptKeepsBangInPath(t *testing.T) {
+	plan := installPlan{
+		SourcePath: `C:\Downloads\Wow!\LMPlayer.exe`,
+		TargetPath: `C:\Apps\LMPlayer\lmplayer.exe`,
+		ScriptPath: `C:\tmp\apply-update.bat`,
+	}
+	script := buildInstallScript(plan)
+	if !strings.Contains(script, `Wow!`) {
+		t.Error("`!` 是合法文件名字符，不该被转义或删除")
+	}
+}
+
+func TestFormatArgsEscapesPercentAndDropsQuote(t *testing.T) {
+	got := formatArgs([]string{"--pct=50%", `he"llo`, "plain"})
+	want := ` "--pct=50%%" "hello" "plain"`
+	if got != want {
+		t.Errorf("formatArgs = %q，期望 %q", got, want)
+	}
+}
+
+func TestPrepareInstallRejectsUnescapablePaths(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "new.exe")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+		t.Fatalf("准备源文件失败：%v", err)
+	}
+
+	// 双引号：无法在 cmd 的引号参数里转义（会闭合参数变成新命令）。
+	if _, err := prepareInstall(installPlan{
+		SourcePath: src,
+		TargetPath: `C:\Apps\bad"name\lmplayer.exe`,
+		ScriptPath: filepath.Join(dir, "s.bat"),
+	}); err == nil {
+		t.Error(`目标路径里含 " 时应当拒绝，而不是拼出一段可能被拆开的命令`)
+	}
+
+	// 换行：Windows 允许文件名叫这个，但写进批处理会把这行提前结束。
+	nl := filepath.Join(dir, "bad\nname.exe")
+	if err := os.WriteFile(nl, []byte("x"), 0o644); err == nil {
+		if _, err := prepareInstall(installPlan{
+			SourcePath: nl,
+			TargetPath: `C:\Apps\LMPlayer\lmplayer.exe`,
+			ScriptPath: filepath.Join(dir, "s2.bat"),
+		}); err == nil {
+			t.Error("源路径里含换行时应当拒绝")
+		}
+	}
+}
+
 func TestDefaultInstallDirIsUnderDataDir(t *testing.T) {
 	dataDir := t.TempDir()
 	got := defaultInstallDir(dataDir)

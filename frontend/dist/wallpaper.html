@@ -10,8 +10,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws:"
+      content="default-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"
     />
+    <!-- connect-src 只留 'self'（裸 ws: 等于允许任意目标外连，见 index.html 的长注释）；
+         frame-ancestors 故意不写在这里 —— 它只认响应头，由 main.go 的中间件补。 -->
     <title>桌面背景歌词</title>
     <!--
       桌面背景歌词窗口（见 Go 侧 desktop_wallpaper.go）。
@@ -44,9 +46,9 @@
       （见 frontend/src/js/desktop-wallpaper.js）。
       渲染逻辑见 ./js/desktop-wallpaper-window.js。
     -->
-    <script type="module" crossorigin src="/assets/wallpaper-uJdKveL5.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/bridge-B5ZHfSUK.js">
-    <link rel="modulepreload" crossorigin href="/assets/skinhost-Ck_gKWPm.js">
+    <script type="module" crossorigin src="/assets/wallpaper-CZzKjfzl.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/bridge-CWWIRda1.js">
+    <link rel="modulepreload" crossorigin href="/assets/skinhost-rqHlHrO7.js">
     <link rel="stylesheet" crossorigin href="/assets/style-Ddg4T7B4.css">
   </head>
   <body>

@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -420,6 +422,95 @@ func TestHandlerBlocksTraversal(t *testing.T) {
 		if strings.Contains(rec.Body.String(), "outside") {
 			t.Errorf("%s: 泄露了根目录外的文件内容", p)
 		}
+	}
+}
+
+/* --------------------------------------------------------------------------
+   /skins/ 与链接（第六轮审查 §2.7）
+   --------------------------------------------------------------------------
+   样式目录是**用户数据目录**：里面的符号链接（Windows 上需要开发者模式或
+   管理员权限）或目录联接（`mklink /J`，**不需要任何权限**）能让
+   `/skins/<id>/x` 实际指向目录外的文件。而同源页面里跑着第三方样式包的 JS，
+   它能直接 fetch 这些地址 —— 读配置、读用户主目录都属于这一类。
+
+   本机实测（这也是策略的来源）：
+     · `os.Symlink` 报 "A required privilege is not held by the client"；
+     · 目录联接能建，但 Go 的 `os.Lstat` 对它**不报 ModeSymlink**
+       （所以判据用文件属性，见 linkguard_windows.go）；
+     · `filepath.EvalSymlinks` 解析不了联接内部的文件（"The system cannot find
+       the path specified"）—— 于是 Windows 上的联接一律不服务，
+       因为「证明不了它没越界」（与 internal/metacache/embed.go 同一条原则）。
+   -------------------------------------------------------------------------- */
+
+// linkDir 建一个 targetDir → linkPath 的目录链接。返回 false 表示本机做不了。
+func linkDir(t *testing.T, targetDir, linkPath string) bool {
+	t.Helper()
+	if err := os.Symlink(targetDir, linkPath); err == nil {
+		return true
+	}
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+		return false
+	}
+	// 目录联接：mklink /J，不需要开发者模式。
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", linkPath, targetDir).CombinedOutput(); err != nil {
+		t.Logf("mklink /J 失败：%v（%s）", err, out)
+		return false
+	}
+	return true
+}
+
+// 越界的链接绝不能把根目录外的文件放出去。
+func TestHandlerBlocksLinkEscapingDataDir(t *testing.T) {
+	m := newTestManagerWithFiles(t)
+
+	// 包目录里放一个指向「数据目录」的链接：它是样式根目录的**上一层**，
+	// 里面有 outside.txt。字符路径上完全合法，只有看链接本身才看得出越界。
+	escape := filepath.Join(m.Dir(), "neon", "escape")
+	if !linkDir(t, filepath.Dir(m.Dir()), escape) {
+		t.Skip("本机不能创建目录联接（Windows 需要权限）")
+	}
+
+	rec := authGet(t, m, "/skins/neon/escape/outside.txt", http.MethodGet)
+	if rec.Code == http.StatusOK {
+		t.Errorf("跟着链接读到了样式根目录之外的文件（内容 %q）", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "outside") {
+		t.Error("响应体里泄露了根目录外文件的内容")
+	}
+
+	// 对照组：包内普通文件必须照常可读 —— 证明上面的非 200 不是「handler 坏了」。
+	ok := authGet(t, m, "/skins/neon/icon.svg", http.MethodGet)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("包内普通文件应当 200，得到 %d", ok.Code)
+	}
+}
+
+// 指向根目录**之内**的链接：非 Windows 上必须放行（正常用法）；
+// Windows 上因为解析不了目录联接而一律拒绝 —— 这条差异是刻意的，写下来免得
+// 以后有人当成 bug「修」回去。
+func TestHandlerLinkInsideDataDirPolicy(t *testing.T) {
+	m := newTestManagerWithFiles(t)
+
+	link := filepath.Join(m.Dir(), "viaLink")
+	if !linkDir(t, filepath.Join(m.Dir(), "neon"), link) {
+		t.Skip("本机不能创建目录联接（Windows 需要权限）")
+	}
+
+	rec := authGet(t, m, "/skins/viaLink/icon.svg", http.MethodGet)
+	if runtime.GOOS == "windows" {
+		if rec.Code == http.StatusOK {
+			t.Errorf("Windows 上目录联接不服务（EvalSymlinks 解析不了，无法证明没越界），却拿到了 %d", rec.Code)
+		}
+		return
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("指向根目录内的符号链接应当可读，得到 %d（内容 %q）", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "<svg/>") {
+		t.Errorf("内容不对：%q", rec.Body.String())
 	}
 }
 

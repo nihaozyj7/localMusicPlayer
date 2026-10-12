@@ -76,7 +76,25 @@ func compiled(pattern string) *regexp.Regexp {
 	return re
 }
 
-// normalizeSize 把「数值 + 单位」换算为字节；非法返回 -1
+// sizeRuleInert 是 normalizeSize 的「这条规则不生效」哨兵值。
+//
+// 为什么用负数而不是 0：0 是**合法阈值**（用户完全可能想写「大于 0 字节」），
+// 而空值/非法值必须与它区分开，否则一条空 size 规则会变成「size > 0」——
+// 即「排除所有非空文件」，一次预览就把曲库清空（见第六轮审查 N-1）。
+const sizeRuleInert int64 = -1
+
+// normalizeSize 把「数值 + 单位」换算为字节；空值/非法值返回 sizeRuleInert。
+//
+// ★ 契约（与前端 frontend/src/js/store.js#normalizeSize 逐条对齐，改一边请改两边）：
+//   - 只保留数字与 `.` `+` `-`（与前端同一条清洗规则，保证「非法输入」的判定一致）；
+//   - 清洗后为空 → 不生效（前端返回 NaN）；解析失败 → 不生效；
+//   - 单位 KB/MB/GB（大小写不敏感，缺省按字节）；
+//   - 向零截断（Go 的 int64() 与 JS 的 Math.trunc 同义），
+//     否则 1.1KB = 1126.4 会让两端的 eq 判定在 size=1126 上给出相反结果；
+//   - 超出 int64 表示范围 → 不生效。这是**新钉下来的**行为：Go 里把越界浮点
+//     转成 int64 的结果是「实现相关」（amd64 上会得到负数，被后面的 <0 判定
+//     当成不生效，但换个架构就未必），显式拒绝比赌平台行为好，两端也才有
+//     一个可以逐条比对的共同契约。
 func normalizeSize(value, unit string) int64 {
 	cleaned := strings.Map(func(r rune) rune {
 		if (r >= '0' && r <= '9') || r == '.' || r == '-' || r == '+' {
@@ -85,23 +103,30 @@ func normalizeSize(value, unit string) int64 {
 		return -1
 	}, value)
 	if cleaned == "" {
-		return -1
+		return sizeRuleInert
 	}
 	n, err := strconv.ParseFloat(cleaned, 64)
 	if err != nil {
-		return -1
+		return sizeRuleInert
 	}
 	switch strings.ToUpper(strings.TrimSpace(unit)) {
 	case "KB":
-		return int64(n * 1024)
+		n *= 1024
 	case "MB":
-		return int64(n * 1024 * 1024)
+		n *= 1024 * 1024
 	case "GB":
-		return int64(n * 1024 * 1024 * 1024)
-	default:
-		return int64(n)
+		n *= 1024 * 1024 * 1024
 	}
+	// int64 的范围是 [-2^63, 2^63-1]。float64 表示不了 2^63-1（会进位成 2^63），
+	// 所以判据写成「>= 2^63 或 < -2^63」—— 恰好等于 -2^63 是合法的。
+	if n >= twoTo63 || n < -twoTo63 {
+		return sizeRuleInert
+	}
+	return int64(n)
 }
+
+// twoTo63 = 2^63，用于越界判定（写成常量避免每次调用都构造 untyped 大整数）。
+const twoTo63 = 9223372036854775808.0
 
 func sizeMatch(op string, actual, threshold int64) bool {
 	switch op {
@@ -168,6 +193,9 @@ func matchCompiled(path string, size int64, rules []compiledRule) (bool, string)
 		hit := false
 		switch c.rule.Type {
 		case "size":
+			// 负数 = 这条规则不生效：既包括 normalizeSize 的哨兵 sizeRuleInert，
+			// 也包括用户真写了负值（"-5MB" 这种阈值没有任何意义，
+			// 前端 store.js#matchCompiled 用同一个判据跳过它）。
 			if c.bytes < 0 {
 				continue
 			}

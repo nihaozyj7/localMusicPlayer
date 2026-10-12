@@ -129,6 +129,28 @@ export function esc(s) {
 }
 
 /**
+ * 把地址拼成可以安全塞进 CSS 的 `url("…")` 值。
+ *
+ * 为什么不能直接写 `url("${url}")`（第六轮审查 §2.7）：这里的地址来自
+ * **第三方样式包的清单**（`skin.json` 的 `icon.file`），而它最终写进的是
+ * 元素的 `style` 属性 —— 地址里只要出现 `")`，字符串就被闭合，后面跟的
+ * 内容会被当成**新的 CSS 声明**解析（CSS 注入）。样式包是同源执行的第三方
+ * 代码，这条注入路径必须自己堵死。
+ *
+ * 做法是 CSS 字符串转义：`\` 与 `"` 前加反斜杠，控制字符（换行等）换成空格
+ * —— CSS 字符串里不允许裸换行。转义之后任何字符都只能是字符串内容，
+ * 闭不出去；而正常地址（`/skins/<id>/assets/icon.svg?t=…`）逐字节不变。
+ */
+export function cssUrl(raw) {
+  const s = String(raw ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, " ");
+  return `url("${s}")`;
+}
+
+/**
  * 生成占位封面（内联 SVG data URL）
  * 正式版会由 Go 后端读取音频内嵌封面；这里用于界面预览。
  */

@@ -25,12 +25,15 @@
 package library
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"localmusicplayer/internal/bootstrap"
 )
 
 // makeJunction 造一个目录联接；失败则跳过（不是所有环境都允许）。
@@ -132,6 +135,88 @@ func TestWalkFolderJunctionLoopIsCut(t *testing.T) {
 	if calls > 5 {
 		t.Errorf("枚举了 %d 次目录，期望 3 次以内 —— 绕回的目录联接被走进了", calls)
 	}
+}
+
+// TestWalkFolderJunctionInsideRootIsNotScannedTwice 扫描根**内部**的目录联接
+// 指向同一个根里的另一个目录（`root\A` 与 `root\linkA -> root\A`）。
+//
+// ★ 第六轮审查 N-5：修复前这种情况整棵被跳过（`IsDir()` 门槛），第 7 条修复开始
+// 解引用之后，同一批歌会以**两个路径各进库一次** —— 同一首歌两条记录，路径不同、
+// StableID 也不同。判据是「链接目标是否落在本次扫描根之下」，与遍历顺序无关。
+func TestWalkFolderJunctionInsideRootIsNotScannedTwice(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "A", "a.mp3"))
+	writeFile(t, filepath.Join(root, "A", "sub", "b.mp3"))
+	makeJunction(t, filepath.Join(root, "linkA"), filepath.Join(root, "A"))
+
+	got, status := walkFolder(root)
+	if status != statusOK {
+		t.Fatalf("状态 = %q，期望 %q", status, statusOK)
+	}
+	if len(got) != 2 {
+		t.Fatalf("收集到 %d 个候选 %v，期望 2 个 —— 树内链接让同一批歌各进库一次",
+			len(got), pathsOf(got))
+	}
+	// 歌必须记在**真实目录**那条路径上，而不是链接路径：链接删掉之后歌不该消失。
+	for _, c := range got {
+		if rel, err := filepath.Rel(filepath.Join(root, "linkA"), c.path); err == nil &&
+			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			t.Errorf("候选 %s 记在了链接路径下（应记在真实目录 %s 下）", c.path, filepath.Join(root, "A"))
+		}
+	}
+}
+
+// TestRescanPathsThroughInsideRootLinkKeepsTargetPath 增量重扫的同一个入口。
+//
+// 监听按**文件路径**入队，增量重扫扫的是「文件所在目录」而不是整个扫描根
+// （刻意的性能取舍）。事件名带着链接路径时（`root\linkA\sub\b.mp3`），
+// 重扫会以链接路径再收一次歌 —— 与全量扫描是同一条不变量。
+func TestRescanPathsThroughInsideRootLinkKeepsTargetPath(t *testing.T) {
+	m, store, _ := newTestManager(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "A"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeWAV(t, filepath.Join(root, "A", "a.wav"), 1)
+	makeJunction(t, filepath.Join(root, "linkA"), filepath.Join(root, "A"))
+
+	if err := store.Update(func(c *bootstrap.Config) {
+		c.Folders = []bootstrap.Folder{{ID: "f1", Path: root}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m = NewManager(store)
+	if _, err := m.Scan(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(m.Songs()); n != 1 {
+		t.Fatalf("首次扫描后应有 1 首，实际 %d：%v", n, songPaths(m))
+	}
+
+	// 模拟监听：事件名带链接路径
+	throughLink := filepath.Join(root, "linkA", "a.wav")
+	if _, err := m.RescanPaths(context.Background(), []string{throughLink}); err != nil {
+		t.Fatalf("增量扫描失败: %v", err)
+	}
+	if n := len(m.Songs()); n != 1 {
+		t.Fatalf("增量重扫后应有 1 首，实际 %d：%v —— 树内链接让同一首歌多出一条", n, songPaths(m))
+	}
+	for _, s := range m.Songs() {
+		if rel, err := filepath.Rel(filepath.Join(root, "linkA"), s.Path); err == nil &&
+			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			t.Errorf("曲目路径 %s 记到了链接路径下（应记在 %s 下）", s.Path, filepath.Join(root, "A"))
+		}
+	}
+}
+
+// songPaths 把当前曲库路径排成切片，仅用于失败信息。
+func songPaths(m *Manager) []string {
+	songs := m.Songs()
+	out := make([]string, 0, len(songs))
+	for _, s := range songs {
+		out = append(out, s.Path)
+	}
+	return out
 }
 
 // TestWatcherRegistersJunctionSubdir 监听侧同一类修复：

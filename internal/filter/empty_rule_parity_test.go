@@ -133,3 +133,109 @@ func TestCompiledEmptyPatternIsNil(t *testing.T) {
 		t.Fatal("非空 pattern 应能编译成功")
 	}
 }
+
+/* --------------------------------------------------------------------------
+   size 规则的阈值语义（第六轮审查 N-1）
+   --------------------------------------------------------------------------
+   表逐条对应 frontend/tests/filter-parity.test.js 里的同名表（改一边请改两边）。
+
+   钉住的是：**空值/非法值/负数/越界 = 这条规则不生效**，而不是「阈值 0」。
+   反例（修复前的行为）：`value: ""` + `op: "gt"` 在前端会被解析成 0，于是
+   「size > 0」把**所有非空文件**都排除掉 —— 而后端只是把这条规则跳过。
+   同一份配置，设置页预览与真实扫描给出相反结果。
+   -------------------------------------------------------------------------- */
+
+func TestSizeRuleThresholdParity(t *testing.T) {
+	// 与前端测试同一个 size=5000 的对照歌曲（个别用例自带 size，见下表）
+	const defaultSize int64 = 5000
+
+	cases := []struct {
+		name     string
+		value    string
+		unit     string
+		op       string
+		scope    string
+		size     int64 // 0 = 用 defaultSize
+		excluded bool
+	}{
+		// ★ 缺陷本体：空值 + gt。修复前前端这里是 true（「0 字节以上」全部排除）。
+		{"空值 + gt + exclude → 规则失效，歌保留", "", "B", "gt", "exclude", 0, false},
+		{"空值 + lt + exclude → 规则失效，歌保留", "", "B", "lt", "exclude", 0, false},
+		{"空值 + eq + exclude → 规则失效，歌保留", "", "B", "eq", "exclude", 0, false},
+		// include 的「存在即参与判定」语义不受规则是否失效影响（两端一致）
+		{"空值 + gt + include → 一条都命中不了（include-miss）", "", "B", "gt", "include", 0, true},
+		// 纯非法输入同样是「不生效」，而不是「0」
+		{"字母 + gt + exclude → 不生效", "abc", "B", "gt", "exclude", 0, false},
+		{"只有小数点 + gt + exclude → 不生效", ".", "B", "gt", "exclude", 0, false},
+		{"连字符 + gt + exclude → 不生效", "--", "B", "gt", "exclude", 0, false},
+		// 负数阈值没有意义 → 不生效（两端都用「负数 = 失效」这一条判据）
+		{"负值 + gt + exclude → 不生效", "-5", "B", "gt", "exclude", 0, false},
+		{"负值 + lt + include → 不生效且 include 落空", "-5", "B", "lt", "include", 0, true},
+		// 越界 = 不生效（两端显式拒绝，不依赖「浮点转整数」的实现相关行为）
+		{"超出 int64 + gt + exclude → 不生效", "99999999999999999999999999", "B", "gt", "exclude", 0, false},
+		// 0 是**合法**阈值，必须与「空值」区分开
+		{"0 + gt + exclude → 0 是合法阈值，非空文件被排除", "0", "B", "gt", "exclude", 0, true},
+		{"0 + lt + exclude → 没有文件小于 0 字节", "0", "B", "lt", "exclude", 0, false},
+		// 单位换算
+		{"1KB + gt + exclude → 5000 > 1024", "1", "KB", "gt", "exclude", 0, true},
+		{"5MB + lt + exclude → 5000 < 5242880", "5", "MB", "lt", "exclude", 0, true},
+		{"1GB + lt + exclude → 5000 < 1073741824", "1", "GB", "lt", "exclude", 0, true},
+		// ★ 截断必须一致：1.1KB = 1126.4 → 两端都截断成 1126
+		{"1.1KB + eq + exclude（size=1126）→ 截断后相等", "1.1", "KB", "eq", "exclude", 1126, true},
+		{"1.1KB + eq + exclude（size=1127）→ 截断后不等", "1.1", "KB", "eq", "exclude", 1127, false},
+		// 单位大小写不敏感
+		{"1kb + gt + exclude（小写单位）→ 5000 > 1024", "1", "kb", "gt", "exclude", 0, true},
+		// 清洗规则一致：逗号被去掉 → "1,5" 读作 15（两端同一个清洗规则）
+		{"1,5KB + lt + exclude（逗号被清洗 → 15KB）", "1,5", "KB", "lt", "exclude", 0, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			size := c.size
+			if size == 0 {
+				size = defaultSize
+			}
+			r := rule("r", "size", c.op, c.value, c.unit, c.scope)
+			got, id := Match("D:/Music/a.mp3", size, []bootstrap.FilterRule{r})
+			if got != c.excluded {
+				t.Fatalf("size=%d，value=%q unit=%q op=%q scope=%q：excluded=%v（命中 %q），期望 %v —— 与前端不一致",
+					size, c.value, c.unit, c.op, c.scope, got, id, c.excluded)
+			}
+			// 批量入口必须与单曲入口给出同一结论
+			songs := []bootstrap.Song{{Path: "D:/Music/a.mp3", Size: size}}
+			res := Apply(songs, []bootstrap.FilterRule{r})
+			if (len(res.Kept) == 0) != c.excluded {
+				t.Fatalf("Apply 与 Match 不一致：kept=%d excluded=%d", len(res.Kept), res.Excluded)
+			}
+		})
+	}
+}
+
+// TestNormalizeSizeSentinels 直接钉住换算函数的契约（含 Go/JS 共同的边界）。
+func TestNormalizeSizeSentinels(t *testing.T) {
+	cases := []struct {
+		value string
+		unit  string
+		want  int64
+	}{
+		{"", "B", sizeRuleInert},
+		{"   ", "B", sizeRuleInert},
+		{"abc", "MB", sizeRuleInert},
+		{".", "B", sizeRuleInert},
+		{"-5", "B", -5}, // 负值由 matchCompiled 的 `< 0` 判成「不生效」
+		{"0", "B", 0},   // 0 是合法阈值，不能与空值混为一谈
+		{"1.1", "KB", 1126},
+		{"5", "MB", 5 * 1024 * 1024},
+		{"1", "gb", 1024 * 1024 * 1024},
+		// 恰好 -2^63 属于 int64 范围之内，必须接受
+		{"-9223372036854775808", "B", -9223372036854775808},
+		// 2^63 越界 → 失效
+		{"9223372036854775808", "B", sizeRuleInert},
+		{"99999999999999999999999999", "GB", sizeRuleInert},
+	}
+	for _, c := range cases {
+		if got := normalizeSize(c.value, c.unit); got != c.want {
+			t.Errorf("normalizeSize(%q, %q) = %d，期望 %d", c.value, c.unit, got, c.want)
+		}
+	}
+}
