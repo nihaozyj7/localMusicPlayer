@@ -135,6 +135,41 @@ const chrome = deriveChrome(manifest.colors);
 
 宿主壳只读 `--chrome-*`，不读插件任何变量；插件自己画面的配色是插件 CSS 的事。
 
+## 舞台安全区（`--skin-inset-top` / `--skin-inset-bottom`）
+
+配色契约解决的是"宿主壳**看得清**"，安全区解决的是"插件的内容**放得住**"：
+宿主壳（标题栏 + 详情页头部行 / 底部播放控件栏）是**叠在插件画面上**的
+（`.titlebar` / `.playerbar` 的 z-index 都高于 `.playerview`），所以插件画在
+这两条带子里的东西会被宿主控件压住 —— 两边都读不清。
+
+宿主把两条带子的高度挂在舞台根上：
+
+| 变量 | 含义 | 主窗口 | 定义处 |
+| --- | --- | --- | --- |
+| `--skin-inset-top` | 顶部让位 = 标题栏 + 详情页头部行 | 88px（`--h-titlebar` + `--h-pv-head`） | `styles/components/layout.css` |
+| `--skin-inset-bottom` | 底部让位 = 播放控件栏 | 86~92px（`--h-playerbar`，随宽度收窄） | 同上 |
+
+* 声明了 `capabilities.background` 的样式舞台是 `inset: 0`（铺满整窗，见 layout.css），
+  **必须读**这两个值；没声明的样式舞台本来就夹在两块 chrome 之间，读到的是 `0px`。
+* 宿主在桌面背景歌词窗口里把两者**归零**（`desktopwallpaper.css`），所以取值一律写
+  `var(--skin-inset-top, 0px)` 并参与 `calc()`，不要写死像素。
+* 装饰层（背景图 / 渐变 / 粒子 / 光晕）可以画到 chrome 底下去，**要读的文字不行**。
+* 窄窗口与降级档的 `padding` 覆盖最容易把这两项吃掉 —— 改内边距时原样带过去。
+
+```css
+.hud {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  /* 顶部/底部各留安全区 + 自己的呼吸空间 */
+  padding: calc(var(--skin-inset-top, 0px) + 20px) 26px calc(var(--skin-inset-bottom, 0px) + 18px);
+}
+```
+
+作者向的同一份说明见 `internal/skins/template/皮肤说明.md` §「安全区」。
+
 ## CSS 隔离（`wrapPluginCss`）
 
 宿主注入样式表时强制包裹：

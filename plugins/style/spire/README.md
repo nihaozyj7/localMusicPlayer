@@ -87,6 +87,11 @@ ctx.backgroundRoot（整窗背景层，宿主给容器）
 5. **一层只写 2 个自定义属性**：`--c-tf`（整条 transform）与 `--c-op`；
    写之前先跟上次的值比对（自定义属性每次写都会让样式失效，逐帧写上百个是白烧 CPU）。
 6. **窄窗口**：透视收敛 + 层间距压缩 + `rotateY` 降到 40%（`lib/tower.js#shapeFor`）。
+7. **HUD 要让开宿主壳（安全区）**：本款声明了 `background:true`，舞台是 `inset:0` 铺满整窗的，
+   而宿主的「标题栏 + 详情页头部行」与「底部播放控件栏」浮在画面上。曲名 / 歌手 / 层号 / 时间码
+   用 `padding-bottom: calc(var(--skin-inset-bottom, 0px) + 30px)` 抬起来 ——
+   渐变暗底仍然铺到舞台底，只有文字让开；窄窗档覆盖 `padding` 时必须把 `calc(...)` 原样带过去。
+   自检的 `__scenarioE` 会把 inset 设成真机的 88/92（以及窄窗 86、归零）**量**文字行的包围盒。
 
 ---
 

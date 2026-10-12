@@ -267,6 +267,10 @@ frontend/dist/       Vite 产物 + bindings 副本 + 内置主题同步源（**�
     复用零件走 `ctx.sdk`。第三方样式是运行时从 `/skins/` import 的，一旦依赖 `store.js` 之类，接口就没法演进。
 11. **插件 CSS 由宿主强制包裹**（`@layer skin` + `@scope(舞台)`）：选择器**相对舞台根**写（舞台自身用 `::scope`），
     不要写 `.playerview[data-skin="<id>"]` 前缀；想影响宿主控件观感只有一条路 —— 在清单 `colors` 里声明配色。
+    **舞台安全区**：`capabilities.background` 为真的样式舞台铺满整窗（`inset: 0`），宿主的「标题栏 + 详情页头部行」
+    与「底部播放控件栏」浮在它**上面**（高度由宿主写成 `--skin-inset-top` / `--skin-inset-bottom`）——
+    插件里要给人读的内容一律 `calc(var(--skin-inset-*, 0px) + Npx)` 让开，装饰层不受限，兜底值只能写 `0px`。
+    规范正文见 `docs/42` §3.1；第三方样式包的 S11 要求自检**量**出来。
 12. **写用户文件的代码只做最小插入**（`internal/metacache/embed.go`）：不改动音频数据、不改动任何 chunk 的语义与顺序；
     但**该同步的偏移必须同步** —— 容器头部变大后（往 `moov` 加 `covr`、往 FLAC 的 metadata 区加 `PICTURE`），
     记录数据块绝对位置的 `stco` / `co64` 会整体失效，不按 delta 修正就是**把文件写坏**

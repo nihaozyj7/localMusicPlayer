@@ -213,13 +213,19 @@
   visibility: hidden;
 }
 
-/* ---- HUD ---- */
+/* ---- HUD ----
+   ★ 安全区：本款声明了 background:true，舞台铺满整窗，宿主的**标题栏 + 详情页头部行**
+   与**底部播放控件栏**浮在画面之上（--z-titlebar / --z-playerbar > --z-playerview）。
+   曲名 / 歌手 / 层号 / 时间码这些**要读的文字**必须落在安全区内，所以用 padding-bottom
+   把整块 HUD 连文字一起抬起来 —— 渐变的底边仍然贴着舞台底（那一段本来就被底栏盖住），
+   观感上 HUD 的暗底还是铺到底，文字却不会被底栏压住。
+   桌面背景歌词窗口没有这两块 chrome，宿主把 --skin-inset-bottom 归零，回到贴边的 30px。 */
 .sp__hud {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 26px 34px 30px;
+  padding: 26px 34px calc(var(--skin-inset-bottom, 0px) + 30px);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -257,8 +263,9 @@
 }
 
 /* ---- 窄窗口：透视收敛，层间距压缩（几何由 JS 写进变量，这里只收 HUD） ---- */
+/* 窄窗只收内边距，安全区那一项**必须原样带着**（这里最容易漏） */
 .sp[data-narrow="1"] .sp__hud {
-  padding: 20px 20px 22px;
+  padding: 20px 20px calc(var(--skin-inset-bottom, 0px) + 22px);
 }
 .sp[data-narrow="1"] .sp__artist {
   max-width: 38vw;

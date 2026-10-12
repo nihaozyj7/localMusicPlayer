@@ -43,9 +43,23 @@ magic-circle/
 3. **CSS 由宿主强制包裹**（`@layer skin` + `@scope(舞台)`）：选择器**相对舞台根**写
    （舞台自身用 `::scope`），不要写 `.playerview[data-skin="<id>"]` 前缀。
    想影响宿主控件观感只有一条路 —— 在清单 `colors` 里声明配色，由宿主办对比度。
-4. **不轮询**：只保留一条 `requestAnimationFrame` 帧循环，暂停后自己停帧。
-5. **不碰 `window` / `document.documentElement`，不发网络请求。**
-6. **只能在 Windows 上验证**；调试用 `$env:LMPLAYER_DEBUG_PORT = "9333"`。
+4. **让开宿主壳（安全区）**：`background: true` 的样式舞台是**铺满整窗**的，而宿主的
+   「标题栏 + 详情页头部行」与「底部播放控件栏」是**浮在画面上**的
+   （`.titlebar` / `.playerbar` 的 z-index 都高于 `.playerview`）。这两条带子的高度由
+   宿主写成 `--skin-inset-top` / `--skin-inset-bottom`（主窗口 88px / 86~92px）：
+
+   ```css
+   /* 要给人读的文字（曲名 / 歌手 / 时间码 / 提示 / HUD）一律这样让开 */
+   padding: calc(var(--skin-inset-top, 0px) + 20px) 26px calc(var(--skin-inset-bottom, 0px) + 18px);
+   ```
+
+   装饰层（背景图 / 渐变 / 粒子 / 光晕）可以画到带子底下去，**文字不行**；
+   兜底值必须写 `0px`（桌面背景歌词窗口没有这两块 chrome）；
+   窄窗口与降级档的 `padding` 覆盖最容易把这两项吃掉。
+
+5. **不轮询**：只保留一条 `requestAnimationFrame` 帧循环，暂停后自己停帧。
+6. **不碰 `window` / `document.documentElement`，不发网络请求。**
+7. **只能在 Windows 上验证**；调试用 `$env:LMPLAYER_DEBUG_PORT = "9333"`。
 
 ## 自检
 

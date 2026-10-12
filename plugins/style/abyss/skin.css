@@ -228,13 +228,19 @@
   pointer-events: none;
 }
 
+/* ★ 安全区：本款声明了 background:true，舞台是 inset:0 铺满整窗的，而宿主的
+   **标题栏 + 详情页头部行**（返回 / 样式按钮那一行）与**底部播放控件栏**是浮在
+   画面之上的（--z-titlebar / --z-playerbar 都高于 --z-playerview）。所以读数
+   （曲名 / 下潜深度 / 时间码 / 提示）一律落在这两条带子之外 —— 让开多少由宿主
+   通过 --skin-inset-* 给出，窄窗口下底栏变矮时它会自己跟着变。
+   桌面背景歌词窗口没有这两块 chrome，宿主把两个值归零，HUD 回到贴边的 22px。 */
 .ab__hud {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 22px 26px;
+  padding: calc(var(--skin-inset-top, 0px) + 22px) 26px calc(var(--skin-inset-bottom, 0px) + 22px);
   pointer-events: none;
 }
 
@@ -284,7 +290,8 @@
 .ab__nogl {
   position: absolute;
   right: 26px;
-  bottom: 46px;
+  /* 46px 是「HUD 最后一行之上」；底栏那一段还要再让开（同 .ab__hud） */
+  bottom: calc(var(--skin-inset-bottom, 0px) + 46px);
   padding: 2px 8px;
   border: 1px solid var(--ab-accent-35);
   border-radius: 999px;
@@ -384,8 +391,9 @@
   filter: blur(6px);
 }
 
+/* 窄窗只收横向与内边距，安全区那两项**必须原样带着**（这里最容易漏） */
 .ab[data-narrow="1"] .ab__hud {
-  padding: 14px 16px;
+  padding: calc(var(--skin-inset-top, 0px) + 14px) 16px calc(var(--skin-inset-bottom, 0px) + 14px);
 }
 
 .ab[data-narrow="1"] .ab__text {

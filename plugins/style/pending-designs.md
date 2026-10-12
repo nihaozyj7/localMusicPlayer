@@ -33,6 +33,7 @@
 | S8 | 真机（`bin/lmplayer.exe`）里：挂载成功、控制台无报错、换歌/进度/暂停/切主题/窄窗口/切走再切回都不崩 | `$env:LMPLAYER_DEBUG_PORT = "9333"` + `tools/` 里的探针，或人工确认 |
 | S9 | 重新生成 `plugins/style/index.json` | `node plugins/build-index.mjs` |
 | S10 | 台账里勾选并写一行签收记录（日期 + 证据命令 + 实测结果） | 本文件 §4 |
+| S11 | **安全区**：`background:true` 的样式，所有要读的文字（HUD / 曲名 / 时间码 / 提示）都不落在 `--skin-inset-top` / `--skin-inset-bottom` 两条带子里；装饰层不受限 | 自检里量 `getBoundingClientRect`（见 §3.5） |
 
 > **不要在项目门禁里加用例**（`tools/check-*.mjs`、`frontend/tests/`）。样式包的自检**跟着包走**，
 > 这是 `plugins/README.md` 与根 `AGENTS.md` 已经定下的硬约定。临时探针命名 `.tmp-*.mjs`。
@@ -54,13 +55,16 @@
 | `env` | `themeId` / `mode` / `width` / `height` / `dpr` / `reducedMotion` / `foreground` | 清晰度感知、明暗联动、面积自适应 |
 | `options` | `animations` / `showLyrics` / `lyricsFontSize` / `coverCarousel` / `interactive` / `performanceMode` / `budgetFps` | **双向尊重**：宿主的设置必须生效，不能自己另开一套 |
 | `actions` | `seek` / `seekBy` / `seekRatio` / `togglePlay` / `next` / `prev` / `like` / `unlike` / `toggleLike` / `openFolder` / `openCoverPanel` / `openLyricsPanel` / `reportBackdrop` | 不可交互舞台上**全是空实现** |
-| `capabilities` | `spectrum` / `background` / `interactive` | `background:true` 才有整窗舞台 + `--skin-inset-top/bottom` |
+| `capabilities` | `spectrum` / `background` / `interactive` | `background:true` 才有整窗舞台（`inset:0`）+ `--skin-inset-top/bottom`（**必须让开**，见 §3.5） |
 
-### 1.2 三条硬边界
+### 1.2 四条硬边界
 
 1. **CSP `default-src 'self'`**：无网络、无 `eval`。但 **Canvas2D / WebGL2 / SVG 滤镜 / 自带字体（`font-src` 回落 `self`）/ 同源 Worker 脚本**都合法。
 2. **CSS 被宿主强制包进 `@layer skin { @scope(舞台根) }`**：`:root` / `body` / `*` / `!important` 全部无效；**宿主壳（标题栏/底栏/侧栏/浮层）改不动**，舞台里也没有全局后期。
 3. **影响宿主观感的唯一合法通道**：清单 `colors` + `ctx.actions.reportBackdrop()`（宿主做对比度兜底，见 `colors.js`）。
+4. **宿主壳压在画面上，内容要让开（安全区）**：`background:true` 的舞台铺满整窗，
+   宿主的「标题栏 + 详情页头部行」与「底栏」浮在画面上（z-index 更高）。要给人读的
+   文字一律落进 `--skin-inset-top` / `--skin-inset-bottom` 划出的安全区，见 §3.5。
 
 ### 1.3 三个「文档说了但实现没有」的坑（别依赖）
 
@@ -180,6 +184,42 @@ plugins/style/<id>/
 - 每款完成后跑 `node plugins/build-index.mjs` 重新生成 `plugins/style/index.json`（客户端「从仓库获取」读它）。
 - 本文件 §4 台账里签收：勾选 + 写一行「日期 / 证据 / 实测」。
 
+### 3.5 安全区（宿主壳压在画面上，内容必须让开）
+
+清单声明 `capabilities.background: true` 之后，舞台变成 `inset: 0` **铺满整窗**，而宿主的
+「标题栏 + 详情页头部行」与「底部播放控件栏」是**浮在画面之上**的（`.titlebar` /
+`.playerbar` 的 z-index 都高于 `.playerview`，它们自己有返回 / 样式 / 传输控件要能点）。
+宿主把这两条带子的高度写成两个自定义属性挂在舞台根上：
+
+| 变量 | 含义 | 主窗口 | 桌面背景歌词窗口 |
+| :--- | :--- | :--- | :--- |
+| `--skin-inset-top` | 顶部让位 = `--h-titlebar` + `--h-pv-head` | 88px（36 + 52） | 0px |
+| `--skin-inset-bottom` | 底部让位 = `--h-playerbar` | 86~92px（随宽度收窄） | 0px |
+
+```css
+/* HUD：要读的文字全部落进安全区；兜底值必须写 0px（那是"没有 chrome"的舞台） */
+.hud {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: calc(var(--skin-inset-top, 0px) + 20px) 26px calc(var(--skin-inset-bottom, 0px) + 18px);
+}
+```
+
+四条经验（都是真实踩过的）：
+
+1. **装饰可以，文字不行**：背景图 / 渐变 / 粒子 / 光晕画到带子底下没问题（那一段本来就被
+   宿主壳盖着），但曲名 / 歌手 / 时间码 / 提示 / 歌词不许 —— 叠加之后两边都读不清。
+2. **`padding` 的兜底值写 `0px`**，不要写死 88px：桌面背景歌词窗口把两个值归零了。
+3. **窄窗口与降级档的 `padding` 覆盖最容易漏**：`.x[data-narrow="1"] .hud { padding: 20px }`
+   会把安全区整条吃掉 —— 改内边距时把 `calc(var(--skin-inset-*, 0px) + Npx)` 原样带过去。
+4. **自检里量出来**（S11）：把 `--skin-inset-top/bottom` 设成 88/92（假宿主里就写在
+   `.playerview` 上），再对 HUD 的文字行取 `getBoundingClientRect()`，断言
+   `top ≥ stage.top + 88` 且 `bottom ≤ stage.bottom - 92`；再各跑一次窄窗档（86px）与
+   归零档。`abyss` / `spire` 的 check 脚本里各有一场（`__scenarioG` / `__scenarioE`）。
+
 ---
 
 ## 4. 交付台账
@@ -292,6 +332,46 @@ plugins/style/<id>/
     `node plugins/style/rubbing/tests/rubbing-check.mjs` → **74/74 通过**
     （新增 4 条：上报的 bg 是近黑合成底、fg 是亮色字、accent 是 hex、accent 与 `--rb-accent` 同源）。
   - `node plugins/build-index.mjs` → `plugins/style/index.json` 已更新，`--check` 通过（`npm run check:plugins`）。
+- 2026-10-12 全部 `background:true` 的样式补**安全区**（用户报：「自定义样式的内容会渲染到顶部标题区域与底部播放器控件栏区域，
+  宿主 UI 叠在插件 UI 上，影响可读性」）：
+  - 契约侧：这条规则此前**只写在示例包的注释里、没有任何自检在量**，于是漏了两款。现在写进
+    `internal/skins/template/皮肤说明.md`（硬规则第 4 条 + 新增「安全区」一节）、`internal/skins/template/skin.css`（模板注释）、
+    `frontend/packages/player-skins/README.md`、`plugins/style/README.md`（硬约束第 4 条）、`docs/42` §3.1，
+    并新增签收条件 **S11** 与共同约束 **§3.5**。
+  - 违反的两款（`background:true` ⇒ 舞台 `inset:0` 铺满整窗，而标题栏 + 头部行 88px、底栏 86~92px 浮在画面上）：
+    - `spire`：`.sp__hud` 是 `bottom:0 + padding-bottom:30px`，曲名 / 歌手 / 层号 / 时间码整条压在底栏底下。
+      改成 `padding-bottom: calc(var(--skin-inset-bottom, 0px) + 30px)` —— 只抬文字，HUD 那层渐变暗底仍然铺到舞台底（不留硬边）。
+    - `abyss`：`.ab__hud` 是 `inset:0 + padding:22px`，顶部读数（深度 / 提示）压在标题栏与头部行下、
+      曲名与时间码压在底栏下；右下角的 Canvas2D 兜底角标 `.ab__nogl`（`bottom:46px`）同样被盖住。三处都按 inset 让开。
+  - 顺带修掉**同一条规则最常漏的一处**：两款的窄窗档都写死了 `padding`（`14px 16px` / `20px 20px 22px`），
+    而覆盖 `padding` 会把安全区整条吃掉 —— 改成 `calc(var(--skin-inset-*, 0px) + Npx)`。
+  - 量具（两条都是新加的，此前没有任何断言碰过这件事）：`spire-check.mjs` 的 `__scenarioE` 与
+    `abyss-check.mjs` 的 `__scenarioG` 把 `--skin-inset-top/bottom` 按真机设成 88px / 92px 挂到舞台根上，
+    取 HUD 文字行的 `getBoundingClientRect()`，断言 `top ≥ stage.top + 88` 且 `bottom ≤ stage.bottom - 92`；
+    再各跑一次窄窗档（86px）与**归零档**（桌面背景歌词窗口，要贴回边）。修前这两场必然红：
+    spire 的 `.sp__sub` 底边 = 舞台底 − 30px，比允许线（舞台底 − 92px）低 62px。
+    abyss 那一场还额外读 `padding-top` / `padding-bottom` 的**计算值**（110/114 与窄窗 102/100）——
+    这条不依赖帧循环有没有出帧：无头环境里 rAF 偶尔要过几拍才放行，只量"文字盒子"会量到还没渲染的
+    0 高空盒子（假绿）。窄窗档那条同理：断言的是**曲名那个真的有字的盒子**。
+  - `node plugins/style/spire/tests/spire-check.mjs` → **77/77 通过**；
+    `node plugins/style/abyss/tests/abyss-check.mjs` → **140/140 通过**（两个 check 都要**单独跑**：
+    并发跑两个无头 Edge 会互相抢 CPU，时间敏感的帧数断言会偶发假红）。
+    注：abyss 里那条**既有的**「窄窗口字号收了一档」偶尔会红（`curFont` 空串：无头环境里
+    `.lyric[aria-current="true"]` 有些跑法还没落位，同一个实例的帧循环一次都没出帧）——
+    与本次改动无关（它量的是字号，不是安全区，且本轮**每一次**跑里安全区那 10 条都是绿的）。
+    已在 `narrowDiag` 里把 `idle / line / 各行 aria-current / 舞台里还剩几个 .ab` 一起打出来，
+    下次再红能直接定位。
+  - 真机验收（`node .tmp-skin-live.mjs --skin spire` / `--skin abyss`：真 Go 后端 + WebView2 + 隔离数据目录 +
+    内嵌 ffmpeg 现场生成的 24 秒测试曲）→ **spire 32/32、abyss 33/33 通过**。探针里新加了一节「安全区」，
+    量的是真机上的带子：标题栏 `0..36` / 详情页头部行 `36..88` / 底栏 `728..820`（1280×820 ⇒ 92px）——
+    spire 的 HUD 文字底边落在 **696**（离底栏 32px），abyss 的曲名底边 **704**、下潜读数顶边 **111**（离头部行下沿 23px）。
+    ⚠️ 量具坑：自定义属性在 `getComputedStyle` 里拿到的是**原样 token 流**（`--skin-inset-top` 是
+    `calc(36px + 52px)` 而不是 `88px`），判据只能用**量到的带子**，不能 `parseFloat` 变量。
+  - 顺带修掉探针里 abyss 的 `SPEC.layers`：它停在 9，而舞台现在是 10 层（`.ab__scrim` 是上一轮修可读性时加的）
+    —— 那是探针假红，不是回归（`plugins/style/abyss/skin.js` 本轮一个字节没动）。
+  - `node plugins/build-index.mjs` → `plugins/style/index.json` 已更新，`--check` 通过。
+  - 教训：**"舞台铺满整窗"与"宿主壳浮在画面上"是同一件事的两面** —— 只把舞台铺满、不给安全区量具，
+    就等于把"内容别画到 host UI 底下"寄希望于作者记得住。
 
 ---
 

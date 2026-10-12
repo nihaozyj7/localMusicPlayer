@@ -721,6 +721,21 @@ window.__scenarioE = async function () {
   pv.style.height = "560px";
   push(narrow, { type: "resize" });
   await wait(500);
+  /* 无头环境里 rAF 偶尔要过两三拍才被放行：不等"当前行真的被标上"就量字号，
+     量到的是还没渲染的中间态（curFont 空串）—— 那是量具抖，不是窄窗档坏了。
+     有界轮询：真没渲染的话这里会超时，下面的断言照样会红。 */
+  for (let i = 0; i < 30 && !narrow.ab.querySelector('.ab__text .lyric[aria-current="true"]'); i += 1) await wait(100);
+  out.narrowDiag = {
+    idle: narrow.ab.dataset.idle,
+    line: narrow.ab.dataset.line,
+    rows: narrow.ab.querySelectorAll(".ab__text .lyric").length,
+    withAttr: Array.from(narrow.ab.querySelectorAll(".ab__text .lyric")).map((el) => el.getAttribute("aria-current")),
+    scroller: !!narrow.ab.querySelector(".ab__text .lyrics__scroll"),
+    frames: counters.frames,
+    glFrames: counters.glFrames + counters.c2dFrames,
+    /* 舞台里还剩几个 .ab：>1 说明卸载没清干净（有活着的僵尸实例） */
+    abs: stage.querySelectorAll(".ab").length,
+  };
   out.narrow = {
     narrow: narrow.ab.dataset.narrow,
     flow: narrow.ab.dataset.flow,
@@ -738,6 +753,101 @@ window.__scenarioE = async function () {
   };
   pv.style.width = "1100px";
   pv.style.height = "700px";
+  return out;
+};
+
+/* ==========================================================================
+   场景 G：安全区（宿主标题栏 + 详情页头部行 / 底部播放控件栏压在画面上）
+   --------------------------------------------------------------------------
+   清单声明了 background:true ⇒ 舞台铺满整窗（inset:0），宿主的标题栏 + 头部行
+   与底栏浮在画面上，两块的高度由宿主写成 --skin-inset-top / -bottom。
+   这一场按真机的 88px / 92px 挂到舞台根上，量 HUD 的**文字**落在哪 ——
+   让开以前 .ab__hud 是 inset:0 + padding:22px，深度读数压在标题栏下、
+   曲名与时间码压在底栏下，右下角的兜底角标（bottom:46px）也一样。
+   ========================================================================== */
+window.__scenarioG = async function () {
+  const out = {};
+  const pv = document.querySelector(".playerview");
+  const setInset = (t, b) => {
+    pv.style.setProperty("--skin-inset-top", t);
+    pv.style.setProperty("--skin-inset-bottom", b);
+  };
+  const stageR = () => {
+    const r = stage.getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) };
+  };
+  const boxOf = (ab, sel) => {
+    const el = ab.querySelector(sel);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) };
+  };
+
+  setInset("88px", "92px");
+  const g = await mountInstance({});
+  await wait(700);
+  const ab = g.ab;
+  /* 推进度是为了让 HUD 的读数有机会被写出来。**但安全区这条不靠它**：
+     帧循环有没有在这一刻出帧是环境的事（本文件里同一份断言曾经量到 0 高的空盒子），
+     所以判据是「盒子的位置」+「HUD 自己的内边距」，文字有没有写进 span 都不影响结论。 */
+  await at(g, 60000, true);
+  await wait(400);
+  out.inset = [computed(ab, "--skin-inset-top"), computed(ab, "--skin-inset-bottom")];
+  out.diag = {
+    depthText: ab.querySelector(".ab__depth").textContent,
+    titleText: ab.querySelector(".ab__title").textContent,
+    playing: ab.dataset.playing,
+    depthAttr: ab.dataset.depth,
+  };
+  out.main = {
+    stage: stageR(),
+    top: boxOf(ab, ".ab__hud-top"),
+    bottom: boxOf(ab, ".ab__hud-bottom"),
+    depth: boxOf(ab, ".ab__depth"),
+    title: boxOf(ab, ".ab__title"),
+    padTop: computed(ab.querySelector(".ab__hud"), "padding-top"),
+    padBottom: computed(ab.querySelector(".ab__hud"), "padding-bottom"),
+    noglBottom: computed(ab.querySelector(".ab__nogl"), "bottom"),
+  };
+
+  /* 窄窗：底栏变矮（真机 86px），而 HUD 的 padding 会被窄窗档整条覆盖 —— 最容易漏的一处 */
+  g.host.setSize(760, 560);
+  g.root.style.width = "760px";
+  g.root.style.height = "560px";
+  pv.style.width = "760px";
+  pv.style.height = "560px";
+  setInset("88px", "86px");
+  push(g, { type: "resize" });
+  await wait(600);
+  out.narrow = {
+    narrow: ab.dataset.narrow,
+    stage: stageR(),
+    top: boxOf(ab, ".ab__hud-top"),
+    bottom: boxOf(ab, ".ab__hud-bottom"),
+    title: boxOf(ab, ".ab__title"),
+    padLeft: computed(ab.querySelector(".ab__hud"), "padding-left"),
+    padTop: computed(ab.querySelector(".ab__hud"), "padding-top"),
+    padBottom: computed(ab.querySelector(".ab__hud"), "padding-bottom"),
+  };
+
+  /* inset 归零（桌面背景歌词窗口没有这两块 chrome）：HUD 贴回边的 22px */
+  g.root.style.width = "";
+  g.root.style.height = "";
+  pv.style.width = "1100px";
+  pv.style.height = "700px";
+  g.host.setSize(1100, 700);
+  setInset("0px", "0px");
+  push(g, { type: "resize" });
+  await wait(500);
+  out.zero = {
+    stage: stageR(),
+    top: boxOf(ab, ".ab__hud-top"),
+    bottom: boxOf(ab, ".ab__hud-bottom"),
+    padTop: computed(ab.querySelector(".ab__hud"), "padding-top"),
+    padBottom: computed(ab.querySelector(".ab__hud"), "padding-bottom"),
+  };
+  pv.style.removeProperty("--skin-inset-top");
+  pv.style.removeProperty("--skin-inset-bottom");
   return out;
 };
 
@@ -1048,7 +1158,7 @@ if (!EDGE) {
     let ready = false;
     for (let i = 0; i < 60; i += 1) {
       await sleep(300);
-      ready = await evaluate("!!window.__scenarioA && !!window.__scenarioF && !!window.__counters");
+      ready = await evaluate("!!window.__scenarioA && !!window.__scenarioF && !!window.__scenarioG && !!window.__counters");
       if (ready === true) break;
     }
 
@@ -1326,14 +1436,61 @@ if (!EDGE) {
         check(
           E.narrow.rows === 4 && E.narrow.curFont === "26px" && E.narrow.curFont === E.narrow.curVar && E.narrow.depthFont === "13px",
           "窄窗口字号收了一档（32/23 → 26/19，走 --lyric-* 变量，不是给 .lyric 写 font-size）",
-          j([E.narrow.rows, E.narrow.curFont, E.narrow.curVar, E.narrow.depthFont])
+          j([E.narrow.rows, E.narrow.curFont, E.narrow.curVar, E.narrow.depthFont, E.narrowDiag])
         );
         const nf = (E.narrow.flow || "0x0").split("x").map(num);
         check(nf[0] > 0 && nf[0] < E.narrow.cvClient[0], "窄窗口流场分辨率仍然小于画布（半分辨率）", j([E.narrow.flow, E.narrow.cvW]));
       }
 
+      /* ---------------- G ---------------- */
+      console.log("\n[7] 安全区（宿主标题栏 + 头部行 / 底栏压在画面上）");
+      let G;
+      try {
+        G = await evaluate("window.__scenarioG()");
+      } catch (e) {
+        G = brief(e);
+      }
+      if (G?.__error || G?.error) {
+        check(false, "场景 G 跑通", j(G.__error || G.error));
+      } else {
+        check(G.inset[0] === "88px" && G.inset[1] === "92px", "舞台根把 --skin-inset-* 传到了插件里", j(G.inset));
+        check(
+          px(G.main.padTop) >= 88 && px(G.main.padBottom) >= 92,
+          "主窗口：HUD 的内边距把安全区吃进了自己（上 ≥88 / 下 ≥92，不是只让外框躲开）",
+          j([G.main.padTop, G.main.padBottom])
+        );
+        check(
+          G.main.top && G.main.top.top >= G.main.stage.top + 88,
+          "主窗口：顶部那行读数在标题栏 + 头部行（88px）之下",
+          j([G.main.top, G.main.depth, G.main.stage])
+        );
+        check(
+          G.main.title && G.main.title.h > 0 && G.main.title.bottom <= G.main.stage.bottom - 92,
+          "主窗口：曲名真的渲染了、且整个落在底栏（92px）之上",
+          j([G.main.title, G.main.stage, G.diag])
+        );
+        check(px(G.main.noglBottom) >= 92, "兜底角标也让开了底栏（bottom ≥ inset）", G.main.noglBottom);
+        check(G.narrow.narrow === "1", "窄窗档标记生效", G.narrow.narrow);
+        check(G.narrow.padLeft === "16px", "窄窗档仍然只收横向内边距", G.narrow.padLeft);
+        check(
+          px(G.narrow.padTop) >= 88 && px(G.narrow.padBottom) >= 86,
+          "窄窗档：padding 覆盖没有把安全区吃掉（底栏 86px）",
+          j([G.narrow.padTop, G.narrow.padBottom, G.narrow])
+        );
+        check(
+          G.narrow.title && G.narrow.title.h > 0 && G.narrow.title.bottom <= G.narrow.stage.bottom - 86,
+          "窄窗档：曲名整个落在底栏（86px）之上",
+          j([G.narrow.title, G.narrow.stage])
+        );
+        check(
+          G.zero.top && G.zero.bottom && G.zero.top.top <= G.zero.stage.top + 30 && G.zero.bottom.bottom >= G.zero.stage.bottom - 30,
+          "inset 归零（桌面背景歌词窗口）后 HUD 贴回边的 22px",
+          j(G.zero)
+        );
+      }
+
       /* ---------------- F ---------------- */
-      console.log("\n[6] 卸载（自己清干净 / 背景层归还 / GL 资源真的还了 / 之后不许再有帧）");
+      console.log("\n[8] 卸载（自己清干净 / 背景层归还 / GL 资源真的还了 / 之后不许再有帧）");
       let F;
       try {
         F = await evaluate("window.__scenarioF()");
@@ -1354,7 +1511,7 @@ if (!EDGE) {
         check(F.updateAfterDestroy === "ok", "destroy 之后再收 update 不抛异常", j(F.updateAfterDestroy));
       }
 
-      console.log("\n[7] 控制台必须干净");
+      console.log("\n[9] 控制台必须干净");
       const noisy = errors.filter((e) => !/404|Failed to load resource|net::ERR|WebGL.*(lost|context)/i.test(e));
       check(noisy.length === 0, "无未捕获异常 / console.error", noisy.slice(0, 4).map((e) => String(e).split("\n")[0]).join(" | "));
     }

@@ -18,8 +18,8 @@
       "files": [
         {
           "path": "abyss/README.md",
-          "size": 13862,
-          "sha256": "80ac41e1916c2bdc9f37bcbab0fcbd447e876c1db12cb05142d37d5915ac46bb"
+          "size": 14216,
+          "sha256": "c63f587d8532e4f473a7c8594f537c81917c7cba08b644c2c6e37c6b9f578072"
         },
         {
           "path": "abyss/assets/icon.svg",
@@ -48,8 +48,8 @@
         },
         {
           "path": "abyss/skin.css",
-          "size": 13817,
-          "sha256": "7ff93f9bbba031339d241875eb1ce716f0288d66b4dd796866373fddf68b96e5"
+          "size": 14827,
+          "sha256": "1a3c76c538732b61ee8a3e693550922b0201c0e674be5352c659eadabc97c914"
         },
         {
           "path": "abyss/skin.js",
@@ -369,8 +369,8 @@
       "files": [
         {
           "path": "spire/README.md",
-          "size": 6960,
-          "sha256": "1d7721c80c053ef2f9bdacdd54c60517546ff09feb4b9d48124346a9c5d16763"
+          "size": 7556,
+          "sha256": "482543d7242802b897caea0b541c7e13f48951290f2d7e7e9baf9938b68b4c34"
         },
         {
           "path": "spire/assets/icon.svg",
@@ -389,8 +389,8 @@
         },
         {
           "path": "spire/skin.css",
-          "size": 10396,
-          "sha256": "392776c61df702517d0021c16e2ac67c73db842bc21c492df2b5f0fc74041c10"
+          "size": 11226,
+          "sha256": "d6390921d83a2d6d890e1986c68a97717d5f76adbf51a177dd571ff36740c1b6"
         },
         {
           "path": "spire/skin.js",

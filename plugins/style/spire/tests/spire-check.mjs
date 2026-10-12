@@ -455,6 +455,79 @@ window.__scenarioC = async function () {
   return out;
 };
 
+/* 安全区：主界面里舞台铺满整窗（清单 background:true），宿主的**标题栏 + 详情页头部行**
+   与**底部播放控件栏**压在画面上，两块的高度由宿主写成 --skin-inset-top / -bottom。
+   这一场按真机的 88px / 92px 把它挂到舞台根上，量 HUD 的**文字**到底落在哪 ——
+   让开以前，.sp__hud 是 bottom:0 + padding-bottom:30px，曲名与时间码正压在底栏底下。 */
+window.__scenarioE = async function () {
+  const pv = document.querySelector(".playerview");
+  const setInset = (t, b) => {
+    pv.style.setProperty("--skin-inset-top", t);
+    pv.style.setProperty("--skin-inset-bottom", b);
+  };
+  const box = (sp, sel) => {
+    const el = sp.querySelector(sel);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) };
+  };
+  const stageRect = () => {
+    const r = stage.getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) };
+  };
+
+  setInset("88px", "92px");
+  /* 复用上一个场景的实例，**不要新挂一个**：本包的帧循环是模块级单例，再 mount 一个
+     会把上一个的 rAF 留在后台（场景 D 的"卸载后零帧"就会被它污染成假红）。 */
+  const e = INSTANCES[INSTANCES.length - 1];
+  const sp = e.sp;
+  stage.style.width = "1100px";
+  stage.style.height = "700px";
+  sp.style.width = "";
+  sp.style.height = "";
+  e.host.setSize(1100, 700);
+  push(e, { type: "resize" });
+  await wait(400);
+  const out = {
+    inset: [computed(sp, "--skin-inset-top"), computed(sp, "--skin-inset-bottom")],
+    stage: stageRect(),
+    hud: box(sp, ".sp__hud"),
+    title: box(sp, ".sp__title"),
+    sub: box(sp, ".sp__sub"),
+  };
+
+  // 窄窗口：底栏变矮（真机是 86px），窄窗档的 padding 覆盖最容易把安全区吃掉
+  e.host.setSize(820, 560);
+  stage.style.width = "820px";
+  stage.style.height = "560px";
+  sp.style.width = "820px";
+  sp.style.height = "560px";
+  setInset("88px", "86px");
+  push(e, { type: "resize" });
+  await wait(500);
+  out.narrow = {
+    data: sp.dataset.narrow,
+    stage: stageRect(),
+    hud: box(sp, ".sp__hud"),
+    title: box(sp, ".sp__title"),
+    sub: box(sp, ".sp__sub"),
+  };
+
+  // 归零（桌面背景歌词窗口没有这两块 chrome）：HUD 要贴回底边
+  stage.style.width = "1100px";
+  stage.style.height = "700px";
+  sp.style.width = "";
+  sp.style.height = "";
+  e.host.setSize(1100, 700);
+  setInset("0px", "0px");
+  push(e, { type: "resize" });
+  await wait(400);
+  out.zero = { stage: stageRect(), sub: box(sp, ".sp__sub") };
+  pv.style.removeProperty("--skin-inset-top");
+  pv.style.removeProperty("--skin-inset-bottom");
+  return out;
+};
+
 window.__scenarioD = async function () {
   // 卸载：舞台 + 整窗背景层都要清干净，帧循环也要停。
   // 先停掉前面几个实例：帧计数器是**全局**的，别人还在跑就没法判断"这一个"停没停
@@ -784,7 +857,35 @@ if (!page) {
         check(["1", "2"].includes(C.dpr), "dpr 属性跟着环境走", j(C.dpr));
       }
 
-      console.log("\n[7] 卸载（舞台与整窗背景层都要清干净）");
+      console.log("\n[7] 安全区（宿主标题栏 + 头部行 / 底栏压在画面上）");
+      let E;
+      try {
+        E = await evaluate("window.__scenarioE()");
+      } catch (e) {
+        E = brief(e);
+      }
+      if (E?.__error || E?.error) {
+        check(false, "场景 E 跑通", j(E.__error || E.error));
+      } else {
+        check(E.inset[0] === "88px" && E.inset[1] === "92px", "舞台根把 --skin-inset-* 传到了插件里", j(E.inset));
+        check(E.sub && E.sub.bottom <= E.stage.bottom - 92, "主窗口：HUD 文字整个落在底栏之上（底栏 92px）", j({ sub: E.sub, stage: E.stage }));
+        check(E.title && E.title.top >= E.stage.top + 88, "主窗口：HUD 首行也在顶部 chrome（88px）之下", j({ title: E.title, stage: E.stage }));
+        // HUD 自己（含那层渐变暗底）允许铺到舞台底 —— 底栏盖住的那一段本来就是它的背景
+        check(E.hud && E.hud.bottom >= E.stage.bottom - 1, "HUD 的暗底仍然铺到舞台底（只抬文字，不留硬边）", j({ hud: E.hud, stage: E.stage }));
+        check(E.narrow.data === "1", "窄窗档标记生效", j(E.narrow.data));
+        check(
+          E.narrow.sub && E.narrow.sub.bottom <= E.narrow.stage.bottom - 86,
+          "窄窗档：padding 覆盖没有把安全区吃掉（底栏 86px）",
+          j({ sub: E.narrow.sub, stage: E.narrow.stage })
+        );
+        check(
+          E.zero.sub && E.zero.sub.bottom >= E.zero.stage.bottom - 34,
+          "inset 归零（桌面背景歌词窗口）后 HUD 贴回底边",
+          j({ sub: E.zero.sub, stage: E.zero.stage })
+        );
+      }
+
+      console.log("\n[8] 卸载（舞台与整窗背景层都要清干净）");
       let D;
       try {
         D = await evaluate("window.__scenarioD()");
@@ -802,7 +903,7 @@ if (!page) {
     }
   }
 
-  console.log("\n[8] 控制台必须干净");
+  console.log("\n[9] 控制台必须干净");
   const noisy = errors.filter((e) => !/404|Failed to load resource|net::ERR/.test(e));
   check(noisy.length === 0, "无未捕获异常 / console.error", noisy.slice(0, 4).map((e) => String(e).split("\n")[0]).join(" | "));
 
