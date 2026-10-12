@@ -3,17 +3,23 @@
    --------------------------------------------------------------------------
    跑法：node plugins/style/pulse/tests/pulse-check.mjs
 
-   这一款不能只测 DOM 长得对不对 —— 它的核心是**同步与预测**，所以自检里有三件
+   这一款不能只测 DOM 长得对不对 —— 它的核心是**同步与预测**，所以自检里有四件
    必须真的量出来的事：
 
      1. 合成 onset 流（每 500ms 一次宽带突变）喂进去，PLL 是否真的收敛到 120BPM，
         拍点网格是否真的按 500ms 的间距落在屏幕上（量 DOM 的 rect）；
      2. 字级刻度是否真的**吸**到拍点上（吸附过的刻度与拍点标记的 rect 必须重合）；
-     3. 换歌那种"抖动的间隔"是否真的落到 free（而不是编一个 BPM 出来）。
+     3. 换歌那种"抖动的间隔"是否真的落到 free（而不是编一个 BPM 出来）；
+     4. 歌词是否真的**自己滚**（当前句必须被滚到歌词带的中央；场景 F）。
 
    歌词用的是宿主的**真模块**（`frontend/packages/player-skins/src/lyrics-view.js`），
    按 /sdk/ 路由托管 —— 因为这一款是第一个真的调 `ctx.sdk.createLyricsView` 的样式包，
    假一个替身就等于没验过它。
+   **宿主的歌词骨架样式也必须是真表**（`frontend/packages/player-skins/src/lyrics.css`
+   + 复位 + 令牌，按 /host.css 托管）：`.lyrics / .lyrics__scroll` 的排版是宿主定的，
+   而且它在真机里**未分层**注入，而本包整份 CSS 在 `@layer skin` 里（层级优先于特异性）。
+   自检里抄一份"最小同义版"就等于把这些前提换掉 —— 那正是「歌词不滚动」这个真机 bug
+   在自检里一次都没出现过的原因。
 
    皮肤模块是单例（`S` 指向最后一次挂载的实例），所以每个场景都**新挂一个**实例，
    并且不 destroy 别人的实例（那会 destroy 掉当前这个）。
@@ -71,16 +77,15 @@ const MIME = {
  *   第 3/4 行在很后面（验窗口外不画）。
  */
 const HARNESS = `<!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="flat-dark">
 <head>
 <meta charset="utf-8">
 <title>pulse check</title>
+<link rel="stylesheet" href="/host.css">
 <style>
+  /* 宿主壳的最小同义版（只放布局；歌词那两层的样式一律走 /host.css 的真实表） */
   html, body { margin: 0; background: #202020; }
-  /* 宿主歌词骨架（components/lyrics.css 的最小同义版）：SDK 只管语义，排版交宿主与样式包 */
-  .lyrics { position: absolute; inset: 0; }
-  .lyrics .lyrics__scroll { position: absolute; inset: 0; overflow-y: auto; }
-  .playerview { position: fixed; left: 0; top: 0; width: 1100px; height: 700px; }
+  .playerview { position: fixed; left: 0; top: 0; z-index: 5; width: 1100px; height: 700px; }
   .playerview__stage { position: relative; height: 100%; overflow: hidden; }
   .skin-bg { position: fixed; left: 0; top: 0; right: 0; bottom: 0; }
 </style>
@@ -695,6 +700,62 @@ window.__scenarioE = async function () {
   return out;
 };
 
+/* ==========================================================================
+   场景 F：歌词自动滚动（当前句必须**留在可见带里**）
+   --------------------------------------------------------------------------
+   这一条是被真机 bug 逼出来的：歌词带只有舞台高的 27%（≈190px），而宿主
+   lyrics.css 的 --lyric-pad: 34% 是按**宽度**解析的（≈350px）——
+   上下内边距比容器本身还高，border-box 下浏览器把滚动容器撑到「内边距之和」
+   （clientHeight 702px，可见的只有父级裁出来的 190px），SDK 按 clientHeight
+   居中当前行时把它放到了可见带**之下 160px**：屏幕上一直是 8 句以前的歌词
+   在慢慢爬，当前句永远不进视野（看起来就是"歌词不滚动"）。
+   所以这里量三件事：
+     · 滚动容器的 clientHeight 必须 ≈ 歌词带的可见高度；
+     · 每一句当前歌词都必须落在带子里，且被滚到带子的垂直中央；
+     · 进度往前走，scrollTop 必须单调增长（真的在滚）。
+   ========================================================================== */
+window.__scenarioF = async function () {
+  const many = [];
+  for (let i = 0; i < 60; i += 1) many.push({ time: i * 1200, text: "第 " + (i + 1) + " 句歌词内容" });
+  const f = await mountInstance({ spectrum: null, position: 0, lines: many });
+  /* 场景 D 把 .playerview 缩过（760×560），这里量的是正常窗口，自己先摆回去 */
+  const view = document.querySelector(".playerview");
+  view.style.width = "1100px";
+  view.style.height = "700px";
+  f.host.setSize(1100, 700);
+  push(f, { type: "resize" });
+  await wait(300);
+  const snap = () => {
+    const s = f.pl.querySelector(".pl__lyrics .lyrics__scroll");
+    const band = f.pl.querySelector(".pl__lyrics").getBoundingClientRect();
+    const act = f.pl.querySelector('.pl__lyrics .lyric[aria-current="true"]');
+    const r = act ? act.getBoundingClientRect() : null;
+    return {
+      scrollTop: Math.round(s.scrollTop * 10) / 10,
+      clientH: Math.round(s.clientHeight),
+      scrollH: Math.round(s.scrollHeight),
+      bandH: Math.round(band.height),
+      padTop: computed(s, "padding-top"),
+      activeIdx: act ? Number(act.dataset.lyricIndex) : -1,
+      /* 当前句中心相对带子顶部的偏移：带子高的一半就是"正中" */
+      activeCenter: r ? Math.round((r.top + r.height / 2 - band.top) * 10) / 10 : null,
+      visible: r ? r.bottom > band.top + 1 && r.top < band.bottom - 1 : false,
+    };
+  };
+  const out = { steps: [] };
+  /* 暂停着量：位置钟不外推，量到的就是"这一句"。
+     settle 给足：SDK 用 behavior:"smooth" 居中，跳得远时动画本身要好几百 ms */
+  for (const p of [0, 14400, 36000, 57600, 69600]) {
+    await at(f, p, false, 1200);
+    out.steps.push(Object.assign({ pos: p }, snap()));
+  }
+  out.rows = lyricRows(f).length;
+  out.rootH = f.root.clientHeight;
+  out.plH = f.pl.clientHeight;
+  out.viewH = view.clientHeight;
+  return out;
+};
+
 /** 对比度用本包的颜色工具核对（自检不许自己抄一份算法） */
 window.__wcag = function (a, b) {
   const lum = (hex) => {
@@ -729,11 +790,31 @@ function serve(root, req, res) {
   return true;
 }
 
+/* 宿主的真实样式（复位 + 令牌 + 深色主题 + 歌词骨架），按 /host.css 原样托管。
+   ★ 为什么不在这里抄一份"最小同义版"：`.lyrics` 与 `.lyrics__scroll` 的排版是**宿主**
+     定的，而且 `lyrics.css` 在真机里是**未分层**注入的（样式包整份在 @layer skin 里，
+     层级优先于特异性 → 分层规则压不过它）。抄一份就等于把这些前提改掉：
+     抄的那版曾把 `--lyric-pad`（34%，按**宽度**解析）整个漏掉，于是
+     「歌词带只有 190px 高、上下内边距却有 350px、当前句被顶到视野之外」这个
+     真机 bug 在自检里**一次都没出现过**（见场景 F）。 */
+const STYLE_ROOT = join(REPO_ROOT, "frontend", "src", "styles");
+const HOST_CSS = [
+  readFileSync(join(STYLE_ROOT, "base.css"), "utf8"),
+  readFileSync(join(STYLE_ROOT, "tokens.css"), "utf8"),
+  readFileSync(join(STYLE_ROOT, "themes", "flat-dark.css"), "utf8"),
+  readFileSync(join(SDK_ROOT, "lyrics.css"), "utf8"),
+].join("\n");
+
 const server = createServer((req, res) => {
   const path = new URL(req.url, "http://127.0.0.1").pathname;
   if (path === "/" || path === "/__harness.html") {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(HARNESS);
+    return;
+  }
+  if (path === "/host.css") {
+    res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
+    res.end(HOST_CSS);
     return;
   }
   if (path.startsWith("/sdk/")) {
@@ -995,7 +1076,10 @@ if (!EDGE) {
         );
         check(SS.range[0] === true && SS.range[1] === true, "位移全程都在合法范围内", j([SS.slideBefore, SS.slideAfter]));
         check(
-          SS.shifts.length >= 10 && SS.shifts.every((s, i) => Math.abs(s + SS.deltas[i]) <= 1.5),
+          /* 容差 = **一帧的位移**：取样是 50ms 一步（每步约 9px），而 rect 只在渲染帧更新，
+             两次取值只要跨在帧边界两侧就会差一帧（≈2.9px）。这是量具的采样格，不是画面在跳 ——
+             真跳的判据在下面一条（窗口重设是整段 +plotW 的复位，速度错则平均步长对不上）。 */
+          SS.shifts.length >= 10 && SS.shifts.every((s, i) => Math.abs(s + SS.deltas[i]) <= 3),
           "拍点整体跟着容器刚性左移（同一段里位移多少、标记就走多少：屏幕位置连续、不跳）",
           j({ shifts: SS.shifts.slice(0, 8), deltas: SS.deltas.slice(0, 8) })
         );
@@ -1093,7 +1177,42 @@ if (!EDGE) {
         check(E.bgChildrenAfter === 0, "背景容器始终为空", j(E.bgChildrenAfter));
       }
 
-      console.log("\n[6] 控制台必须干净");
+      /* ---------------- 场景 F ---------------- */
+      console.log("\n[6] 歌词自动滚动（当前句必须留在可见带里）");
+      let LY;
+      try {
+        LY = await evaluate("window.__scenarioF()");
+      } catch (e) {
+        LY = brief(e);
+      }
+      if (LY?.__error || LY?.error) {
+        check(false, "场景 F 跑通", j(LY.__error || LY.error));
+      } else {
+        const steps = LY.steps || [];
+        check(LY.rows === 60, "60 行歌词都渲染了", j(LY.rows));
+        check(
+          steps.length === 5 && steps.every((s) => Math.abs(s.clientH - s.bandH) <= 2),
+          "滚动容器的高度 = 歌词带的可见高度（--lyric-pad 不许比容器还高）",
+          j({ view: LY.viewH, root: LY.rootH, pl: LY.plH, steps: steps.map((s) => [s.clientH, s.bandH, s.padTop]) })
+        );
+        check(
+          steps.every((s) => s.visible === true && s.activeCenter > 0 && s.activeCenter < s.bandH),
+          "每一句当前歌词都落在可见带里（自动滚动真的跟着歌走）",
+          j(steps.map((s) => [s.activeIdx, s.activeCenter, s.bandH]))
+        );
+        check(
+          steps.every((s) => Math.abs(s.activeCenter - s.bandH / 2) <= 24),
+          "当前句被滚到带子垂直中央（±24px）",
+          j(steps.map((s) => [s.activeCenter, Math.round(s.bandH / 2)]))
+        );
+        check(
+          steps.every((s, i) => i === 0 || s.scrollTop > steps[i - 1].scrollTop),
+          "进度往前走 scrollTop 单调增长（不是卡住不动）",
+          j(steps.map((s) => [s.activeIdx, s.scrollTop]))
+        );
+      }
+
+      console.log("\n[7] 控制台必须干净");
       const noisy = errors.filter((e) => !/404|Failed to load resource|net::ERR/.test(e));
       check(noisy.length === 0, "无未捕获异常 / console.error", noisy.slice(0, 4).map((e) => String(e).split("\n")[0]).join(" | "));
     }

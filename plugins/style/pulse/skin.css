@@ -286,6 +286,17 @@
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
+  /* ★ 必须自己重设 --lyric-pad，否则歌词**看起来不会滚动**。
+     宿主 lyrics.css 给的是 `--lyric-pad: 34%`，而 CSS 的百分比内边距是相对
+     **宽度**解析的：那一档是按「几百 px 高的竖排歌词列」定的，这里的歌词带
+     只有舞台高的 27%（≈190px 高）却有 ≈1030px 宽 —— 34% = 350px 的上下内边距
+     比容器本身还高。border-box 下浏览器会把盒子撑到「内边距之和」
+     （clientHeight 变成 702px，而可见的只有父级 .pl__lyrics 的 190px），
+     于是 SDK 按 clientHeight 居中当前行时把它放到了可见带**之下 160px**：
+     屏幕上一直是「8 句以前」的歌词在慢慢爬，当前句永远不进视野。
+     内边距要的是「把第一句推到带子中间」，所以按**舞台高**取半个歌词带
+     （27% / 2 = 13.5%；--pl-h 由 resize() 写成 px）。 */
+  --lyric-pad: calc(var(--pl-h, 720px) * 0.135);
 }
 
 .pl__lyrics .lyrics__scroll::-webkit-scrollbar {
@@ -440,6 +451,11 @@
   left: 5%;
   right: 5%;
   top: 47%;
+}
+
+/* 窄窗口的歌词带是 47%..76%（29%），内边距跟着改成一半（14.5%） */
+.pl[data-narrow="1"] .pl__lyrics .lyrics__scroll {
+  --lyric-pad: calc(var(--pl-h, 720px) * 0.145);
 }
 
 .pl[data-narrow="1"] .pl__gear {

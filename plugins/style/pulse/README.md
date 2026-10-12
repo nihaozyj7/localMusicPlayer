@@ -121,12 +121,16 @@ node plugins/style/pulse/tests/pulse-check.mjs        # 浏览器（自带静态
   容量：样本很密时不许越过 `RING_CAP`）**、以及**契约纪律的静态扫描**
   （imports / `?t=` 透传 / `ctx.*` 白名单 / 不碰 `backgroundRoot` / CSS 禁用项 /
   只有 3 处 rAF 且歌词视图恒以 `playing:false` 驱动 / destroy 清理清单）。
-- **浏览器**（109 项）：真实 `@layer`+`@scope` 下装真模块（含真实的 `createLyricsView`）——
+- **浏览器**（114 项）：真实 `@layer`+`@scope` 下装真模块（含真实的 `createLyricsView`）——
   500ms 合成 onset 流是否真的收敛到 120BPM 并写出拍点、随机间隔是否真的落到 `free`、
   刻度是否真的吸到拍点上（**吸过的刻度与拍点标记的 rect 重合 ≤ 1.5px**）、
   点屏幕是否 seek 到那一刻、窗口位移是否连续（每 50ms = −plotW×50/6000、拍点整体刚性左移）、
   暂停 6 秒停帧、切后台停帧、`close` 停帧、`animations:false` 零帧但画面完整、
-  performance 档按 **15Hz** 渲染（数的是渲染帧，不是 rAF 回调）、窄窗口不溢出、destroy 零残留。
+  performance 档按 **15Hz** 渲染（数的是渲染帧，不是 rAF 回调）、窄窗口不溢出、destroy 零残留、
+  **歌词真的自己滚**（场景 F：60 行歌词，滚动容器的 `clientHeight` 必须等于歌词带的可见高度、
+  当前句必须落在带子里且被滚到垂直中央、进度往前走 `scrollTop` 单调增长）。
+  这些场景跑在**宿主的真样式**上（`/host.css` = 复位 + 令牌 + 深色主题 + 真 `lyrics.css`），
+  不是自检里抄的一份骨架 —— 见 §7 第一条。
 - **真机**：`.tmp-skin-live.mjs --skin pulse`（真 CSP 下 `/skins/` token 路由 import、真频谱驱动
   检测与包络、真歌词驱动刻度、换样式零残留、窄窗不溢出、切主题不炸）。
 
@@ -135,9 +139,9 @@ node plugins/style/pulse/tests/pulse-check.mjs        # 浏览器（自带静态
 | 命令 | 结果 |
 | :--- | :--- |
 | `node --test "plugins/style/pulse/tests/*.test.js"` | **51 / 51 通过** |
-| `node plugins/style/pulse/tests/pulse-check.mjs` | **109 / 109 通过**（连跑两次全绿） |
-| `node .tmp-skin-live.mjs --skin pulse`（真机） | **30 / 30 通过**：真频谱上 `data-beat=locked`、`data-onsets=27`、`data-cv=0.05`、29 个拍点、1 个刻度吸附、歌词 `--w=0.53`、暂停 6 秒 `data-idle=1` 且时间码不再动、换样式零残留、820px 窄窗画布跟随舞台不溢出、切深浅色不炸、关详情页再开能重挂、控制台零 error/warn |
-| `node plugins/build-index.mjs --check` | 通过（6 个条目 / 49 个文件） |
+| `node plugins/style/pulse/tests/pulse-check.mjs` | **114 / 114 通过**（有一项「拍点整体跟着容器刚性左移」是**历史遗留的偶发**：它按 50ms 采样、用最近邻配对，采样格差一帧就会出现 12 vs 11 的 1px 对不上 —— 与歌词无关，改动前它同样会偶发失败） |
+| `node .tmp-skin-live.mjs --skin pulse`（真机） | **36 / 36 通过**：真频谱上 `data-beat=locked`、`data-onsets=27`、`data-cv=0.07`、29 个拍点、2 个刻度吸附；**歌词滚动容器 173px = 歌词带的可视高度 173px**（`--lyric-pad` 86.4px，当前句落在带子中央 67..113）；暂停 6 秒 `data-idle=1` 且时间码不再动；换样式零残留；820px 窄窗画布跟随舞台不溢出；切深浅色不炸；关详情页再开能重挂；控制台零 error/warn |
+| `node plugins/build-index.mjs --check` | 通过（7 个条目 / 58 个文件） |
 
 ## 7. 实现偏差与限制
 
@@ -161,3 +165,15 @@ node plugins/style/pulse/tests/pulse-check.mjs        # 浏览器（自带静态
   现在 `ringPush` 以 `RING_KEEP_MS`（窗口 6 秒 + 1 秒余量）为准丢最旧的样本，容量（`RING_CAP = 4096`）
   只当内存上界（够到 ~580Hz）。这条有回归用例钉着：`30/60/85/120/144/240Hz 下窗口覆盖都要≈6 秒`。
 - **歌词当前行自己算**（二分查找），不调 `lyrics().index`（4Hz 才更新，不能当连续量用）。
+- **歌词带必须自己重设 `--lyric-pad`，否则表现是「歌词不会自行滚动」**：宿主 `lyrics.css`
+  给的是 `--lyric-pad: 34%`，而 CSS 的百分比内边距是相对**宽度**解析的 —— 那一档是按
+  「几百 px 高的竖排歌词列」定的。心跳的歌词带只有舞台高的 27%（1100×700 窗口下 189px 高）、
+  宽却有 ≈1030px，34% = 350px 的上下内边距**比容器本身还高**：`box-sizing: border-box` 下
+  浏览器会把盒子撑到「内边距之和」（`clientHeight` 变成 702px，而可见的只有父级 `.pl__lyrics`
+  裁出来的 189px）。SDK 按 `clientHeight` 居中当前行时，就把当前句放到了可见带**之下 160px** ——
+  屏幕上一直是「8 句以前」的歌词在慢慢爬，当前句永远不进视野。现在按**舞台高**取半个歌词带
+  （`calc(var(--pl-h) * 0.135)`，窄窗口 0.145），既让第一句正好落在带子中线，又保证
+  `clientHeight == 可见高度`。回归用例钉在自检场景 F（需求侧的证据：宿主 `lyrics.css`
+  是**未分层**注入，本包整份 CSS 在 `@layer skin` 里，层级优先于特异性 —— 所以 `.pl__lyrics
+  .lyric { … }` 这类声明同样压不过宿主，颜色/字号只能通过声明在 `.lyrics__scroll` 上的
+  `--lyric-*` / `--text-*` / `--accent` 变量生效，与「深渊」同款问题，见那份 README §「歌词」）。

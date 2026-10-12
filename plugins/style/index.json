@@ -262,8 +262,8 @@
       "files": [
         {
           "path": "pulse/README.md",
-          "size": 12592,
-          "sha256": "6b55aebe34f20ce94f9767cb1b4f8306ec5523c7595eba65a02d7234dffd9b2a"
+          "size": 14764,
+          "sha256": "82ac48add78846aef36e64e317079b4ab1ca51230b6799487bdf17ab622b264e"
         },
         {
           "path": "pulse/assets/icon.svg",
@@ -282,8 +282,8 @@
         },
         {
           "path": "pulse/skin.css",
-          "size": 12013,
-          "sha256": "ca04d9c9b7937e30c61e22dce655691f9c3386b0d78b2c1173a24d3b09681ae7"
+          "size": 13181,
+          "sha256": "c11866e9161d6563caee40f96630d676e5b9f9cbbb918ae321ff393005996985"
         },
         {
           "path": "pulse/skin.js",

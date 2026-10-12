@@ -63,7 +63,15 @@
 }
 
 /* 歌词区由 ctx.sdk.createLyricsView 生成（.lyrics / .lyrics__scroll / .lyric），
-   这里只调它的排版参数，不用自己写滚动逻辑。 */
+   这里只调它的排版参数，不用自己写滚动逻辑。
+
+   ★ 如果你的歌词区**又矮又宽**（比如只有舞台高的两三成），必须自己重设
+     `--lyric-pad`：宿主给的是 34%，而 CSS 的百分比内边距是相对**宽度**解析的，
+     纸面上它比你的容器还高 —— border-box 下浏览器会把滚动容器撑到「内边距之和」，
+     SDK 按 clientHeight 居中当前行时就会把当前句放到可见带之外（表现是
+     「歌词不会自己滚」）。按高度给一个「半个歌词带」的值即可，例如
+     `--lyric-pad: calc(var(--你的舞台高, 720px) * 0.135)`（变量写在
+     `.lyrics__scroll` 上才压得过宿主那份未分层的规则）。 */
 .pv-lyrics-host {
   flex: 1 1 auto;
   min-height: 0;
