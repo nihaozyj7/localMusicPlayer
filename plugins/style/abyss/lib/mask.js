@@ -41,11 +41,9 @@ export function textRects(lineEl, stageEl) {
         if (!rect || !rect.width) continue;
         const host = child.parentElement || lineEl;
         let font = "";
-        let spacing = "";
         try {
           const cs = getComputedStyle(host);
           font = cs.font || `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-          spacing = cs.letterSpacing;
         } catch {
           font = "";
         }
@@ -56,7 +54,6 @@ export function textRects(lineEl, stageEl) {
           h: rect.height,
           text,
           font,
-          spacing,
         });
       } else if (child.nodeType === 1) {
         const tag = child.tagName;
@@ -97,16 +94,24 @@ export function paintMask(canvas, stageEl, lineEl, dpr, opts = {}) {
   let box = null;
   for (const it of plan.items) {
     g.font = it.font || `${Math.round(14 * plan.scale)}px sans-serif`;
-    if (it.spacing && "letterSpacing" in g) {
-      try {
-        g.letterSpacing = it.spacing;
-      } catch {
-        /* 老引擎不认就算了 */
-      }
+    /* 横向对齐：宿主歌词给当前行带 `letter-spacing: -0.01em`（lyrics.css），而这个
+       Chromium 的 canvas 既不把 letterSpacing 算进 measureText、也不用在 fillText 上 ——
+       遮罩于是比 DOM 宽 n × 0.32px（20 个字 = 6px），"墨迹必须落在 DOM 盒 ±2px 内"
+       这条断言就红了，屏幕上表现为水里的字形凹陷比文字宽出一小截。
+       与其赌引擎支持（各版本行为不一致），不如按 **DOM 量出来的宽度**横向微缩：
+       通常只有 0.99x，肉眼看不出来，但轮廓与 DOM 完全重合，任何引擎都成立。 */
+    const mw = g.measureText(it.text).width || it.w;
+    const k = it.w > 0 && mw > 0 ? it.w / mw : 1;
+    if (Math.abs(k - 1) > 0.0008) {
+      g.save();
+      g.translate(it.x, it.y + it.h / 2);
+      g.scale(k, 1);
+      g.fillText(it.text, 0, 0);
+      g.restore();
+    } else {
+      g.fillText(it.text, it.x, it.y + it.h / 2);
     }
-    const w = g.measureText(it.text).width || it.w;
-    g.fillText(it.text, it.x, it.y + it.h / 2);
-    const right = it.x + Math.max(w, it.w);
+    const right = it.x + it.w;
     const top = it.y;
     const bottom = it.y + it.h;
     box = box

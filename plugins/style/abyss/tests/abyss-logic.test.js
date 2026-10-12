@@ -586,3 +586,24 @@ test("诚实暴露可观测状态（自检与真机探针靠它断言，不靠�
     assert.ok(src.includes(key), `要暴露 ${key}`);
   }
 });
+
+test("每个文件都要能被解析（遗言式：GLSL 写在 JS 模板串里，注释里一个反引号就整包炸）", async () => {
+  // 真发生过两次：着色器源码是 JS 模板串，改注释时顺手写了个 `反引号`，
+  // 模板串当场提前闭合 —— 静态扫描（只读文本）看不出来，只有真机报
+  // "SyntaxError: Unexpected identifier"。所以这里**真的 import 一遍**。
+  const files = [
+    "skin.js",
+    "skin.json",
+    "lib/water.js",
+    "lib/gl.js",
+    "lib/canvas2d.js",
+    "lib/mask.js",
+  ];
+  for (const f of files) assert.ok(existsSync(path.join(PKG, f)), `缺文件 ${f}`);
+  for (const f of files.filter((x) => x.endsWith(".js"))) {
+    await assert.doesNotReject(import(`../${f}`), `${f} 解析失败`);
+  }
+  // 顺带钉住"模板串本身在 JS 里也是合法的"：模块能 import 就说明没有提前闭合的模板串。
+  const skin = await import("../skin.js");
+  assert.ok(skin.default, "skin.js 要有默认导出");
+});

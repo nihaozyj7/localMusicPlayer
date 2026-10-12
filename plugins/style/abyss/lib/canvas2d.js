@@ -67,9 +67,10 @@ export function create2D(canvas) {
       const lift = clamp01(u.lift || 0);
       const turb = clamp01(u.turb || 0);
       const foam = clamp01(u.foam || 0);
-      // 深水底
+      // 深水底：alpha 不能太高（0.82 会把上面那层"整窗底色"糊死，兜底档看起来
+      // 就是一块纯黑），但也得够厚，不然封面会像贴纸一样浮着
       ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = `rgba(${u.bg[0]},${u.bg[1]},${u.bg[2]},0.82)`;
+      ctx.fillStyle = `rgba(${u.bg[0]},${u.bg[1]},${u.bg[2]},0.66)`;
       ctx.fillRect(0, 0, w, h);
 
       /* 双层位移贴图：同一张封面两份不同相位 —— 水面"流动"的观感就来自这一层错位 */
@@ -81,9 +82,9 @@ export function create2D(canvas) {
         const dx2 = Math.sin(ph * 1.37 + 1.7) * amp * 1.6 + (u.surge || 0) * 18;
         const dy2 = Math.cos(ph * 1.11 + 0.4) * amp * 1.1;
         ctx.globalCompositeOperation = "screen";
-        ctx.globalAlpha = 0.34;
+        ctx.globalAlpha = 0.42;
         ctx.drawImage(img, dx1, dy1 + lift * 8, w, h);
-        ctx.globalAlpha = 0.22;
+        ctx.globalAlpha = 0.26;
         ctx.drawImage(img, dx2, dy2 - (u.surge || 0) * 10, w * 1.08, h * 1.08);
       }
       ctx.globalCompositeOperation = "source-over";
@@ -127,9 +128,19 @@ export function create2D(canvas) {
       vg.addColorStop(1, "rgba(0,0,0,0.55)");
       ctx.fillStyle = vg;
       ctx.fillRect(0, 0, w, h);
-      ctx.globalAlpha = 0.35 + lift * 0.4;
-      ctx.fillStyle = `rgba(${u.accent[0]},${u.accent[1]},${u.accent[2]},0.28)`;
-      ctx.fillRect(0, h * (0.34 - lift * 0.16), w, 2 + lift * 6);
+
+      /* 水面高光带：用**渐变**画，不是一个 fillRect。
+         原来那条 2~8px 的实心亮线没有模糊，在深水上就是一道细硬的白线
+         （像画面的分隔线，GL 档是有 3px blur 的），两档观感对不上。 */
+      const bandY = h * (0.34 - lift * 0.16);
+      const bandH = 2 + lift * 6;
+      const sg = ctx.createLinearGradient(0, bandY - bandH * 3, 0, bandY + bandH * 3);
+      const a0 = Math.min(0.42, 0.24 + lift * 0.3);
+      sg.addColorStop(0, `rgba(${u.accent[0]},${u.accent[1]},${u.accent[2]},0)`);
+      sg.addColorStop(0.5, `rgba(${u.accent[0]},${u.accent[1]},${u.accent[2]},${a0.toFixed(3)})`);
+      sg.addColorStop(1, `rgba(${u.accent[0]},${u.accent[1]},${u.accent[2]},0)`);
+      ctx.fillStyle = sg;
+      ctx.fillRect(0, bandY - bandH * 3, w, bandH * 6);
       ctx.globalAlpha = 1;
       stats.draws += 1;
     },

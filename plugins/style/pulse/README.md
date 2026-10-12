@@ -25,7 +25,7 @@ pulse/
 │   └── scope.js               示波器几何 + 配色工具（纯逻辑，无 DOM）
 ├── README.md
 └── tests/
-    ├── pulse-logic.test.js    纯逻辑自检（node --test，47 项）
+    ├── pulse-logic.test.js    纯逻辑自检（node --test，51 项）
     └── pulse-check.mjs        浏览器自检（自带静态服务 + 假宿主 + 无头 Edge）
 ```
 
@@ -111,13 +111,14 @@ node --test "plugins/style/pulse/tests/*.test.js"     # 纯逻辑
 node plugins/style/pulse/tests/pulse-check.mjs        # 浏览器（自带静态服务 + 无头 Edge）
 ```
 
-- **纯逻辑**（49 项）：能量 / 质心 / flux 的语义（稳态不报 onset、抬起来才算）、自适应阈值
+- **纯逻辑**（51 项）：能量 / 质心 / flux 的语义（稳态不报 onset、抬起来才算）、自适应阈值
   （**音量 4% 时照样检出**：频谱是音量后的口径，绝对阈值会全漏）、onset 冷却、
   间隔物理范围过滤、修剪均值估 BPM、变异系数判定、四个状态分支的文案、
   PLL 软校正（偏差 ≤ 25% 周期只挪一半，超了就重新起拍）、负延迟补偿的峰值位置、
   柔性吸附（窗口边界取等号、吸最近的那个、差得远的不许拖）、环形缓冲与插值、
   窗口映射（参照点换掉时屏幕位置仍连续）、示波器几何（单调性 / 越界钳制 / 空序列）、
-  颜色工具、以及**契约纪律的静态扫描**
+  颜色工具、**环形缓冲的两种上界（时间保留：30/60/85/120/144/240Hz 下 6 秒窗口都要铺满；
+  容量：样本很密时不许越过 `RING_CAP`）**、以及**契约纪律的静态扫描**
   （imports / `?t=` 透传 / `ctx.*` 白名单 / 不碰 `backgroundRoot` / CSS 禁用项 /
   只有 3 处 rAF 且歌词视图恒以 `playing:false` 驱动 / destroy 清理清单）。
 - **浏览器**（109 项）：真实 `@layer`+`@scope` 下装真模块（含真实的 `createLyricsView`）——
@@ -133,7 +134,7 @@ node plugins/style/pulse/tests/pulse-check.mjs        # 浏览器（自带静态
 
 | 命令 | 结果 |
 | :--- | :--- |
-| `node --test "plugins/style/pulse/tests/*.test.js"` | **49 / 49 通过** |
+| `node --test "plugins/style/pulse/tests/*.test.js"` | **51 / 51 通过** |
 | `node plugins/style/pulse/tests/pulse-check.mjs` | **109 / 109 通过**（连跑两次全绿） |
 | `node .tmp-skin-live.mjs --skin pulse`（真机） | **30 / 30 通过**：真频谱上 `data-beat=locked`、`data-onsets=27`、`data-cv=0.05`、29 个拍点、1 个刻度吸附、歌词 `--w=0.53`、暂停 6 秒 `data-idle=1` 且时间码不再动、换样式零残留、820px 窄窗画布跟随舞台不溢出、切深浅色不炸、关详情页再开能重挂、控制台零 error/warn |
 | `node plugins/build-index.mjs --check` | 通过（6 个条目 / 49 个文件） |
@@ -153,4 +154,10 @@ node plugins/style/pulse/tests/pulse-check.mjs        # 浏览器（自带静态
 - **字级刻度上限 64 个**（一行最多量 64 个字素）：超长行的尾部刻度不画，避免一行几百个节点。
 - **不做"能量阈值自适应 BPM 范围"**：BPM 固定折进 60..180（`foldBpm`），
   所以 90 与 180 会被判成同一个脉搏 —— 这是刻意的（也是唯一不谎报的办法：频谱给不出小节线）。
+- **环形缓冲按「时间」保留，不按帧数**：缓冲是**每帧**写一个样本，所以能存几秒取决于刷新率。
+  容量曾经写死 512（"6 秒 × 60fps，留点余量"）：60Hz 下 8.5 秒看着没问题，**120Hz 只剩 4.26 秒**、
+  144Hz 只剩 3.55 秒 —— 真机表现是**波形左端整块空掉**（120Hz 空 29%、144Hz 空 41%，刷新率越高空得越多），
+  而开/拖窗口时帧率一掉就"刚好好了"、停下来一会儿又空回去（看起来像随机故障）。
+  现在 `ringPush` 以 `RING_KEEP_MS`（窗口 6 秒 + 1 秒余量）为准丢最旧的样本，容量（`RING_CAP = 4096`）
+  只当内存上界（够到 ~580Hz）。这条有回归用例钉着：`30/60/85/120/144/240Hz 下窗口覆盖都要≈6 秒`。
 - **歌词当前行自己算**（二分查找），不调 `lyrics().index`（4Hz 才更新，不能当连续量用）。

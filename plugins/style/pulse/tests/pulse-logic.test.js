@@ -134,6 +134,50 @@ test("环形缓冲：写满之后按时间顺序读，绕圈也不乱", () => {
   assert.equal(bt.ringIndex(r, 99), -1);
 });
 
+test("环形缓冲按**时间**保留：高刷屏下 6 秒窗口仍然铺满", () => {
+  /* 每帧一个样本，所以"存了几秒"取决于刷新率。曾经容量写死 512：
+     60Hz 够 8.5 秒（自检与开发机都看不出问题），120Hz 只剩 4.26 秒 ——
+     真机表现是示波器**波形左端空掉一大截**（120Hz 空 29%），
+     而且开窗口/拖窗口时帧率一掉就"刚好好了"，停下来一会儿又空回去。 */
+  for (const fps of [30, 60, 85, 120, 144, 240]) {
+    const ring = bt.createRing();
+    const dt = 1000 / fps;
+    let t = 0;
+    for (let k = 0; k < Math.ceil(12_000 / dt); k += 1) {
+      t += dt;
+      bt.ringPush(ring, t, 0.5, 0.5, 0.01);
+    }
+    const out = bt.createSeries();
+    const n = bt.seriesInto(ring, t - bt.SPAN_MS, t, out);
+    assert.ok(n > 1, `${fps}Hz：窗口里要有样本`);
+    assert.ok(out.t[0] >= t - bt.SPAN_MS, `${fps}Hz：不许给出窗口左端之外的样本`);
+    const cover = t - out.t[0];
+    assert.ok(
+      cover >= bt.SPAN_MS - dt,
+      `${fps}Hz：窗口覆盖 ${Math.round(cover)}ms，应≈${bt.SPAN_MS}ms（缺料就是波形左边空一截）`
+    );
+    assert.ok(ring.n <= ring.cap, `${fps}Hz：容量仍然是不许越过的内存上界`);
+  }
+});
+
+test("环形缓冲：时间上界与容量上界各管一段（谁先生效就谁生效）", () => {
+  /* 时间上界：每秒一个样本 —— 只留 RING_KEEP_MS 内的那几个 */
+  const slow = bt.createRing(64);
+  for (let i = 0; i < 100; i += 1) bt.ringPush(slow, i * 1000, 0, 0, 0);
+  assert.equal(slow.n, Math.ceil(bt.RING_KEEP_MS / 1000) + 1, "保留时长内的样本 + 刚写入的这一个");
+  assert.ok(slow.n < slow.cap, "时间上界先生效时，容量不会被顶到");
+
+  /* 容量上界：样本很密（时间上界不触发），仍然不许越过 cap */
+  const fast = bt.createRing(4);
+  for (let i = 0; i < 20; i += 1) bt.ringPush(fast, i * 10, 0, 0, 0);
+  assert.equal(fast.n, 4);
+  assert.deepEqual(
+    [0, 1, 2, 3].map((k) => fast.t[bt.ringIndex(fast, k)]),
+    [160, 170, 180, 190],
+    "绕圈之后顺序仍然是从旧到新"
+  );
+});
+
 test("seriesInto：按时间窗拷出来，越界的丢掉（零分配）", () => {
   const r = bt.createRing(32);
   for (let i = 0; i < 10; i += 1) bt.ringPush(r, i * 100, i / 10, i / 20, i / 30);

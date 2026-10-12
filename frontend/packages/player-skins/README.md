@@ -120,13 +120,18 @@ const chrome = deriveChrome(manifest.colors);
 // chrome = { theme, vars, missing, corrected, contrast, preview, readable }
 ```
 
-* `colors: { bg, fg }` → 派生出 `--chrome-bg / -bg-soft / -fg / -fg-dim / -hover / -active / -border / -accent`，
+* `colors: { bg, fg }` → 派生出 `--chrome-bg / -bg-soft / -fg / -fg-dim / -hover / -active / -border`
+  与整个强调色家族 `--chrome-accent / -accent-text / -accent-weak(-hover)`，
   由宿主写到 `<html>` 上（浮层是 `#app` 外的 fixed 元素，只能挂在文档根）；
+  另有 `--skin-bg` / `--skin-fg`：非整窗背景型的样式，宿主用它给标题栏 / 底栏 / 舞台铺底；
 * **对比度兜底**：`bg` 与 `fg` 的 WCAG 对比度低于 4.5:1 时，把 `fg` 推向黑/白
-  （`corrected: true`，`contrast` 是纠正后的值）；
+  （`corrected: true`，`contrast` 是纠正后的值）；`accent` 同样会被纠正到"在底色上看得见"，
+  并配一个画在它上面的 `--chrome-accent-text`（主题的 `--accent-text` 是给主题自己的强调色配的，
+  不能沿用）。没声明 `accent` 时用插件的 `fg`；
 * `colors: { theme: true }` → 合法写法：不写任何变量，宿主壳直接用主题令牌；
 * **缺失或写错**（`missing: ["bg","fg"]`）→ 不写变量、降级主题，设置页在该样式
-  卡片上显示警告图标（悬浮看原因）。
+  卡片上显示警告图标（悬浮看原因）。只声明了一半（只有 `bg` 或只有 `fg`）同样整壳降级，
+  宿主不会"上一半"（那会把主题的文字令牌一起抹掉）。
 
 宿主壳只读 `--chrome-*`，不读插件任何变量；插件自己画面的配色是插件 CSS 的事。
 

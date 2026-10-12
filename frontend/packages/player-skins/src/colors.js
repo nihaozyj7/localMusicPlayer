@@ -261,6 +261,27 @@ export function deriveChrome(declared) {
     corrected = r.corrected;
   }
 
+  /**
+   * 强调色家族。宿主壳里凡是"被强调"的地方（底栏的播放/暂停与进度条填充、
+   * 切换按钮的选中块、选中行）都用 --accent*，而主题那一套是**按主题底色**
+   * 配的：简约深色的蓝灰 #8b9bb4 落在插件声明的纸白上只有 2.5:1 —— 于是
+   * 「只换了文字色、没换强调色」的壳看起来就是"别的颜色"。这里一并对齐：
+   *   · 声明了 accent → 用对底色可读的纠正版；
+   *   · 没声明 → 用插件自己的前景色（"纸白 + 墨黑 + 一个专色"的样式缺专色时，
+   *     壳里也不该混进主题的色相，宁可单色）。
+   */
+  let finalAccent = null;
+  let finalAccentText = null;
+  // 半套清单（只有 bg 或只有 fg）本来就不会启用壳层配色（skinhost.applyChrome 要求
+  // 底色与前景成对），所以这里也不需要为它硬编一个强调色。
+  const baseAccent = accent ?? finalFg;
+  if (baseAccent) {
+    finalAccent = bg ? ensureReadableFg(bg, baseAccent).color : baseAccent;
+    // 强调色**上**的文字色：从插件底色起步（专色上的字通常就是纸白），不够再推黑/白。
+    // 不能沿用主题的 --accent-text —— 它是给主题自己的强调色配的。
+    finalAccentText = ensureReadableFg(finalAccent, bg ?? { r: 255, g: 255, b: 255, a: 1 }).color;
+  }
+
   if (bg) {
     // 半透明底 + 宿主自己的毛玻璃：与 v2 的 --glass-bg-strong 消费方式一致
     vars["--chrome-bg"] = `color-mix(in oklab, ${rgbText(bg)} 82%, transparent)`;
@@ -275,7 +296,13 @@ export function deriveChrome(declared) {
     vars["--chrome-border"] = `color-mix(in oklab, ${rgbText(finalFg)} 18%, transparent)`;
     vars["--skin-fg"] = rgbText(finalFg);
   }
-  if (accent) vars["--chrome-accent"] = rgbText(accent);
+  if (finalAccent) {
+    vars["--chrome-accent"] = rgbText(finalAccent);
+    vars["--chrome-accent-text"] = rgbText(finalAccentText);
+    // 淡底（选中行 / 弱强调块）跟着强调色走，否则同屏会出现两种色相
+    vars["--chrome-accent-weak"] = `color-mix(in oklab, ${rgbText(finalAccent)} 16%, transparent)`;
+    vars["--chrome-accent-weak-hover"] = `color-mix(in oklab, ${rgbText(finalAccent)} 24%, transparent)`;
+  }
 
   return {
     theme: false,
@@ -327,6 +354,9 @@ export const CHROME_VAR_NAMES = [
   "--chrome-active",
   "--chrome-border",
   "--chrome-accent",
+  "--chrome-accent-text",
+  "--chrome-accent-weak",
+  "--chrome-accent-weak-hover",
   "--skin-bg",
   "--skin-fg",
 ];

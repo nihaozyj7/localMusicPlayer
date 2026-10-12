@@ -35,15 +35,27 @@ const SDK_ROOT = join(REPO_ROOT, "frontend", "packages", "player-skins", "src");
 const wa = await import(pathToFileURL(join(PKG_ROOT, "lib", "water.js")).href);
 const MANIFEST = JSON.parse(readFileSync(join(PKG_ROOT, "skin.json"), "utf8"));
 
+/** WCAG 相对亮度（0..1） */
+function lumOf(rgb) {
+  const f = (c) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+}
+
+/** 两个 rgb 数组之间的 WCAG 对比度 */
+function wcagRgb(a, b) {
+  const l1 = lumOf(a);
+  const l2 = lumOf(b);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+
 /** WCAG 对比度（颜色解析走本包的 hexToRgb） */
 function wcag(bgHex, fgHex) {
   const lum = (hex) => {
     const [r, g, b] = wa.hexToRgb(hex, [0, 0, 0]);
-    const f = (c) => {
-      const s = c / 255;
-      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-    };
-    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    return lumOf([r, g, b]);
   };
   const l1 = lum(bgHex);
   const l2 = lum(fgHex);
@@ -63,6 +75,10 @@ const HARNESS = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <title>abyss check</title>
+<!-- 宿主真实的样式表，顺序与 frontend/src/styles/index.css 一致；lyrics.css 由宿主在运行时注入（未分层） -->
+<link rel="stylesheet" href="/host/base.css">
+<link rel="stylesheet" href="/host/tokens.css">
+<link rel="stylesheet" href="/host/lyrics.css">
 <style>
   html, body { margin: 0; background: #101418; }
   /* 宿主歌词骨架（components/lyrics.css 的最小同义版） */
@@ -407,6 +423,31 @@ window.__scenarioA = async function () {
     textBlend: computed(ab.querySelector(".ab__text"), "mix-blend-mode"),
     curFont: computed(ab.querySelector('.ab__text .lyric[aria-current="true"]'), "font-size"),
     otherFont: computed(ab.querySelector('.ab__text .lyric[aria-current="false"]'), "font-size"),
+    /* ---- 观感 / 层次：这几条是"画出来到底看不看得见"的静态半边 ---- */
+    /* 歌词配色必须是**本包的**（皮肤不能直接写 .lyric 的 color：lyrics.css 未分层，
+       层级优先于特异性，写了也上不了屏）。这两条读的是变量落到字上的结果。 */
+    curColor: computed(ab.querySelector('.ab__text .lyric[aria-current="true"]'), "color"),
+    otherColor: computed(ab.querySelector('.ab__text .lyric[aria-current="false"]'), "color"),
+    lyricDim: computed(ab.querySelector(".ab__text .lyrics__scroll"), "--lyric-dim"),
+    lyricPad: computed(ab.querySelector(".ab__text .lyrics__scroll"), "--lyric-pad"),
+    /* 暗角与遮罩必须在歌词**之前**（画在字下面）。写在字后面那圈黑会盖住字上，
+       实测把 #58c7ff 压成 (27,60,77) —— 对比度 1.3:1，等于看不见。 */
+    order: {
+      vig: Array.from(ab.children).findIndex((el) => el.classList.contains("ab__vig")),
+      scrim: Array.from(ab.children).findIndex((el) => el.classList.contains("ab__scrim")),
+      text: Array.from(ab.children).findIndex((el) => el.classList.contains("ab__text")),
+      hud: Array.from(ab.children).findIndex((el) => el.classList.contains("ab__hud")),
+    },
+    /* 当前行落在舞台的哪个高度上（0=顶 1=底）。量的是**结果**：
+       --lyric-pad 曾经写死 34%（百分比内边距按**宽度**解析），首句被推到文本框最下沿，
+       那里正好压着最重的暗角。 */
+    curCenter: (() => {
+      const el = ab.querySelector('.ab__text .lyric[aria-current="true"]') || ab.querySelector(".ab__text .lyric");
+      if (!el) return -1;
+      const r = el.getBoundingClientRect();
+      const s = ab.getBoundingClientRect();
+      return Math.round(((r.top + r.height / 2 - s.top) / s.height) * 1000) / 1000;
+    })(),
     curTransform: computed(ab.querySelector('.ab__text .lyric[aria-current="true"]'), "transform"),
     surfaceBlur: computed(ab.querySelector(".ab__surface"), "filter"),
     noGlHidden: ab.querySelector(".ab__nogl").hidden,
@@ -689,7 +730,10 @@ window.__scenarioE = async function () {
     viewport: window.innerWidth,
     pageScroll: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
     depthFont: computed(narrow.ab.querySelector(".ab__depth"), "font-size"),
+    rows: narrow.ab.querySelectorAll(".ab__text .lyric").length,
     curFont: computed(narrow.ab.querySelector('.ab__text .lyric[aria-current="true"]'), "font-size"),
+    /* 变量侧的值：窄窗口这一档**必须**走残留变量，直接给 .lyric 写 font-size 是死规则 */
+    curVar: computed(narrow.ab.querySelector(".ab__text .lyrics__scroll"), "--lyric-size-active"),
     hudPad: computed(narrow.ab.querySelector(".ab__hud"), "padding-left"),
   };
   pv.style.width = "1100px";
@@ -783,6 +827,29 @@ const server = createServer((req, res) => {
   }
   if (path.startsWith("/sdk/")) {
     if (!serve(SDK_ROOT, { url: req.url.replace(/^\/sdk/, "") }, res)) res.writeHead(404).end("not found");
+    return;
+  }
+  /* 宿主的样式表必须按真机那样进来（未分层）：
+     · lyrics.css 是**在宿主里注入的、未分层**的样式 —— @layer 里的声明永远赢不了它。
+       旧版自检没加载它，于是"皮肤写的 .lyric 颜色到底上不上得了屏"这一条从来没被验过，
+       而真机上正是它把当前行压成了主题的灰蓝。
+     · base.css 给全局 `box-sizing: border-box`，直接决定 .lyrics__scroll 的高度怎么算
+       （content-box 下 height:100% + 百分比内边距会撑成一个 1206px 的怪盒子）。
+     · tokens.css 提供主题默认值 —— 本包的配色**必须**盖过它。 */
+  if (path.startsWith("/host/")) {
+    const f = path.slice("/host/".length);
+    const files = {
+      "base.css": join(REPO_ROOT, "frontend", "src", "styles", "base.css"),
+      "tokens.css": join(REPO_ROOT, "frontend", "src", "styles", "tokens.css"),
+      "lyrics.css": join(SDK_ROOT, "lyrics.css"),
+    };
+    const file = files[f];
+    if (file && existsSync(file)) {
+      res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
+      res.end(readFileSync(file));
+      return;
+    }
+    res.writeHead(404).end("not found");
     return;
   }
   if (!serve(PKG_ROOT, req, res)) res.writeHead(404).end("not found");
@@ -990,7 +1057,7 @@ if (!EDGE) {
       check(false, "自检页面加载", j(ready));
     } else {
       /* ---------------- A ---------------- */
-      console.log("\n[1] 挂载 / 七层结构 / 背景层 / GL 真的在画 / 遮罩对齐 / 读数 / 配色");
+      console.log("\n[1] 挂载 / 层次结构 / 背景层 / GL 真的在画 / 遮罩对齐 / 读数 / 配色 / 可读性");
       let A;
       try {
         A = await evaluate("window.__scenarioA()");
@@ -1003,9 +1070,15 @@ if (!EDGE) {
         const M = A.mounted;
         check(M.hasAb === true, "样式能挂载并渲染");
         check(
-          M.children.join("|") === "ab__fluid|ab__soft|ab__mask|ab__glow|ab__surface|ab__text|ab__vig|ab__hud|ab__nogl",
-          "舞台里九件齐全（GL 水/兜底水/遮罩/光晕/液面/歌词/暗角/HUD/兜底角标）",
+          M.children.join("|") ===
+            "ab__fluid|ab__soft|ab__mask|ab__glow|ab__surface|ab__vig|ab__scrim|ab__text|ab__hud|ab__nogl",
+          "舞台里十件齐全，且层次顺序正确（GL 水/兜底水/遮罩/光晕/液面/暗角/暗底/歌词/HUD/兜底角标）",
           j(M.children)
+        );
+        check(
+          M.order.vig >= 0 && M.order.vig < M.order.scrim && M.order.scrim < M.order.text && M.order.text < M.order.hud,
+          "暗角与暗底都画在歌词**下面**（画在上面就是把字压黑）",
+          j(M.order)
         );
         check(M.render === "gl" && M.softVisibility === "hidden", "GL 档位下兜底画布是藏起来的（两张画布、布局一致）", j([M.render, M.softVisibility]));
         check(M.bgChildren.join("|") === "abbg__img|abbg__deep|abbg__caustics", "整窗背景层三件齐全（封面/深度分层/光斑）", j(M.bgChildren));
@@ -1018,13 +1091,24 @@ if (!EDGE) {
         check(M.words.length === 10 && M.words.every((w) => w.w !== ""), "逐字填充量 --w 每帧在写（10 个字素）", j(M.words.map((w) => w.w)));
         check(M.words.some((w) => w.active === "true"), "唱到的字素被点亮", j(M.words.map((w) => w.active)));
         check(M.textBlend === "screen", "歌词与水混合（mix-blend-mode，@scope 之后仍生效）", M.textBlend);
-        check(M.curFont === "21px" && M.otherFont === "16px", "当前行放大（只改字号，不改 transform）", j([M.curFont, M.otherFont]));
+        check(M.curFont === "32px" && M.otherFont === "23px", "当前行放大（只改字号，不改 transform）", j([M.curFont, M.otherFont]));
+        check(
+          /^rgba?\(88, 199, 255/.test(M.curColor) && /^rgba?\(223, 242, 255/.test(M.otherColor),
+          "歌词配色走的是本包的配色（--accent / --text-1），盖过了主题 tokens（未分层的 lyrics.css 只能靠变量绕）",
+          j([M.curColor, M.otherColor])
+        );
+        check(parseFloat(M.lyricDim) >= 0.35, "非当前行没有暗到看不见（--lyric-dim）", M.lyricDim);
+        check(
+          M.curCenter > 0.34 && M.curCenter < 0.66,
+          "当前行落在舞台纵向中部（首句不被顶到框底、不顶到框顶）",
+          j({ curCenter: M.curCenter, lyricPad: M.lyricPad })
+        );
         check(M.curTransform === "none", "当前行没有 transform 缩放（一缩遮罩就对不齐）", M.curTransform);
         check(M.surfaceBlur.includes("blur"), "液面是渐变 + 模糊画的", M.surfaceBlur.slice(0, 30));
         check(M.causticsAnim === "ab-caustics", "@keyframes 被 @layer+@scope 包住之后仍然有效", M.causticsAnim);
         check(ms(M.causticsDur) >= 20000, "背景光斑极慢（42 秒级，不抢注意力）", M.causticsDur);
         check(M.bgImgReady === "1" && M.bgImgSrc === "set", "封面进了背景层（data-ready 由 load 事件置位）", j([M.bgImgReady, M.bgImgSrc]));
-        check(M.coverReady === "1", "封面被采样成密度场（64×64 → 256×256）", M.coverReady);
+        check(M.coverReady === "1", "封面被采样成密度场（128×128 → 256×256，再抹一遍）", M.coverReady);
         check(px(M.lift) > 0.05, "低频把液面抬起来了（--ab-lift 在动）", M.lift);
         check(px(M.turb) > 0.05 && px(M.foam) > 0.05, "湍流与泡沫也在动", j([M.turb, M.foam]));
         check(M.phase !== "" && px(M.phase) >= 0, "泵浦相位在写（歌曲钟积分出来的）", M.phase);
@@ -1070,6 +1154,54 @@ if (!EDGE) {
         const cManifest = wcag(MANIFEST.colors.bg, MANIFEST.colors.fg);
         check(cInk >= 3.9, "上报的配色对比度 ≥ 3.9（深海底色与冰蓝字）", cInk.toFixed(2));
         check(cManifest >= 4.5, "清单里的配色对比度 ≥ 4.5", cManifest.toFixed(2));
+        /* --- 真的画出来了吗 ---
+           上面全是"DOM 属性对不对"。它们**全都绿也挡不住**"字被暗角盖成 1.3:1"
+           这类事故（历史上一整轮 125 项全绿，而屏幕上的歌词对比度是 1.31:1）。
+           这一条读的是 CDP 截下来的**合成后真实像素**：把当前行那一带截图，
+           取亮度中位数当"底"、最亮 1% 当"字"，算 WCAG。 */
+        const band = await evaluate(`(() => {
+          const el = document.querySelector('.ab__text .lyric[aria-current="true"]') || document.querySelector('.ab__text .lyric');
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { x: Math.max(0, r.left - 6), y: Math.max(0, r.top - 6), width: r.width + 12, height: r.height + 12 };
+        })()`);
+        if (!band?.width) {
+          check(false, "当前行的盒子能量到（可读性断言的前提）", j(band));
+        } else {
+          const shot = await send("Page.captureScreenshot", {
+            format: "png",
+            clip: { x: band.x, y: band.y, width: band.width, height: band.height, scale: 1 },
+          });
+          const an = await evaluate(`(async () => {
+            const bin = atob(${JSON.stringify(shot?.data || "")});
+            const buf = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i += 1) buf[i] = bin.charCodeAt(i);
+            const bmp = await createImageBitmap(new Blob([buf], { type: "image/png" }));
+            const cv = new OffscreenCanvas(bmp.width, bmp.height);
+            const g = cv.getContext("2d");
+            g.drawImage(bmp, 0, 0);
+            const d = g.getImageData(0, 0, bmp.width, bmp.height).data;
+            const f = (c) => { const s = c / 255; return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); };
+            const rows = [];
+            for (let i = 0; i < d.length; i += 4) {
+              rows.push([0.2126 * f(d[i]) + 0.7152 * f(d[i + 1]) + 0.0722 * f(d[i + 2]), d[i], d[i + 1], d[i + 2]]);
+            }
+            rows.sort((a, b) => a[0] - b[0]);
+            const mid = rows[Math.floor(rows.length / 2)];
+            const top = rows[Math.min(rows.length - 1, Math.floor(rows.length * 0.99))];
+            return { bg: [mid[1], mid[2], mid[3]], fg: [top[1], top[2], top[3]], n: rows.length, w: bmp.width, h: bmp.height };
+          })()`);
+          if (!an || an.__error || !an.fg) {
+            check(false, "截下来的像素读得出来（可读性断言）", j(an && (an.__error || an)));
+          } else {
+            const c = wcagRgb(an.bg, an.fg);
+            check(
+              c >= 4.5,
+              "**当前行在合成后的真实像素上对比度 ≥ 4.5:1**（低于 3:1 就是「歌词看不清」）",
+              `${c.toFixed(2)}:1  底=${an.bg} 字=${an.fg} 裁切=${an.w}x${an.h}`
+            );
+          }
+        }
       }
 
       /* ---------------- B ---------------- */
@@ -1191,7 +1323,11 @@ if (!EDGE) {
         check(E.narrow.cvClient[0] <= 760 && E.narrow.cvW === E.narrow.cvClient[0], "窄窗口画布跟着新盒子（dpr 1）", j(E.narrow));
         check(E.narrow.stageRight <= E.narrow.viewport, "舞台没有越出视口", j([E.narrow.stageRight, E.narrow.viewport]));
         check(E.narrow.pageScroll <= 1, "窄窗口下没有横向滚动", j(E.narrow.pageScroll));
-        check(E.narrow.curFont === "18px" && E.narrow.depthFont === "13px", "窄窗口字号收了一档（21/14 → 18/13）", j([E.narrow.curFont, E.narrow.depthFont]));
+        check(
+          E.narrow.rows === 4 && E.narrow.curFont === "26px" && E.narrow.curFont === E.narrow.curVar && E.narrow.depthFont === "13px",
+          "窄窗口字号收了一档（32/23 → 26/19，走 --lyric-* 变量，不是给 .lyric 写 font-size）",
+          j([E.narrow.rows, E.narrow.curFont, E.narrow.curVar, E.narrow.depthFont])
+        );
         const nf = (E.narrow.flow || "0x0").split("x").map(num);
         check(nf[0] > 0 && nf[0] < E.narrow.cvClient[0], "窄窗口流场分辨率仍然小于画布（半分辨率）", j([E.narrow.flow, E.narrow.cvW]));
       }

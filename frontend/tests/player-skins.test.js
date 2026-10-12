@@ -18,6 +18,7 @@ import assert from "node:assert/strict";
 
 import {
   BUILTIN_SKINS,
+  CHROME_VAR_NAMES,
   DEFAULT_SKIN_ID,
   HOST_API_VERSION,
   SKIN_API_VERSION,
@@ -445,6 +446,41 @@ test("deriveChrome：缺失时只产出「能产出的那一半」，其余回�
   const onlyBg = deriveChrome({ bg: "#0b1020" });
   assert.ok(onlyBg.vars["--chrome-bg"], "有 bg 就该有底色变量");
   assert.equal(onlyBg.vars["--chrome-fg"], undefined, "没有 fg 就不该编一个出来");
+});
+
+test("deriveChrome：强调色家族跟着插件走（主题那套是按主题底色配的）", () => {
+  // 「活字」式声明：纸白 + 墨黑 + 一个专色（专色会由 reportBackdrop 随封面换）
+  const lp = deriveChrome({ bg: "#f2efe7", fg: "#171610", accent: "#3c3c44" });
+  assert.equal(lp.vars["--chrome-accent"], "rgb(60 60 68)");
+  assert.equal(lp.vars["--chrome-accent-text"], "rgb(242 239 231)", "专色上的字用插件的纸白");
+  assert.ok(lp.vars["--chrome-accent-weak"].includes("color-mix"), "淡底也要跟着强调色");
+
+  // 没声明 accent：用插件自己的前景色 —— 壳是一套单色画面，不混进主题的色相
+  // （实测：主题蓝灰 #8b9bb4 落在纸白上只有 2.5:1，看起来就是"另一个颜色"）
+  const mono = deriveChrome({ bg: "#f2efe7", fg: "#171610" });
+  assert.equal(mono.vars["--chrome-accent"], "rgb(23 22 16)", "缺 accent 时用插件的前景色");
+  assert.equal(mono.vars["--chrome-accent-text"], "rgb(242 239 231)");
+
+  // 强调色与底色撞在一起（对比度 < 2）：推到黑/白，保证进度条填充看得见
+  const flat = deriveChrome({ bg: "#f2efe7", fg: "#171610", accent: "#f6f2e9" });
+  assert.equal(flat.vars["--chrome-accent"], "rgb(0 0 0)");
+
+  // 暗色插件：强调色上的字反过来是它的底色
+  const pulse = deriveChrome({ bg: "#05070a", fg: "#7cfc9b", accent: "#7cfc9b" });
+  assert.equal(pulse.vars["--chrome-accent-text"], "rgb(5 7 10)");
+});
+
+test("CHROME_VAR_NAMES：强调色家族也在清理名单里（否则会残留上一个插件的颜色）", () => {
+  for (const key of [
+    "--chrome-accent",
+    "--chrome-accent-text",
+    "--chrome-accent-weak",
+    "--chrome-accent-weak-hover",
+    "--skin-bg",
+    "--skin-fg",
+  ]) {
+    assert.ok(CHROME_VAR_NAMES.includes(key), `${key} 必须能被 clearChromeVars 清掉`);
+  }
 });
 
 /* --------------------------------------------------------------------------

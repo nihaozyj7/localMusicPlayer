@@ -95,14 +95,47 @@
 }
 
 /* --------------------------------------------------------------------------
+   歌词背后的保底暗底（**必须在 .ab__text 之前**，正常混合）
+   --------------------------------------------------------------------------
+   `.ab__text` 是 `mix-blend-mode: screen`：它只会把底下的东西提亮，自己没有任何
+   把字"压下去"的手段 —— 水面一旦亮起来（液面高光带、涌浪、封面颜料浮上来），
+   字就跟着化掉。所以对比度不能靠文字自己，得靠它**下面**这层永远很暗的水。
+   -------------------------------------------------------------------------- */
+.ab__scrim {
+  position: absolute;
+  left: -4%;
+  right: -4%;
+  top: 16%;
+  bottom: 10%;
+  background: radial-gradient(74% 58% at 50% 50%, var(--ab-bg-85) 0%, var(--ab-bg-60) 54%, transparent 84%);
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
    歌词（宿主 SDK 的 createLyricsView 渲染在这里）
+   --------------------------------------------------------------------------
+   ★ 这一节为什么几乎不写 `.lyric { … }`：
+
+     `lyrics.css`（属于宿主壳）是**未分层**注入的，而本包整份 CSS 被宿主裹进了
+     `@layer skin`。级联顺序里**层级优先于特异性** —— 未分层的规则永远压得住
+     分层里的规则。所以像
+
+       .ab__text .lyric { color: var(--ab-fg); opacity: 0.5 }
+
+     这样的声明**一条都上不了屏**：颜色一直被 `lyrics.css` 的 `color: var(--text-1)`
+     顶掉，于是"深渊"的字从来没用过自己的 #dff2ff，而是主题的 --accent 灰蓝
+     （#8b9bb4）压在一缸深水上 —— 这就是"歌词看不清"的直接原因。
+
+     皮肤唯一抢得到的旋钮是**变量**，而且必须声明在 `.lyrics__scroll` 上：
+     `.lyrics` 自己的 `--lyric-*` 被未分层规则写死了，声明在它身上（或它上面的
+     祖先）都抢不过；`.lyric` 在 `.lyrics__scroll` 里面，继承就近取值，才轮到我们。
    -------------------------------------------------------------------------- */
 .ab__text {
   position: absolute;
-  left: 9%;
-  right: 9%;
-  top: 30%;
-  bottom: 24%;
+  left: 8%;
+  right: 8%;
+  top: 26%;
+  bottom: 20%;
   overflow: hidden;
   /* 关键：矢量文字与水面混合，"咬"进去而不是浮在上面 */
   mix-blend-mode: screen;
@@ -120,6 +153,22 @@
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
+  /* ---- SDK 的旋钮（见上面的说明）---- */
+  --lyric-size: 23px;
+  --lyric-size-active: 32px;
+  /* 非当前行压到多暗：太低就"看不见"，太高就抢当前行 */
+  --lyric-dim: 0.42;
+  /* ★ 这里的百分比是**相对宽度**解析的（CSS 的百分比内边距都这样），而它实际要
+     起的作用是"把第一句推到舞台中间"。所以按舞台高度算：--ab-h 由 resize() 写成
+     "<舞台高>px"，0.245 就是"从 .ab__text 顶边往下约一半"。旧版写死 34%
+     （≈ 306px）把第一句顶到了框的最下沿 —— 那里正好是暗角最重的地方。 */
+  --lyric-pad: calc(var(--ab-h) * 0.245);
+  --lyric-measure: 900px;
+  /* 配色走 SDK 的口径：未唱到 = --text-1，已唱到 = --accent，
+     逐字渐变里"未唱到那一侧"由 --text-1 × --lyric-dim 混出来 */
+  --text-1: var(--ab-fg);
+  --text-3: var(--ab-fg-55);
+  --accent: var(--ab-accent);
 }
 
 .ab__text .lyrics__scroll::-webkit-scrollbar {
@@ -127,43 +176,20 @@
   height: 0;
 }
 
-/* 注意：这里**只许改字号/颜色/不透明度**，不许用 transform 缩放当前行 ——
-   transform 会缩放字形，而遮罩是按"盒子 + 计算字号"画的，一缩就对不齐了。 */
-.ab__text .lyric {
-  padding: 3px 0;
-  font-size: 16px;
-  line-height: 1.46;
-  letter-spacing: 0.02em;
-  color: var(--ab-fg-55);
-  opacity: 0.5;
-  transition: opacity 180ms linear;
-}
-
+/* 当前行：字号只能走变量（`lyrics.css` 的 font-size 是未分层的，压不过），
+   这里只补宿主**没写过**的属性 —— text-shadow 就是其中之一。
+   注意 screen 混合下阴影同样只能提亮，它是"水下的一圈光"，不是描边。
+   也**不许**用 transform 缩放当前行：transform 会缩放字形，而遮罩是按
+   "盒子 + 计算字号"画的，一缩就对不齐了。 */
 .ab__text .lyric[aria-current="true"] {
-  font-size: 21px;
-  color: var(--ab-fg);
-  opacity: 1;
-  text-shadow: 0 2px 22px var(--ab-bg-85);
+  font-size: 32px;
+  text-shadow: 0 0 30px var(--ab-accent-35);
 }
 
-.ab__text .lyric[data-exit="1"] {
-  opacity: 0.28;
-}
-
-/* 逐字：SDK 写的是离散的 data-active 与连续的 --w（0..1），
-   把 --w 变成"被水压出来的亮边"，不切开文字本身 */
+/* 逐字：SDK 写的是离散的 data-active 与连续的 --w（0..1）。
+   把 --w 变成"被水点亮的光"，字本身不切开（切开是 lyrics.css 的渐变在管）。 */
 .ab__text .lyric__word {
-  text-shadow: 0 0 calc(var(--w, 0) * 14px) var(--ab-accent);
-}
-
-.ab__text .lyric__word[data-active="true"] {
-  color: var(--ab-accent);
-}
-
-.ab__text .lyric__trans {
-  display: block;
-  font-size: 0.76em;
-  opacity: 0.68;
+  text-shadow: 0 0 calc(3px + var(--w, 0) * 20px) var(--ab-accent-35);
 }
 
 .ab__text .lyrics__empty {
@@ -188,11 +214,17 @@
 
 /* --------------------------------------------------------------------------
    暗角 / HUD / 兜底角标
+   --------------------------------------------------------------------------
+   ★ 暗角必须画在 `.ab__text` **之前**。它原来排在歌词后面，于是那圈
+     `rgba(bg, 0.6→0.85)` 的黑是**盖在字上**的 —— 在 1280×800 的舞台里，
+     歌词所在的横向条带离渐变中心 0.94 个半径，暗角在那里已经接近 0.8 不透明，
+     直接把 #58c7ff 的字压成 (27,60,77)：对比度 1.3:1，等于看不见。
+     暗角是"水的一部分"，本来就不该压住浮在上面的字。
    -------------------------------------------------------------------------- */
 .ab__vig {
   position: absolute;
   inset: 0;
-  background: radial-gradient(76% 68% at 50% 46%, transparent 0%, var(--ab-bg-60) 72%, var(--ab-bg-85) 100%);
+  background: radial-gradient(88% 82% at 50% 44%, transparent 0%, transparent 46%, var(--ab-bg-60) 100%);
   pointer-events: none;
 }
 
@@ -247,10 +279,12 @@
   color: var(--ab-fg-55);
 }
 
+/* 兜底角标：挪到时间码**上面**。原来固定在 right:10px / bottom:8px，
+   正好压在 HUD 的时间码上（右下角是同一块地方）。 */
 .ab__nogl {
   position: absolute;
-  right: 10px;
-  bottom: 8px;
+  right: 26px;
+  bottom: 46px;
   padding: 2px 8px;
   border: 1px solid var(--ab-accent-35);
   border-radius: 999px;
@@ -273,24 +307,28 @@
 
 .abbg__img {
   position: absolute;
-  inset: -12%;
-  width: 124%;
-  height: 124%;
+  inset: -14%;
+  width: 128%;
+  height: 128%;
   object-fit: cover;
-  filter: blur(26px) saturate(1.15) brightness(0.5);
+  /* 这一层是**水色**，不是"墙上的封面"：模糊给足（26px 时还能看出封面的白条，
+     画面上就是一道脏抹布），亮度压到 0.36，饱和度反而提一点 —— 让它只剩颜色。 */
+  filter: blur(52px) saturate(1.4) brightness(0.36);
   opacity: 0;
   transition: opacity 900ms ease-out;
 }
 
 .abbg__img[data-ready="1"] {
-  opacity: 0.55;
+  opacity: 0.5;
 }
 
-/* 深度分层：越往下越黑 */
+/* 深度分层：越往下越黑。水面（上 1/4）留一点封面色，往下就是纯深水 ——
+   旧版把不透明段压到 46%，封面的白条在 20% 高度处还能透出来三成，
+   于是画面正中横着一道灰白色的糊斑，"看不出背景在干嘛"说的就是它。 */
 .abbg__deep {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, var(--ab-bg-60) 0%, var(--ab-bg) 46%, var(--ab-bg-85) 100%);
+  background: linear-gradient(180deg, var(--ab-bg-60) 0%, var(--ab-bg) 26%, var(--ab-bg) 100%);
 }
 
 /* 水下的光斑（极慢的漂移；静态档与低动效下直接停住） */
@@ -357,10 +395,12 @@
   bottom: 26%;
 }
 
-.ab[data-narrow="1"] .ab__text .lyric {
-  font-size: 15px;
-}
-
-.ab[data-narrow="1"] .ab__text .lyric[aria-current="true"] {
-  font-size: 18px;
+/* 窄窗口收一档字号。
+   ★ 必须走变量（写在 .lyrics__scroll 上），不能直接给 `.lyric` 写 font-size：
+     宿主的 lyrics.css 是**未分层**注入的，`.lyric { font-size: var(--lyric-size) }`
+     永远赢过 @layer skin 里的同名声明 —— 原来这两条 `.lyric { font-size: 15px/18px }`
+     就是彻底没生效的死规则（自检当时读到的 18px 是"没有 lyrics.css 时"的假象）。 */
+.ab[data-narrow="1"] .ab__text .lyrics__scroll {
+  --lyric-size: 19px;
+  --lyric-size-active: 26px;
 }

@@ -165,9 +165,15 @@ export function createSkinHost(opts) {
       return false;
     }
     const derived = skin.chrome || deriveChrome(skin.colors);
-    if (derived.theme || !Object.keys(derived.vars || {}).length) {
-      // 声明了 theme（或什么都没声明）：宿主壳直接用主题配色 —— 这正是
-      // "缺失时降级使用主题配色"那条定案，不许留下半套变量。
+    const vars = derived.vars || {};
+    // 需要「底色 + 前景」成对，才算一套能用的壳层配色：只声明了一半时
+    //   · 缺 fg：映射里 --text-*/--surface-* 依赖的 --chrome-fg 不在，那条声明会变成
+    //     invalid at computed-value time，反而把主题的文字令牌一起抹掉；
+    //   · 缺 bg：壳上的字是插件的墨色、底却是主题的窗口底色 —— 正是"看不见"的来源。
+    // 按 §5.4「缺失 → 壳层直接用当前主题的配色」整壳降级，设置页卡片照旧打警告图标。
+    if (derived.theme || !vars["--chrome-bg"] || !vars["--chrome-fg"]) {
+      // 声明了 theme（或什么都没声明 / 只声明了一半）：宿主壳直接用主题配色 ——
+      // 这正是"缺失时降级使用主题配色"那条定案，不许留下半套变量。
       clearChromeVars(rootEl);
       opts.onChromeApplied?.(false, skin);
       return false;
@@ -234,7 +240,10 @@ export function createSkinHost(opts) {
     ctx = null;
     mountedId = null;
     errorStreak = 0;
-    clearChromeVars(app);
+    // 写在哪就清在哪：applyChrome 把配色写在 <html> 上（#app 之外的浮层也要继承），
+    // 这里清 #app 等于没清 —— 关掉详情页后 data-chrome / --chrome-* 会留在根元素上，
+    // 宿主壳（标题栏、底栏）就继续按上一个插件的配色画。
+    clearChromeVars(document.documentElement);
   }
 
   return {

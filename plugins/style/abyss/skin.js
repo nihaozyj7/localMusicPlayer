@@ -54,6 +54,8 @@ const SURGE_MS = 900;
 const MAX_LINES = 600;
 /** 遮罩画布长边上限（4K + dpr2 下别上传一张 8MB 纹理） */
 const MASK_EDGE = 2048;
+/** 封面降采样边长：密度场要放大到全屏，采得太粗就是一片硬边方块（曾用 64，方块约 17px） */
+const COVER_SAMPLE = 128;
 const FONT_STACK = '"Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif';
 
 const SHELL = `
@@ -62,8 +64,9 @@ const SHELL = `
   <canvas class="ab__mask" hidden></canvas>
   <div class="ab__glow" aria-hidden="true"></div>
   <div class="ab__surface" aria-hidden="true"></div>
-  <div class="ab__text"></div>
   <div class="ab__vig" aria-hidden="true"></div>
+  <div class="ab__scrim" aria-hidden="true"></div>
+  <div class="ab__text"></div>
   <div class="ab__hud">
     <div class="ab__hud-top">
       <span class="ab__depth"></span>
@@ -194,6 +197,8 @@ export default {
       rect: { w: 1, h: 1, dpr: 1 },
       narrow: false,
       backdropTimer: 0,
+      /* 歌词滚动容器与它的 scroll 监听（遮罩要跟着滚动重画，见 refreshMask） */
+      scroller: null,
     };
     S = st;
 
@@ -423,7 +428,7 @@ function setCover(st, src) {
 
 /**
  * 封面 → 两份料：
- *   · 一张 64×64 采样 → 256×256 密度场（GL 的"颜料"纹理）
+ *   · 一张 128×128 采样 → 256×256 密度场（GL 的"颜料"纹理）
  *   · 一个真 Image（Canvas2D 兜底的双层位移贴图要直接 drawImage）
  * 封面是 data URL 或同源 `/online/cover`，画布不会被 taint（P5 已在真机验过）。
  */
@@ -434,12 +439,12 @@ function sampleCover(st, url) {
     if (!st.alive) return;
     try {
       const cv = document.createElement("canvas");
-      cv.width = 64;
-      cv.height = 64;
+      cv.width = COVER_SAMPLE;
+      cv.height = COVER_SAMPLE;
       const g = cv.getContext("2d", { willReadFrequently: true });
-      g.drawImage(img, 0, 0, 64, 64);
-      const px = g.getImageData(0, 0, 64, 64).data;
-      st.coverPixels = wa.densityFromCover(px, 64, 256);
+      g.drawImage(img, 0, 0, COVER_SAMPLE, COVER_SAMPLE);
+      const px = g.getImageData(0, 0, COVER_SAMPLE, COVER_SAMPLE).data;
+      st.coverPixels = wa.densityFromCover(px, COVER_SAMPLE, 256);
       st.coverSrc = px;
       st.renderer?.setCover?.(st.coverPixels, 256);
       st.elRoot.dataset.coverReady = "1";
@@ -710,8 +715,33 @@ function activeLineEl(st) {
 }
 
 /**
+ * 盯住歌词滚动容器：它一滚就重画遮罩。
+ *
+ * 宿主 SDK 把当前行滚到中间（换行时），用户滚轮也会动它 —— 而遮罩画的是
+ * "此刻屏幕上的字形在哪"。没有这个监听，换行那一帧画完的墨迹会永远停在
+ * 滚动前的位置（方框里的字往下走，水里的凹陷留在原处）。
+ * 这里只在**容器换了**的时候重新挂，不是每帧挂。
+ */
+function ensureScroller(st) {
+  const next = st.elText?.querySelector?.(".lyrics__scroll") || null;
+  if (next === st.scroller) return;
+  if (st.scroller && st.onScroll) st.scroller.removeEventListener("scroll", st.onScroll);
+  st.scroller = next;
+  if (next) {
+    if (!st.onScroll) st.onScroll = () => refreshMask(st, false);
+    next.addEventListener("scroll", st.onScroll, { passive: true });
+  }
+}
+
+/**
  * 字形遮罩：**每行只画一次**（不是每帧）。
- * 行号 / 文本 / 画布尺寸都不变就直接返回 —— 逐帧重画一张全舞台的画布纯属浪费。
+ * 行号 / 文本 / 尺寸 / 滚动位置都不变就直接返回 —— 逐帧重画一张全舞台的画布纯属浪费。
+ *
+ * ★ 为什么要带滚动位置：换行时宿主 SDK 会把当前行滚到中间，而这一步发生在
+ *   皮肤画完遮罩**之后**。旧版判据里没有滚动量，于是墨迹固定在滚动前的位置，
+ *   和对齐断言一比就是"低 scrollTop 个像素"（实测 11~46px）——
+ *   屏幕上的表现是水里的字形凹陷偏离文字，越往后的行越歪。
+ *   现在滚动一变就重画一帧，随后稳定（一行一次，不是每帧）。
  */
 function refreshMask(st, force) {
   if (!mkm || !st.elMask) return;
@@ -719,7 +749,9 @@ function refreshMask(st, force) {
   const text = idx >= 0 && st.lines[idx] ? st.lines[idx].text : "";
   const cssW = Math.max(1, Math.round(st.elCanvas.clientWidth || st.rect.w));
   const cssH = Math.max(1, Math.round(st.elCanvas.clientHeight || st.rect.h));
-  const key = `${wa.maskKey(idx, text, cssW, cssH)}|${force ? "f" : ""}|${st.rect.dpr}`;
+  const scroller = st.elText?.querySelector?.(".lyrics__scroll") || null;
+  const scroll = scroller ? Math.round(scroller.scrollTop) : 0;
+  const key = `${wa.maskKey(idx, text, cssW, cssH, scroll)}|${force ? "f" : ""}|${st.rect.dpr}`;
   const lineEl = idx >= 0 ? activeLineEl(st) : null;
   if (!force && key === st.maskKey && lineEl) return;
   if (!lineEl || !text) {
@@ -904,6 +936,7 @@ function renderFrame(st, wall, dtMs) {
   st.elRoot.dataset.flowState = st.clock.playing ? "flowing" : "still";
 
   /* ---- 3. 歌词：当前行 + 逐字（每帧喂外推位置；playing:false 让 SDK 不开自己的循环） ---- */
+  ensureScroller(st);
   const pos = now + VISUAL_LAG_MS;
   st.pos = now;
   if (st.view && st.lines.length) {
@@ -1004,6 +1037,16 @@ function destroySkin(st) {
   }
   if (st.onClick) st.elRoot?.removeEventListener("click", st.onClick);
   st.onClick = null;
+  // 歌词滚动容器的 scroll 监听（元素本身会随 st.elRoot 一起被丢掉，但监听要显式还）
+  if (st.scroller && st.onScroll) {
+    try {
+      st.scroller.removeEventListener("scroll", st.onScroll);
+    } catch {
+      /* 元素已被宿主回收 */
+    }
+  }
+  st.scroller = null;
+  st.onScroll = null;
   // GL 资源（含 WEBGL_lose_context）+ 兜底画布
   dropRenderer(st);
   st.coverPixels = null;

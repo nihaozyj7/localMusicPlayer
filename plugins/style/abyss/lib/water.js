@@ -112,7 +112,13 @@ export function pumpOf(bands, prev, opts = {}) {
   return { lowPeak, midPeak, highPeak, lift, turb, foam, energy, raw: { low, mid, high } };
 }
 
-/** 封面 64×64 RGBA → 256×256 密度场（双线性放大 + 亮度→密度 + 一层柔和的水波偏移） */
+/**
+ * 封面 64×64 RGBA → 256×256 密度场（双线性放大 + 亮度→密度 + 一层柔和的水波偏移）
+ *
+ * @param {Uint8Array} src
+ * @param {number} [srcSize]
+ * @param {number} [dstSize]
+ */
 export function densityFromCover(src, srcSize = 64, dstSize = 256) {
   const out = new Uint8Array(dstSize * dstSize * 4);
   if (!src || src.length < srcSize * srcSize * 4) return out;
@@ -142,7 +148,48 @@ export function densityFromCover(src, srcSize = 64, dstSize = 256) {
       out[o + 3] = Math.round(clamp01(0.25 + lum * 1.35) * 255);
     }
   }
-  return out;
+  return smoothDensity(out, dstSize, 2);
+}
+
+/**
+ * 把密度场再抹一遍（可分离的 1-2-1，两趟 × passes 次）。
+ *
+ * 为什么必须抹：密度场是从封面**降采样**来的，一个源像素在屏幕上会放大到十几个
+ * 像素宽，直接喂给 shader 就是一片硬边的方块（观感像画面坏了，而不是"水里的颜料"）。
+ * 双线性只保证**过渡**是平滑的，挡不住"每一格本身"是平的 —— 这里补上一层模糊，
+ * 才有水彩化开的样子。代价是每首歌一次，256×256。
+ *
+ * passes=2（≈每边 2 个纹素 ≈ 屏幕上 12px）：封面自带的 8bit 色带 / 边缘压暗
+ * 会被放大成一道竖直的深浅分界（128 采样 → 一纹素约 6px），抹两遍才看不出边。
+ */
+function smoothDensity(src, size, passes = 1) {
+  let cur = src;
+  for (let p = 0; p < Math.max(1, passes); p += 1) {
+    const tmp = new Uint8ClampedArray(cur.length);
+    const out = new Uint8Array(cur.length);
+    const at = (buf, x, y, c) => buf[((y * size + x) << 2) + c];
+    const clampI = (v) => (v < 0 ? 0 : v > size - 1 ? size - 1 : v);
+    // 横向
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        for (let c = 0; c < 4; c += 1) {
+          const v = at(cur, clampI(x - 1), y, c) + 2 * at(cur, x, y, c) + at(cur, clampI(x + 1), y, c);
+          tmp[((y * size + x) << 2) + c] = v >> 2;
+        }
+      }
+    }
+    // 纵向
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        for (let c = 0; c < 4; c += 1) {
+          const v = at(tmp, x, clampI(y - 1), c) + 2 * at(tmp, x, y, c) + at(tmp, x, clampI(y + 1), c);
+          out[((y * size + x) << 2) + c] = v >> 2;
+        }
+      }
+    }
+    cur = out;
+  }
+  return cur;
 }
 
 /** 位置 → 下潜深度读数（整首歌 0..2400 m，越听越深） */
@@ -239,8 +286,18 @@ export function maskPlan(rects, stage, dpr, scale = 1) {
 }
 
 /** 遮罩的目标状态：只有"行号 + 文本 + 遮罩尺寸"都变了才需要重新画/重新上传 */
-export function maskKey(index, text, w, h) {
-  return `${index}|${Math.round(w)}x${Math.round(h)}|${String(text || "").slice(0, 120)}`;
+/**
+ * 字形遮罩的重画判据。
+ *
+ * ★ `scroll` 必须参与：遮罩画布是全舞台坐标系，字形画在**当时的**可视位置上，
+ *   而宿主 SDK 在换行时会把当前行滚到中间 —— 滚动发生在皮肤画完遮罩之后。
+ *   不带滚动量就会出现"墨迹正好比 DOM 文字低 scrollTop 个像素"：
+ *   屏幕上看到的是水里的凹陷/辉光整体错位（实测错 11~46px，随行号变大）。
+ *   带上它，多画一帧就自己收敛（一行一次，不是每帧）。
+ */
+export function maskKey(index, text, w, h, scroll = 0) {
+  const s = Math.round(Number(scroll) || 0);
+  return `${index}|${Math.round(w)}x${Math.round(h)}|${s}|${String(text || "").slice(0, 120)}`;
 }
 
 /** 换歌涌浪：一次整屏折射偏移，0 → 1 → 0（t0 是涌浪起点，durMs 总时长） */

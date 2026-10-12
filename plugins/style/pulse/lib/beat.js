@@ -34,8 +34,23 @@
 
 /** 示波器窗口：屏幕上看到"过去 6 秒" */
 export const SPAN_MS = 6000;
-/** 环形缓冲容量（6 秒 × 60fps = 360，留 512） */
-export const RING_CAP = 512;
+/**
+ * 环形缓冲保留的**时长**（示波器窗口 + 1 秒余量）。
+ *
+ * ★ 缓冲是按**帧**写一个样本的，所以"能存几秒"取决于刷新率 —— 只按容量算会
+ * 在高刷屏上悄悄缺料：容量 512 时 60Hz 够 8.5 秒（看着没问题），
+ * 120Hz 只有 4.26 秒、144Hz 只有 3.55 秒，于是波形**左端整块空掉**
+ * （120Hz 空 29%、144Hz 空 41%），而且刷新率越高空得越多。
+ * 现在 eviction 以时间为准（见 `ringPush`），容量只当内存上界。
+ * 多留 1 秒是为了进度补丁那点跳变（宿主 4Hz + 位置量化 250ms）：
+ * 外推出来的"现在"偶尔会往前小跳一下，余量保证窗口左端始终有样本。
+ */
+export const RING_KEEP_MS = SPAN_MS + 1000;
+/**
+ * 环形缓冲容量（**内存上界**，不是"能存多久"）。
+ * 要装下 RING_KEEP_MS：240Hz 要 1680 个样本，4096 够到 ~580Hz。
+ */
+export const RING_CAP = 4096;
 
 /** onset 检测参数 */
 export const ONSET = {
@@ -155,7 +170,7 @@ export function createRing(cap = RING_CAP) {
   };
 }
 
-export function ringPush(ring, t, e, c, f) {
+export function ringPush(ring, t, e, c, f, keepMs = RING_KEEP_MS) {
   const i = ring.head;
   ring.t[i] = t;
   ring.e[i] = e;
@@ -163,6 +178,15 @@ export function ringPush(ring, t, e, c, f) {
   ring.f[i] = f;
   ring.head = (i + 1) % ring.cap;
   if (ring.n < ring.cap) ring.n += 1;
+  /* 时间上界：比 keepMs 更旧的样本直接丢掉（丢最旧 = n 减一，
+     逻辑顺序是 (head − n + k)，所以 n 一减，最旧的那个就出队了）。
+     这一条是**按时间**而不是按帧数的：只按帧数会让高刷屏的缓冲盖不满 6 秒窗口。 */
+  if (!(keepMs > 0)) return;
+  while (ring.n > 1) {
+    const oldest = ring.t[(ring.head - ring.n + ring.cap * 2) % ring.cap];
+    if (t - oldest <= keepMs) break;
+    ring.n -= 1;
+  }
 }
 
 /** 第 k 个样本（k 从 0 = 最旧 到 n-1 = 最新）在 typed array 里的下标 */

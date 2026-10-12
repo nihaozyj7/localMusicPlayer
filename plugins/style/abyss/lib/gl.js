@@ -36,14 +36,30 @@ uniform float uDiss;
 uniform float uLift;
 out vec4 o;
 float hash(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
+/* 平滑值噪声（双线性 + smoothstep）。
+   这里曾经用的是**逐纹素白噪声**：vec2(n, hash(uv + n))。速度场每帧衰减 0.985，
+   白噪声会被积分放大到 ~60 倍（随机分量 ±1.6），成画那一笔再拿 flow 去挪封面采样点 ——
+   相邻像素于是采到封面的**不同位置**，屏幕上就是一片"水面上撒了麻点"，
+   而且因为 floor(uv*20) 是网格，麻点还聚成方块。
+   湍流要的是**空间相关**的扰动：格子之间插值，水才会"流"，而不是"抖"。 */
+float vnoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 fr = fract(p);
+  fr = fr * fr * (3.0 - 2.0 * fr);
+  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), fr.x),
+             mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), fr.x), fr.y);
+}
 void main() {
   vec2 uv = gl_FragCoord.xy * uTexel;
   vec2 v = texture(uPrev, uv).xy;
   vec2 back = uv - v * uTexel * 1.6;
   vec4 s = texture(uPrev, back);
-  float n = hash(floor(uv * 48.0) + floor(uTime * 6.0));
-  vec2 f = uForce * (0.02 + 0.06 * uLift) + (vec2(n, hash(uv + n)) - 0.5) * 0.07 * uTurb;
-  v = v * uDiss + f;
+  /* 噪声场自己慢慢漂（不是按帧重掷），否则湍流会一跳一跳 */
+  vec2 np = uv * 5.0 + vec2(uTime * 0.05, uTime * -0.04);
+  vec2 nv = vec2(vnoise(np), vnoise(np + vec2(19.3, 7.7))) - 0.5;
+  vec2 f = uForce * (0.02 + 0.06 * uLift) + nv * 0.05 * uTurb;
+  /* 再兜一道：速度的模长有界 —— 下游（域扭曲 / 封面采样偏移）都是按倍率消费它的 */
+  v = clamp(v * uDiss + f, -1.2, 1.2);
   float dB = texture(uPrev, back + uTexel * 1.5).z;
   float d = mix(s.z, dB, 0.25);
   o = vec4(v, d, s.w * 0.995);
@@ -66,6 +82,10 @@ uniform vec3 uBg;
 uniform vec3 uFg;
 uniform vec3 uAccent;
 out vec4 o;
+/* 镜像平铺：fract() 的接缝两侧取到的是封面的两端，明暗常常差一大截 ——
+   再被 flow 的逐像素噪声横向一推，接缝就变成"一块硬边色块 + 一排毛刺"。
+   镜像折叠让接缝两侧的**取值连续**（只有导数翻向，抹过两遍的颜料场看不出来）。 */
+vec2 mirror(vec2 v) { v = fract(v); return abs(v * 2.0 - 1.0); }
 void main() {
   vec2 uv = gl_FragCoord.xy / uRes;
   vec2 flow = texture(uFlow, uv).xy;
@@ -74,20 +94,33 @@ void main() {
   float mx = texture(uMask, uv + vec2(mt.x, 0.0)).r;
   float my = texture(uMask, uv + vec2(0.0, mt.y)).r;
   vec2 grad = vec2(mx - m, my - m);
+  /* 字腔（墨迹内部）与它外面的一圈柔光。
+     旧版是把 |grad| 直接加成一道**硬亮边**，它和 DOM 上那份真文字叠在一起
+     就是"重影/糊成一片"的元凶。现在凹陷只靠"压暗字腔"读出来，边缘光改成
+     四个方向各采一次的**软**包络，幅度也压到很低。 */
+  float ink = smoothstep(0.18, 0.72, m);
+  float mB = (texture(uMask, uv + vec2(mt.x * 2.0, 0.0)).r + texture(uMask, uv - vec2(mt.x * 2.0, 0.0)).r
+            + texture(uMask, uv + vec2(0.0, mt.y * 2.0)).r + texture(uMask, uv - vec2(0.0, mt.y * 2.0)).r) * 0.25;
+  float halo = clamp(mB - m, 0.0, 1.0);
   vec2 wuv = uv + flow * (0.0035 + 0.012 * uTurb);
   wuv += vec2(sin(uTime * 0.35 + uv.y * 6.2831), cos(uTime * 0.27 + uv.x * 6.2831)) * 0.0035 * (0.35 + uTurb);
-  vec2 ruv = wuv + grad * (0.35 + 0.9 * uLift) + vec2(0.0, -uSurge * 0.05) + flow * 0.02;
-  float dens = texture(uCover, fract(ruv * 1.35 + vec2(0.07, 0.11))).a;
-  float pig = texture(uCover, fract(ruv * 0.8 - 0.2)).b;
-  vec3 water = mix(uBg * 0.6, uAccent * 0.75, dens * 0.55 + pig * 0.15);
-  float edge = clamp(length(grad) * 6.0, 0.0, 1.0);
-  water += uFg * edge * (0.22 + 0.35 * uLift) * 0.55;
-  water -= uBg * m * 0.25;
+  vec2 ruv = wuv + grad * (0.7 + 1.6 * uLift) + vec2(0.0, -uSurge * 0.05) + flow * 0.02;
+  float dens = texture(uCover, mirror(ruv * 0.85 + vec2(0.07, 0.11))).a;
+  float pig = texture(uCover, mirror(ruv * 0.5 - 0.2)).b;
+  vec3 water = mix(uBg * 0.55, uAccent * 0.8, dens * 0.5 + pig * 0.22);
+  water += uFg * halo * (0.03 + 0.12 * uLift);
+  water *= 1.0 - 0.5 * ink;
+  /* 表面颗粒（高频泡沫）：只在靠近液面的地方撒，而且幅度必须小。
+     旧版是全屏 ±0.03 的逐像素噪声（还乘了 uFoam 的全量），在 alpha 只有 0.5 的
+     水面上直接读成"一层灰色噪点/抖动"，画面像坏了一样 —— 泡沫不是脏点。 */
   float g = fract(sin(dot(floor(uv * uRes), vec2(12.9898, 78.233))) * 43758.5453);
-  water += (g - 0.5) * 0.06 * uFoam;
-  water *= mix(0.55, 1.0, smoothstep(0.0, 0.55, uv.y + uLift * 0.1));
+  water += (g - 0.5) * 0.022 * uFoam * smoothstep(0.18, 0.72, uv.y + uLift * 0.12);
+  water *= mix(0.62, 1.0, smoothstep(0.0, 0.62, uv.y + uLift * 0.1));
   water *= 1.0 - 0.45 * pow(length(uv - 0.5), 1.6);
-  float a = clamp(0.42 + dens * 0.45 + edge * 0.2, 0.0, 0.95);
+  /* alpha 压在 0.8 以下：上面那层"整窗底色"（深度渐变 + 封面颜料 + 水下光斑）
+     才透得出来。旧版固定 0.42 + dens*0.45，几乎把背景层糊死了 —— 画面上就只剩
+     一缸自己发灰的水，难怪"看不出背景在干嘛"。 */
+  float a = clamp(0.30 + dens * 0.34 + halo * 0.1, 0.0, 0.78);
   o = vec4(water, a);
 }`;
 
@@ -359,9 +392,12 @@ export function createGL(canvas, opts = {}) {
       gl.uniform1f(cache(progDraw, "uTurb"), u.turb || 0);
       gl.uniform1f(cache(progDraw, "uFoam"), u.foam || 0);
       gl.uniform1f(cache(progDraw, "uSurge"), u.surge || 0);
-      gl.uniform3f(cache(progDraw, "uBg"), u.bg[0], u.bg[1], u.bg[2]);
-      gl.uniform3f(cache(progDraw, "uFg"), u.fg[0], u.fg[1], u.fg[2]);
-      gl.uniform3f(cache(progDraw, "uAccent"), u.accent[0], u.accent[1], u.accent[2]);
+      /* ★ 颜色一律按 **0..255** 传进来（`hexToRgb` 的口径，Canvas2D 兜底也吃这一份），
+         着色器里要的是 0..1。这里必须除以 255 —— 不除的话 `uBg * 0.6` 直接是 (2.4, 10.8, 16.2)，
+         整个水面被夹到近白，画出来是一缸发灰的雾（曾经真的这样发布过一次）。 */
+      gl.uniform3f(cache(progDraw, "uBg"), u.bg[0] / 255, u.bg[1] / 255, u.bg[2] / 255);
+      gl.uniform3f(cache(progDraw, "uFg"), u.fg[0] / 255, u.fg[1] / 255, u.fg[2] / 255);
+      gl.uniform3f(cache(progDraw, "uAccent"), u.accent[0] / 255, u.accent[1] / 255, u.accent[2] / 255);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       stats.draws += 1;
       // --- 每帧查一次错误（反馈环那种"静默丢帧"只能靠它抓到） ---

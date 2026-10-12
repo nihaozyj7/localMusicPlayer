@@ -363,4 +363,48 @@
   --glass-border: var(--chrome-border);
   --border-2: var(--chrome-border);
   --divider: var(--chrome-border);
+
+  /* 强调色家族：播放/暂停图标、进度条与音量条的填充、切换按钮的选中块、
+     选中行……全部走 --accent*，而主题那一套是**按主题底色**配的 ——
+     简约深色的蓝灰 #8b9bb4 落在插件声明的纸白上只有 2.5:1，看起来就是
+     "底栏里混进来一个别的颜色"（用户报的就是这个）。
+     · --accent          → 插件声明的 accent（对底色做过可读性纠正）；没声明 accent
+       的样式用插件自己的前景色，于是壳是一套单色画面，不会混进主题的色相。
+     · --accent-text     → 画在强调色**上**的文字/图标色。必须一起换：主题那对是
+       （主题强调色 + 它的对位色），换成插件的专色后就不成立了 —— 实测"样式按钮组的
+       选中块"会变成近黑字压在深色专色上（1.9:1，等于看不见）。
+     · --accent-contrast → 同一个语义的另一个出口（开关的滑块）。
+     · --accent-weak*    → 强调色的淡底（选中行 / 弱强调块），跟着走，免得同屏两个色相。 */
+  --accent: var(--chrome-accent);
+  --accent-text: var(--chrome-accent-text);
+  --accent-contrast: var(--chrome-accent-text);
+  --accent-weak: var(--chrome-accent-weak);
+  --accent-weak-hover: var(--chrome-accent-weak-hover);
+}
+
+/* 宿主壳自己的**底色**：插件声明的 colors.bg 要真的铺在壳下面。
+   --------------------------------------------------------------------------
+   上面那份映射只换了"字是什么颜色"，没有换"字底下是什么"：标题栏与底栏在宿主里
+   都是 `background: none`（见 titlebar.css / playerbar.css 的文件头），露出来的是
+   **主题**的窗口底色；舞台（.playerview）同理。于是「插件声明浅色画面 + 用户用深色
+   主题」时，壳上的字是插件的墨色、底却是主题的近黑 —— 实测底栏曲名的对比度是
+   1.04:1（= 完全看不见），标题栏与详情页头部行（返回 / 样式按钮组）一样瞎；
+   反过来的组合（暗色插件 + 浅色主题）同样瞎。
+
+   触发条件是"宿主壳叠在插件画面上"这句话真的成立：整窗背景型样式
+   （capabilities.background）自己铺满整窗，宿主壳在那里是**故意**退成透明的
+   （见 layout.css「整窗背景型样式：宿主壳让位」），所以这里只认
+   data-skin-background="no" 的样式 —— 这些样式只画舞台，舞台之外本该由宿主
+   用插件声明的底色接上。
+
+   用不透明的 --skin-bg（不是 82% 的 --chrome-bg）：壳与画面必须是同一张纸，
+   半透明会让壳比画面暗一档、在标题栏与头部行之间露出一条接缝。--chrome-bg
+   仍然留给浮层（它经 --glass-* 消费，压在画面上做玻璃）。
+   var() 的兜底参数是必要的：插件只声明了 fg（没声明 bg）时 --skin-bg 不存在，
+   裸写一条 var(--skin-bg) 会变成 "invalid at computed-value time" —— 这条声明
+   等于被改写成 transparent，反而把主题的窗口底色也一起抹掉。 */
+:root:root[data-chrome="on"] .playerview[data-skin-background="no"],
+:root:root[data-chrome="on"] .app[data-skin-background="no"] .titlebar,
+:root:root[data-chrome="on"] .app[data-skin-background="no"] .playerbar {
+  background-color: var(--skin-bg, var(--bg-window));
 }

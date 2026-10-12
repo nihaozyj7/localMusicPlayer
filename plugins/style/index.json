@@ -18,8 +18,8 @@
       "files": [
         {
           "path": "abyss/README.md",
-          "size": 9152,
-          "sha256": "df18c49502d72f8de45ca5cac93d22e5b7dd8baddeb108bd93124331960fe16d"
+          "size": 13862,
+          "sha256": "80ac41e1916c2bdc9f37bcbab0fcbd447e876c1db12cb05142d37d5915ac46bb"
         },
         {
           "path": "abyss/assets/icon.svg",
@@ -28,33 +28,33 @@
         },
         {
           "path": "abyss/lib/canvas2d.js",
-          "size": 5730,
-          "sha256": "c71d1fcb6071ba9922e0271494f7b66aa2703ee8ec8ffd32335df89eee19d7f3"
+          "size": 6545,
+          "sha256": "1948ac0cd88e8ad1f5e56f24898045aef557d3b9968241fe75402d7b5b4a0120"
         },
         {
           "path": "abyss/lib/gl.js",
-          "size": 15838,
-          "sha256": "62f12f5fed3e395164b6ad37dd9a92dcd9b7505d48206e41ba210a5ee04a79d7"
+          "size": 18925,
+          "sha256": "5f82b42afc41b531fc04fc9ff98bb7d6b06a7c6dbabad9b6f194956ff4044a9b"
         },
         {
           "path": "abyss/lib/mask.js",
-          "size": 5884,
-          "sha256": "fb737ac4361830e12e33ff8934b7d740e5cca470405b6a8d8a8f52dea06f5f6d"
+          "size": 6496,
+          "sha256": "1c7b83f4c528aea11879f83e51c4e51e24afee3bb2bf21c02d7e3dd2fa02f60c"
         },
         {
           "path": "abyss/lib/water.js",
-          "size": 11622,
-          "sha256": "1fb589251eadda8a96dd830e5a82eab38f4b735d9ac3a5979a76fcd91d5637ea"
+          "size": 14091,
+          "sha256": "c052e6df8c3b9b5277f4f2bf6d3b551a8f2681c2e8335953dc8225c89da48c07"
         },
         {
           "path": "abyss/skin.css",
-          "size": 9516,
-          "sha256": "437c9bc01cc141f6f004d80be752e821968d5f44ac1245e72e16f63212ae40a5"
+          "size": 13817,
+          "sha256": "7ff93f9bbba031339d241875eb1ce716f0288d66b4dd796866373fddf68b96e5"
         },
         {
           "path": "abyss/skin.js",
-          "size": 34307,
-          "sha256": "cf93cb652f761e4c886235792350c6cba8d21f95be6a62a4423c0ddb470019e6"
+          "size": 36544,
+          "sha256": "6d2501c2126a63c550c233611d14d79bd3f6e8dbcb512886f7a09439b5a3bc81"
         },
         {
           "path": "abyss/skin.json",
@@ -262,8 +262,8 @@
       "files": [
         {
           "path": "pulse/README.md",
-          "size": 11656,
-          "sha256": "2a01b9df6e735c08e4ad7201389e3754fd1a85dd9d7096411b964a3739c611d6"
+          "size": 12592,
+          "sha256": "6b55aebe34f20ce94f9767cb1b4f8306ec5523c7595eba65a02d7234dffd9b2a"
         },
         {
           "path": "pulse/assets/icon.svg",
@@ -272,8 +272,8 @@
         },
         {
           "path": "pulse/lib/beat.js",
-          "size": 15971,
-          "sha256": "5925c14fbbafc409f4feca96455648afe70794fe847f2114076b23b92597d644"
+          "size": 17334,
+          "sha256": "9f08a99d3ff7ab657a66e99add8b6df01db7b753bbfd652f758da59fe872e78c"
         },
         {
           "path": "pulse/lib/scope.js",

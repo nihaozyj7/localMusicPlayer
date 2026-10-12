@@ -124,6 +124,11 @@ const RUNTIME_TOKENS = new Set([
   "chrome-fg-dim",
   "chrome-hover",
   "chrome-active",
+  "chrome-accent", // 同上（强调色家族：tokens.css 的宿主壳配色一节消费）
+  "chrome-accent-text",
+  "chrome-accent-weak",
+  "chrome-accent-weak-hover",
+  "skin-bg", // 同上（宿主壳自己的底色：标题栏 / 底栏 / 舞台）
   "cover-bg", // theme.js（当前封面地址）
   "seed", // theme.js（封面取色）
   "seed-2",
