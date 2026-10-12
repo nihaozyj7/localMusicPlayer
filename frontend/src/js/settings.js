@@ -370,6 +370,11 @@ patch 只带与该类型相关的字段；不确定时用 ctx.track() / ctx.lyri
 3. 你的 CSS 在 @layer skin 里，**压不过**宿主壳的规则；也**碰不到**宿主 UI（标题栏、底栏、侧边栏、播放队列等都不在作用域内）。想影响宿主控件的观感只有一条路：在清单 colors 里声明配色（宿主会保证对比度）。
 4. 可以直接使用主题令牌，深浅色会自动跟随：
    --accent / --accent-weak / --accent-text / --accent-contrast / --text-1 / --text-2 / --text-3 / --text-inverse / --surface-1 / --surface-2 / --surface-3 / --surface-hover / --surface-active / --glass-bg / --glass-bg-strong / --glass-blur / --glass-saturate / --glass-border / --border-1 / --border-2 / --divider / --r-sm / --r-md / --r-lg / --r-xl / --dur / --ease / --lyric-size
+   （其中 --lyric-size 是**用户设置**「歌词字号」：宿主写在 :root 上，歌词零件已经
+    读它。样式包想改字号就在自己的作用域里覆盖它；但**不要**为了"固定一个好看的
+    字号"而无条件写死 —— 那等于替用户关掉了这个设置。相关旋钮还有
+    --lyric-size-active（当前行字号）与 --lyric-dim（非当前行压暗程度），
+    都按使用点兜底读取，写在 ::scope 上即可生效。）
 5. 不要改布局令牌（--h-titlebar / --w-sidebar / --h-playerbar / --h-header / --row-h / --row-h-compact），改了会破坏固定布局。
 6. 需要私有变量时定义在自己的作用域里（::scope { --my-…: … }），不要写到 :root。
 

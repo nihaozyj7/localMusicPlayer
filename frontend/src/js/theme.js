@@ -10,6 +10,7 @@
 import { backend, isWails } from "./bridge.js";
 import { animationDurationValue, setRuntimeTokens, replaceStyleRules } from "./runtime-tokens.js";
 import { commit, state } from "./store.js";
+import { lyricSizeToken } from "./ui/lyric-size.js";
 import { toast } from "./ui/overlays.js";
 import { isPlaceholderCoverUrl } from "./utils.js";
 
@@ -306,6 +307,15 @@ export async function applyResolvedTheme(config) {
     "--glass-blur": config.glassBlurCustom ? `${config.glassBlur}px` : null,
     // --dur 是全站唯一的过渡时长令牌：动画开关与「过渡速度」都只改它
     "--dur": animationDurationValue(config),
+    // 歌词字号：歌词由**样式包**渲染，宿主只能把用户设置当 CSS 变量交给它
+    // （见 packages/player-skins/src/lyrics.css 里 .lyric 的 font-size）。
+    //
+    // ★ 必须在这里下发，不能只在两个滑杆的 onChange 里写：那样只有「本次会话里
+    //   拖过滑杆」才有值，重启后配置里的字号谁也不管，歌词永远是骨架兜底的 16px
+    //   —— 用户看到的就是「设置里改了字号，重启又变回去」。
+    // 本函数在启动（main.js#initTheme / main）+ 每次换主题 + 封面取色完成后都会跑，
+    // 于是配置改了、主题换了、桌面背景歌词窗口镜像令牌，都跟着走。
+    "--lyric-size": lyricSizeToken(config.lyricsFontSize),
     // 封面取色的种子色。
     //
     // 为什么换主题时必须重下发：运行时令牌表的优先级**高于**

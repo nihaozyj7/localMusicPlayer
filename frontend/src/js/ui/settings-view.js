@@ -75,7 +75,7 @@ import { applyPlaybackOptions } from "../audio.js";
 // 音效档位表（选项面板也用它），见 effect-presets.js
 import { EFFECT_PRESETS } from "./effect-presets.js";
 // 歌词字号量程（选项面板也用它），见 ui/lyric-size.js
-import { LYRIC_SIZE_MAX, LYRIC_SIZE_MIN } from "./lyric-size.js";
+import { LYRIC_SIZE_MAX, LYRIC_SIZE_MIN, lyricSizeToken } from "./lyric-size.js";
 
 /* --------------------------------------------------------------------------
    设置分区
@@ -2344,7 +2344,7 @@ class MpSettingsLayer extends MpElement {
           state.config.glassAlphaCustom = true;
           applyGlassAlpha(v);
         }
-        if (key === "lyricsFontSize") setRuntimeToken("--lyric-size", `${v}px`);
+        if (key === "lyricsFontSize") setRuntimeToken("--lyric-size", lyricSizeToken(v));
         // 切歌间隔要立刻生效：改完设置后紧接着的那次自动切歌就该按新值停顿
         if (isTrackGap) applyTrackGap(state.config[key]);
       },

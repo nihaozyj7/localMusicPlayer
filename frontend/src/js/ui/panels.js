@@ -26,7 +26,7 @@ import { markDragEnd, shouldIgnoreRowClick } from "../tracks.js";
 import { clearQueue } from "../store.js";
 import { DESKTOP_MODE, applyDesktopMode, currentDesktopMode } from "../desktop-mode.js";
 import { EFFECT_PRESETS } from "./effect-presets.js";
-import { LYRIC_SIZE_MAX, LYRIC_SIZE_MIN } from "./lyric-size.js";
+import { LYRIC_SIZE_MAX, LYRIC_SIZE_MIN, lyricSizeToken } from "./lyric-size.js";
 import {
   applySleepMinutes,
   clearSleepTimer,
@@ -433,7 +433,7 @@ class MpOptionsPanel extends MpPanel {
         format: (v) => `${Math.round(v)}px`,
         onChange: (v) => {
           state.config.lyricsFontSize = v;
-          setRuntimeToken("--lyric-size", `${v}px`);
+          setRuntimeToken("--lyric-size", lyricSizeToken(v));
           this.requestUpdate();
         },
         onCommit: () => commit(),

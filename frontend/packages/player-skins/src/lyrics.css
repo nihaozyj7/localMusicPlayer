@@ -31,9 +31,31 @@
 }
 
 .lyrics {
-  --lyric-size: 16px;
-  --lyric-size-active: 21px;
-  --lyric-dim: 0.36;
+  /* --------------------------------------------------------------------------
+     ★ 字号**不在这里声明**，一个都不行
+     --------------------------------------------------------------------------
+     `--lyric-size` 是宿主下发的**用户设置**（设置 → 歌词字号，写在 :root 上，
+     带 !important 的运行时令牌）。自定义属性是普通继承：只要在本元素上写一句
+     `--lyric-size: 16px`，它就**就近压过**祖先（:root，以及样式包写在
+     `::scope` 上的值），于是"拖字号滑杆没任何反应"——这正是本站要修的 bug。
+
+     所以**字号 / 亮度这几个可定制量一律改成使用点的 var() 兜底**
+     （`font-size: var(--lyric-size, 16px)`），元素上不落任何同名声明：
+       · 用户字号      --lyric-size            （宿主写 :root）
+       · 当前行字号    --lyric-size-active     （样式包可选；不给就按正文字号推导）
+       · 非当前行压暗  --lyric-dim             （样式包可选）
+
+     （`--lyric-pad` / `--lyric-measure` 仍然是骨架自己的布局默认值，写在下面 ——
+      它们不是宿主下发的旋钮，样式包照旧在更近的容器上覆盖，例如
+      `.lyrics__scroll { --lyric-pad: … }`。）
+
+     样式包想改字号，写在**舞台根**（`::scope { … }`）或更近的容器上即可 ——
+     前者在 @layer skin 里也压得过这里，因为这里根本没有同名声明。
+     -------------------------------------------------------------------------- */
+  /* 当前行的字号：样式包给了 --lyric-size-active 就用它，否则按正文字号放大。
+     1.3125 = 原来的 21/16：用户把正文字号调大时，当前行一起变大。
+     （这个名字是骨架内部派生量，不是对外旋钮，样式包不必知道它。） */
+  --lyric-active-size: var(--lyric-size-active, calc(var(--lyric-size, 16px) * 1.3125));
   --lyric-pad: 34%;
   /* 单行歌词的宽度上限：详情页铺满整窗后，不加限制在超宽屏上会长得难读 */
   --lyric-measure: 760px;
@@ -80,10 +102,10 @@
   background: none;
   text-align: inherit;
   font-family: inherit;
-  font-size: var(--lyric-size);
+  font-size: var(--lyric-size, 16px);
   line-height: 1.5;
   color: var(--text-1);
-  opacity: var(--lyric-dim);
+  opacity: var(--lyric-dim, 0.36);
   transform-origin: center;
   /* 刻意**不**过渡 font-size 与 filter：
      · font-size 是文本度量，动它会让整个滚动区重排、每一行在 250ms 里持续
@@ -117,7 +139,7 @@
 }
 
 .lyric[aria-current="true"] {
-  font-size: var(--lyric-size-active);
+  font-size: var(--lyric-active-size);
   font-weight: var(--fw-semibold);
   color: var(--accent);
   opacity: 1;
@@ -126,7 +148,7 @@
 }
 
 .lyric[data-past="true"] {
-  opacity: calc(var(--lyric-dim) * 0.9);
+  opacity: calc(var(--lyric-dim, 0.36) * 0.9);
 }
 
 /* —— 行退场：当前行唱完、交棒给下一句时的那一下 ——
@@ -140,14 +162,16 @@
 @keyframes lyric-exit {
   0% {
     opacity: 1;
-    transform: translateY(0) scale(calc(var(--lyric-size-active) / var(--lyric-size)));
+    /* 起手仍是当前行的大小（当前行字号 / 正文字号），所以这里用派生出来的
+       --lyric-active-size 而不是那两个对外旋钮 */
+    transform: translateY(0) scale(calc(var(--lyric-active-size) / var(--lyric-size, 16px)));
   }
   55% {
-    opacity: calc(var(--lyric-dim) * 1.5);
+    opacity: calc(var(--lyric-dim, 0.36) * 1.5);
     transform: translateY(-5px) scale(1.1);
   }
   100% {
-    opacity: calc(var(--lyric-dim) * 0.9);
+    opacity: calc(var(--lyric-dim, 0.36) * 0.9);
     transform: translateY(0) scale(1);
   }
 }
@@ -201,7 +225,7 @@
 .lyric__trans {
   display: block;
   margin-top: 2px;
-  font-size: calc(var(--lyric-size) * 0.78);
+  font-size: calc(var(--lyric-size, 16px) * 0.78);
   font-weight: var(--fw-normal);
   color: var(--text-3);
 }
@@ -211,7 +235,7 @@
   display: block;
   padding: 7px var(--sp-4);
   font-family: var(--font-num);
-  font-size: var(--lyric-size);
+  font-size: var(--lyric-size, 16px);
   color: var(--text-3);
   opacity: 0.6;
 }
