@@ -80,6 +80,46 @@ function makeSwitchMachine() {
     /** 前端希望装载的歌 / 后端确实装载的歌 */
     loadedFor: null,
     backendSongId: null,
+    /** 用户意图是不是「在播」—— 装载成功后要据此发一次 playerPlay */
+    wantPlaying: true,
+    /** 实际发出过几次 playerPlay */
+    playIssued: 0,
+
+    /**
+     * 与 audio.js 的 requestSeq 对齐：**每次发起装载、以及每次卸载**都 +1。
+     *
+     * ★ 卸载也要 +1 是这一轮修的缺陷（见文件头 §5）：不 +1 的话，
+     * 「点 A → 转码中 → 用户清空队列」这条路径上，A 的 playerLoad 回来时
+     * 闸门判定会通过，于是照样写状态、照样发 Play —— 声音出来了，
+     * 界面却停在「已停止」，而且暂停/停止都按不掉（前端认为无事可做）。
+     */
+    requestSeq: 0,
+
+    /** 与 audio.js#loadSong 开头对齐，返回这次请求的号 */
+    requestLoad(songId) {
+      this.loadedFor = songId;
+      this.anchor = null;
+      this.position = 0;
+      this.switchPending = true;
+      return ++this.requestSeq;
+    },
+
+    /** 与 audio.js#loadSong 里 playerLoad 之后的第一道闸门对齐 */
+    acceptLoad(seq) {
+      return seq === this.requestSeq;
+    },
+
+    /**
+     * 与 audio.js#loadSong 的尾部对齐：闸门 → superseded → 写状态 → 起播。
+     * 返回 applied / dropped / superseded，供用例断言「这次到底算不算数」。
+     */
+    completeLoad(seq, res) {
+      if (!this.acceptLoad(seq)) return "dropped";
+      if (res?.superseded) return "superseded";
+      this.backendSongId = this.loadedFor;
+      if (this.wantPlaying) this.playIssued++;
+      return "applied";
+    },
 
     /** 与 audio.js 的 currentSong()/playSong 对齐：切歌时位置清零 */
     switchTo(songId) {
@@ -129,6 +169,7 @@ function makeSwitchMachine() {
 
     /** 与 audio.js 的 unloadCurrent 对齐 */
     unload() {
+      this.requestSeq++; // ★ 作废在途的 playerLoad（见 requestSeq 的说明）
       this.switchPending = false;
       this.loadedFor = null;
       this.backendSongId = null;
@@ -336,6 +377,95 @@ test("bridge.js：playerCancelGap 必须接上后端方法", () => {
       `${rel.join("/")} 里缺少 CancelTrackGap —— 前端调用会拿到 undefined`
     );
   }
+});
+
+/* --------------------------------------------------------------------------
+   5. 在途装载必须被作废（卸载 / 后一次切歌）
+   --------------------------------------------------------------------------
+   现象：「点了停止（或清空队列）之后，声音还是出来了，而且暂停也按不掉」，
+   以及「点了 B，播的却是 A」。
+
+   成因是同一个：loadSong 会 await 一次 playerLoad，而后端在里面可能正跑着
+   一次 ffmpeg 转码（实测 0.8~1.2 秒）。这期间用户的新意图（切歌或停止）
+   只会改变**新的**那次请求，先发起的那次如果没有任何作废机制，回来之后
+   照样会写状态并起播。前端这半的闸门就是 requestSeq；后端还有一道
+   （services_player.go#loadSeq，返回 superseded）—— 两道都要在。
+   -------------------------------------------------------------------------- */
+
+test("卸载后：在途的装载回来必须被丢弃（否则「停止后还在响」）", () => {
+  const m = makeSwitchMachine();
+
+  // 用户点 A：后端开始转码，前端把这次请求的号记下来
+  const seq = m.requestLoad("A");
+  assert.equal(m.switchPending, true, "发起装载时要进入「切歌中」");
+
+  // 用户随即清空队列 / 点了停止
+  m.unload();
+
+  // A 的 playerLoad 现在才回来
+  const outcome = m.completeLoad(seq, { durationMs: 2000 });
+
+  assert.equal(outcome, "dropped", "卸载之后回来的装载必须被丢弃 —— 它已经不是用户的意图了");
+  assert.equal(m.backendSongId, null, "被丢弃的装载不能改「后端装着哪首」的记账");
+  assert.equal(m.playIssued, 0, "被丢弃的装载不能再发 playerPlay —— 那正是「点了停止却还在出声」");
+});
+
+test("卸载会作废在途请求（requestSeq 必须递增）", () => {
+  const m = makeSwitchMachine();
+  const before = m.requestSeq;
+  m.unload();
+  assert.equal(m.requestSeq, before + 1, "unloadCurrent 必须递增 requestSeq");
+});
+
+test("切歌仍然有效：后发起的那次才写得进状态", () => {
+  // 别把闸门做成「谁都不能写」：正常切歌必须照旧成功。
+  const m = makeSwitchMachine();
+  const seqA = m.requestLoad("A");
+  const seqB = m.requestLoad("B"); // 用户在 A 返回前又点了 B
+
+  assert.equal(m.completeLoad(seqB, { durationMs: 2000 }), "applied", "最后一次意图必须生效");
+  assert.equal(m.backendSongId, "B");
+  assert.equal(m.completeLoad(seqA, { durationMs: 2000 }), "dropped", "先发起的 A 回来时必须过期");
+  assert.equal(m.backendSongId, "B", "A 不能把 B 覆盖掉 —— 这就是「点 B 播 A」");
+});
+
+test("后端说 superseded：前端必须静默收工，不能当成功继续写状态", () => {
+  // 后端在 resolve 期间发现自己的号变了（又切了歌或已经 Unload），于是返回
+  // {superseded:true} 并且**没有动任何状态**。前端这边若把它当成功，就会
+  // 用一次「后端根本没装载」的结果去写界面，又是一次「界面说有、实际没有」。
+  const m = makeSwitchMachine();
+  const seq = m.requestLoad("A");
+  const outcome = m.completeLoad(seq, { superseded: true });
+
+  assert.equal(outcome, "superseded");
+  assert.equal(m.backendSongId, null, "superseded 的结果不能当成装载成功");
+  assert.equal(m.playIssued, 0, "superseded 之后不能起播");
+});
+
+/* --------------------------------------------------------------------------
+   6. 源码级不变量：上面两处闸门必须真的写在 audio.js 里
+   -------------------------------------------------------------------------- */
+
+test("audio.js：unloadCurrent 必须递增 requestSeq", () => {
+  const start = audioCode.indexOf("async function unloadCurrent() {");
+  assert.ok(start > 0, "audio.js 里没有找到 unloadCurrent");
+  const body = audioCode.slice(start, audioCode.indexOf("\n}\n", start));
+  assert.match(
+    body,
+    /requestSeq\+\+;/,
+    "unloadCurrent 必须 requestSeq++ 作废在途的 playerLoad（否则「停止后还在响」）"
+  );
+});
+
+test("audio.js：playerLoad 返回后要认后端的 superseded", () => {
+  const start = audioCode.indexOf("async function loadSong(song) {");
+  assert.ok(start > 0, "audio.js 里没有找到 loadSong");
+  const body = audioCode.slice(start, audioCode.indexOf("\nasync function syncPlayState", start));
+  assert.match(
+    body,
+    /if \(res\?\.superseded\) return;/,
+    "loadSong 必须认出后端返回的 superseded（代际校验被取代）并静默收工"
+  );
 });
 
 test("playerbar.js：切歌途中不画旧进度", () => {

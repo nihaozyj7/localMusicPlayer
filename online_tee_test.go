@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -72,7 +73,7 @@ func TestTeeToCacheDoesNotHangWhenAlreadyCached(t *testing.T) {
 func TestPipeTeeEOFClosesWriter(t *testing.T) {
 	payload := []byte("cache-me-please")
 	pr, pw := io.Pipe()
-	tee := &pipeTee{r: io.TeeReader(bytes.NewReader(payload), pw), pw: pw}
+	tee := newPipeTee(bytes.NewReader(payload), pw)
 
 	got := make(chan []byte, 1)
 	go func() {
@@ -110,7 +111,7 @@ func TestPipeTeeEOFClosesWriter(t *testing.T) {
 // TestPipeTeeCloseUnblocksAbortedTransfer 守 ②。
 func TestPipeTeeCloseUnblocksAbortedTransfer(t *testing.T) {
 	pr, pw := io.Pipe()
-	tee := &pipeTee{r: io.TeeReader(bytes.NewReader(make([]byte, 500_000)), pw), pw: pw}
+	tee := newPipeTee(bytes.NewReader(make([]byte, 500_000)), pw)
 
 	finished := make(chan error, 1)
 	go func() {
@@ -153,5 +154,165 @@ func TestPipeTeeWithoutPipeForwardsPlainly(t *testing.T) {
 	}
 	if err := tee.Close(); err != nil {
 		t.Fatalf("没有 pipe 时 Close 应当是安全的空操作: %v", err)
+	}
+}
+
+/* ==========================================================================
+   ③ 旁路**先**退出时，转发侧不能跟着卡死
+   --------------------------------------------------------------------------
+   这是与 ①② 相反方向的第三个死结，且它更严重：①② 的后果是「缓存丢了」，
+   ③ 的后果是「正在播的这一首永久卡住」（用户只能切歌）。
+
+   触发条件都是**缓存这一路失败**，而缓存只是可选的加速手段：
+     · 磁盘满 / %TEMP% 被清理 / 目录没有写权限 → WriteTo 第一步就失败；
+     · 写到一半失败（配额、断电式错误）→ WriteTo 中途返回。
+   旧实现里旁路一退出，pipe 就再没有读者，转发侧的下一次 pw.Write 永久阻塞。
+   ========================================================================== */
+
+// TestTeeSinkDiscardsAfterCacheGaveUp ③ 的最短路径：旁路已经退出，写入必须丢弃而不是阻塞。
+func TestTeeSinkDiscardsAfterCacheGaveUp(t *testing.T) {
+	pr, pw := io.Pipe()
+	// ★ pr 故意**只在测试结束时**关闭：旧实现的旁路 goroutine 就是这样 ——
+	// WriteTo 直接 return，读端既不读也不关。若测试自己在旁路里先关读端，
+	// 卡死就会变成「写端报错」，测不出真正的**永久阻塞**（那是用户看到的现象）。
+	defer pr.Close()
+	tee := newPipeTee(bytes.NewReader(bytes.Repeat([]byte("B"), 300_000)), pw)
+
+	// 扮演「WriteTo 第一步就失败」的旁路：立刻退出，且不读不关 pr
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		defer tee.sink.stop(errTeeCacheFailed)
+	}()
+
+	select {
+	case <-exited:
+	case <-time.After(3 * time.Second):
+		t.Fatal("夹具不成立：旁路没能退出")
+	}
+
+	done := make(chan int, 1)
+	go func() {
+		n, _ := io.Copy(io.Discard, tee)
+		done <- int(n)
+	}()
+	select {
+	case n := <-done:
+		if n != 300_000 {
+			t.Fatalf("转发字节数 = %d，期望 300000", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("缓存已经放弃后，转发侧仍然被卡死：pipe 没有读者，" +
+			"TeeReader 的写永远等不到返回（现象是「这一首试听永久停在某处」）")
+	}
+}
+
+// TestCacheWriteFailureMidStreamDoesNotBreakPlayback ③ 的中途失败：
+// 缓存写到一半失败，**播放仍必须收到完整字节**（缓存失败不能变成播放中断）。
+func TestCacheWriteFailureMidStreamDoesNotBreakPlayback(t *testing.T) {
+	payload := bytes.Repeat([]byte("C"), 400_000)
+	pr, pw := io.Pipe()
+	defer pr.Close() // 同上一个用例：不在旁路里关，忠实还原旧实现
+	tee := newPipeTee(bytes.NewReader(payload), pw)
+
+	// 扮演写到一半就失败的 WriteTo：只消费 4096 字节然后退出
+	cacheGone := make(chan struct{})
+	go func() {
+		defer close(cacheGone)
+		defer tee.sink.stop(errors.New("模拟磁盘满"))
+		buf := make([]byte, 4096)
+		if _, err := io.ReadFull(pr, buf); err != nil {
+			t.Errorf("夹具不成立：旁路没能读到前 4KB: %v", err)
+		}
+	}()
+
+	got := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(tee)
+		got <- b
+	}()
+
+	select {
+	case b := <-got:
+		if !bytes.Equal(b, payload) {
+			t.Fatalf("转发内容不完整：%d 字节，期望 %d（缓存失败不该影响播放）", len(b), len(payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("缓存中途写失败之后，转发被卡死或提前中断了")
+	}
+	<-cacheGone
+}
+
+// TestTeeSinkKeepsDeliveringWhileCacheAlive 兜底：缓存正常时字节必须照样到达旁路
+// （别为了修死锁把 tee 本身修没了）。
+func TestTeeSinkKeepsDeliveringWhileCacheAlive(t *testing.T) {
+	payload := []byte("both-sides-must-see-this")
+	pr, pw := io.Pipe()
+	tee := newPipeTee(bytes.NewReader(payload), pw)
+
+	cached := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(pr)
+		cached <- b
+	}()
+
+	got, err := io.ReadAll(tee)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("转发内容不对: %q", got)
+	}
+	select {
+	case b := <-cached:
+		if !bytes.Equal(b, payload) {
+			t.Fatalf("旁路拿到的内容不对: %q", b)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("正常路径下旁路没收到字节：tee 被修坏了")
+	}
+}
+
+// TestCacheStreamFailureDoesNotStallTransfer ③ 的**端到端**版本：
+// 真的让 s.files.WriteTo 第一步就失败，整条 teeToCache 必须照样把字节读完。
+//
+// 与上面两个用例的分工：那两个直接驱动 teeSink（证明「写端退役后丢弃而不是报错」
+// 是必要条件），这一个跑**真实的旁路方法** s.cacheStream —— 它同时钉住
+// 「旁路退出前必须 stop 写端」这一句：删掉那句 defer，转发侧就会在下一次写入
+// 永久阻塞，本用例会在超时后失败（旧实现正是如此）。
+func TestCacheStreamFailureDoesNotStallTransfer(t *testing.T) {
+	// 让「缓存目录」的位置是一个**普通文件**：MkdirAll / Create 必然失败，
+	// 于是旁路第一步就退出。对应真实场景：缓存目录被清理、无写权限、磁盘满。
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := onlinecache.New(blocker)
+
+	const bvid = "BV1cachefail"
+	if _, ok := cache.Path(bvid, "m4a"); !ok {
+		t.Fatal("夹具不成立：拿不到缓存路径")
+	}
+
+	payload := bytes.Repeat([]byte("D"), 300_000)
+	svc := &OnlineService{files: cache}
+	teed := svc.teeToCache(&bilibili.AudioStream{BVID: bvid}, bytes.NewReader(payload))
+	defer teed.Close()
+
+	done := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(teed)
+		done <- b
+	}()
+
+	select {
+	case b := <-done:
+		if !bytes.Equal(b, payload) {
+			t.Fatalf("转发内容不完整：%d 字节，期望 %d", len(b), len(payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("缓存写失败后转发被永久阻塞：旁路 goroutine 已经退出，" +
+			"pipe 没有读者，TeeReader 的写永远等不到返回" +
+			"（现象是「这一首试听永久停在某处，只能切歌」）")
 	}
 }

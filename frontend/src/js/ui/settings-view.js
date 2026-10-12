@@ -492,10 +492,9 @@ class MpSettingsLayer extends MpElement {
                   · 关于 —— 版本更新在前，应用信息与资料（看过一次就够）在后。
               -->
               ${this.foldersCard()} ${this.rulesCard()} ${this.playbackCard()} ${this.lyricsCard()}
-              ${this.loudnessCard()} ${this.themeCard()} ${this.playerCard()} ${this.listCard()}
-              ${this.systemCard()} ${this.onlineCard()} ${this.aiCard()} ${this.updateCard()}
-              ${this.aboutCard()} ${this.techCard()} ${this.libsCard()} ${this.licenseCard()}
-              ${this.creditsCard()}
+              ${this.loudnessCard()} ${this.themeCard()} ${this.playerCard()} ${this.listCard()} ${this.systemCard()}
+              ${this.onlineCard()} ${this.aiCard()} ${this.updateCard()} ${this.aboutCard()} ${this.techCard()}
+              ${this.libsCard()} ${this.licenseCard()} ${this.creditsCard()}
             </div>
           </div>
         </div>
@@ -510,6 +509,14 @@ class MpSettingsLayer extends MpElement {
     const derived = this.settingsDerived();
     const rows = state.folders.length
       ? state.folders.map((f) => {
+          // 状态字面量来自后端 internal/library#walkFolder（ok / missing /
+          // denied / partial / error），两边必须一一对应 —— 有一条测试逐个比对
+          //（frontend/tests/folder-status.test.js）。
+          //
+          // ★ 这里以前是「ok → 绿、missing → 路径不存在、其余一律无访问权限」：
+          // 于是 I/O 错误（磁盘掉线、路径过长）被显示成「无访问权限」，
+          // 用户去改权限根本没用；而「部分子目录读不到」这种**扫描不完整**的
+          // 情况更是完全看不出来（曲库少了一批歌，界面说一切正常）。
           const chip =
             f.status === "ok"
               ? html`<span class="chip chip--ok"
@@ -517,7 +524,13 @@ class MpSettingsLayer extends MpElement {
                 >`
               : f.status === "missing"
                 ? html`<span class="chip chip--error"><i class="chip__dot"></i>路径不存在</span>`
-                : html`<span class="chip chip--warn"><i class="chip__dot"></i>无访问权限</span>`;
+                : f.status === "denied"
+                  ? html`<span class="chip chip--warn"><i class="chip__dot"></i>无访问权限</span>`
+                  : f.status === "partial"
+                    ? html`<span class="chip chip--warn"><i class="chip__dot"></i>部分子目录读不到</span>`
+                    : f.status === "error"
+                      ? html`<span class="chip chip--error"><i class="chip__dot"></i>扫描出错</span>`
+                      : html`<span class="chip chip--warn"><i class="chip__dot"></i>状态未知</span>`;
           const count = derived.perFolder.get(f.id) ?? 0;
           return html` <div class="pathrow" data-folder=${f.id}>
             <svg class="pathrow__icon" aria-hidden="true"><use href="#i-folder"></use></svg>
@@ -628,11 +641,13 @@ class MpSettingsLayer extends MpElement {
           ${loading ? html`正在读取清单…` : html`发现 <b>${fmtCount(n)}</b> 个无法播放的文件`}
         </span>
         ${loading ? nothing : html`<span class="unplayable__cta">${open ? "收起" : "查看是哪些文件"}</span>`}
-        ${loading
-          ? nothing
-          : html`<span class="unplayable__chev" data-open=${String(open)}
-              >${icon(open ? "chevron-down" : "chevron-right")}</span
-            >`}
+        ${
+          loading
+            ? nothing
+            : html`<span class="unplayable__chev" data-open=${String(open)}
+                >${icon(open ? "chevron-down" : "chevron-right")}</span
+              >`
+        }
       </button>
       ${open && n ? this.unplayableList(list) : nothing}
     </div>`;
@@ -681,7 +696,8 @@ class MpSettingsLayer extends MpElement {
       </div>
       <div class="unplayable__foot">
         <span>
-          这些文件在播放时解不出来，已从曲库移除（<b>磁盘文件没有被删除</b>）。 修好文件后点「已修好」重新扫描即可回到曲库。
+          这些文件在播放时解不出来，已从曲库移除（<b>磁盘文件没有被删除</b>）。
+          修好文件后点「已修好」重新扫描即可回到曲库。
         </span>
         <button class="btn btn--ghost btn--sm" type="button" data-act="unplayable-clear">
           ${icon("trash")}<span>清空清单</span>
@@ -1058,11 +1074,13 @@ class MpSettingsLayer extends MpElement {
                   style=${preview?.fg ? `background:${preview.fg}` : "background:var(--text-1)"}
                 ></i>
               </span>
-              ${missing.length
-                ? html`<span class="skincard__warn" data-tip=${warnTip} aria-label=${warnTip}
-                    >${icon("warning")}</span
-                  >`
-                : nothing}
+              ${
+                missing.length
+                  ? html`<span class="skincard__warn" data-tip=${warnTip} aria-label=${warnTip}
+                      >${icon("warning")}</span
+                    >`
+                  : nothing
+              }
             </button>
             ${
               s.builtin
@@ -1472,9 +1490,7 @@ class MpSettingsLayer extends MpElement {
         <div class="about-note">
           <div class="about-note__title"><span>会联网的功能</span></div>
           ${NETWORK_USAGE.map(
-            (u) => html`<div class="about-note__body">
-              · ${u.what} → ${u.where}（${u.when}；关闭方式：${u.off}）
-            </div>`
+            (u) => html`<div class="about-note__body">· ${u.what} → ${u.where}（${u.when}；关闭方式：${u.off}）</div>`
           )}
         </div>
         <div class="about-note">
@@ -1504,6 +1520,11 @@ class MpSettingsLayer extends MpElement {
     // 所以「配没配」看的是本地记录的布尔位，而不是拿占位串当真值比较。
     const keySet = Boolean(cfg.aiApiKeySet) || Boolean(String(cfg.aiApiKey || "").trim());
     const configured = Boolean(String(cfg.aiBaseUrl || "").trim() && keySet);
+    // 地址不被接受的原因由**后端**算（派生字段 aiBaseUrlProblem，见
+    // services.go#ConfigService.Get）—— 校验规则只有一份，前端不再自己实现
+    // 一遍。这里只负责显示：不显示的话，用户看到的是「AI 莫名不工作」
+    //（后端会拒绝把密钥发到这个地址，见 services_ai.go#ExtractMeta）。
+    const addrProblem = String(cfg.aiBaseUrlProblem || "").trim();
     const field = (label, hint, key, placeholder, type = "text") =>
       html` <div class="setting setting--stack">
         <div class="setting__main">
@@ -1532,6 +1553,17 @@ class MpSettingsLayer extends MpElement {
       </div>
       <div class="card__body">
         ${field("接口地址（Base URL）", "OpenAI 兼容接口，例如 https://api.openai.com/v1", "aiBaseUrl", "https://api.openai.com/v1")}
+        ${
+          addrProblem
+            ? html`<div class="setting__warn" role="alert">
+                <span>这个接口地址不会被使用：${addrProblem}</span>
+                <span class="setting__warn-sub"
+                  >本机模型服务（LM Studio / Ollama）请填 http://127.0.0.1:端口；其它地址必须是 https://，且不要用
+                  IP。地址不合规时程序不会把 API Key 发出去。</span
+                >
+              </div>`
+            : null
+        }
         ${field("API Key", "只写入本地配置，不会发往该接口以外的任何地方", "aiApiKey", "sk-...", "password")}
         ${field("模型 ID", "例如 gpt-4o-mini、deepseek-chat；留空默认 gpt-4o-mini", "aiModelId", "gpt-4o-mini")}
         ${settingRow({
@@ -1558,19 +1590,19 @@ class MpSettingsLayer extends MpElement {
         ${settingRow({
           label: "下载歌曲时用 AI 整理元数据",
           hint: "下载完成（直接下载或从试听缓存搬运）后，在后台把文件名与现有信息交给 AI，还原出真实的标题 / 歌手 / 专辑并写回歌曲文件。整理在下载结束后才发生，不会拖慢下载；写回会改写文件标签且不可撤销，只在 AI 给出非空字段时才写。支持 m4a / flac，其它格式只更新曲库",
-          control: switchControl(
-            "aiDownloadTag",
-            state.config.aiDownloadTag !== false,
-            "下载歌曲时用 AI 整理元数据"
-          ),
+          control: switchControl("aiDownloadTag", state.config.aiDownloadTag !== false, "下载歌曲时用 AI 整理元数据"),
         })}
         <!-- 发送内容的常驻说明：横幅式的「首次确认」只在第一次弹（见 settings.js#confirmAIFirstUse），
              真正要能随时查到的是这一段。 -->
         <div class="about-note">
           <div class="about-note__title"><span>AI 会收到什么</span></div>
-          <div class="about-note__body">· 发送：歌曲的标题 / 歌手 / 专辑 / 时长，以及文件名（只有文件名，不含完整路径）。</div>
+          <div class="about-note__body">
+            · 发送：歌曲的标题 / 歌手 / 专辑 / 时长，以及文件名（只有文件名，不含完整路径）。
+          </div>
           <div class="about-note__body">· 不发：曲库列表、播放记录、文件路径与任何设备标识。</div>
-          <div class="about-note__body">· 接口地址由你自己填写，通常在境外；请自行确认该服务的隐私政策与数据处理方式。</div>
+          <div class="about-note__body">
+            · 接口地址由你自己填写，通常在境外；请自行确认该服务的隐私政策与数据处理方式。
+          </div>
           <div class="about-note__body">· 随时可关：清空 Base URL / API Key，或关掉下面两个使用 AI 的开关。</div>
         </div>
         <div class="setting__hint">
@@ -1620,15 +1652,16 @@ class MpSettingsLayer extends MpElement {
           </div>
           <div class="about-hero__links">
             ${PROJECT_LINKS.map(
-              (l) => html`<button
-                class="btn btn--sm"
-                type="button"
-                data-act="about-open-url"
-                data-url=${l.url}
-                title=${l.url}
-              >
-                ${icon(l.icon)}<span>${l.label}</span>
-              </button>`
+              (l) =>
+                html`<button
+                  class="btn btn--sm"
+                  type="button"
+                  data-act="about-open-url"
+                  data-url=${l.url}
+                  title=${l.url}
+                >
+                  ${icon(l.icon)}<span>${l.label}</span>
+                </button>`
             )}
           </div>
         </div>
@@ -1695,10 +1728,11 @@ class MpSettingsLayer extends MpElement {
       </div>
       <div class="card__body">
         ${this.updateStatusBlock({ check, current, latest, pending, progress })}
-
-        ${u.error && !check?.error
-          ? html`<div class="setting__hint" style="color:var(--danger,#e5484d)">${u.error}</div>`
-          : nothing}
+        ${
+          u.error && !check?.error
+            ? html`<div class="setting__hint" style="color:var(--danger,#e5484d)">${u.error}</div>`
+            : nothing
+        }
         ${progress ? this.updateProgressBlock(progress, check) : nothing}
         ${pending ? this.updatePendingBlock(pending) : nothing}
         ${check?.notes && check.hasUpdate ? this.updateNotesBlock(check) : nothing}
@@ -1732,7 +1766,12 @@ class MpSettingsLayer extends MpElement {
             <div class="setting__hint">${UPDATE_REPO}</div>
           </div>
           <div class="setting__control">
-            <button class="btn btn--ghost btn--sm" type="button" data-act="about-open-url" data-url=${UPDATE_RELEASES_URL}>
+            <button
+              class="btn btn--ghost btn--sm"
+              type="button"
+              data-act="about-open-url"
+              data-url=${UPDATE_RELEASES_URL}
+            >
               ${icon("external")}<span>全部版本</span>
             </button>
             <button class="btn btn--ghost btn--sm" type="button" data-act="update-open-dir">
@@ -1764,10 +1803,10 @@ class MpSettingsLayer extends MpElement {
     if (!check) {
       return html` <div class="about-note">
         <div class="about-note__title"><span>尚未检查</span></div>
-        <div class="about-note__body">
-          点右边的按钮查询有没有新版本。检查只读取版本信息，不会下载任何东西。
-        </div>
-        <button class="btn btn--sm" type="button" data-act="update-check">${icon("refresh")}<span>检查更新</span></button>
+        <div class="about-note__body">点右边的按钮查询有没有新版本。检查只读取版本信息，不会下载任何东西。</div>
+        <button class="btn btn--sm" type="button" data-act="update-check">
+          ${icon("refresh")}<span>检查更新</span>
+        </button>
       </div>`;
     }
 
@@ -1817,17 +1856,19 @@ class MpSettingsLayer extends MpElement {
           ${check.publishedAt ? ` · 发布于 ${new Date(check.publishedAt).toLocaleDateString("zh-CN")}` : ""}
         </div>
         <div class="setting__control">
-          ${progress
-            ? html`<button class="btn btn--sm" type="button" data-act="update-cancel">
-                ${icon("close")}<span>取消下载</span>
-              </button>`
-            : pending
-              ? html`<button class="btn btn--sm" type="button" data-act="update-install">
-                  ${icon("refresh")}<span>立即安装并重启</span>
+          ${
+            progress
+              ? html`<button class="btn btn--sm" type="button" data-act="update-cancel">
+                  ${icon("close")}<span>取消下载</span>
                 </button>`
-              : html`<button class="btn btn--sm" type="button" data-act="update-download">
-                  ${icon("download")}<span>下载更新</span>
-                </button>`}
+              : pending
+                ? html`<button class="btn btn--sm" type="button" data-act="update-install">
+                    ${icon("refresh")}<span>立即安装并重启</span>
+                  </button>`
+                : html`<button class="btn btn--sm" type="button" data-act="update-download">
+                    ${icon("download")}<span>下载更新</span>
+                  </button>`
+          }
           <button
             class="btn btn--ghost btn--sm"
             type="button"
@@ -1853,11 +1894,13 @@ class MpSettingsLayer extends MpElement {
       <div class="about-note__body">
         ${check.checkedAt ? `上次检查：${new Date(check.checkedAt).toLocaleString("zh-CN")}` : ""}
       </div>
-      ${skipped
-        ? html`<button class="btn btn--sm" type="button" data-act="update-skip" data-version="">
-            ${icon("refresh")}<span>不再跳过</span>
-          </button>`
-        : nothing}
+      ${
+        skipped
+          ? html`<button class="btn btn--sm" type="button" data-act="update-skip" data-version="">
+              ${icon("refresh")}<span>不再跳过</span>
+            </button>`
+          : nothing
+      }
       <button class="btn btn--ghost btn--sm" type="button" data-act="update-check">
         ${icon("refresh")}<span>重新检查</span>
       </button>
@@ -1895,17 +1938,19 @@ class MpSettingsLayer extends MpElement {
         style="height:6px;border-radius:3px;background:var(--surface-2,#2a2a2e);overflow:hidden"
       >
         <div
-          style="height:100%;background:var(--accent,#4c8dff);transition:width .2s ease;width:${indeterminate
-            ? 100
-            : pct}%;opacity:${indeterminate ? 0.35 : 1}"
+          style="height:100%;background:var(--accent,#4c8dff);transition:width .2s ease;width:${
+            indeterminate ? 100 : pct
+          }%;opacity:${indeterminate ? 0.35 : 1}"
         ></div>
       </div>
       <div class="about-note__body">
-        ${indeterminate
-          ? "正在连接…"
-          : total > 0
-            ? `${pct}% · ${fmtSize(done)} / ${fmtSize(total)}${progress.speedText ? ` · ${progress.speedText}` : ""}`
-            : fmtSize(done)}
+        ${
+          indeterminate
+            ? "正在连接…"
+            : total > 0
+              ? `${pct}% · ${fmtSize(done)} / ${fmtSize(total)}${progress.speedText ? ` · ${progress.speedText}` : ""}`
+              : fmtSize(done)
+        }
         ${check?.assetSizeText ? html` <span>（共 ${check.assetSizeText}）</span>` : nothing}
       </div>
     </div>`;
@@ -1916,19 +1961,21 @@ class MpSettingsLayer extends MpElement {
     return html` <div class="about-note">
       <div class="about-note__title">
         <span>更新包已就绪</span>
-        ${pending.verified
-          ? html`<span class="chip chip--ok"><i class="chip__dot"></i>SHA-256 已校验</span>`
-          : html`<span class="chip chip--warn"><i class="chip__dot"></i>未能校验</span>`}
+        ${
+          pending.verified
+            ? html`<span class="chip chip--ok"><i class="chip__dot"></i>SHA-256 已校验</span>`
+            : html`<span class="chip chip--warn"><i class="chip__dot"></i>未能校验</span>`
+        }
       </div>
       <div class="about-note__body">
         ${pending.name} · ${fmtSize(pending.bytes || 0)}
         ${pending.mirrorId ? ` · 来自 ${updateMirror(pending.mirrorId).name}` : ""}
       </div>
-      ${pending.verified
-        ? nothing
-        : html`<div class="setting__hint">
-            这一版没有找到可用的 SHA-256 校验值，安装前请自行确认来源可信。
-          </div>`}
+      ${
+        pending.verified
+          ? nothing
+          : html`<div class="setting__hint">这一版没有找到可用的 SHA-256 校验值，安装前请自行确认来源可信。</div>`
+      }
       <div class="setting__control">
         <button class="btn btn--sm" type="button" data-act="update-install">
           ${icon("refresh")}<span>立即安装并重启</span>
@@ -1967,17 +2014,18 @@ class MpSettingsLayer extends MpElement {
       </div>
       <div class="card__body">
         ${TECH_STACK.map(
-          (t) => html` <div class="about-row">
-            <div class="about-row__main">
-              <div class="about-row__title">
-                <button class="linkbtn" type="button" data-act="about-open-url" data-url=${t.url} title=${t.url}>
-                  <span>${t.name}</span>${icon("external")}
-                </button>
-                <span class="about-row__version">${t.version}</span>
+          (t) =>
+            html` <div class="about-row">
+              <div class="about-row__main">
+                <div class="about-row__title">
+                  <button class="linkbtn" type="button" data-act="about-open-url" data-url=${t.url} title=${t.url}>
+                    <span>${t.name}</span>${icon("external")}
+                  </button>
+                  <span class="about-row__version">${t.version}</span>
+                </div>
+                <div class="about-row__desc">${t.role}</div>
               </div>
-              <div class="about-row__desc">${t.role}</div>
-            </div>
-          </div>`
+            </div>`
         )}
       </div>
       <div class="card__foot">
@@ -2002,34 +2050,34 @@ class MpSettingsLayer extends MpElement {
       </div>
       <div class="card__body">
         <div class="libtable">
-          <div class="libtable__head">
-            <span>库 / 版本</span><span>许可证</span><span>用途</span>
-          </div>
+          <div class="libtable__head"><span>库 / 版本</span><span>许可证</span><span>用途</span></div>
           ${libs.map(
-            (l) => html` <div class="libtable__row">
-              <div class="libtable__cell libtable__cell--name">
-                <button class="linkbtn" type="button" data-act="about-open-url" data-url=${l.url} title=${l.url}>
-                  <span>${l.name}</span>${icon("external")}
-                </button>
-                <span class="libtable__version">${l.version}</span>
-              </div>
-              <div class="libtable__cell"><span class="tagchip">${l.license}</span></div>
-              <div class="libtable__cell libtable__cell--role">
-                <span class="libtable__kind">${l.kind}</span>${l.role}
-              </div>
-            </div>`
+            (l) =>
+              html` <div class="libtable__row">
+                <div class="libtable__cell libtable__cell--name">
+                  <button class="linkbtn" type="button" data-act="about-open-url" data-url=${l.url} title=${l.url}>
+                    <span>${l.name}</span>${icon("external")}
+                  </button>
+                  <span class="libtable__version">${l.version}</span>
+                </div>
+                <div class="libtable__cell"><span class="tagchip">${l.license}</span></div>
+                <div class="libtable__cell libtable__cell--role">
+                  <span class="libtable__kind">${l.kind}</span>${l.role}
+                </div>
+              </div>`
           )}
         </div>
         ${BUNDLED_BINARIES.map(
-          (b) => html` <div class="about-note">
-            <div class="about-note__title">
-              <span>${nameWithVersion(b)}</span><span class="tagchip tagchip--warn">${b.license}</span>
-            </div>
-            <div class="about-note__body">${b.role}</div>
-            <button class="linkbtn" type="button" data-act="about-open-url" data-url=${b.url} title=${b.url}>
-              <span>FFmpeg 许可说明</span>${icon("external")}
-            </button>
-          </div>`
+          (b) =>
+            html` <div class="about-note">
+              <div class="about-note__title">
+                <span>${nameWithVersion(b)}</span><span class="tagchip tagchip--warn">${b.license}</span>
+              </div>
+              <div class="about-note__body">${b.role}</div>
+              <button class="linkbtn" type="button" data-act="about-open-url" data-url=${b.url} title=${b.url}>
+                <span>FFmpeg 许可说明</span>${icon("external")}
+              </button>
+            </div>`
         )}
       </div>
       <div class="card__foot">
@@ -2050,18 +2098,24 @@ class MpSettingsLayer extends MpElement {
       </div>
       <div class="card__body">
         ${LICENSE_NOTES.map(
-          (n) => html` <div class="about-note">
-            <div class="about-note__title">
-              <span>${n.label}</span>
-              <span class=${n.tone === "ok" ? "tagchip tagchip--ok" : "tagchip"}>${n.value}</span>
-            </div>
-            <div class="about-note__body">${n.desc}</div>
-          </div>`
+          (n) =>
+            html` <div class="about-note">
+              <div class="about-note__title">
+                <span>${n.label}</span>
+                <span class=${n.tone === "ok" ? "tagchip tagchip--ok" : "tagchip"}>${n.value}</span>
+              </div>
+              <div class="about-note__body">${n.desc}</div>
+            </div>`
         )}
       </div>
       <div class="card__foot">
         <span>第三方许可证的完整文本随仓库分发（见 THIRD-PARTY-NOTICES.md）</span>
-        <button class="btn btn--sm" type="button" data-act="about-open-url" data-url="https://www.apache.org/licenses/LICENSE-2.0">
+        <button
+          class="btn btn--sm"
+          type="button"
+          data-act="about-open-url"
+          data-url="https://www.apache.org/licenses/LICENSE-2.0"
+        >
           ${icon("external")}<span>阅读 Apache-2.0</span>
         </button>
       </div>
@@ -2081,28 +2135,28 @@ class MpSettingsLayer extends MpElement {
       <div class="card__body">
         <div class="about-subtitle">在线数据来源</div>
         ${DATA_SOURCES.map(
-          (d) => html` <div class="about-row">
-            <div class="about-row__main">
-              <div class="about-row__title">
-                <button class="linkbtn" type="button" data-act="about-open-url" data-url=${d.url} title=${d.url}>
-                  <span>${d.name}</span>${icon("external")}
-                </button>
+          (d) =>
+            html` <div class="about-row">
+              <div class="about-row__main">
+                <div class="about-row__title">
+                  <button class="linkbtn" type="button" data-act="about-open-url" data-url=${d.url} title=${d.url}>
+                    <span>${d.name}</span>${icon("external")}
+                  </button>
+                </div>
+                <div class="about-row__desc">${d.role}</div>
               </div>
-              <div class="about-row__desc">${d.role}</div>
-            </div>
-          </div>`
+            </div>`
         )}
         <div class="about-subtitle about-subtitle--gap">致谢</div>
         ${THANKS.map(
-          (t) => html` <div class="about-note">
-            <div class="about-note__title"><span>${t.title}</span></div>
-            <div class="about-note__body">${t.body}</div>
-          </div>`
+          (t) =>
+            html` <div class="about-note">
+              <div class="about-note__title"><span>${t.title}</span></div>
+              <div class="about-note__body">${t.body}</div>
+            </div>`
         )}
       </div>
-      <div class="card__foot card__foot--stack">
-        ${DISCLAIMER.map((d) => html`<span>· ${d}</span>`)}
-      </div>
+      <div class="card__foot card__foot--stack">${DISCLAIMER.map((d) => html`<span>· ${d}</span>`)}</div>
     </section>`;
   }
 
@@ -2294,28 +2348,8 @@ class MpSettingsLayer extends MpElement {
     // 歌词字号的量程与播放选项面板共用一份常量（见 ui/lyric-size.js）：
     // 两处不一致会让用户以为「设置里拖到头了，面板里还能更大」是故障。
     const isLyricSize = key === "lyricsFontSize";
-    const min = isTrackGap
-      ? 0
-      : isCarousel
-        ? 2
-        : isLyricSize
-          ? LYRIC_SIZE_MIN
-          : isBlur
-            ? 0
-            : isAlpha
-              ? 20
-              : 0;
-    const max = isTrackGap
-      ? 10
-      : isCarousel
-        ? 60
-        : isLyricSize
-          ? LYRIC_SIZE_MAX
-          : isBlur
-            ? 48
-            : isAlpha
-              ? 95
-              : 100;
+    const min = isTrackGap ? 0 : isCarousel ? 2 : isLyricSize ? LYRIC_SIZE_MIN : isBlur ? 0 : isAlpha ? 20 : 0;
+    const max = isTrackGap ? 10 : isCarousel ? 60 : isLyricSize ? LYRIC_SIZE_MAX : isBlur ? 48 : isAlpha ? 95 : 100;
     // 单位跟着键走：轮播与切歌间隔是秒，字号/模糊是像素，透明度是百分比
     const unit = isCarousel || isTrackGap ? " 秒" : isBlur ? "px" : isAlpha ? "%" : "px";
     // 切歌间隔要能表达「1.5 秒」这种半秒/十分之一秒的档位；

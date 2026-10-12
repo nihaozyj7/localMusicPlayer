@@ -26,12 +26,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-import {
-  LYRIC_SIZE_DEFAULT,
-  LYRIC_SIZE_MAX,
-  LYRIC_SIZE_MIN,
-  lyricSizeToken,
-} from "../src/js/ui/lyric-size.js";
+import { LYRIC_SIZE_DEFAULT, LYRIC_SIZE_MAX, LYRIC_SIZE_MIN, lyricSizeToken } from "../src/js/ui/lyric-size.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");

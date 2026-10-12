@@ -356,8 +356,7 @@ try {
   check("面板可见", panel.visible);
   check(
     "面板里有全部 4 个音效档位按钮",
-    panel.options.length === 4 &&
-      ["off", "vocal", "bass", "surround"].every((v) => panel.options.includes(v)),
+    panel.options.length === 4 && ["off", "vocal", "bass", "surround"].every((v) => panel.options.includes(v)),
     JSON.stringify(panel.options)
   );
   check(

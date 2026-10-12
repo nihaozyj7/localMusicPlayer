@@ -42,12 +42,7 @@ class MpApp extends MpElement {
     return html`
       <div class="app-bg" id="app-bg" aria-hidden="true"></div>
 
-      <div
-        class="app"
-        id="app"
-        data-view=${state.playerOpen ? "player" : "library"}
-        data-mode=""
-      >
+      <div class="app" id="app" data-view=${state.playerOpen ? "player" : "library"} data-mode="">
         <div class="skin-bg" id="skin-background" hidden aria-hidden="true"></div>
         <mp-titlebar></mp-titlebar>
         <mp-sidebar></mp-sidebar>

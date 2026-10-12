@@ -172,7 +172,6 @@ const last = {
   duration: -1,
   lyricIndex: -2,
   position: -1,
-  progressAt: 0,
   progressPlaying: null,
 };
 
@@ -189,7 +188,6 @@ function resetDesktopWallpaperSync() {
   last.duration = -1;
   last.lyricIndex = -2;
   last.position = -1;
-  last.progressAt = 0;
   last.progressPlaying = null;
 }
 
@@ -232,7 +230,6 @@ function collectWallpaperPatches() {
     last.lyricIndex = media.lyrics.index;
     last.duration = playback.duration;
     last.progressPlaying = playback.playing;
-    last.progressAt = now();
     patches.push({
       type: "song",
       song: media.song,
@@ -297,8 +294,10 @@ function collectWallpaperPatches() {
   //
   // 数据量很小（四个数），主窗口推给自家皮肤也是同一个 250ms 档，这里没有理由更省。
   // 暂停时 position 不动，下面的比对会自然把它挡掉，不会空转。
-  const at = now();
-
+  //
+  // （这里原本还有一个 `progressAt`：早期按「多久没推过就补一次」做节流留下的
+  //   时间戳，改成纯内容比对之后它只被写入、从没被读过 —— 第六轮审查 §4.3
+  //   一并删掉了它和只为它存在的 `now()`。）
   const due =
     playback.position !== last.position ||
     media.lyrics.index !== last.lyricIndex ||
@@ -309,7 +308,6 @@ function collectWallpaperPatches() {
     last.lyricIndex = media.lyrics.index;
     last.duration = playback.duration;
     last.progressPlaying = playback.playing;
-    last.progressAt = at;
     patches.push({
       type: "progress",
       position: playback.position,
@@ -320,10 +318,6 @@ function collectWallpaperPatches() {
   }
 
   return patches;
-}
-
-function now() {
-  return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
 }
 
 /* --------------------------------------------------------------------------

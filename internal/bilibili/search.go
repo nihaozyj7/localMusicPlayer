@@ -191,15 +191,22 @@ func parseDurationText(s string) int64 {
 	if s == "" {
 		return 0
 	}
-	// 纯数字字符串按秒处理
+	// 纯数字字符串按秒处理。
+	//
+	// ★ 负数与 0 一律按「未知」处理（返回 0），与 parseDurationRaw 的数字分支
+	//（那里显式要求 `asNumber > 0`）保持一致：负时长会原样透出到界面
+	//（进度条算出负的总时长），没有任何一处能纠正它。
 	if n, err := strconv.ParseFloat(s, 64); err == nil {
+		if n <= 0 {
+			return 0
+		}
 		return int64(n * 1000)
 	}
 	parts := strings.Split(s, ":")
 	var total int64
 	for _, p := range parts {
 		v, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64)
-		if err != nil {
+		if err != nil || v < 0 {
 			return 0
 		}
 		total = total*60 + v

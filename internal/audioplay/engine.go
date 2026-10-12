@@ -74,6 +74,15 @@ const (
 	// 上限设 3 秒是因为 seek 时要丢弃积压的数据 —— 积压越多，
 	// seek 后听到旧内容的时间越长。
 	ringFrames = SampleRate * 3
+
+	// wavHeaderSize 是标准 WAV 头的长度。
+	//
+	// ffmpeg.TranscodeToWAV 保证头长固定为 44 字节，所以 PCM 数据的绝对位置
+	// 可以算出来：`wavHeaderSize + 帧号*FrameSize`。
+	// ★ 这个 44 曾经在三个地方各写了一遍（Load、Seek、silence.go），
+	// 而「跳过开头静音」恰好就是把文件定位到 `wavHeaderSize + startFrame*FrameSize`
+	// —— 一份数字漂了就会定位到错误的位置。现在只有这一份。
+	wavHeaderSize = 44
 )
 
 /* --------------------------------------------------------------------------
@@ -929,14 +938,13 @@ func (e *Engine) Load(path string, startFrame, endFrame int64, gain float64) err
 		_ = f.Close()
 		return fmt.Errorf("读取音频文件信息失败: %w", err)
 	}
-	// 跳过标准 44 字节 WAV 头。ffmpeg.TranscodeToWAV 保证头长固定为 44
-	// （见 internal/ffmpeg 的说明），所以这里可以直接定位。
-	const headerSize = 44
-	if _, err := f.Seek(headerSize, io.SeekStart); err != nil {
+	// 跳过标准 44 字节 WAV 头（见 wavHeaderSize）。ffmpeg.TranscodeToWAV
+	// 保证头长固定，所以这里可以直接定位。
+	if _, err := f.Seek(wavHeaderSize, io.SeekStart); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("跳过 WAV 头失败: %w", err)
 	}
-	pcmSize := st.Size() - headerSize
+	pcmSize := st.Size() - wavHeaderSize
 	if pcmSize < 0 {
 		pcmSize = 0
 	}
@@ -1009,16 +1017,35 @@ func (e *Engine) Load(path string, startFrame, endFrame int64, gain float64) err
 
 // startFeedLocked 起一个 goroutine 把文件读进环形缓冲。
 // 调用方必须持有 e.mu。
+//
+// ★ startFrame 决定**从哪一帧开始读**：它就是「跳过开头静音」的起点。
+//
+// 旧实现里这个参数从头到尾没被用过（`Load` 只 Seek 到 WAV 头就调它，读的是
+// 文件开头），于是「跳过开头静音」在听感上完全没生效 —— 实测「以 1.9 秒为起点
+// 装载 2 秒 WAV」，出声位置仍是 0（审查报告第 12 条）。
+//
+// 定位放在这里而不是留给调用方：调用方有两处（`Load` 与 `Seek`），参数化在这里
+// 意味着**没人能忘**。两处调用仍会各自 Seek 一次（为了把失败报给调用者），
+// 这里再定位一次是幂等的，代价是一次 syscall。
 func (e *Engine) startFeedLocked(startFrame int64) {
 	if e.file == nil {
 		return
 	}
+	if startFrame < 0 {
+		startFrame = 0
+	}
+	if _, err := e.file.Seek(wavHeaderSize+startFrame*FrameSize, io.SeekStart); err != nil {
+		// 定位失败退回「从头播」：Load / Seek 已经各自报过一次错了，
+		// 这里没有日志通道，硬失败只会让整条播放链多一个死法。
+		_, _ = e.file.Seek(wavHeaderSize, io.SeekStart)
+	}
+
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	e.stopFeed = stop
 	e.feedDone = done
 
-	// 从指定位置开始读（f 的当前位置已在 Load/Seek 里定位好）
+	// 从指定位置开始读（上面的 Seek 已经定位好）
 	f := e.file
 	go func() {
 		defer close(done)
@@ -1050,6 +1077,17 @@ func (e *Engine) startFeedLocked(startFrame int64) {
 					case <-stop:
 						return
 					default:
+					}
+					// ★ 不足一帧的尾巴必须丢掉。
+					//
+					// ringBuffer.write 对 `len(pcm)/FrameSize == 0` 返回 0，而这里
+					// `written` 不会前进 —— 旧代码遇 0 只 sleep 5ms 后 continue，
+					// 于是内层 for 永不退出：**整条播放链无声、无日志、不报错**
+					//（PCM 长度为非 4 的整数倍时命中，例如读到 1~3 字节的尾字节；
+					// 审查报告第 47 条）。1~3 个字节本来就凑不出一帧，丢掉它
+					// 不影响任何一个可播放的采样，还能让循环正常走到 EOF。
+					if n-written < FrameSize {
+						break
 					}
 					w := e.ring.write(buf[written:n])
 					if w == 0 {
@@ -1172,7 +1210,7 @@ func (e *Engine) SeekToFrame(frame int64) error {
 	}
 
 	e.stopFeedLocked()
-	if _, err := e.file.Seek(headerSizeOffset+frame*FrameSize, io.SeekStart); err != nil {
+	if _, err := e.file.Seek(wavHeaderSize+frame*FrameSize, io.SeekStart); err != nil {
 		return fmt.Errorf("定位失败: %w", err)
 	}
 	e.ring.reset()
@@ -1194,8 +1232,7 @@ func (e *Engine) SeekToFrame(frame int64) error {
 	return nil
 }
 
-// headerSizeOffset 与 Load 里的 44 字节头保持一致
-const headerSizeOffset = 44
+// （WAV 头长度统一用 wavHeaderSize，见文件顶部的说明）
 
 // SetGain 设置线性增益（用户音量 × 响度补偿）。内部做斜坡平滑，不会爆音。
 // 负值会被钳到 0（钳位在 gainState.set 里统一处理）。

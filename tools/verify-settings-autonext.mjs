@@ -21,7 +21,16 @@
 
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { mkdtempSync, mkdirSync, copyFileSync, existsSync, openSync, closeSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  copyFileSync,
+  existsSync,
+  openSync,
+  closeSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -57,7 +66,10 @@ const writePack = (id, manifest, js) => {
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, "skin.json"), JSON.stringify(manifest, null, 2));
   writeFileSync(path.join(dir, "skin.js"), js);
-  writeFileSync(path.join(dir, "skin.css"), `.demo{min-height:100%;box-sizing:border-box;padding:24px}\n.demo__t{font-size:24px}\n`);
+  writeFileSync(
+    path.join(dir, "skin.css"),
+    `.demo{min-height:100%;box-sizing:border-box;padding:24px}\n.demo__t{font-size:24px}\n`
+  );
 };
 writePack(
   "accept-chrome",
@@ -248,7 +260,11 @@ try {
       };
     })()
   `);
-  check("播放选项面板里有「显示歌词」开关", opt?.hasSwitch === true && opt?.open === true, JSON.stringify(opt?.items));
+  check(
+    "播放选项面板里有「显示歌词」开关",
+    opt?.hasSwitch === true && opt?.open === true,
+    JSON.stringify(opt?.items)
+  );
   const toggled = await evalJs(`
     (() => {
       document.getElementById("opt-show-lyrics").click();
@@ -320,8 +336,7 @@ try {
   );
   check(
     "设置-播放界面样式卡片 = 内置两款 + 脚本造的两个第三方包",
-    JSON.stringify(settings?.skinCards) ===
-      '["classic","immersive","accept-chrome","accept-plain"]',
+    JSON.stringify(settings?.skinCards) === '["classic","immersive","accept-chrome","accept-plain"]',
     JSON.stringify(settings?.skinCards)
   );
   check(
@@ -332,14 +347,18 @@ try {
       settings?.skinWarn === 1,
     JSON.stringify({ chips: settings?.skinChips, warn: settings?.skinWarn })
   );
-  await evalJs("(() => { const b = document.querySelector('#settings-layer [data-act=\\'close-settings\\']') || document.getElementById('settings-close'); if (b) b.click(); return true; })()");
+  await evalJs(
+    "(() => { const b = document.querySelector('#settings-layer [data-act=\\'close-settings\\']') || document.getElementById('settings-close'); if (b) b.click(); return true; })()"
+  );
   await sleep(400);
 
   /* ---- 4a. 配色声明 → 宿主壳配色（需求核心的端到端） ----
      选中脚本造的 accept-chrome（清单里声明了 colors.bg/fg）：宿主应当把派生出来的
      --chrome-* 写到 <html> 上，并让宿主壳的令牌（--text-1 等）跟随它 —— 这样插件
      画面与标题栏/底栏/浮层才是一套配色，而且对比度由宿主兜底（见 player-skins/colors.js）。 */
-  await evalJs(`(() => { window.__app.setPlayerViewMode("accept-chrome"); window.__app.openPlayer(); return true; })()`);
+  await evalJs(
+    `(() => { window.__app.setPlayerViewMode("accept-chrome"); window.__app.openPlayer(); return true; })()`
+  );
   await sleep(1400);
   const chromeOn = await evalJs(`
     (() => {
@@ -371,11 +390,7 @@ try {
   await sleep(700);
   const chromeOff = await evalJs(`(() => ({ attr: document.documentElement.dataset.chrome || "" }))()`);
   console.log("配色快照(关):", JSON.stringify(chromeOff));
-  check(
-    "关掉详情页后 --chrome-* 被清掉（宿主壳回到主题配色）",
-    chromeOff?.attr === "",
-    JSON.stringify(chromeOff)
-  );
+  check("关掉详情页后 --chrome-* 被清掉（宿主壳回到主题配色）", chromeOff?.attr === "", JSON.stringify(chromeOff));
 
   /* ---- 4b. 真机渲染：@scope 包裹后的插件 CSS 是否真的生效（契约 v3 最高风险项） ----
      前面那些检查读的都是"元数据"；这一条真的把详情页打开，看插件 CSS 有没有匹配上。
@@ -581,7 +596,9 @@ try {
   // 此刻音频正在真实播放（5c 刚接过下一首）。
   // ① 声明了 capabilities.spectrum 的插件：每次更新现取，应拿到固定 128 段全谱；
   // ② 没声明的插件（accept-plain 在 mount 里读一次）：应拿到 null —— 能力门生效。
-  await evalJs(`(() => { window.__app.setPlayerViewMode("accept-chrome"); window.__app.openPlayer(); return true; })()`);
+  await evalJs(
+    `(() => { window.__app.setPlayerViewMode("accept-chrome"); window.__app.openPlayer(); return true; })()`
+  );
   await sleep(2600);
   const spec = await evalJs(`(() => {
     const p = window.__spec;
@@ -606,11 +623,18 @@ try {
   );
 
   // 复位回内置样式并收起详情页，保持与前面检查结束时一致的状态
-  await evalJs(`(() => { window.__app.setPlayerViewMode("classic"); window.__app.state.playerOpen = false; window.__app.commit(); return true; })()`);
+  await evalJs(
+    `(() => { window.__app.setPlayerViewMode("classic"); window.__app.state.playerOpen = false; window.__app.commit(); return true; })()`
+  );
   await sleep(700);
 
   console.log("--- 控制台相关日志 ---");
-  console.log(logs.filter((l) => /skins|样式|player|音频/.test(l)).slice(-15).join("\n"));
+  console.log(
+    logs
+      .filter((l) => /skins|样式|player|音频/.test(l))
+      .slice(-15)
+      .join("\n")
+  );
 } catch (err) {
   console.log("异常:", String(err));
   check("验收脚本正常跑完", false, String(err));

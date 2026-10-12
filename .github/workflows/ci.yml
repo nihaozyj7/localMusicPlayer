@@ -10,9 +10,11 @@
 #  这三件都不是「有人写错了代码」，而是「没有东西在跑检查」。
 #
 #  门禁内容与本地开发者跑的命令**完全一致**，避免出现「CI 绿、本地红」的分裂：
-#    npm run check        → eslint + tsc + node:test
+#    npm run check        → prettier --check + eslint + tsc + node:test（内含「跳过用例必须写明原因」）
+#    npm run check:plugins → plugins/*/index.json 与磁盘一致
 #    node tools/check-gofmt.mjs
 #    go vet / go test -race
+#    node tools/check-skipped-tests.mjs → 「没跑的用例有账」
 # ============================================================================
 
 name: CI
@@ -44,8 +46,17 @@ jobs:
       - run: npm ci
 
       # lint && typecheck && test —— 与 package.json 的 check 脚本同一套
+      # （check 里还包含 format:check：Prettier 曾经是「名存实亡」的门禁，
+      #   104 个文件长期不合规却没人发现，见第六轮审查 建议 13）
       - name: 工程化检查
         run: npm run check
+
+      # ★ 插件清单门禁：plugins/{theme,style}/index.json 是**客户端**读的清单，
+      #   改了插件却忘了 `node plugins/build-index.mjs` 重新生成，表现是
+      #   「客户端里那个插件看不到 / 装不动」—— 而这一步此前从来不在 CI 里跑，
+      #   于是只能靠人记得（第六轮审查 建议 13 的第二半）。
+      - name: 插件清单校验
+        run: npm run check:plugins
 
       # 构建前端产物：这一步能抓到「只在构建期暴露」的问题
       # （例如 mock 被 statically import 进产物、入口文件缺失）
@@ -117,3 +128,33 @@ jobs:
       # 库里有多处并发扫描 / 缓存落盘路径，历史上有过真实竞态。
       - name: go test -race
         run: go test -race . ./internal/... ./tools/...
+
+      # ★ 「跳过数 > 0 即失败」门禁（审查报告第六轮 建议 12 / 第 16 条）。
+      #
+      # 为什么需要它：go test -race 只保证「跑了的都过」，而这个项目里有一批
+      # 用例是靠 t.Skip 退出的 —— PlayerService 的 38 个编排用例依赖声卡，
+      # 容器里没有声卡时它们会被整批静默跳过，于是 CI 全绿、那批用例其实
+      # 一次都没跑（正是那种「没人会注意到」的回归）。
+      #
+      # 跳过本身允许（真需要设备/外网/平台权限的用例在别的环境里必须能跳），
+      # 但必须在 tools/skipped-tests-allowlist.json 里登记原因；任何没登记的
+      # 跳过、或某一类跳过数超过登记上限，都会让这一步失败。
+      - name: 跳过用例门禁
+        run: node tools/check-skipped-tests.mjs
+
+      # ★ 工具链 / 依赖漏洞门禁。
+      #
+      # 为什么必须有：标准库漏洞只随**实际构建用的** Go 补丁版本修复，而
+      # go.mod 的 `go` 指令是「最低版本」语义 —— 它既不保证补丁版本，也不会
+      # 触发升级。实测 go1.27.0 下有 10 项标准库漏洞命中真实调用路径
+      # （net/http 的 http2、crypto/tls、net/textproto，见 GO-2026-6603/6605/
+      # 6607/6608/6609/6610/6611/6612/6613/6617），全部在 go1.27.2 修复。
+      # 只靠「记得升级 Go」是不够的：这正是那种**没人会注意到**的回归。
+      #
+      # 退出码非 0 即失败（有漏洞时 govulncheck 返回 3），不写 `|| true`。
+      #
+      # 包列表显式写出而不是 `./...`：与上面的 vet / test 保持同一份清单。
+      # `./...` 会顺着 node_modules 里的第三方 Go 源码（flatted）跑进去，
+      # 那不是本模块的包（见 AGENTS.md「不要用 go test ./...」）。
+      - name: govulncheck（标准库与依赖漏洞）
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest . ./internal/... ./tools/...

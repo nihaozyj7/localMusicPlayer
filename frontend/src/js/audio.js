@@ -258,20 +258,20 @@ export function startAudioEvents() {
     on("player:state", (payload) => {
       if (!payload) return;
       applyAnchor(payload);
-    }),
+    })
   );
 
   unsubscribers.push(
     on("player:error", (payload) => {
       if (!payload) return;
       handlePlaybackFailure(payload.songId || state.currentId, payload.reason, "backend");
-    }),
+    })
   );
 
   unsubscribers.push(
     on("player:ended", () => {
       handleEnded();
-    }),
+    })
   );
 
   // 位置外推的心跳。这里只做「按锚点算出当前应该显示的位置」，
@@ -279,7 +279,6 @@ export function startAudioEvents() {
   if (tickTimer) clearInterval(tickTimer);
   tickTimer = setInterval(extrapolate, 250);
 }
-
 
 /* --------------------------------------------------------------------------
    锚点与外推
@@ -530,7 +529,7 @@ export function playbackOptionsState() {
  * @param {string} source      触发来源，仅用于日志排查：backend | load | legacy
  */
 function handlePlaybackFailure(songId, reason, source = "unknown") {
-  const song = songId ? (songById(songId) || currentSong()) : currentSong();
+  const song = songId ? songById(songId) || currentSong() : currentSong();
   const id = song?.id || songId || null;
   const title = song?.title || id || "当前歌曲";
   const why = String(reason || "").trim() || "未知原因";
@@ -715,6 +714,19 @@ export async function syncAudio() {
  * 不能依赖一个「之后一定会再跑一次」的同步。
  */
 async function unloadCurrent() {
+  // ★★★ 先作废在途的 playerLoad，再清记账。
+  //
+  // 为什么这是一行**必须**有的代码，而不是洁癖：loadSong 会 await 一次
+  // playerLoad，而后端在那里面可能正跑着一次 ffmpeg 转码（实测 0.8~1.2 秒）。
+  // 如果这期间用户点了「停止」或清空了队列，就会走到这里：后端被 Unload 了，
+  // 但那次在途的 Load 还会回来，并且——如果没有这一行——`seq !== requestSeq`
+  // 判定会**通过**（requestSeq 根本没变），于是后面的
+  // `backendSongId = song.id`、`if (state.playing) playerPlay()` 照常执行。
+  //
+  // 结果是一个很难自愈的状态：声音从后端出来了，界面却停在「已停止」，
+  // 而且暂停/停止都按不掉（前端认为当前没有任何装载，syncAudio 不再发指令）。
+  // 递增 requestSeq 之后，那次过期装载的所有后续步骤都会被已有的闸门丢掉。
+  requestSeq++;
   switchPending = false;
   loadedFor = null;
   backendSongId = null;
@@ -783,6 +795,10 @@ async function loadSong(song) {
   try {
     const res = await backend.playerLoad(song.id);
     if (seq !== requestSeq) return; // 期间又切歌了
+    // 后端的代际校验：这次装载在 resolve（转码）期间被后来的切歌/停止取代了。
+    // 后端已经放弃它、也没改任何状态，这里同样静默收工 —— 绝不把它当成功
+    // 往下写（否则又回到「点 B 播 A」）。
+    if (res?.superseded) return;
 
     // 这首歌装载成功：连败计数清零，失败闸门也放开
     // （否则「坏歌 A、好歌 B、坏歌 A」这种顺序里 A 会被永久拉黑）

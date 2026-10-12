@@ -891,7 +891,7 @@ func (m *Manager) readAll(ctx context.Context, items []candidate, concurrency in
 					cancelled.Store(true)
 					return
 				}
-				out[j.idx] = m.songFromCandidate(j.c, force)
+				out[j.idx] = m.parseOne(j.c, force)
 				mu.Lock()
 				done++
 				n := int(done)
@@ -928,6 +928,41 @@ func (m *Manager) readAll(ctx context.Context, items []candidate, concurrency in
 		}
 	}
 	return final, false
+}
+
+// parseOne 解析单个候选文件的元数据，并保证「单个畸形文件不会终止进程」。
+//
+// ★ 为什么必须在这里兜住 panic：meta.Read 面对畸形 / 极端文件时可能 panic
+// （历史故障：时长不足 1 秒的文件在 meta 里触发整数除零）。readAll 的 worker
+// 此前没有任何 recover，panic 会一路冒到 runtime，**整个应用直接退出** ——
+// 用户看到的现象是「扫描到某个文件就闪退」，且重启后再次闪退。
+//
+// 兜底语义与「文件读不出标签」完全一致：这首歌照样保留（路径 / 大小 / 修改时间
+// 都在，只是标题回落到文件名、时长与码率为 0），并留一条日志便于定位。
+func (m *Manager) parseOne(c candidate, force bool) bootstrap.Song {
+	return safeParse(c, func() bootstrap.Song { return m.songFromCandidate(c, force) })
+}
+
+// safeParse 执行一次元数据解析，把 panic 降级成「无标签」的兜底结果。
+//
+// 单独抽成函数是为了让这条兜底路径**本身可测**：测试可以直接传一个 panic 的
+// 闭包，不必伪造一个能真的让解析器崩溃的音频文件（那种文件本来就该被修掉）。
+func safeParse(c candidate, fn func() bootstrap.Song) (song bootstrap.Song) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[library] 解析元数据 panic，已降级为「无标签」（%s）: %v", c.path, r)
+			song = bootstrap.Song{
+				ID:      bootstrap.StableID(c.path, "t"),
+				Path:    c.path,
+				Ext:     c.ext,
+				Size:    c.size,
+				ModTime: c.mod,
+				AddedAt: c.mod,
+			}
+			fillFallback(&song)
+		}
+	}()
+	return fn()
 }
 
 func (m *Manager) songFromCandidate(c candidate, force bool) bootstrap.Song {
@@ -1136,68 +1171,201 @@ func (m *Manager) enrichDurations(ctx context.Context, songs []bootstrap.Song, f
    目录遍历
    -------------------------------------------------------------------------- */
 
+// 遍历状态。**对外契约**：前端文件夹卡片按这些值出提示
+// （`frontend/src/js/ui/settings-view.js#foldersCard`），改字面量要同时改前端；
+// 前端有一条测试逐个比对两边（`frontend/tests/folder-status.test.js`）。
+const (
+	// statusOK 正常遍历完毕
+	statusOK = "ok"
+	// statusMissing 扫描根不存在（或不是一个目录）
+	statusMissing = "missing"
+	// statusDenied 扫描根不可读（无权限）
+	statusDenied = "denied"
+	// statusError 扫描根遇到其他 I/O 错误（磁盘错、路径过长、网络盘断开…）
+	statusError = "error"
+	// statusPartial 扫描根本身能读，但有子目录没读成 —— 结果可能不完整
+	statusPartial = "partial"
+)
+
+// entryIsDir 判断一个目录项是不是目录 —— **对链接会解引用**。
+//
+// ★ 这就是「junction 根静默 0 首」的修复点。`fs.DirEntry.IsDir()` 看的是
+// **Lstat** 得到的型别，而 Windows 上 junction（目录联接）的型别是
+// `ModeIrregular`：既不是 `ModeDir` 也不是 regular。于是「链接指向一个目录」
+// 在旧实现里被当成「既不是目录、也不是音频文件」直接跳过：
+// 实测（`mklink /J`，见 walk_folder_junction_windows_test.go）把 junction
+// 当作扫描根，结果是 **0 首 + 状态 ok** —— 界面只显示「这个文件夹一首歌都没有」，
+// 不报任何错，用户完全无从下手；更糟的是 RescanPaths 会拿这份空结果去
+// **删掉**该目录下原有的条目。
+//
+// 普通目录仍然走零开销的 `IsDir()`；只有非普通项才多一次 `os.Stat`。
+func entryIsDir(path string, e fs.DirEntry) bool {
+	if e.IsDir() {
+		return true
+	}
+	if e.Type().IsRegular() {
+		return false
+	}
+	st, err := os.Stat(path) // 跟随链接：junction / 符号链接在这里才显出是目录
+	if err != nil {
+		return false // 坏链接（目标不存在）：当作不存在
+	}
+	return st.IsDir()
+}
+
+// linkLoopsBack 判断一个（可能是链接的）目录会不会绕回自己的祖先。
+//
+// 为什么必须有：junction 可以指向自己的祖先（包括扫描根自己）。旧实现里
+// 这种链接被 `IsDir()` 挡掉了，所以「无害地漏掉」；一旦我们开始解引用，
+// 它就会变成**无限递归** —— 扫描线程再也回不来。判据是把「自己解引用后的
+// 身份」与路径上每个祖先目录逐级比较：相等即说明它是环。
+//
+// 用 os.SameFile 而不是比字符串：junction 的目标可以写成相对路径、8.3 短名、
+// 大小写不同、带 `\\?\` 前缀，字符串比较会被这些写法绕过去，而身份比较不会
+// （实测 `os.SameFile(junction, 目标)` 为 true）。
+//
+// 只有非普通项目才做这件事（普通目录构成树，不可能有环），代价可以忽略。
+func linkLoopsBack(path string, e fs.DirEntry) bool {
+	if e.IsDir() {
+		return false
+	}
+	self, err := os.Stat(path)
+	if err != nil || !self.IsDir() {
+		return false
+	}
+	// 逐级往上：每一级都与「自己解引用后的身份」比一次。
+	//
+	// ★ 终止条件必须是「filepath.Dir 到达不动点」（Windows 上是 `C:\`、
+	// Unix 上是 `/`），不能写成 `len(p) < len(path)` —— path 是**最初**那个
+	// 链接路径，走到根之后它的长度依然小于 path，循环就再也出不来
+	//（实测把 os.Stat(`C:\`) 打成了死循环，junction 用例直接挂到测试超时）。
+	for p := filepath.Dir(path); ; {
+		if anc, err := os.Stat(p); err == nil && os.SameFile(self, anc) {
+			log.Printf("[library] 跳过会绕回自身的目录链接 %s（它指向的正是祖先 %s）", path, p)
+			return true
+		}
+		next := filepath.Dir(p)
+		if next == p {
+			break
+		}
+		p = next
+	}
+	return false
+}
+
+// folderWalker 一次扫描根的遍历器。
+//
+// ★ 为什么不用 filepath.WalkDir：它按 Lstat 的型别决定要不要下钻，看不到
+// junction 后面的目录（见 entryIsDir 的说明）。手写递归之后还能顺带做到两件
+// WalkDir 做不到的事：
+//  1. 用祖先链身份比较剪掉会绕回自身的链接（否则解引用之后就是无限递归）；
+//  2. 精确区分「扫描根本身读失败」（状态要报给用户）与「某个子目录读失败」
+//     （跳过它、状态降级为 partial），而不是把两者一起吞成 ok。
+type folderWalker struct {
+	root string
+	out  []candidate
+	// partial 表示有子目录没读成：本次结果可能不完整，状态要降级成 partial。
+	// 定义收紧到「目录读不了」这一件事 —— 坏链接（目标不存在）只记日志，
+	// 它不是一个「读不了的目录」。
+	partial bool
+	// readDir 是目录枚举实现。生产路径就是 os.ReadDir；测试注入一个会失败的
+	// 实现，才能在没有权限/ACL 的机器上确定性地覆盖 denied / error / partial
+	// 三条分支（见 walk_folder_test.go）。
+	readDir func(string) ([]fs.DirEntry, error)
+}
+
+// walk 递归收集 dir 下的音频文件。返回非 nil 错误只代表**扫描根本身**读失败。
+func (w *folderWalker) walk(dir string) error {
+	readDir := w.readDir
+	if readDir == nil {
+		readDir = os.ReadDir
+	}
+	entries, err := readDir(dir)
+	if err != nil {
+		if dir == w.root {
+			return err // 根本身读不了 = 整次遍历失败，由调用方映射成状态
+		}
+		w.partial = true
+		log.Printf("[library] 跳过读不了的子目录 %s: %v", dir, err)
+		return nil
+	}
+	for _, e := range entries {
+		path := filepath.Join(dir, e.Name())
+		if entryIsDir(path, e) {
+			// 跳过隐藏目录（.git / $RECYCLE.BIN 等）；根自己不算
+			name := e.Name()
+			if path != w.root && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "$")) {
+				continue
+			}
+			if linkLoopsBack(path, e) {
+				continue
+			}
+			if err := w.walk(path); err != nil {
+				return err
+			}
+			continue
+		}
+		// 只收普通文件。`!IsRegular()` 的同义词是「目录、链接、设备…」，
+		// 走到这里说明它连解引用都不是目录：坏链接或特殊文件，记一行就好。
+		if !e.Type().IsRegular() {
+			log.Printf("[library] 跳过不是普通文件的目录项 %s（型别 %v）", path, e.Type())
+			continue
+		}
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+		if !bootstrap.IsAudioExt(ext) {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		w.out = append(w.out, candidate{
+			path:   path,
+			size:   fi.Size(),
+			ext:    ext,
+			folder: w.root,
+			mod:    fi.ModTime().UnixMilli(),
+		})
+	}
+	return nil
+}
+
 func walkFolder(root string) ([]candidate, string) {
+	return walkFolderWith(root, os.ReadDir)
+}
+
+// walkFolderWith 与 walkFolder 相同，只是目录枚举实现可注入（测试用）。
+func walkFolderWith(root string, readDir func(string) ([]fs.DirEntry, error)) ([]candidate, string) {
 	out := []candidate{}
 	info, err := os.Stat(root)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return out, "missing"
+			return out, statusMissing
 		}
 		if os.IsPermission(err) {
-			return out, "denied"
+			return out, statusDenied
 		}
-		return out, "missing"
+		log.Printf("[library] 扫描根不可访问 %s: %v", root, err)
+		return out, statusError
 	}
 	if !info.IsDir() {
-		return out, "missing"
+		return out, statusMissing
 	}
 
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			// 单个子目录无权限时跳过，不中断整次扫描
-			if d != nil && d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		// 跳过隐藏目录（.git / $RECYCLE.BIN 等）
-		if d.IsDir() {
-			name := d.Name()
-			if path != root && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "$")) {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
-		if !bootstrap.IsAudioExt(ext) {
-			return nil
-		}
-		fi, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		out = append(out, candidate{
-			path:   path,
-			size:   fi.Size(),
-			ext:    ext,
-			folder: root,
-			mod:    fi.ModTime().UnixMilli(),
-		})
-		return nil
-	})
-	if err != nil {
+	w := &folderWalker{root: root, out: out, readDir: readDir}
+	if err := w.walk(root); err != nil {
 		if os.IsPermission(err) {
-			return out, "denied"
+			return w.out, statusDenied
 		}
 		// 以前这里返回 "ok"：磁盘 I/O 错误 / 路径过长 / 网络盘断开都会被当成
 		// 「扫描成功」，曲库被静默截断而界面上没有任何提示，排查极其困难。
 		log.Printf("[library] 遍历 %s 失败: %v", root, err)
-		return out, "error"
+		return w.out, statusError
 	}
-	return out, "ok"
+	if w.partial {
+		return w.out, statusPartial
+	}
+	return w.out, statusOK
 }
 
 // countSongsInFolders 统计每个文件夹下有多少首（返回的切片与 paths 等长）。

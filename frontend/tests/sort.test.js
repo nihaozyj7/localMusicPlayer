@@ -111,7 +111,11 @@ test("computeSorted：数值字段的升降序语义正确（时长）", () => {
 });
 
 test("computeSorted：文本字段的升降序语义正确（标题）", () => {
-  const list = [song({ id: "c", title: "Cherry" }), song({ id: "a", title: "Apple" }), song({ id: "b", title: "Banana" })];
+  const list = [
+    song({ id: "c", title: "Cherry" }),
+    song({ id: "a", title: "Apple" }),
+    song({ id: "b", title: "Banana" }),
+  ];
   assert.deepEqual(ids(list, "title", "asc"), ["a", "b", "c"]);
   assert.deepEqual(ids(list, "title", "desc"), ["c", "b", "a"]);
 });
@@ -130,7 +134,11 @@ test("computeSorted：addedAt 的降序 = 最近添加在前", () => {
 });
 
 test("computeSorted：playCount 的降序 = 播放次数最多在前", () => {
-  const list = [song({ id: "few", playCount: 1 }), song({ id: "many", playCount: 99 }), song({ id: "some", playCount: 10 })];
+  const list = [
+    song({ id: "few", playCount: 1 }),
+    song({ id: "many", playCount: 99 }),
+    song({ id: "some", playCount: 10 }),
+  ];
   assert.deepEqual(ids(list, "playCount", "desc"), ["many", "some", "few"]);
   assert.deepEqual(ids(list, "playCount", "asc"), ["few", "some", "many"]);
 });
@@ -158,7 +166,10 @@ test("computeSorted：认不出的字段原样返回", () => {
 test("computeSorted：空列表与单元素列表不报错", () => {
   assert.deepEqual(computeSorted([], { key: "title", dir: "asc" }), []);
   const one = [song({ id: "only" })];
-  assert.deepEqual(computeSorted(one, { key: "title", dir: "desc" }).map((s) => s.id), ["only"]);
+  assert.deepEqual(
+    computeSorted(one, { key: "title", dir: "desc" }).map((s) => s.id),
+    ["only"]
+  );
 });
 
 // 比较函数返回 0 的项必须保持原有相对顺序（Array.sort 的稳定性），

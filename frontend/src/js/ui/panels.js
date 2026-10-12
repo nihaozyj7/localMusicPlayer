@@ -246,13 +246,7 @@ class MpQueuePanel extends MpPanel {
       for (let i = 0; i < state.queue.length; i += 1) posById.set(state.queue[i], i);
     }
     return html`
-      <section
-        class="queue-panel"
-        id="queue-panel"
-        hidden
-        data-state="closed"
-        aria-label="播放列表"
-      >
+      <section class="queue-panel" id="queue-panel" hidden data-state="closed" aria-label="播放列表">
         <div class="queue-panel__head">
           <span class="queue-panel__title">播放列表</span>
           <span class="u-spacer"></span>
@@ -465,13 +459,7 @@ class MpOptionsPanel extends MpPanel {
     const alpha = Math.round(state.config.glassAlphaCustom ? state.config.glassAlpha : resolvedGlassAlpha());
     const mode = currentDesktopMode();
     return html`
-      <section
-        class="options-panel"
-        id="options-panel"
-        hidden
-        data-state="closed"
-        aria-label="播放选项"
-      >
+      <section class="options-panel" id="options-panel" hidden data-state="closed" aria-label="播放选项">
         <div class="options-panel__head">
           <svg class="options-panel__icon" aria-hidden="true"><use href="#i-options"></use></svg>
           <span class="options-panel__title">播放选项</span>
@@ -722,13 +710,7 @@ class MpSleepPanel extends MpPanel {
     const timer = state.sleepTimer;
     const readout = sleepReadout(timer, this._pendingMinutes);
     return html`
-      <section
-        class="sleep-panel"
-        id="sleep-panel"
-        hidden
-        data-state="closed"
-        aria-label="定时停止"
-      >
+      <section class="sleep-panel" id="sleep-panel" hidden data-state="closed" aria-label="定时停止">
         <div class="sleep-panel__head">
           <svg class="sleep-panel__icon" aria-hidden="true"><use href="#i-clock"></use></svg>
           <span class="sleep-panel__title">定时停止</span>

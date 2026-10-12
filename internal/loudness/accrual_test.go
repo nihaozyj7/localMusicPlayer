@@ -213,6 +213,18 @@ func TestQueueDeduplicates(t *testing.T) {
 	m := NewManager(t.TempDir(), 1)
 	song := bootstrap.Song{ID: "a", Path: `D:\m\a.flac`, Size: 1, ModTime: 1}
 
+	// ★ 先把并发槽位占满，并标记调度器已启动：这样 enqueue 不会起调度
+	// goroutine，请求会**留在队列里**，去重键也还在。
+	//
+	// 不这么做的话这个用例是在赌「入队到断言之间调度器没被唤醒」——
+	// 而调度器一旦取走 r1 就会清掉去重键（见 manager.go#nextRequest 的
+	// dropQueuedLocked），第二次入队便"成功"，用例随机失败。
+	//（实测：整库并发跑测试时会红。）
+	m.q.mu.Lock()
+	m.q.running = m.conc
+	m.q.started = true
+	m.q.mu.Unlock()
+
 	r1 := &Request{Song: song, Priority: PriorityNormal, Done: make(chan struct{})}
 	r2 := &Request{Song: song, Priority: PriorityInterrupt, Done: make(chan struct{})}
 	if !m.enqueue(r1) {
@@ -236,6 +248,17 @@ func TestYieldIfPending(t *testing.T) {
 	}
 
 	song := bootstrap.Song{ID: "u", Path: `D:\m\u.flac`, Size: 1, ModTime: 1}
+	// ★ 先把并发槽位占满，并标记调度器已启动：请求会留在队列里，
+	// 不会在「入队」与「YieldIfPending」之间被调度器取走。
+	//
+	// 不这么做的话这个用例是在赌调度器没有被唤醒 —— 它一旦取走这个交互请求，
+	// q.inter 就递减归零，YieldIfPending() 便返回 false，用例随机失败
+	//（实测：整库并发跑测试时会红）。
+	m.q.mu.Lock()
+	m.q.running = m.conc
+	m.q.started = true
+	m.q.mu.Unlock()
+
 	// 只入队、不跑（用 enqueue 而不是 Submit，避免真起 ffmpeg）
 	m.enqueue(&Request{Song: song, Priority: PriorityInterrupt, Done: make(chan struct{})})
 

@@ -7,7 +7,7 @@ version: "3"
 #    wails3 task run            构建并运行
 #    wails3 task package        打 Windows 安装包（NSIS）
 #    wails3 task dev:frontend   只启动界面预览服务器（Vite + HMR，无需编译 Go）
-#    wails3 task check          前端工程化检查（ESLint + tsc + 单测）
+#    wails3 task check          前端工程化检查（prettier --check + ESLint + tsc + 单测）
 #    wails3 task test           运行后端测试
 #    wails3 task ffmpeg:info    查看内置 ffmpeg 的体积/许可证/能力清单
 # ============================================================================
@@ -67,7 +67,7 @@ tasks:
       - task: common:build:frontend
 
   check:
-    summary: 前端工程化检查（ESLint + 类型检查 + 单测）
+    summary: 前端工程化检查（格式化 + ESLint + 类型检查 + 单测）
     cmds:
       - task: common:check:frontend
 
@@ -99,9 +99,12 @@ tasks:
       - go test . ./internal/... ./tools/...
 
   check:go:
-    summary: 后端工程化检查（gofmt + go vet + 竞态测试）
+    summary: 后端工程化检查（gofmt + go vet + 竞态测试 + 跳过用例门禁）
     cmds:
       # gofmt 此前没有任何门禁（go vet 不检查格式），见 tools/check-gofmt.mjs
       - node tools/check-gofmt.mjs
       - go vet . ./internal/... ./tools/...
       - go test -race . ./internal/... ./tools/...
+      # 与 CI 同一步：go test -race 只保证「跑了的都过」，这一步保证「没跑的有账」
+      #（设备/联网/平台相关的跳过必须在 tools/skipped-tests-allowlist.json 里登记）
+      - node tools/check-skipped-tests.mjs

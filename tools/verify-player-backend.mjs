@@ -22,8 +22,7 @@ import path from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 
-const EXE =
-  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/lmplayer.exe";
+const EXE = process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/lmplayer.exe";
 const PORT = Number(process.env.MP_PORT || 9382);
 const WORK = mkdtempSync(path.join(tmpdir(), "verify-player-"));
 
@@ -89,10 +88,7 @@ async function connect() {
       returnByValue: true,
     });
     if (r?.result?.exceptionDetails) {
-      throw new Error(
-        r.result.exceptionDetails.exception?.description ||
-          JSON.stringify(r.result.exceptionDetails),
-      );
+      throw new Error(r.result.exceptionDetails.exception?.description || JSON.stringify(r.result.exceptionDetails));
     }
     return r?.result?.result?.value;
   };
@@ -131,15 +127,11 @@ async function main() {
         return av;
       })()
     `);
-    check(
-      "PlayerService.Available() 报告后端可用",
-      backendState?.available === true,
-      JSON.stringify(backendState),
-    );
+    check("PlayerService.Available() 报告后端可用", backendState?.available === true, JSON.stringify(backendState));
     check(
       "采样率/声道与引擎一致",
       backendState?.sampleRate === 44100 && backendState?.channels === 2,
-      `${backendState?.sampleRate}Hz / ${backendState?.channels}ch`,
+      `${backendState?.sampleRate}Hz / ${backendState?.channels}ch`
     );
 
     // ---- 3. 音频会话归属（音量合成器里应当是本程序）----
@@ -154,7 +146,7 @@ async function main() {
     check(
       "Diagnostics 暴露欠载计数",
       diag && Object.prototype.hasOwnProperty.call(diag, "underruns"),
-      `underruns=${diag?.underruns}`,
+      `underruns=${diag?.underruns}`
     );
 
     // ---- 4. 用真实曲库里的第一首歌跑完整链路 ----
@@ -188,17 +180,13 @@ async function main() {
         })()
       `);
       check("Load 返回时长", Number(res?.load?.durationMs) > 0, `durationMs=${res?.load?.durationMs}`);
-      check(
-        "播放后位置推进",
-        Number(res?.state1?.positionMs) > 400,
-        `positionMs=${res?.state1?.positionMs}`,
-      );
+      check("播放后位置推进", Number(res?.state1?.positionMs) > 400, `positionMs=${res?.state1?.positionMs}`);
       check("播放状态为 playing", res?.state1?.playing === true, `playing=${res?.state1?.playing}`);
       const bands = res?.spec?.bands;
       check(
         "频谱有数据（皮肤可视化数据源）",
         Array.isArray(bands) && bands.length === 32 && bands.some((v) => v > 0),
-        Array.isArray(bands) ? `${bands.length} 段，峰值 ${Math.max(...bands)}` : String(bands),
+        Array.isArray(bands) ? `${bands.length} 段，峰值 ${Math.max(...bands)}` : String(bands)
       );
 
       // seek 往返
@@ -211,11 +199,7 @@ async function main() {
           return await P.State();
         })()
       `);
-      check(
-        "Seek 生效（跳到 30s 附近）",
-        Number(seekRes?.positionMs) > 25000,
-        `positionMs=${seekRes?.positionMs}`,
-      );
+      check("Seek 生效（跳到 30s 附近）", Number(seekRes?.positionMs) > 25000, `positionMs=${seekRes?.positionMs}`);
 
       // 暂停必须停住
       const pauseRes = await evalJs(`
@@ -232,11 +216,7 @@ async function main() {
         })()
       `);
       check("暂停后 playing=false", pauseRes?.playing === false, `playing=${pauseRes?.playing}`);
-      check(
-        "暂停后位置停住",
-        Number(pauseRes?.b) - Number(pauseRes?.a) < 200,
-        `${pauseRes?.a}ms → ${pauseRes?.b}ms`,
-      );
+      check("暂停后位置停住", Number(pauseRes?.b) - Number(pauseRes?.a) < 200, `${pauseRes?.a}ms → ${pauseRes?.b}ms`);
     }
 
     // ---- 5. 页面里没有运行时报错 ----

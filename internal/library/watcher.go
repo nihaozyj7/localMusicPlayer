@@ -2,7 +2,6 @@ package library
 
 import (
 	"context"
-	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -178,25 +177,42 @@ func (w *Watcher) Stop() {
 	}
 }
 
-// addRecursive 递归登记目录
+// addRecursive 递归登记目录。
+//
+// ★ 与 walkFolder 同一类修复：这里以前也用 filepath.WalkDir + `d.IsDir()`
+// 作门槛，而 Windows 上 junction 的 Lstat 型别是 ModeIrregular（不是 ModeDir），
+// 于是「链接指向的目录」不会被登记 —— 表现是**那个目录里的文件改了不触发重扫**，
+// 和扫描侧「junction 静默 0 首」是同一个原因（见 library.go#entryIsDir）。
+// 改用「解引用后判目录 + 祖先链剪环」的同一套判据：解引用之后环就成了
+// 无限递归，不剪会直接把登记表撑爆。
 func (w *Watcher) addRecursive(root string) {
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if d != nil && d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
+	w.add(root)
+	w.registerSubdirs(root)
+}
+
+// registerSubdirs 递归登记 dir 下的所有子目录。
+func (w *Watcher) registerSubdirs(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		// 读不到就登记不了它下面的目录，如实记一行；不影响其他目录
+		log.Printf("[watcher] 读取目录失败，其子目录不会被监听 %s: %v", dir, err)
+		return
+	}
+	for _, e := range entries {
+		path := filepath.Join(dir, e.Name())
+		if !entryIsDir(path, e) {
+			continue
 		}
-		if !d.IsDir() {
-			return nil
+		name := e.Name()
+		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "$") {
+			continue
 		}
-		name := d.Name()
-		if path != root && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "$")) {
-			return fs.SkipDir
+		if linkLoopsBack(path, e) {
+			continue
 		}
 		w.add(path)
-		return nil
-	})
+		w.registerSubdirs(path)
+	}
 }
 
 func (w *Watcher) add(dir string) {

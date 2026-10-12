@@ -213,9 +213,7 @@ export function createSkinHost(opts) {
       next.mount(ctx);
     } catch (err) {
       console.error(`[skins] ${next.id} 挂载失败`, err);
-      root.innerHTML = `<div class="skin-error">样式「${esc(next.name)}」加载失败：${esc(
-        err?.message ?? err
-      )}</div>`;
+      root.innerHTML = `<div class="skin-error">样式「${esc(next.name)}」加载失败：${esc(err?.message ?? err)}</div>`;
       return false;
     }
     // 挂载后立刻推一次全量快照：插件不需要自己再拉一遍

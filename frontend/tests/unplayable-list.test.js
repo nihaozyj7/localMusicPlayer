@@ -54,11 +54,7 @@ function makeLibraryState({ songs, queue, currentId, online = [] }) {
 
 test("移除一首歌时，曲库/过滤结果/队列三处都要改", () => {
   const s = makeLibraryState({
-    songs: [
-      { id: "a" },
-      { id: "bad" },
-      { id: "b" },
-    ],
+    songs: [{ id: "a" }, { id: "bad" }, { id: "b" }],
     queue: ["bad", "a", "b"],
     currentId: "a",
   });

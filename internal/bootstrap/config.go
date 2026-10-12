@@ -10,9 +10,13 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -343,6 +347,17 @@ type Config struct {
 
 	// —— AI 元数据清洗（设置 → AI 元数据）——
 	AIBaseURL string `json:"aiBaseUrl"`
+	// AIBaseURLProblem 是派生字段：只在序列化给前端时被填充，不落盘。
+	//
+	// 装的是「这个接口地址不会被使用」的原因（由 NormalizeAIBaseURL 算出来，
+	// 出错信息本身不回显地址）。为什么要把它交给前端：地址不合法时程序会
+	// **拒绝发送密钥**（services_ai.go#ExtractMeta），如果界面上不说明原因，
+	// 用户看到的就是「AI 莫名其妙不工作」—— 例如把地址填成局域网模型服务的
+	// `http://192.168.x.x:1234`，而这正是必须拒绝的（密钥会明文出网卡）。
+	//
+	// ★ 规则只有一份（Go 侧），前端不再自己实现一遍：两边各写一套校验必然会
+	// 漂移，而这里的漂移代价是「界面说没问题、后端却拒绝发请求」。
+	AIBaseURLProblem string `json:"aiBaseUrlProblem,omitempty"`
 	// AIAPIKey 是密钥本身。**只用于持久化与后端调用，不原样交给前端**：
 	// ConfigService.Get 会把它打码（见 services.go#maskSecret）。
 	// 前端判断「配没配」应当看下面的 AIAPIKeySet。
@@ -762,8 +777,17 @@ const DefaultPackSource = "https://raw.githubusercontent.com/nihaozyj7/localMusi
 //
 // 这里刻意做了一点「猜测」而不是直接拒绝非法值：用户手敲地址时最常见的两个错
 // 是漏了协议（github.com/x/y）和末尾多一条斜杠，两种都直接修好。
-// 真正修不了的（空、非 http 协议）落回默认值 —— 让整个功能因为一个手滑的
-// 地址而静默失效，显然比用回默认值更糟。
+// 真正修不了的（空、非 http(s) 协议、**明文 http 指向外部主机**）落回默认值
+// —— 让整个功能因为一个手滑的地址而静默失效，显然比用回默认值更糟。
+//
+// ★ 为什么明文 http 必须落回默认值（审查报告第 41 条）：
+// 这个地址取回的是 `index.json` + 一个个 **JS 文件**，装完之后在同源页面里
+// 执行（见 docs/42 §8.4 的安全说明）。明文链路能被任何一跳改写，等于把
+// 「在同源页面执行任意 JS」的权力交给了链路上的中间人 —— 而 sha256 是随清单
+// 一起送来的（自证），挡不住这种替换。http 只放行本机回环（本地调试自己起
+// 静态服务器），与 AI 接口地址同一套判据（见 parseSecureEndpoint）。
+//
+// 地址被拒时**不会**静默：`PackSourceProblem` 会给出原因，面板上显示出来。
 func NormalizePackSource(v string) string {
 	clean := strings.TrimSpace(v)
 	if clean == "" {
@@ -773,10 +797,167 @@ func NormalizePackSource(v string) string {
 		clean = "https://" + clean
 	}
 	clean = strings.TrimRight(clean, "/")
-	if !strings.HasPrefix(clean, "https://") && !strings.HasPrefix(clean, "http://") {
+	if _, err := parseSecureEndpoint(clean); err != nil {
 		return DefaultPackSource
 	}
 	return clean
+}
+
+// PackSourceProblem 返回「用户填的插件仓库地址不会被使用」的原因；地址可用
+// （或为空 = 用默认地址）时返回空串。
+//
+// 为什么要单独给一个原因：NormalizePackSource 会把非法地址**落回默认值**，
+// 于是用户看到的现象是「我改了地址，刷新一下又变回默认了」—— 必须把原因
+// 说出来，否则他会以为是自己没保存成功。出错信息不回显地址本身。
+func PackSourceProblem(v string) string {
+	trimmed := strings.TrimSpace(v)
+	if trimmed == "" {
+		return ""
+	}
+	if _, err := parseSecureEndpoint(trimmed); err != nil {
+		return "这个地址不会被使用（已落回默认地址）：必须是 https://，明文 http 只允许 127.0.0.1 / localhost 做本地调试"
+	}
+	return ""
+}
+
+// NormalizeAIBaseURL 规范化并校验「AI 接口地址」。
+//
+// 返回规范化后的地址（漏协议时补 `https://`、去掉末尾斜杠）；err != nil 表示
+// 这个地址**不允许使用**。
+//
+// ★ 调用方**不要因为 err 就把用户输入丢掉**（那会变成「改了设置、一刷新就没了」，
+// 用户还不知道为什么）。正确做法：照原样存下来（见 NormalizeAIBaseURLStored），
+// 在真正要发请求的那一处拒绝（`services_ai.go#ExtractMeta`），并让界面把原因显示出来。
+//
+// 为什么这里必须是硬校验，而不是「看着像 URL 就发」：这个地址指向的请求会带上
+// 用户**真实的 Bearer 密钥**（`services_ai.go` 的 Authorization 头），而地址本身
+// 来自用户配置 —— 第三方样式 JS（同源 import）也能写这个键。
+//
+// 规则：
+//
+//   - 只认 `https://`；明文 `http://` 仅放行本机回环（`127.0.0.1` / `[::1]` /
+//     `localhost`）—— 本机模型服务（LM Studio / Ollama）常这么配，且流量不出网卡；
+//   - 不允许用 IP 字面量指向非回环主机：证书没法验证，等于把 TLS 校验关掉；
+//   - 不允许 URL 里带用户名密码（会被当成主机的一部分、并进日志）；
+//   - 不允许带查询串与 `#` 锚点（拼 `+ "/chat/completions"` 时会拼坏）；
+//   - 出错信息只描述**规则**，绝不回显地址本身（地址里可能已经被塞了密钥）。
+func NormalizeAIBaseURL(v string) (string, error) {
+	raw := strings.TrimSpace(v)
+	if raw == "" {
+		// 空 = 未配置，不是错误（配没配由 Enabled() 判断）。
+		return "", nil
+	}
+	u, err := parseSecureEndpoint(raw)
+	if err != nil {
+		return "", err
+	}
+	// 去掉末尾斜杠：调用方按 base + "/chat/completions" 拼路径。
+	u.Path = strings.TrimRight(u.Path, "/")
+	u.RawPath = ""
+	return u.String(), nil
+}
+
+// NormalizeAIBaseURLStored 供「读盘 / 写配置」路径使用：能规范化就规范化，
+// 非法值**原样保留**（只 trim）。分工见 NormalizeAIBaseURL 的文档注释 ——
+// 闸门在发请求那一处，这里只负责把能修好的地址修好。
+func NormalizeAIBaseURLStored(v string) string {
+	trimmed := strings.TrimSpace(v)
+	if norm, err := NormalizeAIBaseURL(trimmed); err == nil {
+		return norm
+	}
+	return trimmed
+}
+
+// parseSecureEndpoint 解析一个「会拿它去取远端内容」的地址，并套用下面这套规则。
+//
+// 两处调用：AI 接口地址（NormalizeAIBaseURL，请求带真实密钥）与插件仓库地址
+// （NormalizePackSource，取回的 JS 会在同源页面执行）。两者的风险不同，但
+// 「什么地址算安全」的判据是同一套，所以**只有这一份实现** —— 各写一套必然会
+// 漂移，而漂移的代价就是某一边悄悄放行了明文 http。
+//
+// 错误信息只描述规则、不回显地址（调用方可能把密钥塞进查询串）。
+func parseSecureEndpoint(raw string) (*url.URL, error) {
+	v := raw
+	// 手敲地址最常见的错误就是漏协议，这里补一次（两处调用都用同一套猜测）。
+	if !strings.Contains(v, "://") {
+		v = "https://" + v
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		return nil, errors.New("地址格式不正确")
+	}
+	switch u.Scheme {
+	case "https":
+	case "http":
+		if !isLoopbackHost(u.Hostname()) {
+			return nil, errors.New("地址必须用 https://（明文 http 只允许 127.0.0.1 / localhost，用于本地调试）")
+		}
+	default:
+		return nil, errors.New("地址只支持 http / https")
+	}
+	if u.Hostname() == "" {
+		return nil, errors.New("地址缺少主机名")
+	}
+	if u.User != nil {
+		return nil, errors.New("地址里不要写用户名密码")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return nil, errors.New("地址不要带查询串或 # 锚点")
+	}
+	if ip := net.ParseIP(u.Hostname()); ip != nil && !ip.IsLoopback() {
+		return nil, errors.New("地址不要直接用 IP（证书没法验证），请填域名；本机服务用 127.0.0.1 或 localhost")
+	}
+	if !validEndpointHost(u.Hostname()) {
+		return nil, errors.New("地址的主机名不合法：请填带点的域名（例如 api.openai.com），本机服务用 127.0.0.1 或 localhost")
+	}
+	return u, nil
+}
+
+// validEndpointHost 判断主机名能不能作为「去远端取东西」的目标。
+//
+// 只有两类放行：本机回环，或**带点的 ASCII 域名**（IDN 请填 punycode 的
+// `xn--…` 形式）。这一条是被测试逼出来的：`NormalizeAIBaseURL("不是地址")`
+// 会先补成 `https://不是地址`，而 url.Parse 对非 ASCII 主机名照收不误
+// （只在 String() 时做百分号转义）—— 于是「根本不是地址的文本」也能通过校验。
+// 单标签主机名（`https://llm-gateway/v1`）同样拒绝：它靠 LLMNR / NBT-NS 这类
+// 可被局域网冒充的名字解析，等于把密钥交给「谁都可能是」的那台机器。
+func validEndpointHost(host string) bool {
+	if isLoopbackHost(host) {
+		return true
+	}
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	if !strings.Contains(h, ".") || strings.HasPrefix(h, ".") {
+		return false
+	}
+	for _, label := range strings.Split(h, ".") {
+		// 空标签（`a..b`）不是合法域名。
+		if label == "" {
+			return false
+		}
+	}
+	for _, r := range h {
+		isLower := r >= 'a' && r <= 'z'
+		isDigit := r >= '0' && r <= '9'
+		if !isLower && !isDigit && r != '.' && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// isLoopbackHost 判断主机名是不是本机回环。
+//
+// `net.ParseIP(h).IsLoopback()` 已经覆盖 `127.0.0.0/8` 与 `::1`，这里额外认
+// `localhost` 与 `*.localhost`（保留域，系统解析到 127.0.0.1）。
+func isLoopbackHost(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // DefaultDownloadDir 在线歌曲的默认下载目录：系统「音乐」目录下的 downloads。
@@ -1077,17 +1258,18 @@ func NewStore() (*Store, error) {
 	cfg.ConfigPath = filepath.Join(cfg.DataDir, "config.json")
 
 	if raw, err := os.ReadFile(cfg.ConfigPath); err == nil {
-		parsed := DefaultConfig()
-		parsed.DataDir = cfg.DataDir
-		parsed.ConfigPath = cfg.ConfigPath
-		if err := json.Unmarshal(raw, parsed); err != nil {
-			backup := cfg.ConfigPath + ".broken"
+		parsed, before, dropped := decodeConfig(raw, cfg)
+		cfg = parsed
+		if len(dropped) > 0 || before != "" {
+			// 备份名带时间戳：旧实现固定叫 `.broken`，第二次损坏会把它覆盖掉，
+			// 而**第一次**的现场往往才是能看出「哪个键被谁写坏了」的那一份。
+			backup := cfg.ConfigPath + ".broken-" + time.Now().Format("20060102-150405")
 			_ = os.WriteFile(backup, raw, 0o644)
-			fmt.Fprintf(os.Stderr, "[config] 解析失败，已备份到 %s：%v\n", backup, err)
-		} else {
-			cfg = parsed
-			cfg.DataDir = parsed.DataDir
-			cfg.ConfigPath = parsed.ConfigPath
+			if before != "" {
+				fmt.Fprintf(os.Stderr, "[config] 解析失败，已备份到 %s：%v\n", backup, before)
+			} else {
+				fmt.Fprintf(os.Stderr, "[config] 有字段类型不对，已按默认值降级并备份到 %s：%v\n", backup, strings.Join(dropped, ", "))
+			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("读取配置失败: %w", err)
@@ -1099,6 +1281,58 @@ func NewStore() (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// decodeConfig 把 config.json 解成一份配置。
+//
+// 正常路径就是一次普通的 json.Unmarshal；**只有整份解析失败时**才退到逐键降级。
+//
+// 为什么要降级（审查报告第 9 条）：旧实现里一个键的类型被写坏（实测只把
+// `volume` 写成字符串）就会让整份 unmarshal 失败 → 整份回到默认值 ——
+// 用户看到的是「我的歌单和收藏全没了」，而坏掉的其实只有一个音量字段。
+//
+// 逐键降级的做法：把每个键单独包成一个单键对象，再 Unmarshal 到同一份 out 上。
+// 于是「哪个键坏」只影响那一个键（回落默认值），其余键照常生效；而且不需要反射、
+// 也不需要维护一张「键 → 字段」的对照表（那种表迟早会和结构体漂移）。
+//
+// 返回：解析结果、整份解析的失败原因（没失败则为空串）、被丢掉（回落默认值）
+// 的键名（已排序）。**只记键名不记值** —— 配置里可能有密钥。
+func decodeConfig(raw []byte, base *Config) (*Config, string, []string) {
+	newBase := func() *Config {
+		out := DefaultConfig()
+		// DataDir / ConfigPath 是 json:"-" 的运行时事实，永远以调用方给的那份为准。
+		out.DataDir = base.DataDir
+		out.ConfigPath = base.ConfigPath
+		return out
+	}
+
+	out := newBase()
+	if err := json.Unmarshal(raw, out); err == nil {
+		return out, "", nil
+	} else {
+		wholeErr := err.Error()
+
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			// 连「键值对」都读不出来 = 文件整体不是 JSON 对象，只能整份回落默认值。
+			return newBase(), wholeErr, nil
+		}
+
+		// 从干净的默认值开始：坏键必须回到默认，而不是留着上一次解析的半份数据。
+		out = newBase()
+		var dropped []string
+		for key, val := range fields {
+			one, err := json.Marshal(map[string]json.RawMessage{key: val})
+			if err == nil {
+				err = json.Unmarshal(one, out)
+			}
+			if err != nil {
+				dropped = append(dropped, key)
+			}
+		}
+		sort.Strings(dropped)
+		return out, wholeErr, dropped
+	}
 }
 
 // normalize 补齐空值、规范化路径，保证前端拿到的字段总是可用的
@@ -1174,6 +1408,12 @@ func normalize(cfg *Config) {
 	cfg.UpdateChannel = NormalizeUpdateChannel(cfg.UpdateChannel)
 	// 插件仓库地址：手改配置写坏了也不该让「从仓库获取」整块失效
 	cfg.PackSource = NormalizePackSource(cfg.PackSource)
+	// AI 接口地址：只修「能修的」（漏协议、多尾斜杠）。非法值**原样留着**
+	// —— 悄悄清空它只会让 AI 功能莫名不可用；闸门在发请求那一处
+	//（services_ai.go#ExtractMeta），见 NormalizeAIBaseURL。
+	cfg.AIBaseURL = NormalizeAIBaseURLStored(cfg.AIBaseURL)
+	// 派生字段绝不允许落盘（它只在 ConfigService.Get 里按当前地址现算）。
+	cfg.AIBaseURLProblem = ""
 	if cfg.ShuffleMode != "once" {
 		cfg.ShuffleMode = "reshuffle"
 	}
@@ -1371,6 +1611,17 @@ func (s *Store) Save() error {
 }
 
 func (s *Store) saveLocked() error {
+	// ★ 路径为空 = 没有落盘目标，必须**前置**报错。
+	//
+	// 历史故障（审查报告第 9 条）：Reset 用 DefaultConfig() 覆盖配置时把
+	// 运行时填好的 ConfigPath 一起清成了空串，之后的每一次设置改动都只写内存，
+	// 而失败信息是 `rename .3.tmp : The system cannot find the path specified`
+	// —— 既看不出根因，也很难联想到「恢复默认设置」那一步。
+	// 这里宁可停在这一句上，也不要写到某个「相对当前目录」的临时文件里去。
+	if s.cfg.ConfigPath == "" {
+		return errors.New("配置路径为空，无法落盘（DataDir / ConfigPath 没有被正确初始化）")
+	}
+
 	// 不用 MarshalIndent：配置文件里可能包含全部歌单的 songIds（大曲库下是
 	// 数万个字符串），缩进会明显放大序列化开销与文件体积，而这份文件是给程序
 	// 读写的（人类手改是次要场景，且 JSON 本身已经够可读）。
@@ -1435,16 +1686,62 @@ func (s *Store) Playlist(id string) (Playlist, bool) {
 	return Playlist{}, false
 }
 
-// ExpandPath 展开 %VAR% 与 ~ 之类的路径写法
+// envRefPattern 匹配三种环境变量引用写法：`%NAME%`（Windows 习惯）、
+// `${NAME}` 与 `$NAME`（os.ExpandEnv 的语法）。
+var envRefPattern = regexp.MustCompile(
+	`%([A-Za-z_][A-Za-z0-9_]*)%|\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
+
+// expandEnv 一次扫描完成三种写法的展开。
+//
+// 两点刻意与 os.ExpandEnv 不同：
+//   - **展开结果不再二次扫描**：`%VAR%` 的值里含 `$` 时不能被再吃一遍
+//     （否则 `D:\a$b` 会变成 `D:\a`，见 TestExpandPathPercentEnvNotReExpanded）；
+//   - **变量不存在时原样保留**：路径里的 `%` / `$` 未必是变量引用
+//     （`D:\100% 无损`），os.ExpandEnv 会把认不出的 `$VAR` 直接删成空串。
+func expandEnv(p string) string {
+	if !strings.ContainsAny(p, "%$") {
+		return p
+	}
+	return envRefPattern.ReplaceAllStringFunc(p, func(m string) string {
+		var name string
+		switch {
+		case strings.HasPrefix(m, "%"):
+			name = m[1 : len(m)-1]
+		case strings.HasPrefix(m, "${"):
+			name = m[2 : len(m)-1]
+		default:
+			name = m[1:]
+		}
+		if v, ok := os.LookupEnv(name); ok {
+			return v
+		}
+		return m
+	})
+}
+
+// ExpandPath 展开用户输入的路径写法，返回可直接使用的路径：
+//
+//   - 前后空白与 `.` / `..` / 重复分隔符会被清理（filepath.Clean）；
+//   - `~` / `~/x` → 当前用户主目录；
+//   - `%VAR%`（Windows 习惯写法）与 `$VAR` / `${VAR}` → 环境变量。
+//
+// ★ 这里原本只有一句「展开 %VAR% 与 ~」，而实现里只有 os.ExpandEnv —— 它**只认
+// `$VAR`**。这处「注释与实现不符」的代价落在用户身上：Windows 用户把
+// `%USERPROFILE%\Music\downloads` 粘进「下载位置」会原样留下 `%…%`，变成一个
+// 不存在的相对路径（文件夹显示为找不到），而注释还写着这个写法是支持的。
+// 现在两种写法都认（第六轮审查 §4.2）。
+//
+// 展开顺序：先环境变量，再 `~`（这样 `~/$X` 也能正确拼出主目录下的路径）。
 func ExpandPath(p string) string {
 	p = strings.TrimSpace(p)
 	if p == "" {
 		return p
 	}
+	p = expandEnv(p)
 	if strings.HasPrefix(p, "~") {
 		if home, err := os.UserHomeDir(); err == nil {
 			p = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), string(os.PathSeparator)))
 		}
 	}
-	return filepath.Clean(os.ExpandEnv(p))
+	return filepath.Clean(p)
 }

@@ -1216,13 +1216,23 @@ export function notifyCoverChanged() {
    推送辅助
    -------------------------------------------------------------------------- */
 
-/** 推「曲目/封面/歌词」快照；只在真的变了（或被强制）时推 */
-function pushMedia(extra = {}) {
+/**
+ * 推「曲目/封面/歌词」快照；只在真的变了（或被强制）时推。
+ *
+ * `force` 默认按类型推断：song / lyrics / media 都是「发生了就是发生了」的事件，
+ * 即使内容比对没变也要推。**但封面变化那一处必须传 false**（见唯一那个调用点）：
+ * 它在 4Hz 的渲染循环里，强制推等于每次 tick 都往插件塞一整份媒体快照。
+ *
+ * ★ 这里之前只有类型推断、没有第二个参数，于是那个调用点写成 `pushMedia()`
+ *   —— 推出去的是一个**没有 type 的补丁**：`ctx.on("media")` 收不到
+ *   （skinhost.push 按 `type !== patch.type` 过滤），而自带皮肤与模板皮肤都是
+ *   `switch (patch.type) { case "media": … }` 的写法，等于封面变化被静默丢弃。
+ */
+function pushMedia(extra = {}, force = extra.type === "song" || extra.type === "lyrics" || extra.type === "media") {
   const media = mediaSnapshot();
-  const forced = extra.type === "song" || extra.type === "lyrics" || extra.type === "media";
   const changed = media.cover !== lastPushed.cover || media.song?.id !== lastPushed.songId;
   lastPushed.cover = media.cover;
-  if (!changed && !forced) return;
+  if (!changed && !force) return;
   push({ ...extra, ...media });
 }
 
@@ -1362,7 +1372,10 @@ export async function renderPlayerView() {
   }
 
   // 封面变化（封面面板应用/切换、轮播到下一张）
-  pushMedia();
+  // ★ 必须带 type 且不强制：不带 type 的补丁进不了 ctx.on("media")，也会被
+  //   `switch (patch.type)` 的皮肤当成未知类型丢掉；强制则会在每次渲染 tick
+  //   都推一份媒体快照（这里是 4Hz 的调用点）。
+  pushMedia({ type: "media" }, false);
 
   // 歌词变化（手动匹配、在线匹配回来、状态从 matching → failed）
   const lyrics = lyricsSnapshot(song);

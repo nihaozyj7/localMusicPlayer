@@ -7,7 +7,9 @@
 //  2. 任意 scope=exclude 的规则命中 → 立即排除（排除优先，短路返回）；
 //  3. 若存在启用中的 scope=include 规则，则必须至少命中一条才保留；
 //  4. regex 规则同时匹配「完整路径」与「文件名」，忽略大小写，使用 Go 正则语法；
-//  5. 正则非法 → 该条规则视为失效（跳过），不影响其它规则。
+//  5. 正则非法或为**空串** → 该条规则视为失效（跳过），不影响其它规则。
+//     空串必须单独拦：regexp.Compile("") 是「匹配一切」而不是「什么都不匹配」，
+//     交给它会让一条空规则把整个曲库清空。
 package filter
 
 import (
@@ -34,8 +36,22 @@ var (
 // 「编辑中反复试错」；超限时整体清空（重建代价 = 每条规则重新编译一次）。
 const maxRegexCacheEntries = 256
 
-// compiled 编译并缓存正则；非法时缓存 nil
+// compiled 编译并缓存正则；**空 pattern 或非法 pattern** 一律返回 nil
 func compiled(pattern string) *regexp.Regexp {
+	// ★ 空 pattern 必须当成「这条规则不生效」，绝不能交给 regexp.Compile。
+	//
+	// regexp.Compile("") 得到的是一个**匹配一切**的正则：配一条
+	// scope=exclude 的空规则，一次扫描就会把整个曲库过滤干净，而且
+	// Scan 返回 err=nil（用户看到的是「曲库空了，还不报错」）。
+	// 设置页的「添加规则」按钮新建的正则规则 value 就是空串（settings.js
+	// case "rule-add"），所以这个状态是用户点一下就能到达的。
+	//
+	// 前端 store.js#compileRegex 写的是 `if (!pattern) return null`，
+	// 这里与它逐字对齐 —— 两端的过滤语义必须一致（见包注释第 5 条）。
+	if pattern == "" {
+		return nil
+	}
+
 	regexMu.Lock()
 	defer regexMu.Unlock()
 
@@ -213,6 +229,9 @@ func Apply(songs []bootstrap.Song, rules []bootstrap.FilterRule) Result {
 }
 
 // InvalidRegexRules 返回正则非法的规则 id（用于设置界面提示）
+//
+// 空串 / 纯空白**不算非法**：它们只是「这条规则不生效」（空正则被 compiled
+// 直接跳过，见那里的说明），跟「用户敲了半截正则」是两件事，不该报错。
 func InvalidRegexRules(rules []bootstrap.FilterRule) []string {
 	out := []string{}
 	for _, r := range rules {

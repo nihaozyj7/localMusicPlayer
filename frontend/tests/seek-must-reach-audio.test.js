@@ -6,7 +6,9 @@
    根因是两层调用被当成了一个：
 
      store.js#seek(ms)      只改 state.position + emit("player:seek")，
-                            而那个事件**一个订阅者都没有**；
+                            而那个事件**一个订阅者都没有**
+                            （发送方已在第六轮审查 §4.3 删除，见
+                            no-dead-events.test.js）；
      audio.js#seekAudio(ms) 真正让后端跳转，并且把本地锚点前移 ——
                             不前移的话，下一次位置外推（后端每 500ms 推锚点）
                             就会按**旧位置**把 state.position 覆盖回去。
@@ -52,9 +54,7 @@ function walk(dir) {
 
 /** 去掉注释再扫描：解释这条规则的注释里正好会写出被禁的写法 */
 function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+  return src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 }
 
 test("除 audio.js 外，没有模块从 store.js 取 seek", () => {
@@ -68,8 +68,7 @@ test("除 audio.js 外，没有模块从 store.js 取 seek", () => {
   assert.deepEqual(
     bad,
     [],
-    "store.seek 只改状态、不会真的跳转（进度条会弹回原处）；" +
-      `请改用 audio.js#seekTo：\n  ${bad.join("\n  ")}`
+    "store.seek 只改状态、不会真的跳转（进度条会弹回原处）；" + `请改用 audio.js#seekTo：\n  ${bad.join("\n  ")}`
   );
 });
 

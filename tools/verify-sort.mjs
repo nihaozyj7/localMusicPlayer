@@ -226,13 +226,21 @@ if (panelInfo) {
     "面板是浮层（position: fixed 且脱离文档流）",
     await evaluate(`getComputedStyle(document.querySelector(".menu")).position === "fixed"`)
   );
-  check("面板含「排序方式」区块", panelInfo.labels.includes("排序方式"), `labels = ${JSON.stringify(panelInfo.labels)}`);
+  check(
+    "面板含「排序方式」区块",
+    panelInfo.labels.includes("排序方式"),
+    `labels = ${JSON.stringify(panelInfo.labels)}`
+  );
   check("面板含「排列顺序」区块", panelInfo.labels.includes("排列顺序"));
   check("面板含升序 / 降序两个方向", panelInfo.items.includes("升序") && panelInfo.items.includes("降序"));
   const fields = ["添加时间", "标题", "歌手", "专辑", "时长", "文件大小", "播放次数"];
   const missing = fields.filter((f) => !panelInfo.items.includes(f));
   check("面板含全部 7 个排序字段", missing.length === 0, missing.length ? `缺少 ${missing.join("、")}` : "");
-  check("面板尺寸合理（不是一条线）", panelInfo.rect.w > 120 && panelInfo.rect.h > 120, JSON.stringify(panelInfo.rect));
+  check(
+    "面板尺寸合理（不是一条线）",
+    panelInfo.rect.w > 120 && panelInfo.rect.h > 120,
+    JSON.stringify(panelInfo.rect)
+  );
 }
 
 // 4. 选「标题」字段（文本字段，默认升序），确认列表真的按标题排好
@@ -247,11 +255,7 @@ await sleep(800);
 
 const asc = await evaluate(titlesOf);
 const ascExpected = ["Apple", "Banana", "Cherry", "Durian"];
-check(
-  "选「标题」后列表按升序排列",
-  asc.join("|") === ascExpected.join("|"),
-  `实际 = ${JSON.stringify(asc)}`
-);
+check("选「标题」后列表按升序排列", asc.join("|") === ascExpected.join("|"), `实际 = ${JSON.stringify(asc)}`);
 await shot("sort-02-asc-title");
 
 // 重新打开面板，点「降序」
@@ -273,7 +277,11 @@ await sleep(800);
 await shot("sort-02-desc");
 
 const desc = await evaluate(titlesOf);
-check("点「降序」后列表顺序确实反过来", desc.length > 1 && desc.join("|") === [...asc].reverse().join("|"), `升序前3 = ${JSON.stringify(asc.slice(0, 3))} / 降序前3 = ${JSON.stringify(desc.slice(0, 3))}`);
+check(
+  "点「降序」后列表顺序确实反过来",
+  desc.length > 1 && desc.join("|") === [...asc].reverse().join("|"),
+  `升序前3 = ${JSON.stringify(asc.slice(0, 3))} / 降序前3 = ${JSON.stringify(desc.slice(0, 3))}`
+);
 
 // 5. 再点「升序」能切回去
 await evaluate(`document.querySelector('#content-header [data-tool="sort"]').click()`);

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"localmusicplayer/internal/bilibili"
@@ -590,12 +591,9 @@ func (s *OnlineService) proxyStream(w http.ResponseWriter, r *http.Request, stre
 
 // teeToCache 把响应体同时写进试听缓存并回给调用方。
 //
-// 返回的 reader 只负责「转发」；写盘在**旁路 goroutine** 里进行，这样
-// 落盘速度（可能慢，尤其是大文件 + 机械盘）不会拖住播放 —— 用户按下试听
-// 应当立刻听到声音，而不是等下载完。
-//
-// 用 io.Pipe 而不是简单包一层 MultiWriter：MultiWriter 会让 Write 变成
-// 「两边都写完才返回」，磁盘一慢就把播放拖成卡顿。
+// 返回的 reader 只负责「转发」；写盘在**旁路 goroutine** 里进行。
+// ⚠️ 注意 io.Pipe 是无缓冲的，所以「磁盘慢」仍然会让转发变慢（写端要等读端消费），
+// 这条路只是把写盘挪出了转发 goroutine，并没有真正解耦 —— 见 pipeTee 的已知限制。
 //
 // ★ 调用方必须 Close 返回值（见下面的 pipeTee.Close 与返回语句处的 defer）。
 func (s *OnlineService) teeToCache(stream *bilibili.AudioStream, body io.Reader) *pipeTee {
@@ -616,32 +614,70 @@ func (s *OnlineService) teeToCache(stream *bilibili.AudioStream, body io.Reader)
 	}
 
 	pr, pw := io.Pipe()
-	go func() {
-		// 写缓存；失败只是没缓存，不影响正在播放的这一路
-		if _, err := s.files.WriteTo(path, pr); err != nil {
-			log.Printf("[online] 试听缓存写入失败（不影响播放）: %v", err)
-			return
-		}
-		// 缓存就绪后立刻登记成后端可播放的歌曲：
-		// 前端下一次「后端装载」才能解析到它（见 EnsureCached 的说明）。
-		s.registerVirtual(stream.BVID, path, "m4a")
-	}()
-	// TeeReader：读到的字节顺手喂给 pipe（写端由上面那个 goroutine 消费）。
-	// 读端出错（客户端断开）时 pipe 写端也会收到错误并结束上面那个 goroutine。
-	return &pipeTee{r: io.TeeReader(body, pw), pw: pw}
+	// 先把 pipeTee（连同 teeSink）建好，旁路 goroutine 才引用得到同一个 sink。
+	teed := newPipeTee(body, pw)
+	go s.cacheStream(stream, path, pr, teed.sink)
+	// TeeReader：读到的字节顺手喂给 teeSink（写端由上面那个 goroutine 消费）。
+	// 旁路先退出时，teeSink 会转为丢弃而不是阻塞或报错。
+	return teed
+}
+
+// cacheStream 是试听缓存的**旁路**：消费 pipe 读端、写盘、登记缓存。
+//
+// 单独抽成方法是为了能直接测它：下面这个死锁发生在两个 goroutine 之间
+// （转发侧与旁路），不把旁路真的跑起来就测不出来。见 online_tee_test.go 的 ③。
+func (s *OnlineService) cacheStream(stream *bilibili.AudioStream, path string, pr *io.PipeReader, sink *teeSink) {
+	// ★ 旁路退出前必须**主动**放掉 pipe，否则转发侧会永久卡死。
+	//
+	// io.Pipe 没有缓冲：写端要一直等到「有人读」或「管道被关」才返回。旁路这里
+	// 一旦退出（缓存目录不可写 / 磁盘满 / 被清理，WriteTo 会直接报错返回），
+	// 读端就再没人读 —— 若不同时放掉管道，转发侧的 pw.Write 会永远等下去，
+	// io.Copy(w, body) 跟着卡死，用户看到的是「这一首试听停在某处，只能切歌」。
+	// 缓存只是可选加速手段，绝不该有这个后果。
+	//
+	// 下面两句是两种等价的「放掉管道」方式，**至少要有一种**（实测缺了就会卡死，
+	// 见 online_tee_test.go 的 TestCacheStreamFailureDoesNotStallTransfer）：
+	//   · stop 关写端：唤醒此刻正阻塞的 pw.Write，并让 teeSink 转为丢弃模式；
+	//   · pr.Close 关读端：让后续写入立刻拿到 ErrClosedPipe。
+	// 两句都留着是有意的冗余：stop 还负责给旁路自身兜底（panic 也会走到 defer），
+	// pr.Close 则保证 WriteTo「不读就返回」（发现缓存已存在）时也不会留下悬空的管道。
+	defer sink.stop(errTeeCacheFailed)
+	defer pr.Close()
+
+	if _, err := s.files.WriteTo(path, pr); err != nil {
+		log.Printf("[online] 试听缓存写入失败（不影响播放）: %v", err)
+		return
+	}
+	// 缓存就绪后立刻登记成后端可播放的歌曲：
+	// 前端下一次「后端装载」才能解析到它（见 EnsureCached 的说明）。
+	s.registerVirtual(stream.BVID, path, "m4a")
 }
 
 // pipeTee 是「边转发边写缓存」的转发侧。
 //
-// 它存在的唯一目的是**保证旁路 goroutine 一定能退出**：io.Pipe 的写端不关，
-// 读者（s.files.WriteTo 里的 io.Copy）就永远等不到 EOF —— 客户端提前断开
-// （用户切歌、关窗口、拖动进度条重发请求）时，转发侧其实是在写端失败的，
-// Read 根本不会返回错误，于是那个 goroutine 加上半成品 .part 文件就会一直留着。
-// 每断开一次泄漏一个，长时间使用后缓存目录里堆满 .part，内存里堆满 goroutine。
+// 它存在的唯一目的是**保证旁路 goroutine 一定能退出、且它的死活绝不回头影响转发**：
+//
+//   - io.Pipe 的写端不关，读者（s.files.WriteTo 里的 io.Copy）就永远等不到 EOF ——
+//     客户端提前断开（用户切歌、关窗口、拖动进度条重发请求）时，转发侧其实是在
+//     写端失败的，Read 根本不会返回错误，于是那个 goroutine 加上半成品 .part
+//     文件就会一直留着。每断开一次泄漏一个。
+//   - 反过来，旁路**先**退出（缓存目录不可写 / 磁盘满 / 被清理）时 pipe 就没有读者，
+//     转发侧的写会**永久阻塞**，io.Copy(w, body) 跟着卡死：现象是「这一首试听
+//     永远停在某个位置，只能切歌」。这一路以前完全没有防护，由 teeSink 兜住。
+//
+// ⚠️ 已知限制（另立条目，不在本次修复范围）：io.Pipe 无缓冲，因此**落盘慢会让
+// 转发同样慢** —— 它并没有真正把磁盘和播放解耦，只是把写盘挪到了另一个 goroutine。
+// 想彻底解耦需要一层有界缓冲（内存占用随之上升），是需要单独决策的设计问题。
 type pipeTee struct {
-	r      io.Reader
-	pw     *io.PipeWriter // nil 表示这条路径不写缓存
-	closed bool
+	r    io.Reader
+	sink *teeSink // nil 表示这条路径不写缓存
+}
+
+// newPipeTee 组装「转发 + 旁路写盘」：写端必须包成 teeSink 后再交给 TeeReader，
+// 否则缓存写失败会演变成转发侧的死锁（见 teeSink 的说明）。
+func newPipeTee(body io.Reader, pw *io.PipeWriter) *pipeTee {
+	sink := &teeSink{pw: pw}
+	return &pipeTee{r: io.TeeReader(body, sink), sink: sink}
 }
 
 func (t *pipeTee) Read(p []byte) (int, error) {
@@ -661,19 +697,75 @@ func (t *pipeTee) Close() error {
 }
 
 func (t *pipeTee) finish(cause error) {
-	if t.closed || t.pw == nil {
+	if t.sink == nil {
 		return
 	}
-	t.closed = true
 	if cause == io.EOF {
-		_ = t.pw.Close() // 正常读完：旁路收到 EOF，写盘并改名
+		t.sink.closeWrite() // 正常读完：旁路收到 EOF，写盘并改名
 		return
 	}
-	_ = t.pw.CloseWithError(cause) // 中止：旁路清掉 .part
+	t.sink.stop(cause) // 中止：旁路清掉 .part
+}
+
+// teeSink 是喂给 io.TeeReader 的写端：pipe 还活着就写进去，pipe 已经退役就**丢弃**。
+//
+// ★ 为什么不能直接把 *io.PipeWriter 交给 TeeReader：
+//
+//  1. 旁路 goroutine 提前退出（缓存写失败）后，pipe 再无读者。io.Pipe 没有缓冲，
+//     此时 pw.Write 会**永久阻塞**，TeeReader.Read 不返回 → io.Copy(w, body) 卡死，
+//     而这条路是「试听正在播放」的唯一数据通道：缓存写不进去，播放也跟着死。
+//  2. 那让旁路在退出前 Close 读端行不行？不行：读端一关，pw.Write 会返回
+//     ErrClosedPipe，TeeReader 把它当作**本次 Read 的错误**往上抛，io.Copy 立刻
+//     中止 —— 等于「缓存失败就把播放掐断」，同样不可接受。
+//
+// 所以「要不要继续喂缓存」这件事必须由写端自己决定：一旦 pipe 退役（无论谁先退出），
+// 后续字节一律丢弃并报告写入成功，转发与播放不受任何影响。
+type teeSink struct {
+	pw   *io.PipeWriter
+	done atomic.Bool
+}
+
+// Write 实现 io.Writer。pipe 退役后返回 (len(p), nil) —— 这个「假装写成功」
+// 是刻意的：io.TeeReader 见到错误就会中断上游 Read，而缓存是可选的，不该拖垮播放。
+func (t *teeSink) Write(p []byte) (int, error) {
+	if t.done.Load() {
+		return len(p), nil
+	}
+	if _, err := t.pw.Write(p); err != nil {
+		// 旁路已经走了（Close 过 pipe / 读端已关）：退役并丢弃这批字节。
+		// 这里不能把 err 传上去 —— 见类型注释第 2 点。
+		t.done.Store(true)
+		return len(p), nil
+	}
+	return len(p), nil
+}
+
+// closeWrite 正常收尾：关掉 pipe 写端，让旁路读到 EOF 后写盘并改名。
+func (t *teeSink) closeWrite() {
+	if t.done.Swap(true) {
+		return
+	}
+	_ = t.pw.Close()
+}
+
+// stop 中止收尾：旁路会拿到 cause 并清掉半成品；同时唤醒可能正阻塞在 Write 上的转发侧。
+// 幂等，可以安全地在 defer 与 finish 两处都调用。
+func (t *teeSink) stop(cause error) {
+	if t.done.Swap(true) {
+		return
+	}
+	if cause == nil {
+		cause = errTeeAborted
+	}
+	_ = t.pw.CloseWithError(cause)
 }
 
 // errTeeAborted 表示转发在读完之前就结束了（客户端断开 / 用户在切歌）。
 var errTeeAborted = errors.New("试听转发提前结束")
+
+// errTeeCacheFailed 表示缓存这一路写失败了（磁盘满 / 目录不可写 / 被清理）。
+// 旁路 goroutine 退出时用它收尾：转发侧会转为「只播放、不再写缓存」。
+var errTeeCacheFailed = errors.New("试听缓存写入失败")
 
 // registerVirtual 把一个已缓存的在线音频登记成后端可解析的歌曲。
 func (s *OnlineService) registerVirtual(bvid, path, ext string) {

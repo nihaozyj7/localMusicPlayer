@@ -1949,3 +1949,135 @@ func TestPlayerServiceSwitchSilencesImmediately(t *testing.T) {
 			got, svc.engine.Playing())
 	}
 }
+
+/* --------------------------------------------------------------------------
+   2. 装载的代际校验（并发切歌 / 停止时在途 Load 必须作废）
+   -------------------------------------------------------------------------- */
+
+// newGatedPlayerSvc 造一个「A 卡在 resolve 里、B 立刻返回」的 PlayerService。
+//
+// 为什么要这个夹具：缺陷只在「两个 Load 同时在飞」时出现，而 resolve 是
+// 唯一被放到锁外、又可能耗时一秒以上的地方（未命中转码缓存时跑 ffmpeg）。
+// 用两个 channel 就能把那个时刻**确定性地**卡住，不靠 sleep 去碰运气。
+func newGatedPlayerSvc(t *testing.T, slowWav, fastWav string) (svc *PlayerService, entered chan struct{}, openGate func(), stop func()) {
+	t.Helper()
+	entered = make(chan struct{})
+	release := make(chan struct{})
+	svc = NewPlayerService(func(songID string) (string, int64, error) {
+		if songID == "A" {
+			close(entered)
+			<-release // 卡住：模拟 A 正在跑 ffmpeg 转码
+			return slowWav, 2000, nil
+		}
+		return fastWav, 2000, nil
+	})
+	svc.setApp(&fakeEmitter{})
+	if !svc.Start() {
+		t.Skip("本机没有可用的音频设备，跳过 PlayerService 端到端测试")
+	}
+	var gateOnce, stopOnce sync.Once
+	openGate = func() { gateOnce.Do(func() { close(release) }) }
+	stop = func() {
+		stopOnce.Do(func() {
+			openGate() // 别把卡住的 goroutine 留在那里
+			svc.Stop()
+			time.Sleep(80 * time.Millisecond)
+		})
+	}
+	t.Cleanup(stop)
+	return svc, entered, openGate, stop
+}
+
+// TestPlayerServiceConcurrentLoadDoesNotOverwriteNewer 并发切歌时，
+// **先发起、后返回**的那次装载不得覆盖后一次（否则就是「点 B 播 A」）。
+func TestPlayerServiceConcurrentLoadDoesNotOverwriteNewer(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	slowWav := filepath.Join(dir, "a.wav")
+	fastWav := filepath.Join(dir, "b.wav")
+	writeServiceTestWAV(t, slowWav, 2.0)
+	writeServiceTestWAV(t, fastWav, 2.0)
+
+	svc, entered, openGate, stop := newGatedPlayerSvc(t, slowWav, fastWav)
+
+	// ① 发起 A：它会卡在 resolve 里
+	type loadResult struct {
+		res map[string]any
+		err error
+	}
+	aDone := make(chan loadResult, 1)
+	go func() {
+		res, err := svc.Load("A")
+		aDone <- loadResult{res, err}
+	}()
+	<-entered
+
+	// ② A 还卡着的时候切到 B：B 的 resolve 立刻返回并装载成功
+	if _, err := svc.Load("B"); err != nil {
+		t.Fatalf("B 的 Load 失败: %v", err)
+	}
+	if got := svc.State()["songId"]; got != "B" {
+		t.Fatalf("切到 B 之后 songId = %v，期望 B（用例前提不成立）", got)
+	}
+
+	// ③ 放行 A：它已经过期，必须放弃而不是覆盖 B
+	openGate()
+	res := <-aDone
+	if res.err != nil {
+		t.Errorf("过期的 Load 不该报错（那不是失败，只是意图被取代了）: %v", res.err)
+	}
+	if res.res["superseded"] != true {
+		t.Errorf("过期的 Load 应当返回 superseded=true，实际 %v（修复前这里会覆盖状态）", res.res)
+	}
+	if got := svc.State()["songId"]; got != "B" {
+		t.Errorf("过期装载返回后 songId = %v，期望仍是 B —— 这就是「点 B 播 A」", got)
+	}
+	stop()
+}
+
+// TestPlayerServiceUnloadSupersedesInFlightLoad 停止/清空队列之后，
+// 在途的 Load 不得把播放器重新点亮。
+//
+// 这是「点了停止却还在出声，而且暂停按不掉」的成因：前端已经在途的
+// playerLoad 回来后照样会写状态（见 audio.js#unloadCurrent 的 requestSeq），
+// 后端这边也必须自己作废那次装载。
+func TestPlayerServiceUnloadSupersedesInFlightLoad(t *testing.T) {
+	dir := tempDirFor(t)
+	defer cleanupDir(dir)
+	slowWav := filepath.Join(dir, "a.wav")
+	fastWav := filepath.Join(dir, "b.wav")
+	writeServiceTestWAV(t, slowWav, 2.0)
+	writeServiceTestWAV(t, fastWav, 2.0)
+
+	svc, entered, openGate, stop := newGatedPlayerSvc(t, slowWav, fastWav)
+
+	done := make(chan map[string]any, 1)
+	go func() {
+		res, _ := svc.Load("A")
+		done <- res
+	}()
+	<-entered
+
+	// 用户点了停止 / 清空了队列
+	svc.Unload()
+	if got := svc.State()["songId"]; got != "" {
+		t.Fatalf("Unload 之后 songId = %v，期望空（用例前提不成立）", got)
+	}
+
+	// 放行那次过期的装载
+	openGate()
+	if res := <-done; res["superseded"] != true {
+		t.Errorf("Unload 之后返回的 Load 应当 superseded=true，实际 %v", res)
+	}
+	st := svc.State()
+	if got := st["songId"]; got != "" {
+		t.Errorf("停止之后 songId = %v，期望空 —— 那次在途装载又把状态点了回来", got)
+	}
+	if st["loaded"] == true {
+		t.Error("停止之后 loaded 仍为 true：界面会处于「没在播」而引擎里有歌的状态")
+	}
+	if svc.engine.Playing() {
+		t.Error("停止之后引擎还在播 —— 这就是「点了停止却还在出声」")
+	}
+	stop()
+}

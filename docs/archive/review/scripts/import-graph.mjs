@@ -20,11 +20,7 @@ function walk(dir, out = []) {
   return out;
 }
 
-const files = [
-  ...walk("frontend/src"),
-  ...walk("frontend/packages/player-skins/src"),
-  ...walk("frontend/tests"),
-];
+const files = [...walk("frontend/src"), ...walk("frontend/packages/player-skins/src"), ...walk("frontend/tests")];
 
 const IMPORT_RE = /(?:^|[^\w])(?:import|export)\s[^;'"]*?from\s*["']([^"']+)["']/g;
 const BARE_IMPORT_RE = /(?:^|[^\w])import\s*["']([^"']+)["']/g;

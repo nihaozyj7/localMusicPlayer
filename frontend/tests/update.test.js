@@ -85,10 +85,7 @@ test("镜像表：id 必须与 Go 的 bootstrap.UpdateChannels 合法名单一�
 
   assert.ok(cfgIds.length >= 6, `没能从 config.go 解析出通道名单（找到 ${cfgIds.length} 个）`);
   for (const m of UPDATE_MIRRORS) {
-    assert.ok(
-      cfgIds.includes(m.id),
-      `镜像 ${m.id} 不在 bootstrap.UpdateChannels 里，用户选它会被落回 auto`
-    );
+    assert.ok(cfgIds.includes(m.id), `镜像 ${m.id} 不在 bootstrap.UpdateChannels 里，用户选它会被落回 auto`);
   }
 });
 
@@ -107,7 +104,9 @@ test("updateMirror：认不出来的 id 落回 auto，不返回 undefined", () =
 
 test("仓库地址：与 package.json 的 repository 同源，且 Releases 链接是它的子路径", () => {
   const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
-  const repoUrl = String(pkg.repository?.url || "").replace(/^git\+/, "").replace(/\.git$/, "");
+  const repoUrl = String(pkg.repository?.url || "")
+    .replace(/^git\+/, "")
+    .replace(/\.git$/, "");
   assert.equal(UPDATE_REPO, repoUrl, "UPDATE_REPO 与 package.json 的 repository 不一致");
   assert.equal(UPDATE_RELEASES_URL, `${UPDATE_REPO}/releases`);
 });
@@ -213,10 +212,7 @@ test("store.js：更新状态与动作都已导出", () => {
     "setUpdateCheckOnStart",
     "skipUpdateVersion",
   ]) {
-    assert.ok(
-      src.includes(`export async function ${fn}`),
-      `store.js 没有导出 ${fn}`
-    );
+    assert.ok(src.includes(`export async function ${fn}`), `store.js 没有导出 ${fn}`);
   }
   // 初始状态里要有 update 这一块
   assert.match(src, /update:\s*\{/, "store.js 的初始状态里没有 update");

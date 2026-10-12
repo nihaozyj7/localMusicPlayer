@@ -361,7 +361,7 @@ func scanSilenceFile(path string, size int64) (SilenceInfo, error) {
 	}
 	defer f.Close()
 
-	totalPCM := size - headerSizeOffset
+	totalPCM := size - wavHeaderSize
 	if totalPCM < 0 {
 		totalPCM = 0
 	}
@@ -377,7 +377,7 @@ func scanSilenceFile(path string, size int64) (SilenceInfo, error) {
 		headChunk = total
 	}
 	headBuf := make([]byte, headChunk*FrameSize)
-	n, err := f.ReadAt(headBuf, headerSizeOffset)
+	n, err := f.ReadAt(headBuf, wavHeaderSize)
 	if err != nil && n == 0 {
 		return SilenceInfo{}, err
 	}
@@ -390,7 +390,7 @@ func scanSilenceFile(path string, size int64) (SilenceInfo, error) {
 		tailChunk = total
 	}
 	tailBuf := make([]byte, tailChunk*FrameSize)
-	offset := headerSizeOffset + (total-tailChunk)*FrameSize
+	offset := wavHeaderSize + (total-tailChunk)*FrameSize
 	n, err = f.ReadAt(tailBuf, offset)
 	if err != nil && n == 0 {
 		return SilenceInfo{}, err

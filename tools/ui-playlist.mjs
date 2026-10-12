@@ -387,11 +387,7 @@ try {
   );
   check(
     "歌单内容区不再有重复的「更多」按钮（侧边栏的歌单入口保留，添加/多选/定位都在）",
-    entry.headerMore === 0 &&
-      entry.sidebarMore > 0 &&
-      entry.add &&
-      entry.multiselect &&
-      entry.locate,
+    entry.headerMore === 0 && entry.sidebarMore > 0 && entry.add && entry.multiselect && entry.locate,
     JSON.stringify(entry)
   );
 
@@ -425,10 +421,7 @@ try {
   );
   check(
     "歌单菜单项仍然齐全（播放 / 加入播放列表 / 重命名 / 删除）",
-    Array.isArray(menu?.labels) &&
-      menu.labels.length >= 4 &&
-      menu.labels.includes("删除歌单") &&
-      menu.seps === 1,
+    Array.isArray(menu?.labels) && menu.labels.length >= 4 && menu.labels.includes("删除歌单") && menu.seps === 1,
     JSON.stringify(menu?.labels)
   );
 } catch (err) {

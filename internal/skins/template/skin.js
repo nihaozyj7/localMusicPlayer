@@ -81,8 +81,9 @@ export default {
   /**
    * 宿主推来的更新。
    *
-   * patch.type 取值：mount / song / media / lyrics / progress / state / spectrum /
-   * options / theme / resize / visibility / chrome / close / destroy。
+   * patch.type 取值：mount / song / media / lyrics / progress / state /
+   * options / theme / resize / close / destroy（清单见 contract.js 的
+   * PATCH_TYPES —— 与宿主实际推的类型有机械对账测试，别照抄旧文档）。
    * 只处理你关心的那几种即可 —— 高频的 progress 每次都全量重排会很浪费。
    */
   update(ctx, patch) {
@@ -121,9 +122,7 @@ export default {
     const m = ctx.media();
     const song = m.song;
     this.refs.title.textContent = song ? song.title : "未在播放";
-    this.refs.sub.textContent = song
-      ? this.html.subtitleOf(song.artist, song.album)
-      : "";
+    this.refs.sub.textContent = song ? this.html.subtitleOf(song.artist, song.album) : "";
     this.html.setCoverImage(this.refs.cover, m.cover, ctx.defaultCover);
     const l = m.lyrics;
     this.lyrics?.setLines(l.lines, { emptyText: this.html.lyricsEmptyText(l) });

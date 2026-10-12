@@ -51,8 +51,16 @@ export const HOST_API_VERSION = "3.0";
 /**
  * 宿主推给插件的更新类型。
  *
- * 名字沿用 v2（`song` / `media` / `close` / `destroy`）—— 重命名收益低、回归面大；
- * v3 只**新增** `visibility` 与 `chrome`，并在文档里把每个类型的载荷写清楚。
+ * 名字沿用 v2（`song` / `media` / `close` / `destroy`）—— 重命名收益低、回归面大。
+ *
+ * ★ 这份清单必须与宿主**实际推的类型**逐项一致，`frontend/tests/skin-patch-contract.test.js`
+ *   会按宿主源码里的 `push({ type })` / `pushMedia({ type })` 机械比对。历史上这里
+ *   多写过两个类型（v3 设计时加的 `visibility` / `chrome`），宿主**一次都没推过**：
+ *     · 停帧信号用的是 `close` / `destroy`（详情页关闭 = 舞台销毁，本来就没有
+ *       「还活着但不可见」的状态，`visibility{foreground}` 因此没有意义）；
+ *     · 壳层配色不走补丁，而是 `colors.js` 按清单算好后写成 `--chrome-*` CSS 变量
+ *       挂在舞台根上（插件直接 `var(--chrome-bg)` 用，无需对拍）。
+ *   清单里多一个类型的代价不是"冗余"，而是**插件作者照着写一个永远不触发的分支**。
  *
  * 设计要点：`song` 是「换歌」这一件事的完整快照（曲目 + 封面 + 歌词），
  * 插件可以在 mount 之后只靠它就把界面填满；其余类型都是增量的高频更新。
@@ -62,7 +70,7 @@ export const HOST_API_VERSION = "3.0";
 export const PATCH_TYPES = [
   "mount", // 挂载完成（mount 之后立即推一次，携带全量快照）
   "song", // 换歌：{ song, cover, covers, coverIndex, lyrics }
-  "media", // 封面变化 / 轮播切图：{ cover, covers, coverIndex }
+  "media", // 封面变化 / 轮播切图：{ song, cover, covers, coverIndex, lyrics }
   "lyrics", // 歌词装载完成或更新：{ lyrics }
   "progress", // 播放进度（宿主约 4Hz 推送；位置按 250ms 一档量化，插件需自行插值）：{ position, duration, playing, lyricIndex }
   "state", // 播放状态变化（播放/暂停/音量/静音）：{ playing, volume, muted }
@@ -72,9 +80,7 @@ export const PATCH_TYPES = [
   "options", // 设置项变化：{ options }
   "theme", // 主题/深浅色变化：{ themeId, mode }
   "resize", // 舞台尺寸变化：{ width, height }
-  "visibility", // 详情页打开/关闭：{ foreground: boolean }（插件据此停帧）
-  "chrome", // 宿主壳配色已按插件声明算好：{ fg, bg, accent }（只读对拍用）
-  "close", // 播放详情页关闭
+  "close", // 播放详情页关闭（要停帧就认这个：之后只会再来 destroy）
   "destroy", // 插件即将被卸载（destroy 之前推最后一次）
 ];
 
@@ -213,7 +219,7 @@ export const PATCH_TYPES = [
  * @property {number} height 舞台高（px）
  * @property {number} dpr 设备像素比
  * @property {boolean} reducedMotion 用户是否要求减少动效
- * @property {boolean} foreground 详情页是否处于前台（同 visibility 补丁）
+ * @property {boolean} foreground 详情页是否处于前台（现取：ctx.env()，**不是**补丁）
  */
 
 /**

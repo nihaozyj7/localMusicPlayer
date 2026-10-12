@@ -91,6 +91,23 @@ type durationInfo struct {
 	bitrate    int
 }
 
+// bitrateBps 按「音频字节数 ÷ 时长毫秒」估算码率（bit/s），拿不到有效时长时返回 0。
+//
+// ★ 千万别写成 size*8/(ms/1000)：ms 落在 1..999 之间时 ms/1000 是 **0**，
+// 整数除零会 panic（< 1 秒的铃声 / 切片 / 截断文件全部命中，而 readAll 的
+// worker 里没有 recover，后果是整个应用退出）。这里先乘 1000 再除，
+// 与 ms/1000 的那版数学等价，且对任意正的 ms 都成立。
+// 本文件 Read() 里「用比特率估算补时长」的兜底分支一直是这种写法，这里把它
+// 收敛成唯一实现，避免再有人照着上面那四处的旧形式抄一遍。
+//
+// 溢出：size*8*1000 需要 size < 2.3e15 才不会溢出 int64，远超任何真实音频文件。
+func bitrateBps(size, ms int64) int {
+	if size <= 0 || ms <= 0 {
+		return 0
+	}
+	return int(size * 8 * 1000 / ms)
+}
+
 /* --------------------------------------------------------------------------
    MP3：优先读 Xing/Info 帧（VBR 准确），否则按帧数累加
    -------------------------------------------------------------------------- */
@@ -126,10 +143,8 @@ func mp3Duration(path string) durationInfo {
 		}
 		ms := int64(xing.frames) * int64(samplesPerFrame) * 1000 / int64(frame.sampleRate)
 		bitrate := 0
-		if ms > 0 {
-			if st, err := os.Stat(path); err == nil {
-				bitrate = int(st.Size() * 8 / (ms / 1000))
-			}
+		if st, err := os.Stat(path); err == nil {
+			bitrate = bitrateBps(st.Size(), ms)
 		}
 		return durationInfo{durationMS: ms, sampleRate: frame.sampleRate, bitrate: bitrate}
 	}
@@ -171,10 +186,8 @@ func mp3Duration(path string) durationInfo {
 		return durationInfo{}
 	}
 	ms := totalSamples * 1000 / int64(frame.sampleRate)
-	bitrate := 0
-	if ms > 0 {
-		bitrate = int(totalBytes * 8 / (ms / 1000))
-	}
+	// 注意：这里的 totalBytes 是「已扫到的音频字节」，不是文件大小（见上面的 12MB 上限）
+	bitrate := bitrateBps(totalBytes, ms)
 	return durationInfo{durationMS: ms, sampleRate: frame.sampleRate, bitrate: bitrate}
 }
 
@@ -311,8 +324,8 @@ func flacDuration(path string) durationInfo {
 	}
 	ms := totalSamples * 1000 / int64(sampleRate)
 	bitrate := 0
-	if st, err := os.Stat(path); err == nil && ms > 0 {
-		bitrate = int(st.Size() * 8 / (ms / 1000))
+	if st, err := os.Stat(path); err == nil {
+		bitrate = bitrateBps(st.Size(), ms)
 	}
 	return durationInfo{durationMS: ms, sampleRate: sampleRate, bitrate: bitrate}
 }
@@ -421,8 +434,8 @@ func mp4Duration(path string) durationInfo {
 	}
 
 	bitrate := 0
-	if st, err := os.Stat(path); err == nil && ms > 0 {
-		bitrate = int(st.Size() * 8 / (ms / 1000))
+	if st, err := os.Stat(path); err == nil {
+		bitrate = bitrateBps(st.Size(), ms)
 	}
 	return durationInfo{durationMS: ms, sampleRate: sampleRate, bitrate: bitrate}
 }

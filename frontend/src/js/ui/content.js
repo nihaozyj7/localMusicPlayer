@@ -125,12 +125,8 @@ class MpContent extends MpElement {
     const v = state.view;
     const pl = v === "playlist" ? playlistById(state.playlistId) : null;
     return html`
-      <main class="main" id="main">
-        <div
-          class="content-header"
-          id="content-header"
-          @click=${(e) => this.onHeaderClick(e)}
-        >
+      <main class="main" id="main" @click=${(e) => this.onMainClick(e)}>
+        <div class="content-header" id="content-header" @click=${(e) => this.onHeaderClick(e)}>
           <div class="content-header__titles">
             <h1 class="content-header__title" id="content-title">
               ${v === "playlist" && pl ? pl.name : VIEW_TITLES[v] || "本地歌曲"}
@@ -256,7 +252,9 @@ class MpContent extends MpElement {
       >
         ${icon("sort")}
         <span>${sortField?.label ?? "添加时间"}</span>
-        <span class="btn__dir" aria-hidden="true">${icon(state.sortDir === "desc" ? "chevron-down" : "chevron-up")}</span>
+        <span class="btn__dir" aria-hidden="true"
+          >${icon(state.sortDir === "desc" ? "chevron-down" : "chevron-up")}</span
+        >
       </button>
     `;
 
@@ -363,17 +361,31 @@ class MpContent extends MpElement {
     `;
   }
 
+  /**
+   * `#main` 上的点击委托（空态按钮）。
+   *
+   * ★ 为什么挂在 `#main` 而不是 `.content-header`（审查报告第 3 条）：
+   * 空态整块（含那个主按钮）渲染在 `.content-body` 里，而当时唯一的
+   * `data-empty-act` 委托挂在 `.content-header` 上 —— 点击从按钮冒泡到
+   * `#main` 就停了，永远到不了那个委托，于是**空态主按钮全部失效**
+   *（「去本地歌曲」「清空搜索」「添加文件夹」都点不动，而且没有任何报错）。
+   *
+   * 挂在两者共同的祖先上，将来空态渲染到哪一侧都不会再失效 —— 这类
+   * 「事件监听挂在了兄弟节点上」的 bug 不会报错、只会静默失效，所以
+   * 位置本身就是要守住的不变量（见 tests/empty-state-delegation.test.js）。
+   */
+  async onMainClick(e) {
+    const emptyAct = e.target.closest("[data-empty-act]")?.dataset.emptyAct;
+    if (!emptyAct) return;
+    if (emptyAct === "add-folder") await handleSettingsAction({ dataset: { act: "add-folder" } }, SETTINGS_CTX);
+    else if (emptyAct === "goto-library") navigate("library");
+    else if (emptyAct === "clear-search") clearLocalFilter();
+  }
+
   /* ------------------------------------------------------------------------
      事件
      ------------------------------------------------------------------------ */
   async onHeaderClick(e) {
-    const emptyAct = e.target.closest("[data-empty-act]")?.dataset.emptyAct;
-    if (emptyAct) {
-      if (emptyAct === "add-folder") await handleSettingsAction({ dataset: { act: "add-folder" } }, SETTINGS_CTX);
-      else if (emptyAct === "goto-library") navigate("library");
-      else if (emptyAct === "clear-search") clearLocalFilter();
-      return;
-    }
     const tool = e.target.closest("[data-tool]")?.dataset.tool;
     if (!tool) return;
     await this.handleTool(tool);

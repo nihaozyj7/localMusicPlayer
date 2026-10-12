@@ -23,8 +23,7 @@ import path from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 
-const EXE =
-  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/lmplayer.exe";
+const EXE = process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/lmplayer.exe";
 const PORT = Number(process.env.MP_PORT || 9383);
 const WORK = mkdtempSync(path.join(tmpdir(), "verify-ui-"));
 
@@ -159,7 +158,7 @@ async function main() {
       check(
         "主线程帧间隔正常（未卡死）",
         avgGap > 0 && avgGap < 80,
-        `平均 ${avgGap.toFixed(1)}ms，最大 ${maxGap.toFixed(1)}ms，${gaps.length} 帧`,
+        `平均 ${avgGap.toFixed(1)}ms，最大 ${maxGap.toFixed(1)}ms，${gaps.length} 帧`
       );
 
       // ---- 位置外推的连续性 ----
@@ -189,17 +188,9 @@ async function main() {
         if (Math.abs(d) > maxJump) maxJump = Math.abs(d);
       }
       const advanced = track[track.length - 1].pos - track[0].pos;
-      check(
-        "播放位置单调推进",
-        monotonic && advanced > 1500,
-        `推进 ${advanced}ms，最大单步 ${maxJump}ms`,
-      );
+      check("播放位置单调推进", monotonic && advanced > 1500, `推进 ${advanced}ms，最大单步 ${maxJump}ms`);
       // 单步不该远超采样间隔：超过 3 倍说明中间有「卡住再跳」的过程
-      check(
-        "位置推进平滑（无跳变）",
-        maxJump < 600,
-        `最大单步 ${maxJump}ms（采样间隔 200ms，阈值 600ms）`,
-      );
+      check("位置推进平滑（无跳变）", maxJump < 600, `最大单步 ${maxJump}ms（采样间隔 200ms，阈值 600ms）`);
 
       // ---- 歌词同步不在这里断言 ----
       //

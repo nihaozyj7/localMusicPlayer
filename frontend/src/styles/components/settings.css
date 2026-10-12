@@ -257,6 +257,25 @@
   color: var(--text-3);
 }
 
+/* AI 接口地址不被接受时的提示（原因由后端算，见 settings-view.js#aiCard）。
+   只影响颜色，盒子尺寸由下面的 padding 决定 —— 视觉值一律走令牌。 */
+.setting__warn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: 0 var(--sp-4) var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-left: 2px solid var(--warning);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  font-size: var(--fs-sm);
+  color: var(--warning);
+}
+
+.setting__warn-sub {
+  color: var(--text-3);
+}
+
 .setting__control {
   flex: none;
   display: flex;

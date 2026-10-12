@@ -24,8 +24,7 @@ import path from "node:path";
 import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
-const EXE =
-  process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/lmplayer.exe";
+const EXE = process.argv.includes("--exe") ? process.argv[process.argv.indexOf("--exe") + 1] : "bin/lmplayer.exe";
 const PORT = Number(process.env.MP_PORT || 9384);
 const WORK = mkdtempSync(path.join(tmpdir(), "verify-lyrics-"));
 
@@ -116,7 +115,12 @@ async function main() {
     console.log("  本机歌词缓存里没有足够长的 .lrc，无法验证歌词同步（跳过）");
     return;
   }
-  console.log(`歌词候选: ${candidates.slice(0, 3).map((c) => `${c.id}(${c.lines}行)`).join(", ")}`);
+  console.log(
+    `歌词候选: ${candidates
+      .slice(0, 3)
+      .map((c) => `${c.id}(${c.lines}行)`)
+      .join(", ")}`
+  );
 
   console.log(`启动: ${EXE}`);
   const child = spawn(path.resolve(EXE), [], {
@@ -233,17 +237,17 @@ async function main() {
       check(
         "早期位置有高亮行（不是 -1）",
         typeof e.index === "number" && e.index >= 0,
-        `pos=${e.pos}ms index=${e.index} "${e.text}"`,
+        `pos=${e.pos}ms index=${e.index} "${e.text}"`
       );
       check(
         "后期位置有高亮行（不是 -1）",
         typeof l.index === "number" && l.index >= 0,
-        `pos=${l.pos}ms index=${l.index} "${l.text}"`,
+        `pos=${l.pos}ms index=${l.index} "${l.text}"`
       );
       check(
         "歌词高亮行随进度**严格前进**",
         typeof e.index === "number" && typeof l.index === "number" && l.index > e.index,
-        `index ${e.index} → ${l.index}（位置 ${e.pos}ms → ${l.pos}ms）`,
+        `index ${e.index} → ${l.index}（位置 ${e.pos}ms → ${l.pos}ms）`
       );
 
       await evalJs(`

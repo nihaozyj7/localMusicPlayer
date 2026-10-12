@@ -43,7 +43,8 @@ function stateOf(el) {
   // 已有的内层 span 就**沿用**（插件自己画的 DOM / 模板渲染的 span 都算），
   // 别再 replaceChildren —— 那会把调用方的节点引用弄成孤儿
   const adopted = /** @type {HTMLElement|null} */ (el.querySelector(":scope > .mp-marquee__text"));
-  let text = adopted;  if (!text) {
+  let text = adopted;
+  if (!text) {
     text = document.createElement("span");
     text.className = "mp-marquee__text";
     el.replaceChildren(text);

@@ -385,7 +385,7 @@ patch 只带与该类型相关的字段；不确定时用 ctx.track() / ctx.lyri
    行上带 words 就是字级（逐字）歌词，上面两个渲染零件会自己按字点亮；再把
    setPosition(pos, { playing })（或 setPlaying(playing)）也喂上，逐字高亮才会在两次
    250ms 进度推送之间平滑推进，否则是 4Hz 的阶梯值。
-4. 动效要尊重 ctx.options().animations（false 时不要做位移动效）与时长与缓动令牌；窗口收起（patch.type === "visibility" 或 close）时停掉帧循环。
+4. 动效要尊重 ctx.options().animations（false 时不要做位移动效）与时长与缓动令牌；要停掉帧循环就认 patch.type === "close"（紧接着一定会来一次 destroy），不要去等"visibility"这类宿主根本不推的补丁 —— 完整的类型清单见 contract.js 的 PATCH_TYPES。
 5. destroy(ctx) 里清掉定时器、事件监听、ResizeObserver 与大对象引用；切换插件会先 destroy 再 mount，两个方法都可能被多次调用。
 6. 不要往 window / document 上挂全局变量或样式，不要改 document.documentElement 上的 data-* 属性。
 7. 不要发网络请求（CSP 也会拦），不要用 eval / new Function。

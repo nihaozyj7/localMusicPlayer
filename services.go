@@ -1085,6 +1085,15 @@ func (s *ConfigService) Get() bootstrap.Config {
 	// 先算出「有没有配密钥」，再打码 —— 顺序反了会让布尔位永远为 false。
 	cfg.AIAPIKeySet = strings.TrimSpace(cfg.AIAPIKey) != ""
 	cfg.AIAPIKey = maskSecret(cfg.AIAPIKey)
+	// 接口地址不合法时把原因一并交给前端（设置页会显示出来）。
+	//
+	// 规则由后端算（internal/bootstrap.NormalizeAIBaseURL），前端只负责显示：
+	// 再在前端写一遍校验必然会漂移，而漂移的代价是「界面说没问题、后端却
+	// 拒绝发请求」—— 那正是「AI 莫名不工作」最难查的一类。
+	// 出错信息本身不回显地址与密钥（见该函数的文档注释）。
+	if _, err := bootstrap.NormalizeAIBaseURL(cfg.AIBaseURL); err != nil {
+		cfg.AIBaseURLProblem = errText(err)
+	}
 	return cfg
 }
 
@@ -1118,14 +1127,23 @@ func (s *ConfigService) Set(patch map[string]any) (bootstrap.Config, error) {
 func (s *ConfigService) Path() string { return s.store.Path() }
 
 // Reset 恢复默认配置（保留文件夹列表）
+//
+// ★ 数据目录与**配置文件路径必须从当前配置上取**，绝不能照抄 DefaultConfig() 的
+// 那一份：默认值里的 ConfigPath 是空的（它由 NewStore 在运行时按 DataDir 拼出来），
+// 照抄等于把「往哪儿落盘」一起清掉 —— 之后所有设置改动都只改内存、重启即丢，
+// 而报错是 `rename .3.tmp : The system cannot find the path specified`，
+// 完全看不出根因（历史故障，见审查报告第 9 条）。
 func (s *ConfigService) Reset() (bootstrap.Config, error) {
 	def := bootstrap.DefaultConfig()
 	err := s.store.Update(func(c *bootstrap.Config) {
+		// 先把运行时事实抓在手里，再整体覆盖成默认值。
 		folders := c.Folders
+		dataDir := c.DataDir
+		configPath := c.ConfigPath
 		*c = *def
 		c.Folders = folders
-		c.DataDir = def.DataDir
-		c.ConfigPath = def.ConfigPath
+		c.DataDir = dataDir
+		c.ConfigPath = configPath
 	})
 	if err != nil {
 		return bootstrap.Config{}, err
@@ -1625,24 +1643,13 @@ type WindowService struct {
 	mainGeomSeq     uint64
 	mainGeomMoved   bool
 	mainGeomResized bool
-	// mainGeomUserTouched 记录「这次运行中用户是否自己动过窗口」。
-	//
-	// 用在最大化恢复上（见 restoreMainWindowMaximizedWhenReady）：恢复要等
-	// 窗口显示出来，而这几百毫秒里用户可能已经拖了一下窗口 —— 那时再把它
-	// 最大化就是在跟用户抢控制权，看着像 bug。动过就放弃恢复。
 	mainGeomUserTouched atomic.Bool
-	// mainGeomSelfMove 标记「当前这次移动/缩放是程序自己发起的」。
-	//
-	// ensureMainWindowOnScreen / ResetMainWindowGeometry 会主动调
-	// SetPosition/SetSize，那同样触发 WindowDidMove，不加标记就会被
-	// noteGeometryTouched 误记成「用户动过窗口」。
-	mainGeomSelfMove atomic.Bool
-	// mainGeomTrackingReady 标记「启动序列已经结束，之后的移动才算用户操作」。
-	//
-	// 启动阶段 Wails 与我们自己都会摆放窗口（首次定位、遮罩显示、补外框），
-	// 那些 WindowDidMove 不是用户操作，不该让「用户动过窗口就别抢控制权」
-	// 的判断成立 —— 否则最大化状态永远恢复不了（见 noteGeometryTouched）。
-	mainGeomTrackingReady atomic.Bool
+	// ★ 这里原有三个「用户是否动过窗口」的原子量（mainGeomUserTouched /
+	//   mainGeomSelfMove / mainGeomTrackingReady）。它们只被写入、从没被读过
+	//   —— 唯一的使用者 restoreMainWindowMaximizedWhenReady 的注释自己就写着
+	//   「门还关着…标志必然是 false」，也就是那个判断早已失效。第六轮审查
+	//   §4.3 判定为存量死代码，已整条删除（见 main_window_geometry.go
+	//   attachMainWindowGeometryTracking 的说明）。
 	// desktopTouched 记录「用户/前端是否已经自己操作过桌面歌词开关」。
 	//
 	// 启动恢复（early_theme.go#restoreDesktopLyricsOnStartup）在超时兜底那条
@@ -2482,7 +2489,13 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 			// 与下面注释里提到的响度那几个键踩过的是同一个坑。
 			c.EffectPreset = bootstrap.NormalizeEffectPreset(asString(raw, c.EffectPreset))
 		case "aiBaseUrl":
-			c.AIBaseURL = strings.TrimSpace(asString(raw, c.AIBaseURL))
+			// AI 接口地址：能规范化就规范化（漏协议 / 多尾斜杠），**非法值照存**
+			// —— 丢掉用户输入会变成「改了设置、一刷新就没了」。真正的闸门在
+			// 发请求那一处（services_ai.go#ExtractMeta），见 NormalizeAIBaseURL。
+			//
+			// 与 rowClickAction / listDensity / effectPreset 同一写法：键自己的
+			// 分支里收敛一次，normalize() 在读盘时再收敛一次（老配置 / 手改配置）。
+			c.AIBaseURL = bootstrap.NormalizeAIBaseURLStored(asString(raw, c.AIBaseURL))
 		case "aiApiKey":
 			// ★ 忽略回传的占位串。
 			//

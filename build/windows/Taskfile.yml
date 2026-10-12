@@ -88,7 +88,7 @@ tasks:
       #
       # 注意：.specs 文件里**不能写注释**（GCC 把每一行都当 spec 解析，
       # 写了会报 "specs file malformed"），所以说明放在这里。
-      CGO_SPECS: '{{.ROOT_DIR}}/build/windows/cgo-nomanifest.specs'
+      CGO_SPECS: "{{.ROOT_DIR}}/build/windows/cgo-nomanifest.specs"
       # DEV 分支同样必须带 -extldflags=-specs={{.CGO_SPECS}}：
       #   .syso（wails3 generate syso 产出）与 MinGW 自动追加的 default-manifest.o
       #   会撞在一起，报 ld.exe: .rsrc merge failure: multiple non-default manifests。

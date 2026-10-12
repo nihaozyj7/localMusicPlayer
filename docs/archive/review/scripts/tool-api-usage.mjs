@@ -71,5 +71,5 @@ for (const [mod, members] of [...used].sort()) {
 fs.writeFileSync(
   path.join(ROOT, ".tmp-audit", "tool-api-usage.json"),
   JSON.stringify(Object.fromEntries([...used].map(([k, v]) => [k, [...v].sort()])), null, 2),
-  "utf8",
+  "utf8"
 );

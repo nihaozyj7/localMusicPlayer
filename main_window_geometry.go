@@ -111,39 +111,9 @@ func (s *WindowService) ensureMainWindowOnScreen() {
 		targetX = b.X + (b.Width-width)/2
 		targetY = b.Y + (b.Height-height)/2
 	}
-	// 标记「这次移动是程序自己发起的」：SetPosition 会触发 WindowDidMove，
-	// 不加标记就会被当成用户操作（见 noteGeometryTouched）。
-	s.mainGeomSelfMove.Store(true)
+	// 直接摆过去就行：这次移动是程序自己发起的，而现在**没有任何地方**在
+	// 判断「用户是否动过窗口」了（见 attachMainWindowGeometryTracking 的说明）。
 	w.SetPosition(targetX, targetY)
-}
-
-// noteGeometryTouched 记录「用户动过窗口」，但要排掉两类不是用户操作的移动：
-//
-//  1. 启动序列期间框架/我们自己摆放窗口（门还没开，见
-//     attachMainWindowGeometryTracking）；
-//  2. 我们主动纠正位置 / 重置窗口时调的那几下 SetPosition/SetSize
-//     （见 mainGeomSelfMove）。
-//
-// 这个标志只用来回答「用户是不是已经自己动过窗口了」
-// （见 restoreMainWindowMaximizedWhenReady 的防抢控制权判断）。
-// 不做这两层排除的话会出现很别扭的自相矛盾：程序自己挪一下窗口，
-// 就再也不敢恢复最大化了 —— 表现成「只要窗口曾经跑丢过，最大化就恢复不了」。
-func (s *WindowService) noteGeometryTouched() {
-	if !s.mainGeomTrackingReady.Load() {
-		return // 启动序列期间的移动不算用户操作
-	}
-	if s.mainGeomSelfMove.Load() {
-		return // 这次移动是我们自己发起的
-	}
-	s.mainGeomUserTouched.Store(true)
-}
-
-// markGeometryTrackingReady 开启「用户动过窗口」的判定。
-//
-// 由启动流程在窗口显示、几何纠正、最大化恢复都做完之后调用 ——
-// 那之后发生的移动 / 缩放才真的来自用户。
-func (s *WindowService) markGeometryTrackingReady() {
-	s.mainGeomTrackingReady.Store(true)
 }
 
 // validateMainWindowGeometry 是 mainWindowSavedGeometry 的纯函数内核：
@@ -225,27 +195,22 @@ func (s *WindowService) attachMainWindowGeometryTracking(w *application.WebviewW
 	if w == nil {
 		return
 	}
-	// 启动阶段先把「用户动过窗口」的门关上：窗口是隐藏创建的
-	// （main.go 的 winOpts.Hidden），Wails 与启动流程自己会在这期间摆放窗口
-	// （首次定位、遮罩显示、补系统外框都会发 WindowDidMove/WindowDidResize），
-	// 那些都不是用户操作。不关门的话，restoreMainWindowMaximizedWhenReady 里
-	// 「用户已动过窗口就别抢控制权」的判断会被框架自己的动作触发 ——
-	// 表现就是最大化状态永远恢复不了（实测踩到过，日志里是
-	// 「用户在启动期间动过窗口，跳过最大化恢复」）。
+	// ★ 这里原本还有一层「用户是不是已经自己动过窗口」的门（mainGeomUserTouched /
+	//   mainGeomTrackingReady / mainGeomSelfMove 三个标志），用来决定启动时要不要
+	//   恢复最大化 —— 怕跟用户抢控制权。第六轮审查 §4.3 判定它已无消费者：
+	//   restoreMainWindowMaximizedWhenReady 的注释自己就写着「门还关着，期间所有
+	//   移动都被 noteGeometryTouched 忽略，标志必然是 false」，也就是说那个判断
+	//   早就不成立了，只剩三个只写不读的原子量。现在恢复最大化不再询问这个标志
+	//   （见该函数），所以整条链一并删除。
 	//
-	// 几何**照常记录**（下面两个回调仍然 scheduleMainGeometrySave），
-	// 只是这段时间的变化不算「用户操作」。启动序列结束由
-	// markGeometryTrackingReady 开门。
-	s.mainGeomTrackingReady.Store(false)
+	// 几何**照常记录**：下面两个回调仍然 scheduleMainGeometrySave。
 
 	// WindowDidMove 与 WindowDidResize 各自置位自己的标志，去抖窗口结束时
 	// 一起写（见 scheduleMainGeometrySave）。
 	w.OnWindowEvent(events.Common.WindowDidMove, func(*application.WindowEvent) {
-		s.noteGeometryTouched()
 		s.scheduleMainGeometrySave(w, true, false)
 	})
 	w.OnWindowEvent(events.Common.WindowDidResize, func(*application.WindowEvent) {
-		s.noteGeometryTouched()
 		s.scheduleMainGeometrySave(w, false, true)
 	})
 	// 最大化 / 还原：只改 maximized 标志，不动 W/H。
@@ -395,13 +360,6 @@ func (s *WindowService) saveMainWindowMaximized(on bool) {
 // （ensureMainWindowOnScreen）：两件事都要求「窗口已显示 + 屏幕枚举已完成」，
 // 分开轮询只是白等两遍。
 func (s *WindowService) restoreMainWindowMaximizedWhenReady(maximized bool) {
-	// 整段事情做完（成功、不需要做、或超时）之后才开门：
-	// 在那之前发生的移动/缩放都不算用户操作（见 noteGeometryTouched）。
-	// 放在最前面 defer，保证任何一条 return 路径都会开门 ——
-	// 忘了开门的话，用户之后拖窗口就再也标记不上「动过」，
-	// 表现为下次启动时最大化恢复会跟用户抢控制权。
-	defer s.markGeometryTrackingReady()
-
 	// 轮询等两件事同时成立：原生窗口建出来了（NativeWindow 非 nil）+ 已经显示。
 	// 总时长约 6 秒，够覆盖「首帧渲染慢」的极端情况；超时就放弃 ——
 	// 那两件事都不是致命问题（窗口只是没最大化 / 位置可能不对），
@@ -420,10 +378,9 @@ func (s *WindowService) restoreMainWindowMaximizedWhenReady(maximized bool) {
 			if !maximized {
 				return
 			}
-			// 到这里就不再需要「用户是不是动过窗口」这个判断了：
-			// 门还关着，期间所有移动都被 noteGeometryTouched 忽略，
-			// 标志必然是 false。等门开了（本函数返回之后），
-			// 用户的任何拖动都会正常记上。
+			// 这里不再判断「用户是不是已经动过窗口」：那套标志已在第六轮审查
+			// §4.3 作为只写不读的存量删除（原判断自己也写着「标志必然是 false」
+			// —— 门在启动期间一直关着，而开门之后本函数早就返回了）。
 			w.Maximise()
 			// 最大化事件会由 Wails 回发，saveMainWindowMaximized 会把它写回去。
 			// 这里不直接写盘：事件路径是唯一权威，避免两处状态不一致。
@@ -455,15 +412,9 @@ func (s *WindowService) ResetMainWindowGeometry() map[string]any {
 	if w.IsMaximised() {
 		w.UnMaximise()
 	}
-	// 标记「这几下是程序自己动的」：SetSize/SetPosition 会触发
-	// WindowDidResize/WindowDidMove，不标记就会被当成用户操作。
-	//
-	// 注意这里**故意不加 defer 复位**：事件是异步派发的，我们返回之后
-	// 才被处理，defer 会在事件到达之前就把标记清掉。而「程序自己动窗口」
-	// 这件事只发生在启动纠正与重置这两处，重置完标记留着也没有副作用 ——
-	// 它只会让之后真正由用户发起的移动被正确记为「用户动过」……
-	// 所以重置结束时必须把它清掉，否则用户之后拖窗口就再也标记不上了。
-	s.mainGeomSelfMove.Store(true)
+	// 这几下是 SetSize/SetPosition，会触发 WindowDidResize/WindowDidMove，
+	// 但那些事件只会 scheduleMainGeometrySave（记几何），不再有「算不算用户
+	// 操作」的判断 —— 那套标志已作为存量删除，所以这里没有任何标记要清。
 	w.SetSize(mainWindowDefaultWidth, mainWindowDefaultHeight)
 	// 居中：拿主屏工作区算，不能用 WindowCentered（那是创建时才有用的选项）
 	if s.app != nil {
@@ -475,11 +426,6 @@ func (s *WindowService) ResetMainWindowGeometry() map[string]any {
 			)
 		}
 	}
-	// 等事件派发完再撤销标记（给一个足够宽的窗口：这些事件由 Wails 的
-	// 事件循环派发，通常几毫秒内到）。
-	time.AfterFunc(300*time.Millisecond, func() { s.mainGeomSelfMove.Store(false) })
-	// 用户主动重置之后，就不该再拿「存档里的最大化」去恢复
-	s.mainGeomUserTouched.Store(true)
 	return map[string]any{
 		"ok":      true,
 		"applied": true,

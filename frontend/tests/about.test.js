@@ -94,8 +94,14 @@ test("参考与致谢：数据来源与鸣谢都非空", () => {
 
 test("顶部入口：包含仓库与协议全文", () => {
   const urls = PROJECT_LINKS.map((l) => l.url);
-  assert.ok(urls.some((u) => u.endsWith("apache.org/licenses/LICENSE-2.0")), "缺少协议全文入口");
-  assert.ok(urls.some((u) => u.includes("github.com")), "缺少仓库入口");
+  assert.ok(
+    urls.some((u) => u.endsWith("apache.org/licenses/LICENSE-2.0")),
+    "缺少协议全文入口"
+  );
+  assert.ok(
+    urls.some((u) => u.includes("github.com")),
+    "缺少仓库入口"
+  );
   for (const l of PROJECT_LINKS) assert.ok(String(l.label).trim() && l.icon, "入口缺少文案或图标");
 });
 

@@ -2,15 +2,27 @@ package coverfetch
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 )
 
+// liveEnabled 判断联网用例是否被显式打开。
+//
+// ★ 原先这里用的是 `testing.Short()`，而 CI 跑的是 `go test -race`（**不带**
+// -short）—— 于是这两个联网探针在每次 CI 里都真的朝 itunes / netease /
+// deezer / musicbrainz 发请求（审查报告第六轮 第 15 条：它是全仓唯一漏掉
+// 门禁开关的联网用例）。第三方站点抖动或限流会让 CI 红，而这与本次提交无关。
+//
+// 现在与其它联网用例（LMPLAYER_LIVE_KUGOU / LMPLAYER_LIVE_QQ /
+// LMPLAYER_LIVE_UPDATE）统一成一个显式开关，默认**跳过**。
+func liveEnabled() bool { return os.Getenv("LMPLAYER_LIVE_COVERFETCH") == "1" }
+
 // TestProvidersProbe 逐个来源打一次真实请求，输出诊断信息。
-// 依赖外网，用 -short 跳过；日常 `go test ./...` 不会跑它。
+// 依赖外网：默认跳过，需要时用 `LMPLAYER_LIVE_COVERFETCH=1 go test ./internal/coverfetch/ -run TestProvidersProbe -v`。
 func TestProvidersProbe(t *testing.T) {
-	if testing.Short() {
-		t.Skip("短模式跳过联网用例")
+	if !liveEnabled() {
+		t.Skip("需要 LMPLAYER_LIVE_COVERFETCH=1 才跑真实网络测试")
 	}
 	req := Request{Title: "晴天", Artist: "周杰伦", Album: "叶惠美"}
 	providers := []Provider{NewITunes(), NewNetease(), NewDeezer(), NewMusicBrainz()}
@@ -36,9 +48,10 @@ func TestProvidersProbe(t *testing.T) {
 }
 
 // TestDownloadITunes 真下载一张 iTunes 封面，确认图床白名单与下载路径可用。
+// 同样默认跳过（见 liveEnabled 的说明）。
 func TestDownloadITunes(t *testing.T) {
-	if testing.Short() {
-		t.Skip("短模式跳过联网用例")
+	if !liveEnabled() {
+		t.Skip("需要 LMPLAYER_LIVE_COVERFETCH=1 才跑真实网络测试")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()

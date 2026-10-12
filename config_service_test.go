@@ -224,3 +224,59 @@ func TestAIDownloadTagTogglePersists(t *testing.T) {
 		t.Fatal("aiDownloadTag=true 未落盘")
 	}
 }
+
+// TestResetKeepsWritingToDisk 「恢复默认设置」之后设置必须还能存进磁盘。
+//
+// 对应审查报告第 9 条（高危）。旧实现是 `*c = *def`，而 DefaultConfig() 里
+// ConfigPath 是**空的**（真实路径由 NewStore 在运行时按 DataDir 拼出来），
+// 于是 Reset 顺手把「往哪儿落盘」一起清掉了：此后所有设置改动都只改内存，
+// 重启即丢，报错是 `rename .3.tmp : The system cannot find the path specified`。
+//
+// 断言必须跨进程读盘（重新 NewStore），只看内存返回值是看不出这个 bug 的。
+func TestResetKeepsWritingToDisk(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("LMPLAYER_DATA_DIR", dataDir)
+	store, err := bootstrap.NewStore()
+	if err != nil {
+		t.Fatalf("创建配置存储失败: %v", err)
+	}
+	svc := NewConfigService(store)
+
+	// 先放一个文件夹进去：Reset 的既有语义是「保留文件夹列表」。
+	// （文件夹不走 applyPatch，是 LibraryService 的专属动作，这里直接写 store。）
+	folder := filepath.Join(dataDir, "music")
+	if err := store.Update(func(c *bootstrap.Config) {
+		c.Folders = append(c.Folders, bootstrap.Folder{ID: "f1", Path: folder})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgs := svc.Path()
+	if strings.TrimSpace(cfgs) == "" {
+		t.Fatal("Reset 之前配置路径就已经是空的")
+	}
+	if _, err := svc.Reset(); err != nil {
+		t.Fatalf("恢复默认设置失败: %v", err)
+	}
+
+	// ① 路径当场就得还在
+	if got := svc.Path(); got != cfgs {
+		t.Fatalf("Reset 之后配置路径 = %q，期望仍是 %q", got, cfgs)
+	}
+	// ② 文件夹列表保留（既有语义）
+	if got := svc.Get().Folders; len(got) != 1 || got[0].Path != folder {
+		t.Fatalf("Reset 之后 folders = %+v，期望保留那一个文件夹", got)
+	}
+
+	// ③ 关键：Reset 之后再改设置，**重启还在**
+	if _, err := svc.Set(map[string]any{"lyricsFontSize": 26}); err != nil {
+		t.Fatalf("Reset 之后写配置失败: %v", err)
+	}
+	reopened, err := bootstrap.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reopened.Get().LyricsFontSize; got != 26 {
+		t.Fatalf("重启后 lyricsFontSize = %d，期望 26 —— Reset 把配置路径清掉了，改动只留在内存里", got)
+	}
+}

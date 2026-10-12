@@ -8,9 +8,14 @@ import { createServer } from "node:http";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(root, "frontend", "src");
 const CDP_PORT = 9347;
-const EDGE = ["C:\\\\Program Files (x86)\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe",
-              "C:\\\\Program Files\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe"].find(existsSync);
-if (!EDGE) { console.error("no edge"); process.exit(1); }
+const EDGE = [
+  "C:\\\\Program Files (x86)\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe",
+  "C:\\\\Program Files\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe",
+].find(existsSync);
+if (!EDGE) {
+  console.error("no edge");
+  process.exit(1);
+}
 
 const PAGE = `<!DOCTYPE html><html><head><style id="runtime-tokens"></style></head><body>
 <script type="module">
@@ -27,7 +32,10 @@ const server = createServer((req, res) => {
   }
   const rel = p === "/runtime-tokens.js" ? join("js", "runtime-tokens.js") : p.slice(1);
   const file = join(SRC, rel);
-  if (!existsSync(file) || statSync(file).isDirectory()) { res.writeHead(404); return res.end("nf"); }
+  if (!existsSync(file) || statSync(file).isDirectory()) {
+    res.writeHead(404);
+    return res.end("nf");
+  }
   res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" });
   res.end(readFileSync(file));
 });
@@ -35,8 +43,18 @@ await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const PORT = server.address().port;
 const userDir = join(tmpdir(), "lmp-tok-" + Date.now());
 mkdirSync(userDir, { recursive: true });
-const edge = spawn(EDGE, ["--headless=new", "--disable-gpu", `--remote-debugging-port=${CDP_PORT}`,
-  `--user-data-dir=${userDir}`, "--no-first-run", `http://127.0.0.1:${PORT}/`], { stdio: "ignore" });
+const edge = spawn(
+  EDGE,
+  [
+    "--headless=new",
+    "--disable-gpu",
+    `--remote-debugging-port=${CDP_PORT}`,
+    `--user-data-dir=${userDir}`,
+    "--no-first-run",
+    `http://127.0.0.1:${PORT}/`,
+  ],
+  { stdio: "ignore" }
+);
 
 async function waitTarget() {
   for (let i = 0; i < 120; i++) {
@@ -51,16 +69,32 @@ async function waitTarget() {
 }
 const ws = new WebSocket(await waitTarget());
 await new Promise((r) => (ws.onopen = r));
-let id = 0; const pending = new Map();
-ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
-const send = (method, params) => { const i = ++id; return new Promise((res) => { pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); }); };
+let id = 0;
+const pending = new Map();
+ws.onmessage = (e) => {
+  const m = JSON.parse(e.data);
+  if (m.id && pending.has(m.id)) {
+    pending.get(m.id)(m);
+    pending.delete(m.id);
+  }
+};
+const send = (method, params) => {
+  const i = ++id;
+  return new Promise((res) => {
+    pending.set(i, res);
+    ws.send(JSON.stringify({ id: i, method, params }));
+  });
+};
 async function ev(expr) {
   const r = await send("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true });
   const ex = r.result?.exceptionDetails;
   if (ex) return { __error: ex.exception?.description || ex.text };
   return r.result?.result?.value;
 }
-for (let i = 0; i < 60; i++) { if (await ev("window.__tokReady === true")) break; await new Promise((r) => setTimeout(r, 200)); }
+for (let i = 0; i < 60; i++) {
+  if (await ev("window.__tokReady === true")) break;
+  await new Promise((r) => setTimeout(r, 200));
+}
 
 const out = await ev(`(() => {
   const m = window.__tok;
@@ -82,4 +116,7 @@ const out = await ev(`(() => {
 })()`);
 
 console.log(JSON.stringify(out, null, 2));
-ws.close(); edge.kill(); server.close(); process.exit(0);
+ws.close();
+edge.kill();
+server.close();
+process.exit(0);

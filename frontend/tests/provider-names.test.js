@@ -53,12 +53,9 @@ test("Go 侧封面来源都要有中文显示名", () => {
     assert.notEqual(
       providerName(id),
       id,
-      `封面来源 ${id} 没有显示名（界面会直接显示内部标识；请补 provider-names.js 的 PROVIDER_NAMES）`,
+      `封面来源 ${id} 没有显示名（界面会直接显示内部标识；请补 provider-names.js 的 PROVIDER_NAMES）`
     );
-    assert.ok(
-      COVER_PROVIDERS.includes(id),
-      `封面来源 ${id} 不在 COVER_PROVIDERS 里（兜底文案会漏掉它）`,
-    );
+    assert.ok(COVER_PROVIDERS.includes(id), `封面来源 ${id} 不在 COVER_PROVIDERS 里（兜底文案会漏掉它）`);
   }
 });
 
@@ -66,15 +63,8 @@ test("Go 侧歌词来源都要有中文显示名", () => {
   const goIDs = providerIDsFromGo("lyricsfetch");
   for (const id of goIDs) {
     // ★ lrclib 就是从这里漏掉的
-    assert.notEqual(
-      providerName(id),
-      id,
-      `歌词来源 ${id} 没有显示名（用户会在「在线歌词来源」里看到内部标识）`,
-    );
-    assert.ok(
-      LYRICS_PROVIDERS.includes(id),
-      `歌词来源 ${id} 不在 LYRICS_PROVIDERS 里`,
-    );
+    assert.notEqual(providerName(id), id, `歌词来源 ${id} 没有显示名（用户会在「在线歌词来源」里看到内部标识）`);
+    assert.ok(LYRICS_PROVIDERS.includes(id), `歌词来源 ${id} 不在 LYRICS_PROVIDERS 里`);
   }
 });
 
@@ -110,16 +100,10 @@ test("界面文案里不许再手写来源清单", () => {
   //（coverfetch 有 5 个来源，句子里只列了 4 个）—— 用户看到的说明与实际
   // 联网行为不一致。现在它由 providerFallbackLabel() 派生。
   // 这里守住「不许再手写」：一旦有人把字面量写回去就红。
-  const src = readFileSync(
-    join(repoRoot, "frontend", "src", "js", "ui", "settings-view.js"),
-    "utf8"
-  );
+  const src = readFileSync(join(repoRoot, "frontend", "src", "js", "ui", "settings-view.js"), "utf8");
   const line = src.split("\n").find((l) => l.includes("封面来自公开曲库"));
   assert.ok(line, "找不到「封面来自公开曲库」这句文案（改名了？）");
-  assert.ok(
-    line.includes("providerFallbackLabel()"),
-    `这句文案应当由来源表派生，实际是：${line.trim()}`
-  );
+  assert.ok(line.includes("providerFallbackLabel()"), `这句文案应当由来源表派生，实际是：${line.trim()}`);
   for (const name of ["iTunes", "Deezer", "MusicBrainz", "网易云"]) {
     assert.ok(!line.includes(name), `文案里还硬写着来源名「${name}」：${line.trim()}`);
   }

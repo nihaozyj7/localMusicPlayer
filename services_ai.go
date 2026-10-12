@@ -144,9 +144,16 @@ func (s *AiService) ExtractMeta(title, artist, album, filename string) (CleanMet
 	}
 	cfg := s.store.Get()
 
-	base := strings.TrimRight(strings.TrimSpace(cfg.AIBaseURL), "/")
-	if !strings.Contains(base, "://") {
-		base = "https://" + base
+	// ★ 安全边界：地址来自用户配置，而下面这个请求会带上**真实密钥**
+	// （requestMeta 里的 Authorization 头）。所以地址不合法就一个字节都不发，
+	// 直接把原因返回给调用方（它负责写日志 / 变成界面提示）。
+	//
+	// 非法地址**仍然留在配置里**（NormalizeAIBaseURLStored 有意不丢用户输入），
+	// 因此每次调用都会在这里被拦下 —— 这正是「配置页显示着他填的地址、
+	// 功能明确报错」，而不是「地址被悄悄清空、AI 莫名不可用」。
+	base, err := bootstrap.NormalizeAIBaseURL(cfg.AIBaseURL)
+	if err != nil {
+		return CleanMeta{}, err
 	}
 	model := strings.TrimSpace(cfg.AIModelID)
 	if model == "" {

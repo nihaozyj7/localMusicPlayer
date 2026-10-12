@@ -546,16 +546,38 @@ func (s *Store) SetActiveCover(songID string, idx int) error {
 // RemoveCover 删掉第 idx 张封面（文件 + 索引项），并修正当前生效下标。
 //
 // 删掉唯一一张 = 这首歌没有封面了（条目也一并移除，免得留下空壳）。
+//
+// 只有「改内存索引 + 落盘索引」需要持锁；磁盘文件在**锁外**删（见下面注释）。
 func (s *Store) RemoveCover(songID string, idx int) error {
+	old, err := s.removeCoverLocked(songID, idx)
+	if err != nil {
+		return err
+	}
+	// 索引已经落盘，文件删失败最多是留下一个孤儿文件（不影响正确性），
+	// 所以放在锁外、错误也不外抛。
+	//
+	// ★ 这里原本是 `defer s.mu.Unlock()` + 锁内删文件：注释写着「放在锁外」，
+	//   实现却让所有封面读取在删文件期间一起等 —— 注释与实现不符（第六轮审查
+	//   §4.2）。现在与下面的 DeleteCover 保持同一种写法：先在锁内把状态改完并
+	//   落盘，解锁之后才碰磁盘；TestCoverFileDeletionIsOutsideLock 守着这条约定。
+	if old.File != "" {
+		_ = os.Remove(filepath.Join(s.dir, string(KindCover), old.File))
+	}
+	return nil
+}
+
+// removeCoverLocked 完成 RemoveCover 需要持锁的那一半：校验、改内存索引、落盘
+// 索引，并返回被删掉的那一项（调用方据此在锁外删文件）。
+func (s *Store) removeCoverLocked(songID string, idx int) (CoverFile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensureLoadedLocked()
 	entry, ok := s.covers[songID]
 	if !ok || len(entry.Items) == 0 {
-		return errors.New("这首歌还没有缓存封面")
+		return CoverFile{}, errors.New("这首歌还没有缓存封面")
 	}
 	if idx < 0 || idx >= len(entry.Items) {
-		return fmt.Errorf("封面下标越界: %d（共 %d 张）", idx, len(entry.Items))
+		return CoverFile{}, fmt.Errorf("封面下标越界: %d（共 %d 张）", idx, len(entry.Items))
 	}
 
 	old := entry.Items[idx]
@@ -577,14 +599,9 @@ func (s *Store) RemoveCover(songID string, idx int) error {
 		s.covers[songID] = syncV1(entry)
 	}
 	if err := s.saveIndexLocked(KindCover); err != nil {
-		return err
+		return CoverFile{}, err
 	}
-	// 索引已经落盘，文件删失败最多是留下一个孤儿文件（不影响正确性），
-	// 所以放在锁外、错误也不外抛。
-	if old.File != "" {
-		_ = os.Remove(filepath.Join(s.dir, string(KindCover), old.File))
-	}
-	return nil
+	return old, nil
 }
 
 // DeleteCover 清空某首歌的全部封面缓存（用户点「恢复原始封面」时用）。

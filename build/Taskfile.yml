@@ -76,7 +76,7 @@ tasks:
       - node tools/build-frontend.mjs
 
   check:frontend:
-    summary: 前端工程化检查（lint + 类型检查 + 单测）
+    summary: 前端工程化检查（格式化 + lint + 类型检查 + 单测）
     cmds:
       - npm run check
 

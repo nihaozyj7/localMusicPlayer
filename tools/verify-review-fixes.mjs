@@ -27,11 +27,21 @@ const EDGE = [
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
   "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
 ].find((p) => existsSync(p));
-if (!EDGE) { console.error("找不到 msedge.exe"); process.exit(1); }
+if (!EDGE) {
+  console.error("找不到 msedge.exe");
+  process.exit(1);
+}
 
-const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
-  ".json": "application/json", ".jpg": "image/jpeg", ".woff2": "font/woff2" };
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".json": "application/json",
+  ".jpg": "image/jpeg",
+  ".woff2": "font/woff2",
+};
 
 const server = createServer((req, res) => {
   const p = decodeURIComponent(new URL(req.url, "http://x").pathname);
@@ -43,7 +53,10 @@ export const Events = { On(){return ()=>{}}, Off(){}, Emit(){return Promise.reso
 export default { Call, Events };`);
   }
   const file = join(DIST, p === "/" ? "index.html" : p.slice(1));
-  if (!existsSync(file) || statSync(file).isDirectory()) { res.writeHead(404); return res.end("nf"); }
+  if (!existsSync(file) || statSync(file).isDirectory()) {
+    res.writeHead(404);
+    return res.end("nf");
+  }
   res.writeHead(200, { "Content-Type": MIME[file.slice(file.lastIndexOf("."))] || "application/octet-stream" });
   res.end(readFileSync(file));
 });
@@ -52,11 +65,19 @@ const PORT = server.address().port;
 
 const userDir = join(tmpdir(), "lmp-verify-" + Date.now());
 mkdirSync(userDir, { recursive: true });
-const edge = spawn(EDGE, [
-  "--headless=new", "--disable-gpu", `--remote-debugging-port=${CDP_PORT}`,
-  `--user-data-dir=${userDir}`, "--no-first-run", "--window-size=1280,900",
-  `http://127.0.0.1:${PORT}/index.html`,
-], { stdio: "ignore" });
+const edge = spawn(
+  EDGE,
+  [
+    "--headless=new",
+    "--disable-gpu",
+    `--remote-debugging-port=${CDP_PORT}`,
+    `--user-data-dir=${userDir}`,
+    "--no-first-run",
+    "--window-size=1280,900",
+    `http://127.0.0.1:${PORT}/index.html`,
+  ],
+  { stdio: "ignore" }
+);
 
 async function waitTarget() {
   for (let i = 0; i < 120; i++) {
@@ -71,11 +92,21 @@ async function waitTarget() {
 }
 const ws = new WebSocket(await waitTarget());
 await new Promise((r) => (ws.onopen = r));
-let id = 0; const pending = new Map();
-ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
+let id = 0;
+const pending = new Map();
+ws.onmessage = (e) => {
+  const m = JSON.parse(e.data);
+  if (m.id && pending.has(m.id)) {
+    pending.get(m.id)(m);
+    pending.delete(m.id);
+  }
+};
 function send(method, params) {
   const myId = ++id;
-  return new Promise((res) => { pending.set(myId, res); ws.send(JSON.stringify({ id: myId, method, params })); });
+  return new Promise((res) => {
+    pending.set(myId, res);
+    ws.send(JSON.stringify({ id: myId, method, params }));
+  });
 }
 async function evaluate(expr) {
   const r = await send("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true });
@@ -159,4 +190,7 @@ out.store = await evaluate(`(async () => {
 })()`);
 
 console.log(JSON.stringify(out, null, 2));
-ws.close(); edge.kill(); server.close(); process.exit(0);
+ws.close();
+edge.kill();
+server.close();
+process.exit(0);

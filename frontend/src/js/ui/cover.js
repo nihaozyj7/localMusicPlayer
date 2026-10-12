@@ -176,12 +176,7 @@ class MpCoverLayer extends MpPanel {
         </div>
 
         <div class="cover-panel__foot">
-          <button
-            class="btn btn--sm"
-            type="button"
-            data-cover-act="open-cache"
-            @click=${() => this.openCacheDir()}
-          >
+          <button class="btn btn--sm" type="button" data-cover-act="open-cache" @click=${() => this.openCacheDir()}>
             ${icon("folder")}<span>打开缓存目录</span>
           </button>
         </div>

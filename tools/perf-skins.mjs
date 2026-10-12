@@ -133,7 +133,9 @@ async function profile(ms) {
     const n = byId.get(id);
     if (!n) continue;
     const f = n.callFrame;
-    const key = `${f.functionName || "(anonymous)"} @ ${String(f.url || "").split("/").pop()}:${f.lineNumber}`;
+    const key = `${f.functionName || "(anonymous)"} @ ${String(f.url || "")
+      .split("/")
+      .pop()}:${f.lineNumber}`;
     self.set(key, (self.get(key) || 0) + 1);
   }
   return [...self.entries()]
@@ -142,7 +144,9 @@ async function profile(ms) {
     .map(([k, v]) => ({ fn: k, pct: +((v / total) * 100).toFixed(1) }));
 }
 
-const all = JSON.parse(await evaluate("JSON.stringify([...document.querySelectorAll('[data-pv-skin]')].map(b=>b.dataset.pvSkin))"));
+const all = JSON.parse(
+  await evaluate("JSON.stringify([...document.querySelectorAll('[data-pv-skin]')].map(b=>b.dataset.pvSkin))")
+);
 const skins = ONLY.length ? all.filter((s) => ONLY.includes(s)) : all;
 console.log(`${skins.length} 个样式，每个采样 ${FRAMES} 帧\n`);
 const table = [];

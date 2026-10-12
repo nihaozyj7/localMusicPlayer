@@ -137,6 +137,22 @@ type PlayerService struct {
 
 	// lastTrim 是最近一次装载实际用的掐点（诊断 / 前端展示「跳过了多少」）。
 	lastTrim audioplay.SilenceTrim
+
+	// loadSeq 是「装载意图」的代际号：每次 Load / Unload 都 +1。
+	//
+	// 为什么必须有它：resolve 会被放到锁外执行（未命中转码缓存时要跑一次
+	// ffmpeg，实测 0.8~1.2 秒，见 Load 的实测数字）。在这段时间里用户完全
+	// 可能又切了一首歌、或者点了停止（清空队列），于是**两个 Load 会同时在
+	// 飞**，或者 Unload 已经落地。没有代际判断时，先发起、后返回的那一个会
+	// 无条件覆盖 currentSongID 并把音频装载进引擎 —— 表现为「点 B 播 A」、
+	// 或者「点了停止却还在出声，而且暂停也按不掉」，且不会自愈。
+	//
+	// 判据是「进 Load 时领的号 == 现在还在用的号」：号变了就说明这次装载
+	// 已经不是最后一次意图，直接放弃（不改状态、不动引擎）。
+	// 括号里那句旧注释（「竞态下如果已经切到别的歌了，就别覆盖状态」）说的
+	// 正是这件事 —— 但在此之前代码里没有任何代际判断，属于注释承诺了、
+	// 实现没兑现。
+	loadSeq uint64
 }
 
 // eventEmitter 是发事件需要的最小接口。
@@ -301,6 +317,14 @@ func (s *PlayerService) Load(songID string) (map[string]any, error) {
 		return nil, fmt.Errorf("歌曲 id 为空")
 	}
 
+	// ★ 领号（见 loadSeq 的说明）：这一次装载属于第几代意图。
+	// 号在**进入 Load 时**就递增，并且要早于下面的 resolve —— 后发起的
+	// Load 一定拿到更大的号，先发起的那个回来后就会发现自己已经过期。
+	s.mu.Lock()
+	s.loadSeq++
+	gen := s.loadSeq
+	s.mu.Unlock()
+
 	// ★★★ 先让引擎安静，再去解析 —— 顺序不能反。
 	//
 	// resolve 可能要跑一次 ffmpeg 转码（实测未命中缓存时 0.8~1.2 秒，
@@ -339,6 +363,18 @@ func (s *PlayerService) Load(songID string) (map[string]any, error) {
 	defer s.mu.Unlock()
 	if !s.available || s.engine == nil {
 		return nil, fmt.Errorf("后端音频不可用")
+	}
+
+	// ★ 代际校验：resolve 期间（可能一秒以上）又切了歌、或者点了停止，
+	// 这次装载就已经过期。**必须在这里就返回**，绝不能往下走到
+	// engine.Load —— 否则会把已经切走/已经停掉的状态又覆盖回来。
+	//
+	// 返回 superseded 而不是错误：这不是失败（没有坏文件、不需要提示），
+	// 只是「你的意图已经被更新的一次取代了」。前端据此静默收工；
+	// 前端自己也有 requestSeq 闸门（见 audio.js#loadSong / unloadCurrent），
+	// 这里是后端的第二道 —— 后端的状态必须由后端自己守住。
+	if s.loadSeq != gen {
+		return map[string]any{"superseded": true}, nil
 	}
 
 	// ★ 换歌为什么不该有「切歌间隔」的停顿：间隔是「自动接下一首」的停顿，
@@ -539,6 +575,11 @@ func (s *PlayerService) CancelTrackGap() map[string]any {
 func (s *PlayerService) Unload() map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// ★ 让在途的 Load 作废（见 loadSeq）：resolve 在锁外跑，Unload 落地时
+	// 它可能还没返回。不作废的话，那次装载会带着「已经过期」的意图把
+	// 引擎重新点亮 —— 用户点了停止、队列也空了，声音却出来了，
+	// 而且界面处于「没在播」状态，暂停/停止都按不掉（前端认为无事可做）。
+	s.loadSeq++
 	if s.engine != nil {
 		// 先取消可能还挂着的切歌间隔，再暂停：
 		// 顺序反过来的话，间隔走完的回调会把「已经停掉的播放器」又推到下一首。

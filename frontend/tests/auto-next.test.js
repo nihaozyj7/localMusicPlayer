@@ -170,11 +170,7 @@ test("audio.js：syncPlayState 必须在同状态时直接返回（不再重复�
 });
 
 test("audio.js：backendPlaying 必须被锚点、推送、卸载三处维护", () => {
-  assert.match(
-    audioCode,
-    /let backendPlaying = null;/,
-    "audio.js 里必须有 backendPlaying 这个模块级状态"
-  );
+  assert.match(audioCode, /let backendPlaying = null;/, "audio.js 里必须有 backendPlaying 这个模块级状态");
   // 锚点是后端状态的权威来源（播完那条锚点就是从这里进来的）
   assert.match(
     bodyOf(audioCode, "function applyAnchor(payload) {"),

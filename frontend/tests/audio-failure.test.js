@@ -57,8 +57,7 @@ function makeFailureMachine(queue) {
 
       this.consecutiveFailures += 1;
       const giveUp = this.consecutiveFailures >= FAILURE_STREAK_LIMIT;
-      const willSkip =
-        !giveUp && this.playing && !this.sleepAfterSong && this.playMode !== "loop-one";
+      const willSkip = !giveUp && this.playing && !this.sleepAfterSong && this.playMode !== "loop-one";
 
       if (giveUp) {
         this.playing = false;

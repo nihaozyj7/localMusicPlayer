@@ -10,7 +10,7 @@
 import { toast } from "./dom.js";
 import { MOCK_FOLDERS, MOCK_FILTER_RULES, MOCK_PLAYLISTS, MOCK_SONGS } from "./mock.js";
 import { moveItem, setCoverOverrideGetter, uid, uniq } from "./utils.js";
-import { backend, connect, emit, isWails, on } from "./bridge.js";
+import { backend, connect, isWails, on } from "./bridge.js";
 // 预览模式下没有后端，检查更新要拿它编一个「已是最新版」出来
 import { APP_VERSION_FALLBACK } from "./about-info.js";
 
@@ -869,10 +869,7 @@ function ensureHaystack(list) {
   if (haystackSource === list) return haystackIndex;
   const next = new Map();
   for (const s of list) {
-    next.set(
-      s.id,
-      `${s.title}${HAY_SEP}${s.artist}${HAY_SEP}${s.album}${HAY_SEP}${s.ext}`.toLowerCase()
-    );
+    next.set(s.id, `${s.title}${HAY_SEP}${s.artist}${HAY_SEP}${s.album}${HAY_SEP}${s.ext}`.toLowerCase());
   }
   haystackSource = list;
   haystackIndex = next;
@@ -889,7 +886,9 @@ function ensureHaystack(list) {
  * @param {string} query 原始查询词（内部自行 trim + 小写）
  */
 export function filterByQuery(list, query) {
-  const q = String(query ?? "").trim().toLowerCase();
+  const q = String(query ?? "")
+    .trim()
+    .toLowerCase();
   if (!q) return list;
 
   // 查询串含分隔符时不能走索引：\0 天然出现在拼接处，会让 includes("\0")
@@ -1929,7 +1928,6 @@ export function playSong(songId, options = {}) {
   state.duration = song.duration || 0;
   state.playing = true;
   commit();
-  emit("player:play", { songId });
 }
 
 export function playContext(songIds, startIndex = 0, origin = null) {
@@ -1952,7 +1950,6 @@ export function togglePlay() {
   }
   state.playing = !state.playing;
   commit();
-  emit(state.playing ? "player:play" : "player:pause", { songId: state.currentId });
 }
 
 /* --------------------------------------------------------------------------
@@ -2022,7 +2019,6 @@ export function playNext(auto = false) {
     state.playing = false;
     state.position = state.duration || 0;
     commit();
-    emit("player:pause", { songId: state.currentId });
     return;
   }
   // 「下一首播放」：随机模式下队列下标不代表播放顺序，先消费显式标记
@@ -2057,7 +2053,6 @@ export function seek(ms) {
   // 暂停状态下拖动进度条也要记住落点：进度通知只在播放时来。
   noteProgress(state.position);
   commit();
-  emit("player:seek", { ms });
 }
 
 /**
@@ -2093,13 +2088,11 @@ export function setVolume(v) {
   state.config.volume = state.volume;
   state.config.muted = state.muted;
   commit();
-  emit("player:volume", { volume: state.volume, muted: state.muted });
 }
 
 export function toggleMute() {
   state.muted = !state.muted;
   commit();
-  emit("player:volume", { volume: state.volume, muted: state.muted });
 }
 
 export function cyclePlayMode() {
@@ -2425,7 +2418,21 @@ export async function flushConfigSync() {
     patch.muted = state.muted;
   }
   try {
-    await backend.setConfig(patch);
+    // 后端 Set 会回传**规范化过**的完整配置。这里只取两个字段：
+    //   · aiBaseUrl         —— 规范化结果（补协议、去尾斜杠）要反映到输入框里；
+    //   · aiBaseUrlProblem  —— 「这个地址不会被使用」的原因（后端算的，规则只有
+    //                          一份；不取的话用户改完地址要等下次启动才会看到警告）。
+    // ★ 不要把整包并回 state.config：后端那份不含本地还没同步的键（例如
+    //   filterRules 就不在 SYNCED_KEYS 里），整包覆盖会把用户刚编辑的内容打回旧值。
+    const saved = await backend.setConfig(patch);
+    if (saved && typeof saved === "object") {
+      if (typeof saved.aiBaseUrl === "string") state.config.aiBaseUrl = saved.aiBaseUrl;
+      state.config.aiBaseUrlProblem = saved.aiBaseUrlProblem || "";
+      // config 对象是**原地改**的（引用不变），Lit 的依赖比较看不出变化，
+      // 所以要显式推进版本号并广播（与 commit() 里 updateRev 的理由相同）。
+      state.updateRev = (state.updateRev || 0) + 1;
+      notify();
+    }
   } catch (err) {
     console.warn("[store] 配置写入后端失败", err);
   }
@@ -2527,13 +2534,28 @@ export async function hydrateFromBackend() {
   const ok = await connect();
   if (!ok) return false;
 
+  // ★ 逐项兜底，**不用裸 Promise.all**（审查报告第 38 条）。
+  //
+  // 裸 Promise.all 的语义是「任一失败 → 整体失败」：后端有一个绑定抛错
+  // （某个服务没注册、某次读盘失败），整个 hydrateFromBackend 就抛出，
+  // 曲库 / 文件夹 / 歌单 / 配置**全都停在初始状态** —— 界面看起来是「什么都没有」，
+  // 而唯一线索是控制台里一行未捕获异常。
+  //
+  // 逐项兜底之后，坏掉的那一块保持默认，其余照常显示；每一行都有明确的
+  // 中文标签，出事时能一眼看出是哪一项（而不是「某个请求失败了」）。
+  const safe = (label, promise, fallback) =>
+    promise.catch((err) => {
+      console.warn(`[store] 启动水合：${label} 失败，这一块保持默认`, err);
+      return fallback;
+    });
+
   const [songs, folders, cfg, playlists, version] = await Promise.all([
-    backend.songs(),
-    backend.folders(),
-    backend.getConfig(),
-    backend.playlists(),
+    safe("曲库", backend.songs(), null),
+    safe("文件夹", backend.folders(), null),
+    safe("配置", backend.getConfig(), null),
+    safe("歌单", backend.playlists(), null),
     // 版本号只影响「关于」卡片里的一行文本，失败不该拖垮整个启动流程
-    backend.appVersion().catch(() => null),
+    safe("版本号", backend.appVersion(), null),
   ]);
   if (version) state.appVersion = String(version);
 

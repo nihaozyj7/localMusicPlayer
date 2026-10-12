@@ -19,12 +19,7 @@ import path from "node:path";
 
 const ROOT = process.cwd();
 
-const SCAN_DIRS = [
-  "frontend/src/js",
-  "frontend/packages/player-skins/src",
-  "frontend/src",
-  "frontend/tests",
-];
+const SCAN_DIRS = ["frontend/src/js", "frontend/packages/player-skins/src", "frontend/src", "frontend/tests"];
 
 function walk(dir, out = []) {
   const abs = path.join(ROOT, dir);
@@ -120,7 +115,10 @@ for (const f of files) {
   for (const e of exps) {
     const selfRe = new RegExp(`(?<![\\w$.])${(e.local || e.name).replace(/\$/g, "\\$")}(?![\\w$])`, "g");
     const selfCount = (src.match(selfRe) || []).length;
-    const srcRefs = countRefs(e.name, SRC_FILES.filter((x) => x !== f));
+    const srcRefs = countRefs(
+      e.name,
+      SRC_FILES.filter((x) => x !== f)
+    );
     const tstRefs = countRefs(e.name, TEST_FILES);
     const totalOther = srcRefs.n + tstRefs.n;
     const localUses = selfCount - 1; // 减掉声明本身
@@ -153,7 +151,7 @@ function printGroup(title, list) {
   console.log(`\n### ${title}  (${list.length})`);
   for (const e of list) {
     console.log(
-      `  ${e.file}  ::  ${e.name}  [${e.kind}]  src=${e.srcRefs} test=${e.testRefs} local=${e.selfFileUses}`,
+      `  ${e.file}  ::  ${e.name}  [${e.kind}]  src=${e.srcRefs} test=${e.testRefs} local=${e.selfFileUses}`
     );
     if (e.srcWhere) console.log(`        src:  ${e.srcWhere.join(", ")}`);
     if (e.testWhere) console.log(`        test: ${e.testWhere.join(", ")}`);
@@ -166,13 +164,18 @@ console.log("=".repeat(78));
 console.log(`扫描文件数: ${files.length}  (src ${SRC_FILES.length} / tests ${TEST_FILES.length})`);
 console.log(`导出符号总数: ${flat.length}`);
 
-printGroup("A. DEAD — 全库零引用（含本文件内也未使用）", flat.filter((e) => e.verdict === "DEAD"));
-printGroup("B. FILE_LOCAL_ONLY — 仅本文件内使用，导出关键字多余", flat.filter((e) => e.verdict === "FILE_LOCAL_ONLY"));
-printGroup("C. TEST_ONLY — 只有单测引用，生产代码无引用", flat.filter((e) => e.verdict === "TEST_ONLY"));
-
-fs.writeFileSync(
-  path.join(ROOT, ".tmp-audit", "js-usage.json"),
-  JSON.stringify(report, null, 2),
-  "utf8",
+printGroup(
+  "A. DEAD — 全库零引用（含本文件内也未使用）",
+  flat.filter((e) => e.verdict === "DEAD")
 );
+printGroup(
+  "B. FILE_LOCAL_ONLY — 仅本文件内使用，导出关键字多余",
+  flat.filter((e) => e.verdict === "FILE_LOCAL_ONLY")
+);
+printGroup(
+  "C. TEST_ONLY — 只有单测引用，生产代码无引用",
+  flat.filter((e) => e.verdict === "TEST_ONLY")
+);
+
+fs.writeFileSync(path.join(ROOT, ".tmp-audit", "js-usage.json"), JSON.stringify(report, null, 2), "utf8");
 console.log("\n[写入] .tmp-audit/js-usage.json");

@@ -28,8 +28,12 @@
 //
 // # 命名
 //
-//	<dir>/<bvid><ext>            例如 …\LocalMusicPlayer\online\BV1xx411c7mD.m4a
-//	<dir>/<bvid><ext>.part       写入中的半成品（永远不是合法的缓存文件）
+//	<dir>/<bvid><ext>                  例如 …\LocalMusicPlayer\online\BV1xx411c7mD.m4a
+//	<dir>/<bvid><ext>.<随机>.part       写入中的半成品（永远不是合法的缓存文件）
+//
+// 半成品名里的随机后缀是为了让**并发写同一个 bvid** 的两个请求各写各的文件，
+// 不会互相截断（见 writeAtomic）。旧版本的固定名 `<bvid><ext>.part` 仍然
+// 会被清理逻辑认出来（见 cacheName / removeParts）。
 //
 // 用 bvid 直接做文件名：一个视频对应一份音频，天然去重；而且**可读**，
 // 用户排查时一眼能认出是哪首歌。文件名要过滤（见 safeName），因为 bvid
@@ -37,14 +41,18 @@
 package onlinecache
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -71,10 +79,11 @@ const minValidBytes = 1024
 // 淘汰（与 media.Server 的转码缓存同一思路）。
 const cacheBudgetBytes = 512 << 20
 
-// partSuffix 是写入中的半成品后缀。
+// partSuffix 是写入中的半成品后缀（正式名 + "." + 随机后缀 + 它）。
 //
-// 用独立后缀而不是「先写目标名再改名」：目标是**命中判据**，
-// 一个写了一半的文件绝不能被 Lookup 看到。
+// 半成品必须是**独立的文件名**：正式名就是命中判据（Lookup 只看它），
+// 一个写了一半的文件绝不能被 Lookup 看到；而随机后缀保证并发写同一条缓存时
+// 各个写者互不覆盖（见 writeAtomic）。
 const partSuffix = ".part"
 
 // namePattern 限制缓存文件名形态：字母数字/下划线/连字符 + 已知音频扩展名。
@@ -90,8 +99,10 @@ var namePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+\.(m4a|mp4|mp3|aac|flac|wav
 type Store struct {
 	dir string
 
-	// mu 保护 map 与淘汰逻辑。文件本身的读写不加这个锁（那会串行化所有下载），
-	// 并发写同一个 bvid 由 ensureWriter 的 O_EXCL 占位来挡。
+	// mu 保护 map 与淘汰逻辑。文件本身的读写不加这个锁（那会串行化所有下载）；
+	// 同一个 bvid 的并发写靠 writeAtomic 的**独占临时文件**互不破坏：
+	// 各写各的 `<目标名>.<随机>.part`，最后完成的那个原子改名落盘，
+	// 输的一方只是白写一遍，不会截断赢家的文件，也不会有半成品留在目录里。
 	mu      sync.Mutex
 	entries map[string]*entry
 }
@@ -208,11 +219,13 @@ func NormalizeExt(ext string) string {
 
 // Store 把 r 的内容写成 bvid 的缓存文件，返回落盘字节数。
 //
-// 写入策略与下载服务一致：先写 <name>.part，成功后**原子改名**。
-// 这样 Lookup 永远不会看到一个写了一半的文件 —— 而「半成品被当成有效缓存」
-// 正是「试听没声音」最隐蔽的一种成因。
+// 写入策略与下载服务一致：先写独占的半成品 `<name>.<随机>.part`，
+// 成功后**原子改名**。这样 Lookup 永远不会看到一个写了一半的文件 ——
+// 而「半成品被当成有效缓存」正是「试听没声音」最隐蔽的一种成因。
 //
-// 已存在可用缓存时直接返回（不重复下载）。
+// 已存在可用缓存时直接返回（不重复下载）。注意这个判断与写入之间没有加锁：
+// 并发进来的两个请求可能都判定「没有缓存」而各写一遍 —— 这是可以接受的
+// （缓存只有一份、内容相同），前提是两者的临时文件互不覆盖，见 writeAtomic。
 func (s *Store) Store(bvid, ext string, r io.Reader) (int64, error) {
 	if path, ok := s.Lookup(bvid, ext); ok {
 		st, err := os.Stat(path)
@@ -238,16 +251,29 @@ func (s *Store) WriteTo(path string, r io.Reader) (int64, error) {
 	return s.writeAtomic(path, r)
 }
 
-// writeAtomic 写 <path>.part 再原子改名到 path。
+// writeAtomic 写一个**独占的**临时文件，再原子改名到 path。
+//
+// ★ 临时文件名必须唯一（`<目标名>.<随机>.part`，用 O_EXCL 创建），
+// 不能是固定的 `path + ".part"`。
+//
+// 为什么：同一条试听路径会并发重入 —— 用户在播放中拖动进度条就会再发一次
+// 请求，播放器的重试也可能叠加。两个写者共用同一个固定名 .part 时，
+// os.Create 会**截断对方正在写的文件**，两边字节交错，最后被改名出去的是
+// 「自己 2MB + 对方 4MB」拼起来的坏文件，而且它会被 Lookup 当成有效缓存、
+// 登记成「可播放」；先失败的那一方还会把对方**正在写**的文件 Remove 掉，
+// 于是缓存整体消失（实测 8 轮并发 8/8 至少一方失败）。
+//
+// 各自独占一个临时文件之后，两个写者互不干扰：谁最后改名谁赢，而那一份
+// 一定是**完整**的文件（内容相同，谁赢都一样），失败也只清掉自己的临时文件。
 func (s *Store) writeAtomic(path string, r io.Reader) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return 0, fmt.Errorf("创建试听缓存目录失败: %w", err)
 	}
-	tmp := path + partSuffix
-	f, err := os.Create(tmp)
+	f, err := createPart(path)
 	if err != nil {
-		return 0, fmt.Errorf("创建缓存文件失败: %w", err)
+		return 0, err
 	}
+	tmp := f.Name()
 	// 失败路径一律清掉半成品：缓存目录里不该留垃圾
 	cleanup := func() {
 		_ = f.Close()
@@ -278,6 +304,92 @@ func (s *Store) writeAtomic(path string, r io.Reader) (int64, error) {
 	s.touch(nameOf(path), path, written)
 	s.evictIfNeeded()
 	return written, nil
+}
+
+// createPart 独占创建一个半成品文件：`<目标名>.<随机后缀>.part`。
+//
+// 用 O_EXCL 而不是 os.Create：名字撞车时必须**报错重试**，而不是打开别人
+// 正在写的文件往下截断（见 writeAtomic 的说明）。
+// 返回的文件由调用方负责改名落盘或删除。
+func createPart(path string) (*os.File, error) {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	// 随机后缀 + O_EXCL 之后，撞车概率已经可以忽略；这里仍然重试，
+	// 是为了不让「随机数源异常」变成「缓存永远写不进去」。
+	for attempt := 0; attempt < 16; attempt++ {
+		name := base + "." + randomSuffix() + partSuffix
+		f, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			return f, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("创建缓存文件失败: %w", err)
+		}
+	}
+	return nil, errors.New("创建缓存文件失败：临时文件名连续冲突")
+}
+
+// partCounter 是 randomSuffix 在随机源不可用时的退化序号。
+var partCounter atomic.Uint64
+
+// randomSuffix 返回 8 个十六进制字符的随机后缀（用于半成品文件名的唯一性）。
+func randomSuffix() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand 失败极罕见；退化值加上自增序号，仍保证同进程内不重名
+		return strconv.FormatInt(time.Now().UnixNano(), 36) + strconv.FormatUint(partCounter.Add(1), 36)
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// removeParts 删掉某个缓存路径对应的**所有**半成品文件。
+//
+// 临时名带随机后缀，所以不能再写死 `path + partSuffix`：漏删的话，
+// 一次中断的写入会在缓存目录里留下永远没人清理的垃圾。
+// 同时兼容旧版固定名 `<目标名>.part`（升级上来的用户目录里可能还有）。
+func removeParts(path string) {
+	dir := filepath.Dir(path)
+	cacheName := filepath.Base(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if isPartOf(e.Name(), cacheName) {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+// isPartOf 判断目录里的一个文件是否是指定缓存名的半成品。
+func isPartOf(name, cacheName string) bool {
+	if name == cacheName+partSuffix { // 旧版固定名
+		return true
+	}
+	return strings.HasPrefix(name, cacheName+".") && strings.HasSuffix(name, partSuffix)
+}
+
+// cacheName 判断目录里的一个文件是不是**我们自己命名的**缓存文件，
+// 返回它对应的正式缓存文件名；不是则返回 ""。
+//
+// Clear 用它来决定「该删谁」：缓存目录理论上只属于本程序，但用户完全可能
+// 把它指到一个共用目录（比如整个临时目录），清空缓存不该删掉无关文件。
+// 半成品（新旧两种命名）同样要能被认出来并删掉，否则中断的写入会永远留在盘上。
+func cacheName(name string) string {
+	if namePattern.MatchString(name) {
+		return name
+	}
+	if !strings.HasSuffix(name, partSuffix) {
+		return ""
+	}
+	stem := strings.TrimSuffix(name, partSuffix) // <目标名> 或 <目标名>.<随机>
+	if namePattern.MatchString(stem) {
+		return stem
+	}
+	if i := strings.LastIndex(stem, "."); i > 0 && namePattern.MatchString(stem[:i]) {
+		return stem[:i]
+	}
+	return ""
 }
 
 // Move 把 bvid 的缓存文件搬到 dst（下载时用）。
@@ -346,7 +458,7 @@ func (s *Store) Remove(bvid string) {
 	for _, ext := range extensions {
 		if path, ok := s.Path(bvid, ext); ok {
 			_ = os.Remove(path)
-			_ = os.Remove(path + partSuffix)
+			removeParts(path) // 临时名带随机后缀，必须按前缀扫，不能写死一个名字
 		}
 	}
 	s.forget(bvid)
@@ -354,7 +466,7 @@ func (s *Store) Remove(bvid string) {
 
 // Clear 清空整个缓存目录。
 //
-// 只删**我们自己命名的**文件（见 namePattern）与 .part 半成品：
+// 只删**我们自己命名的**文件（见 namePattern 与 cacheName，含新旧两种半成品名）：
 // 缓存目录理论上只属于本程序，但用户完全可能把它指到一个共用目录
 // （比如整个临时目录）—— 「清空试听缓存」不该删掉无关文件。
 func (s *Store) Clear() error {
@@ -370,7 +482,7 @@ func (s *Store) Clear() error {
 			continue
 		}
 		name := e.Name()
-		if !namePattern.MatchString(strings.TrimSuffix(name, partSuffix)) {
+		if cacheName(name) == "" {
 			continue
 		}
 		_ = os.Remove(filepath.Join(s.dir, name))

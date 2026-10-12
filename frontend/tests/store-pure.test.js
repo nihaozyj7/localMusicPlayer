@@ -72,9 +72,7 @@ test("applyRules：正则同时匹配完整路径与文件名", () => {
     song({ id: "p", path: "D:/Music/Album/track.mp4" }),
     song({ id: "n", path: "D:/Music/Album/track.mp3" }),
   ];
-  const { kept } = applyRules(songs, [
-    rule({ type: "regex", op: "match", value: "\\.mp4$", scope: "exclude" }),
-  ]);
+  const { kept } = applyRules(songs, [rule({ type: "regex", op: "match", value: "\\.mp4$", scope: "exclude" })]);
   assert.deepEqual(
     kept.map((s) => s.id),
     ["n"]
@@ -245,16 +243,34 @@ test("filterByQuery：命中 title/artist/album/ext 任一项即保留", () => {
     hay({ id: "e", ext: "flac" }),
     hay({ id: "n", title: "无关" }),
   ];
-  assert.deepEqual(filterByQuery(list, "夜航").map((s) => s.id), ["t"]);
-  assert.deepEqual(filterByQuery(list, "某歌手").map((s) => s.id), ["a"]);
-  assert.deepEqual(filterByQuery(list, "专辑名").map((s) => s.id), ["b"]);
-  assert.deepEqual(filterByQuery(list, "flac").map((s) => s.id), ["e"]);
+  assert.deepEqual(
+    filterByQuery(list, "夜航").map((s) => s.id),
+    ["t"]
+  );
+  assert.deepEqual(
+    filterByQuery(list, "某歌手").map((s) => s.id),
+    ["a"]
+  );
+  assert.deepEqual(
+    filterByQuery(list, "专辑名").map((s) => s.id),
+    ["b"]
+  );
+  assert.deepEqual(
+    filterByQuery(list, "flac").map((s) => s.id),
+    ["e"]
+  );
 });
 
 test("filterByQuery：大小写不敏感（查询与数据两侧）", () => {
   const list = [hay({ id: "x", title: "TEST" }), hay({ id: "y", title: "test" })];
-  assert.deepEqual(filterByQuery(list, "test").map((s) => s.id), ["x", "y"]);
-  assert.deepEqual(filterByQuery(list, "TeSt").map((s) => s.id), ["x", "y"]);
+  assert.deepEqual(
+    filterByQuery(list, "test").map((s) => s.id),
+    ["x", "y"]
+  );
+  assert.deepEqual(
+    filterByQuery(list, "TeSt").map((s) => s.id),
+    ["x", "y"]
+  );
 });
 
 test("filterByQuery：不跨界误命中（分隔符生效）", () => {
@@ -263,28 +279,49 @@ test("filterByQuery：不跨界误命中（分隔符生效）", () => {
   // 只有跨界才能命中的查询来钉住分隔符。
   const list = [hay({ id: "1", title: "ab", artist: "c" }), hay({ id: "2", title: "a", artist: "bc" })];
   // "ab" + "c" 跨界拼成 "abc"：查 "bc" 时，第 1 首的 title "ab" 不含、artist "c" 不含 ⇒ 不该命中
-  assert.deepEqual(filterByQuery(list, "bc").map((s) => s.id), ["2"]);
-  assert.deepEqual(filterByQuery(list, "abc").map((s) => s.id), []);
+  assert.deepEqual(
+    filterByQuery(list, "bc").map((s) => s.id),
+    ["2"]
+  );
+  assert.deepEqual(
+    filterByQuery(list, "abc").map((s) => s.id),
+    []
+  );
 });
 
 test("filterByQuery：查询串含分隔符时退回逐字段比较（不误命中全部）", () => {
   const list = [hay({ id: "1", title: "abc" }), hay({ id: "2", title: "xyz" })];
   // \0 出现在索引拼接处，走索引会让 includes("\0") 命中所有歌曲。
-  assert.deepEqual(filterByQuery(list, "\u0000").map((s) => s.id), []);
+  assert.deepEqual(
+    filterByQuery(list, "\u0000").map((s) => s.id),
+    []
+  );
 });
 
 test("filterByQuery：查询词首尾空格被 trim", () => {
   const list = [hay({ id: "1", title: "abc" })];
-  assert.deepEqual(filterByQuery(list, "  abc  ").map((s) => s.id), ["1"]);
+  assert.deepEqual(
+    filterByQuery(list, "  abc  ").map((s) => s.id),
+    ["1"]
+  );
 });
 
 test("filterByQuery：索引按曲库引用失效（换一批歌后结果正确）", () => {
   const first = [hay({ id: "1", title: "aaa" })];
-  assert.deepEqual(filterByQuery(first, "aaa").map((s) => s.id), ["1"]);
+  assert.deepEqual(
+    filterByQuery(first, "aaa").map((s) => s.id),
+    ["1"]
+  );
   // 整体替换（store 的约定），旧索引必须失效
   const second = [hay({ id: "2", title: "bbb" })];
-  assert.deepEqual(filterByQuery(second, "aaa").map((s) => s.id), []);
-  assert.deepEqual(filterByQuery(second, "bbb").map((s) => s.id), ["2"]);
+  assert.deepEqual(
+    filterByQuery(second, "aaa").map((s) => s.id),
+    []
+  );
+  assert.deepEqual(
+    filterByQuery(second, "bbb").map((s) => s.id),
+    ["2"]
+  );
 });
 
 test("filterByQuery：1 万首规模结果与逐字段实现一致", () => {

@@ -1,0 +1,60 @@
+{
+  "_说明": "允许被跳过的后端用例清单（审查报告第六轮 建议 12）。match 是「跳过原因」里的原话片段，reason 说明为什么允许，max 是这一类跳过的上限（超过即门禁失败，防止静默增长）。任何没登记的跳过都会让 node tools/check-skipped-tests.mjs 失败。",
+  "allow": [
+    {
+      "match": "没有可用的音频设备",
+      "reason": "CI 容器里没有声卡，PlayerService / audioplay 的端到端用例会 t.Skip。这是当前唯一选择（那批用例要么真起声卡，要么抽成与设备无关的纯函数 —— 后者是报告第 16 条建议的后续工作）。上限 40 是天花板而不是预期值：本机有设备时这里一条都不会跳。",
+      "max": 40
+    },
+    {
+      "match": "需要 LMPLAYER_LIVE_KUGOU=1",
+      "reason": "真实酷狗接口的联网用例，默认关闭（LMPLAYER_LIVE_KUGOU=1 打开）。CI 不该依赖第三方站点的可用性。",
+      "max": 5
+    },
+    {
+      "match": "需要 LMPLAYER_LIVE_QQ=1",
+      "reason": "真实 QQ 音乐接口的联网用例，默认关闭（LMPLAYER_LIVE_QQ=1 打开）。",
+      "max": 5
+    },
+    {
+      "match": "需要 LMPLAYER_LIVE_UPDATE=1",
+      "reason": "真实 GitHub Releases 的联网用例，默认关闭（LMPLAYER_LIVE_UPDATE=1 打开）。",
+      "max": 5
+    },
+    {
+      "match": "需要 LMPLAYER_LIVE_COVERFETCH=1",
+      "reason": "真实封面源（iTunes 等）的联网探针，默认关闭。原先靠 testing.Short() 判断，而 CI 不带 -short —— 等于每次 CI 都真发外网请求（报告第 15 条），已改成与其它联网用例一致的环境变量开关。",
+      "max": 5
+    },
+    {
+      "match": "未设置 MP_REAL_MUSIC",
+      "reason": "需要本机真实曲库目录（MP_REAL_MUSIC=…）的验证用例，CI 上没有这样的目录。",
+      "max": 3
+    },
+    {
+      "match": "本机不能创建目录联接",
+      "reason": "Windows 上创建目录联接（mklink /J）需要权限；平台不满足时的正常跳过。",
+      "max": 3
+    },
+    {
+      "match": "本机不能创建符号链接",
+      "reason": "Windows 上创建符号链接需要开发者模式或管理员权限；平台不满足时的正常跳过。",
+      "max": 5
+    },
+    {
+      "match": "未知平台",
+      "reason": "按 GOOS 分档的用例在不认识的平台上没有对应档位（本项目只在 Windows 上验证/发布）。",
+      "max": 5
+    },
+    {
+      "match": "当前环境不支持 fsnotify",
+      "reason": "文件监听的用例在 fsnotify 初始化失败的平台上跳过。",
+      "max": 3
+    },
+    {
+      "match": "-short 下跳过",
+      "reason": "要等真实超时（25 秒）的用例只在 go test -short 下跳过；CI 不带 -short，所以 CI 里它们会真跑。",
+      "max": 5
+    }
+  ]
+}

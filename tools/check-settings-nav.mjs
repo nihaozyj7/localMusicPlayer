@@ -248,7 +248,9 @@ const jump = await evaluate(`(async () => {
   const topGap = target.getBoundingClientRect().top - body.getBoundingClientRect().top;
   return { lastName, lastLabel, active, topGap: Math.round(topGap), navH, scrollTop: Math.round(body.scrollTop) };
 })()`);
-console.log(`\n[跳转] 点「${jump.lastLabel}」→ 高亮 ${jump.active}，目标卡片顶距 ${jump.topGap}px（导航高 ${jump.navH}px）`);
+console.log(
+  `\n[跳转] 点「${jump.lastLabel}」→ 高亮 ${jump.active}，目标卡片顶距 ${jump.topGap}px（导航高 ${jump.navH}px）`
+);
 check("点最后一个分类能正确高亮", jump.active === jump.lastName, `实际 ${jump.active}`);
 check("跳转后目标卡片没被导航条挡住", jump.topGap >= jump.navH - 1, `顶距 ${jump.topGap}px vs 导航 ${jump.navH}px`);
 

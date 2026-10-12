@@ -319,57 +319,10 @@ func TestEnsureMainWindowOnScreenDecidesCorrectly(t *testing.T) {
 	}
 }
 
-// TestNoteGeometryTouchedGating 「用户动过窗口」的判定门。
-//
-// 这个标志决定了启动时要不要恢复最大化（动过就不抢控制权）。它必须排掉
-// 两类不是用户操作的移动，否则会出现「最大化永远恢复不了」：
-//
-//  1. 启动序列期间框架/我们自己摆放窗口（门没开）；
-//  2. 程序主动纠正位置/重置窗口时调的那几下 SetPosition。
-//
-// 这两条都是实测踩出来的：第一次实现没排除 (1)，日志里稳定出现
-// 「用户在启动期间动过窗口，跳过最大化恢复」，场景 C 恒失败。
-func TestNoteGeometryTouchedGating(t *testing.T) {
-	t.Run("启动序列期间不算用户操作", func(t *testing.T) {
-		s := &WindowService{}
-		// 门没开（attachMainWindowGeometryTracking 之后、markGeometryTrackingReady 之前）
-		s.noteGeometryTouched()
-		if s.mainGeomUserTouched.Load() {
-			t.Error("门没开时不该标记为用户操作")
-		}
-	})
-
-	t.Run("开门后正常标记", func(t *testing.T) {
-		s := &WindowService{}
-		s.markGeometryTrackingReady()
-		s.noteGeometryTouched()
-		if !s.mainGeomUserTouched.Load() {
-			t.Error("门开了之后用户的移动必须被标记")
-		}
-	})
-
-	t.Run("程序自己发起的移动不算用户操作", func(t *testing.T) {
-		s := &WindowService{}
-		s.markGeometryTrackingReady()
-		s.mainGeomSelfMove.Store(true) // 模拟 ensureMainWindowOnScreen 的 SetPosition
-		s.noteGeometryTouched()
-		if s.mainGeomUserTouched.Load() {
-			t.Error("程序自己挪窗口不该算用户操作（否则纠正过位置就再也恢复不了最大化）")
-		}
-	})
-}
-
-// TestMarkGeometryTrackingReady 门一旦开了就不该再关上。
-//
-// 反过来的话（关门后忘了开），用户之后拖窗口永远标记不上，
-// 下次启动就会跟用户抢控制权、强行最大化。
-func TestMarkGeometryTrackingReady(t *testing.T) {
-	s := &WindowService{}
-	if s.mainGeomTrackingReady.Load() {
-		t.Error("默认应当是关着的（启动序列先关门）")
-	}
-	s.markGeometryTrackingReady()
-	if !s.mainGeomTrackingReady.Load() {
-		t.Error("markGeometryTrackingReady 之后应当开着")
-	}
-}
+// ★ 这里原有两条用例（TestNoteGeometryTouchedGating / TestMarkGeometryTrackingReady）
+//   守着「用户动过窗口就别抢控制权」的三个原子量。第六轮审查 §4.3 判定它们是
+//   只写不读的存量（restoreMainWindowMaximizedWhenReady 自己写着「标志必然是
+//   false」），整条链已删除，于是**被测对象也不存在了** —— 按仓库纪律，删实现
+//   必须同时删掉只为它存在的用例，不能留下「测一个已经没了的东西」的空壳。
+//   同文件里的 validateMainWindowGeometry / ensureMainWindowOnScreen 等用例仍然
+//   覆盖真正在跑的几何逻辑。

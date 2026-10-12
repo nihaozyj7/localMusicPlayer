@@ -26,7 +26,7 @@
    在 Node 18 起就是稳定的。
    ========================================================================== */
 
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
@@ -48,18 +48,37 @@ if (files.length === 0) {
   process.exit(1);
 }
 
+/* --------------------------------------------------------------------------
+   「跳过数 > 0 即失败」的等价门禁（前端侧）
+
+   node --test 跳过用例时退出码仍是 0，所以 `test.skip(...)` 会静默减少覆盖 ——
+   与后端 38 个编排用例在 CI 被整批跳过是同一类风险（审查报告第六轮 建议 12）。
+   这里直接在源码上查：任何 .skip( / { skip: true } 都必须带 `// SKIP-OK: 原因`
+   注释（同一行），否则本次测试直接失败。理由写出来才算「有意识地跳过」。
+   -------------------------------------------------------------------------- */
+const skipPattern = /\b(?:test|it|describe)\.skip\s*\(|\.skip\s*\(\s*\)|\bskip:\s*true/;
+const skipped = [];
+for (const f of files) {
+  const text = readFileSync(join(root, f), "utf8");
+  text.split("\n").forEach((line, i) => {
+    if (skipPattern.test(line) && !line.includes("// SKIP-OK:")) {
+      skipped.push(`${f}:${i + 1}: ${line.trim()}`);
+    }
+  });
+}
+if (skipped.length > 0) {
+  console.error("[test] 有被跳过的用例，但没有写明原因（同一行加 `// SKIP-OK: …` 才能通过）：");
+  for (const s of skipped) console.error(`  · ${s}`);
+  process.exit(1);
+}
+
 // 路径统一用正斜杠：Windows 的 join 会给反斜杠，而它们在部分
 // 工具链里会被当成转义字符。Node 在 Windows 上接受正斜杠。
-const args = [
-  "--import",
-  "./frontend/tests/register.mjs",
-  "--test",
-  ...files.map((f) => f.split("\\").join("/")),
-];
+const args = ["--import", "./frontend/tests/register.mjs", "--test", ...files.map((f) => f.split("\\").join("/"))];
 
 const child = spawn(process.execPath, args, { cwd: root, stdio: "inherit" });
 child.on("exit", (code, signal) => {
   // 信号终止（比如 Ctrl+C）时 code 是 null，按非零退出处理，
   // 免得 CI 把"被中断"误判成"测试通过"。
-  process.exit(signal ? 1 : code ?? 1);
+  process.exit(signal ? 1 : (code ?? 1));
 });

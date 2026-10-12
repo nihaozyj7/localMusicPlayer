@@ -183,6 +183,9 @@ class MpPackStore extends MpElement {
           source: String(res.source || ""),
           default: String(res.default || ""),
           channel: String(res.channel || ""),
+          // 用户填的地址不会被使用时的原因（后端算的，规则只有一份）。
+          // 不显示的话，「地址被落回默认」看起来就像「没保存成功」。
+          problem: String(res.problem || ""),
         };
         this._draft = this._source.source;
         this.requestUpdate();
@@ -328,11 +331,18 @@ class MpPackStore extends MpElement {
           source: String(res.source || ""),
           default: String(res.default || ""),
           channel: String(res.channel || ""),
+          problem: String(res.problem || ""),
         };
       }
       this._editing = false;
       this.requestUpdate();
-      toast(`插件仓库已指向 ${this._source.source}`, { tone: "success", duration: 3600 });
+      // 地址不被接受时（后端已落回默认地址）用错误色说清原因，而不是
+      // 报一句「已指向 <默认地址>」让用户以为保存成功了。
+      if (this._source.problem) {
+        toast(this._source.problem, { tone: "error", duration: 7000 });
+      } else {
+        toast(`插件仓库已指向 ${this._source.source}`, { tone: "success", duration: 3600 });
+      }
       // 换地址等于换了一份仓库，旧的列表已经不作数
       this._items = [];
       this._status = "loading";
@@ -411,6 +421,13 @@ class MpPackStore extends MpElement {
         </button>
       </div>
 
+      ${
+        this._source.problem
+          ? html`<div class="packnote" data-tone="warn" role="alert">
+              ${this._source.problem}（明文 http 取回的脚本会在同源页面里执行，链路上任何一跳都能改写它）
+            </div>`
+          : nothing
+      }
       ${
         this._status === "preview"
           ? html`<div class="packnote" data-tone="warn">

@@ -144,7 +144,7 @@ async function main() {
     check(
       "播放中时间文本前进",
       parseClock(b2.time) > parseClock(b1.time) && parseClock(b1.time) >= 0,
-      `${b1.time} → ${b2.time}`,
+      `${b1.time} → ${b2.time}`
     );
     check("播放中滑块位置前进", b2.value > b1.value, `${b1.value} → ${b2.value}`);
 
@@ -160,7 +160,7 @@ async function main() {
     check(
       "seek 后进度条反映新位置",
       parseClock(b3.time) >= 73 && parseClock(b3.time) <= 80,
-      `seek 75000ms → 显示 ${b3.time}`,
+      `seek 75000ms → 显示 ${b3.time}`
     );
 
     // ---- 3. 暂停后停住 ----
@@ -174,11 +174,7 @@ async function main() {
     const b4 = await evalJs(READ_BAR);
     await sleep(2000);
     const b5 = await evalJs(READ_BAR);
-    check(
-      "暂停后时间停住",
-      parseClock(b4.time) === parseClock(b5.time),
-      `${b4.time} → ${b5.time}`,
-    );
+    check("暂停后时间停住", parseClock(b4.time) === parseClock(b5.time), `${b4.time} → ${b5.time}`);
 
     // ---- 4. 换歌后位置归零并重新前进 ----
     //
@@ -209,7 +205,7 @@ async function main() {
         check(
           "换歌后位置归零并重新前进",
           parseClock(b6.time) < 15 && parseClock(b7.time) > parseClock(b6.time),
-          `${b6.time} → ${b7.time}`,
+          `${b6.time} → ${b7.time}`
         );
       }
     }
@@ -222,10 +218,22 @@ async function main() {
       })()
     `);
   } finally {
-    try { ws?.close(); } catch { /* 忽略 */ }
-    try { child.kill(); } catch { /* 忽略 */ }
+    try {
+      ws?.close();
+    } catch {
+      /* 忽略 */
+    }
+    try {
+      child.kill();
+    } catch {
+      /* 忽略 */
+    }
     await sleep(700);
-    try { rmSync(WORK, { recursive: true, force: true }); } catch { /* 忽略 */ }
+    try {
+      rmSync(WORK, { recursive: true, force: true });
+    } catch {
+      /* 忽略 */
+    }
   }
 
   const failed = results.filter((r) => !r.ok);

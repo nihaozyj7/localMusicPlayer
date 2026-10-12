@@ -45,11 +45,13 @@ function walk(dir) {
  * 不处理字符串里的 //，这些文件的输入足够简单。
  */
 function stripComments(src) {
-  return src
-    // 块注释要保留其中的换行（换成等量的空格），否则报出来的行号会整体偏移，
-    // 把人指到错误的行上 —— 本来就是为了让人一眼找到问题所在。
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+  return (
+    src
+      // 块注释要保留其中的换行（换成等量的空格），否则报出来的行号会整体偏移，
+      // 把人指到错误的行上 —— 本来就是为了让人一眼找到问题所在。
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+      .replace(/(^|[^:])\/\/[^\n]*/g, "$1")
+  );
 }
 
 test("模板事件处理器里不许直接调用后端", () => {
@@ -88,10 +90,7 @@ test("皮肤宿主的「在文件夹中显示」必须接住拒绝", () => {
 test("设置页与封面面板的「打开缓存目录」都要给失败提示", () => {
   // 同一个后端动作在两个界面里必须有一致的失败反馈。
   const settings = readFileSync(join(srcRoot, "js", "settings.js"), "utf8");
-  assert.ok(
-    /coverOpenCacheDir[\s\S]{0,200}?catch/.test(settings),
-    "设置页的打开缓存目录应当 try/catch + toast"
-  );
+  assert.ok(/coverOpenCacheDir[\s\S]{0,200}?catch/.test(settings), "设置页的打开缓存目录应当 try/catch + toast");
   const cover = readFileSync(join(srcRoot, "js", "ui", "cover.js"), "utf8");
   assert.ok(
     /async openCacheDir\(\)[\s\S]{0,400}?catch/.test(cover),

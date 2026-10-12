@@ -97,7 +97,7 @@ test("services.go：歌单 id 匹配不到时必须报错，不能返回 (0, nil
     assert.match(
       body,
       /歌单不存在/,
-      `${signature.slice(0, 45)}…) 没有对「id 匹配不到」返回错误 —— 前端会把静默无操作当成成功`,
+      `${signature.slice(0, 45)}…) 没有对「id 匹配不到」返回错误 —— 前端会把静默无操作当成成功`
     );
     assert.match(body, /found/, `${signature.slice(0, 45)}…) 没有记录「是否命中歌单」`);
   }

@@ -120,11 +120,35 @@ export const TECH_STACK = [
 
 /** 运行时会随程序一起分发的库。 */
 export const RUNTIME_LIBS = [
-  { name: "Wails", version: "v3.0.0-beta.14", license: "MIT", role: "桌面外壳与 Go↔JS 桥", url: "https://github.com/wailsapp/wails" },
-  { name: "dhowden/tag", version: "2024-04-17", license: "BSD-2-Clause", role: "mp3 / m4a / flac / ogg 标签解析", url: "https://github.com/dhowden/tag" },
-  { name: "fsnotify/fsnotify", version: "1.9.0", license: "BSD-3-Clause", role: "音乐文件夹的实时监听", url: "https://github.com/fsnotify/fsnotify" },
+  {
+    name: "Wails",
+    version: "v3.0.0-beta.14",
+    license: "MIT",
+    role: "桌面外壳与 Go↔JS 桥",
+    url: "https://github.com/wailsapp/wails",
+  },
+  {
+    name: "dhowden/tag",
+    version: "2024-04-17",
+    license: "BSD-2-Clause",
+    role: "mp3 / m4a / flac / ogg 标签解析",
+    url: "https://github.com/dhowden/tag",
+  },
+  {
+    name: "fsnotify/fsnotify",
+    version: "1.9.0",
+    license: "BSD-3-Clause",
+    role: "音乐文件夹的实时监听",
+    url: "https://github.com/fsnotify/fsnotify",
+  },
   { name: "Lit", version: "3.3.3", license: "BSD-3-Clause", role: "前端视图层", url: "https://github.com/lit/lit" },
-  { name: "SortableJS", version: "1.15.7", license: "MIT", role: "播放队列与歌单的拖拽排序", url: "https://github.com/SortableJS/Sortable" },
+  {
+    name: "SortableJS",
+    version: "1.15.7",
+    license: "MIT",
+    role: "播放队列与歌单的拖拽排序",
+    url: "https://github.com/SortableJS/Sortable",
+  },
 ];
 
 /**
@@ -132,14 +156,56 @@ export const RUNTIME_LIBS = [
  * 单独列出来是因为分发时必须一并保留它们的许可证声明。
  */
 export const TRANSITIVE_LIBS = [
-  { name: "coder/websocket", version: "1.8.14", license: "ISC", role: "Wails 的 WebSocket 传输", url: "https://github.com/coder/websocket" },
-  { name: "go-ole/go-ole", version: "1.3.0", license: "MIT", role: "Windows COM 绑定", url: "https://github.com/go-ole/go-ole" },
-  { name: "godbus/dbus/v5", version: "5.2.2", license: "BSD-2-Clause", role: "Linux 桌面集成", url: "https://github.com/godbus/dbus" },
-  { name: "jchv/go-winloader", version: "2025-04-06", license: "ISC", role: "Windows 依赖加载", url: "https://github.com/jchv/go-winloader" },
+  {
+    name: "coder/websocket",
+    version: "1.8.14",
+    license: "ISC",
+    role: "Wails 的 WebSocket 传输",
+    url: "https://github.com/coder/websocket",
+  },
+  {
+    name: "go-ole/go-ole",
+    version: "1.3.0",
+    license: "MIT",
+    role: "Windows COM 绑定",
+    url: "https://github.com/go-ole/go-ole",
+  },
+  {
+    name: "godbus/dbus/v5",
+    version: "5.2.2",
+    license: "BSD-2-Clause",
+    role: "Linux 桌面集成",
+    url: "https://github.com/godbus/dbus",
+  },
+  {
+    name: "jchv/go-winloader",
+    version: "2025-04-06",
+    license: "ISC",
+    role: "Windows 依赖加载",
+    url: "https://github.com/jchv/go-winloader",
+  },
   { name: "adrg/xdg", version: "0.5.3", license: "MIT", role: "跨平台标准目录", url: "https://github.com/adrg/xdg" },
-  { name: "mattn/go-colorable", version: "0.1.14", license: "MIT", role: "Windows 控制台彩色输出", url: "https://github.com/mattn/go-colorable" },
-  { name: "mattn/go-isatty", version: "0.0.20", license: "MIT", role: "判断 stdout 是否为终端", url: "https://github.com/mattn/go-isatty" },
-  { name: "golang.org/x/sys", version: "0.46.0", license: "BSD-3-Clause", role: "Go 官方系统调用扩展", url: "https://pkg.go.dev/golang.org/x/sys" },
+  {
+    name: "mattn/go-colorable",
+    version: "0.1.14",
+    license: "MIT",
+    role: "Windows 控制台彩色输出",
+    url: "https://github.com/mattn/go-colorable",
+  },
+  {
+    name: "mattn/go-isatty",
+    version: "0.0.20",
+    license: "MIT",
+    role: "判断 stdout 是否为终端",
+    url: "https://github.com/mattn/go-isatty",
+  },
+  {
+    name: "golang.org/x/sys",
+    version: "0.46.0",
+    license: "BSD-3-Clause",
+    role: "Go 官方系统调用扩展",
+    url: "https://pkg.go.dev/golang.org/x/sys",
+  },
 ];
 
 /** 随应用分发的二进制组件（不是 Go/npm 依赖，单独说明）。 */
@@ -198,7 +264,11 @@ export const DATA_SOURCES = [
   { name: "网易云音乐", role: "歌词 / 封面备选来源", url: "https://music.163.com/" },
   { name: "QQ 音乐", role: "歌词（逐字 / 逐行）/ 封面备选来源", url: "https://y.qq.com/" },
   { name: "酷狗音乐", role: "歌词（逐字 / 逐行）来源", url: "https://www.kugou.com/" },
-  { name: "iTunes Search API", role: "封面（Apple 官方公开接口）", url: "https://performance-partners.apple.com/search-api" },
+  {
+    name: "iTunes Search API",
+    role: "封面（Apple 官方公开接口）",
+    url: "https://performance-partners.apple.com/search-api",
+  },
   { name: "Deezer", role: "封面备选来源", url: "https://developers.deezer.com/api" },
   { name: "MusicBrainz", role: "封面（配合 Cover Art Archive）", url: "https://musicbrainz.org/" },
   { name: "哔哩哔哩", role: "在线试听与下载（公开 Web 接口）", url: "https://www.bilibili.com/" },
@@ -240,10 +310,10 @@ export const DOWNLOAD_SCOPE = [
 
 /** 项目自己声明的边界（放在关于页最下方与在线歌曲卡片里，避免用户对能力产生误解）。 */
 export const DISCLAIMER = [
-   "本软件只做本地音乐的整理与播放，不提供、不存储、不分发任何音乐内容。",
-   "在线搜索 / 试听 / 下载依赖第三方公开接口，其可用性与内容均由对应平台决定。",
-   ...DOWNLOAD_SCOPE,
-   "逐字歌词（QQ 音乐 QRC / 酷狗 KRC）是对第三方私有编码的兼容性解析，只用于在本机显示逐字时间轴；不希望使用时可在「下载与缓存」里关掉。",
+  "本软件只做本地音乐的整理与播放，不提供、不存储、不分发任何音乐内容。",
+  "在线搜索 / 试听 / 下载依赖第三方公开接口，其可用性与内容均由对应平台决定。",
+  ...DOWNLOAD_SCOPE,
+  "逐字歌词（QQ 音乐 QRC / 酷狗 KRC）是对第三方私有编码的兼容性解析，只用于在本机显示逐字时间轴；不希望使用时可在「下载与缓存」里关掉。",
 ];
 
 /* --------------------------------------------------------------------------
@@ -272,7 +342,8 @@ export const NETWORK_USAGE = [
   },
   {
     what: "歌词匹配与在线歌词搜索",
-    where: "lrclib.net、music.163.com、u.y.qq.com / c.y.qq.com、songsearch.kugou.com / krcs.kugou.com / lyrics.kugou.com",
+    where:
+      "lrclib.net、music.163.com、u.y.qq.com / c.y.qq.com、songsearch.kugou.com / krcs.kugou.com / lyrics.kugou.com",
     when: "自动匹配发生在切歌时（本机没有可用歌词才去联网），手动搜索只在点「搜索」时",
     off: "见下方「优先使用逐字歌词」；不手动搜索在线歌词即可减少请求",
   },
@@ -368,12 +439,17 @@ export function nameWithVersion(item) {
 
 /** 全部第三方库（运行时 + 间接），把许可证换成数组给表格统一渲染。 */
 export function allLibs() {
-  return [...RUNTIME_LIBS.map((x) => ({ ...x, kind: "运行时" })), ...TRANSITIVE_LIBS.map((x) => ({ ...x, kind: "随 Wails 引入" }))];
+  return [
+    ...RUNTIME_LIBS.map((x) => ({ ...x, kind: "运行时" })),
+    ...TRANSITIVE_LIBS.map((x) => ({ ...x, kind: "随 Wails 引入" })),
+  ];
 }
 
 /** 同一个许可证出现了多少次（表头那句「MIT × 5」用）。 */
 export function licenseSummary(items) {
   const counts = new Map();
   for (const item of items) counts.set(item.license, (counts.get(item.license) || 0) + 1);
-  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([license, count]) => ({ license, count }));
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([license, count]) => ({ license, count }));
 }

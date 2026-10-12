@@ -27,8 +27,8 @@ npm install                 # 一次：Vite / ESLint / Prettier / TypeScript
 npm run dev                 # 只改界面：Vite HMR，http://127.0.0.1:5173/（假数据渲染，无需 Go）
 npm run dev:static          # 零构建静态预览 —— 无头自检脚本请用这个
 
-npm run check               # lint + typecheck + test（提交前必跑）
-npm run check:plugins       # 校验 plugins/*/index.json 与磁盘一致（改了 plugins/ 才需要，见 §4.3b）
+npm run check               # format:check + lint + typecheck + test（提交前必跑）
+npm run check:plugins       # 校验 plugins/*/index.json 与磁盘一致（改了 plugins/ 才需要，见 §4.3b；CI 里也会跑）
 npm run lint / typecheck / test / format:check
 npm run build               # = node tools/build-frontend.mjs
 
@@ -46,6 +46,12 @@ wails3 task check:go        # node tools/check-gofmt.mjs + go vet + go test -rac
   会卡在 "Waiting for frontend dev server to start..."。请用 `wails3 task dev`（Taskfile 显式传了端口）。
 - **不要用 `go test ./...`**：`node_modules/flatted/golang/pkg/flatted` 是第三方包里自带的 Go 源码，
   会被算成本模块的包。Taskfile 里显式列出了 `. ./internal/... ./tools/...`。
+- **`go.mod` 里的 `toolchain go1.27.2` 要求校验库可用**：Go **按设计**拒绝在 `GOSUMDB=off` 时取用工具链
+  （下载来的工具链无法记进 `go.sum`，见 `cmd/go/internal/modfetch/sumdb.go`），报错是
+  `verifying module: checksum database disabled by GOSUMDB=off`。国内机器不要设 `off`，用官方别名：
+  `go env -w GOSUMDB=sum.golang.google.cn`（走 `GOPROXY` 校验，实测可用）。为什么固定工具链见 §7。
+- 漏洞扫描（与 CI 同一命令，有漏洞时退出码 3）：
+  `go run golang.org/x/vuln/cmd/govulncheck@latest . ./internal/... ./tools/...`
 - 只用 npm（有 `package-lock.json` 与 npm workspaces），不要引入 pnpm/yarn。
 - 内置 ffmpeg 的体积/许可证/能力核对：`node tools/build-ffmpeg.mjs --info`（重编译需 MinGW-w64 + bash，约 6~10 分钟）。
 
@@ -196,8 +202,9 @@ src/styles/index.css      唯一样式入口（@import 顺序固定）
 （Go 侧 `internal/packstore` + `services_packs.go`，仓库地址是配置键 `packSource`）。
 改了 `plugins/` 里的文件却忘了重新生成清单，表现是「客户端里那个插件看不到 / 装不动」。
 
-这条依赖是**单向**的：`plugins/` 的内容不参与项目的 lint / typecheck / test 门禁
-（`npm run check` 不跑 `check:plugins`），所以插件的质量问题不会让项目 CI 变红。
+这条依赖是**单向**的：`plugins/` 的内容不参与项目的 lint / format / typecheck / test 门禁
+（`npm run check` 不跑 `check:plugins`），所以插件的质量问题不会让项目 CI 变红 ——
+CI 里跑的 `check:plugins` 只校验**清单是否与磁盘一致**（见 §7）。
 
 目录约定、令牌契约、`index.json` 的格式、安装与自检命令见 `plugins/README.md` 与各自的 `README.md`。
 
@@ -321,12 +328,30 @@ frontend/dist/       Vite 产物 + bindings 副本 + 内置主题同步源（**�
 两个 job，命令与本地**完全一致**（避免「CI 绿、本地红」）：
 
 ```
-frontend:  npm ci → npm run check（eslint + tsc + node:test）→ npm run build
+frontend:  npm ci → npm run check（prettier --check + eslint + tsc + node:test）→ npm run check:plugins → npm run build
 go:        装 GTK4/WebKitGTK/X11/ALSA + 起 Xvfb → node tools/check-gofmt.mjs → go vet → go test -race
+           → node tools/check-skipped-tests.mjs（没跑的用例有账）→ govulncheck（标准库/依赖漏洞，有命中即红）
 ```
 
+- **`npm run check` 的第一道是 `format:check`**：Prettier 曾经是「名存实亡」的门禁（`format:check` 对 104 个文件报警，
+  而没人跑它），2026-02 第六轮审查 建议 13 已收口 —— 全量 `prettier --write` 后接进 `check` 与 CI。
+  **代码与配置全量纳入格式化**；Markdown 正文按 `.prettierignore` 里的实测理由排除
+  （Prettier 会把表格补齐对齐，57 个文档凭空多出约 60 万字符纯空白，`docs/archive/44` 从 7.8 万涨到 20 万，
+  会把真实改动淹掉）。
+- **`npm run check:plugins` 也在 CI 里**：`plugins/*/index.json` 是客户端读的清单，过期表现是「插件看不到 / 装不动」。
 - `gofmt` 由 `tools/check-gofmt.mjs` 把关；仓库里 `*.go` 已显式 `eol=lf`（工作区 CRLF 会让 gofmt 假红灯）。
 - `go test -race` 是后端最重要的门禁之一：库里有并发扫描与缓存落盘路径，历史上有过真实竞态。
+- **`npm run check:skipped`（`tools/check-skipped-tests.mjs`）负责「跳过数 > 0 即失败」**：
+  `go test -race` 只保证「跑了的都过」，但这个项目有一批用例靠 `t.Skip` 退出
+  （PlayerService 的编排用例依赖声卡、联网用例依赖第三方站点），容器里会被**整批静默跳过**，
+  CI 全绿而那批用例根本没跑。跳过本身允许，但必须在 `tools/skipped-tests-allowlist.json`
+  里登记原因（还能给每类设**上限**，跳过数增长同样算回归）；没登记的跳过会让门禁失败。
+  前端侧等价门禁在 `tools/run-frontend-tests.mjs` 里：`test.skip` 必须同行写 `// SKIP-OK: 原因`。
+- **`govulncheck` 是唯一能盯住「标准库漏洞」的门禁**：标准库漏洞只随**实际构建用的** Go 补丁版本
+  修复，而 `go.mod` 的 `go` 指令是「最低版本」语义（既不保证补丁版本，也不会触发升级）。
+  实测 `go1.27.0` 下 10 项标准库漏洞命中真实调用路径（`net/http` 的 http2、`crypto/tls`、
+  `net/textproto`，见 `GO-2026-6603/6605/6607/6608/6609/6610/6611/6612/6613/6617`），
+  全部在 `go1.27.2` 修复 —— 因此 `go.mod` 钉了 `toolchain go1.27.2`（原因见该文件注释）。
 - 前端测试是 `node:test`，入口 `tools/run-frontend-tests.mjs`，用例在 `frontend/tests/`。
 
 ---

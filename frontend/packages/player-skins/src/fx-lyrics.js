@@ -198,9 +198,10 @@ export function createFxLyrics(host, opts = {}) {
       // 多语言副行（同一时间戳的翻译 / 罗马音）：跟主行画在同一条里，
       // 于是它们共用一次高亮与滚动定位 —— 逐字点亮只作用于 .fxl__text 内的单元，
       // 副行不在其中，不会被打乱（paintHold 取的是 .fxl__text 的子节点）。
-      const trans = Array.isArray(lines[i].trans) && lines[i].trans.length
-        ? lines[i].trans.map((t) => `<span class="fxl__trans">${esc(t)}</span>`).join("")
-        : "";
+      const trans =
+        Array.isArray(lines[i].trans) && lines[i].trans.length
+          ? lines[i].trans.map((t) => `<span class="fxl__trans">${esc(t)}</span>`).join("")
+          : "";
       parts.push(`${open}<span class="fxl__text">${body}</span>${trans}</div>`);
     }
     inner.innerHTML = parts.join("");

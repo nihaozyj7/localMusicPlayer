@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -32,11 +33,46 @@ const (
 // seq 保证同一目标文件的临时名在进程内唯一。
 var seq uint64
 
+// pathLocks 让「同一个目标路径的写入」在进程内串行。
+//
+// ★ 为什么光有唯一临时名还不够（实测）：
+// 4 个 goroutine 各写 20 轮同一个目标，即使每次都写自己的临时文件，
+// `os.Rename` 仍会间歇性返回 `Access is denied`（Windows 上并发替换同一个
+// 目标时的已知行为，见下面 rename 重试的注释）。8 次退避重试（约 180ms）
+// 之后会退回非原子的直接覆盖写，而那一刻连覆盖写也可能失败 ——
+// 实测 80 次写入里有 2 次**直接报错丢掉了这次落盘**
+// （`internal/atomicfile/atomicfile_test.go` 的并发用例就是钉这一条的）。
+//
+// 串行化之后，退避重试只需要对付**进程外**的占用者（杀软、索引器、
+// 另一个程序在读这个文件），那才是它原本的用途。
+//
+// 条目只增不减：key 是绝对路径，一个会话里最多等于「写过的不同文件数」
+// （例如每首歌一个响度文件，8725 首 ≈ 每个条目几十字节）。**不能**在解锁时
+// 删除条目 —— 等待者手里拿的是旧锁，删掉后新来的写者会造一把新锁，
+// 两个写者就又能同时改名了，等于把刚修好的问题请回来。
+var pathLocks sync.Map // map[string]*sync.Mutex
+
+// lockPath 锁住一个目标路径，返回解锁函数。
+func lockPath(path string) func() {
+	key, err := filepath.Abs(path)
+	if err != nil {
+		key = path
+	}
+	v, _ := pathLocks.LoadOrStore(key, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
 // Write 原子地把 data 写到 path。
 //
 // 步骤：写 "<path>.<seq>.tmp" → fsync → rename。
 // 目录不存在时会先建出来。
 func Write(path string, data []byte, perm os.FileMode) error {
+	// 同一目标的写入串行（见 pathLocks 的说明）：不串行的话，两个写者的
+	// rename 会互相把对方顶成 Access is denied，退避重试也救不回来。
+	defer lockPath(path)()
+
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
@@ -71,6 +107,7 @@ func Write(path string, data []byte, perm os.FileMode) error {
 	// 索引器）而失败，返回 ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION ——
 	// 光有唯一的临时名还不够，**改名这一步本身也要串行化**。
 	// 退避重试；仍然失败就退回直接覆盖写：那会有一个极短的非原子窗口，
+	// 而且这条回退路径**不做 fsync**（上面那段 fsync 只管正常路径），
 	// 但比整个落盘失败（用户看到「测量结果没保存」）更可取。
 	var lastErr error
 	for attempt := 0; attempt < renameAttempts; attempt++ {
@@ -82,11 +119,14 @@ func Write(path string, data []byte, perm os.FileMode) error {
 		time.Sleep(time.Duration(attempt+1) * renameBackoffBase)
 	}
 
-	if err := os.WriteFile(path, data, perm); err == nil {
-		_ = os.Remove(tmp)
+	// ★ 回退失败时两条原因都要报：以前这里只包 rename 的错误，于是「目标其实
+	//   不可写 / 磁盘已满」这类真正的原因被丢掉，用户只看到一句
+	//   「替换 xxx 失败: Access is denied」，而那句话大概率与真凶无关。
+	//   两个 %w 让 errors.Is 对两条底层错误都能命中（Go 1.20+ 的多重包装）。
+	writeErr := os.WriteFile(path, data, perm)
+	_ = os.Remove(tmp)
+	if writeErr == nil {
 		return nil
 	}
-
-	_ = os.Remove(tmp)
-	return fmt.Errorf("替换 %s 失败: %w", filepath.Base(path), lastErr)
+	return fmt.Errorf("替换 %s 失败: %w；回退覆盖写也失败: %w", filepath.Base(path), lastErr, writeErr)
 }

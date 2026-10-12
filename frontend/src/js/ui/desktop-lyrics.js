@@ -363,18 +363,20 @@ class MpDesktopLyrics extends LitElement {
               @input=${(e) => this.setSize(e.target.value)}
             />
             <span class="dl__size-val" id="dl-size-val">${this.fontSize}</span>
-            ${this.sizeOverride === null
-              ? nothing
-              : html`<button
-                  class="dl__size-reset"
-                  id="dl-size-reset"
-                  type="button"
-                  title="恢复为跟随设置里的歌词字号"
-                  aria-label="恢复为跟随设置里的歌词字号"
-                  @click=${() => this.followRemoteSize()}
-                >
-                  ↺
-                </button>`}
+            ${
+              this.sizeOverride === null
+                ? nothing
+                : html`<button
+                    class="dl__size-reset"
+                    id="dl-size-reset"
+                    type="button"
+                    title="恢复为跟随设置里的歌词字号"
+                    aria-label="恢复为跟随设置里的歌词字号"
+                    @click=${() => this.followRemoteSize()}
+                  >
+                    ↺
+                  </button>`
+            }
           </div>
         </div>
         <p class="dl__line" id="dl-line">${line}</p>

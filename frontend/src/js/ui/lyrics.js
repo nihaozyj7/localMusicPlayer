@@ -96,14 +96,7 @@ class MpLyricsPanel extends MpElement {
   // 位置相关的那点更新（微调预览跟随 / 编辑器当前行高亮）现在由下面的
   // _onTick() 直接调增量绘制函数完成 —— 那两个函数本来就是为这件事写的
   // （见 paintNudgeFollow / paintEditorFollow 的注释），放进 deps 等于让它们白写。
-  static deps = (s) => [
-    s.lyricsOpen,
-    s.currentId,
-    s.playing,
-    activeTab,
-    lyricsPanelTick,
-    state.config.embedMeta,
-  ];
+  static deps = (s) => [s.lyricsOpen, s.currentId, s.playing, activeTab, lyricsPanelTick, state.config.embedMeta];
 
   constructor() {
     super();
@@ -146,7 +139,7 @@ class MpLyricsPanel extends MpElement {
         if (!this.open) return;
         if (activeTab === "nudge") this.paintNudgeFollow();
         else if (activeTab === "edit") this.paintEditorFollow();
-      }),
+      })
     );
   }
 
@@ -214,11 +207,13 @@ class MpLyricsPanel extends MpElement {
                 data-song-source
                 data-src=${info.source}
               >
-                ${info.status === "matching" || info.status === "loading"
-                  ? "歌词匹配中…"
-                  : info.status === "failed"
-                    ? "歌词匹配失败"
-                    : `${lyricsSourceLabel(info.source)}${wordLevel ? " · 逐字" : ""}`}
+                ${
+                  info.status === "matching" || info.status === "loading"
+                    ? "歌词匹配中…"
+                    : info.status === "failed"
+                      ? "歌词匹配失败"
+                      : `${lyricsSourceLabel(info.source)}${wordLevel ? " · 逐字" : ""}`
+                }
               </span>
               <span class="lyricspanel__artist" data-song-artist>${song ? song.artist || "" : ""}</span>
             </div>
@@ -359,7 +354,9 @@ class MpLyricsPanel extends MpElement {
         <div class="lyricspanel__state lyricspanel__state--error" data-online-state="error">
           ${icon("warning")}
           <div class="lyricspanel__state-title">搜索失败</div>
-          <div class="lyricspanel__state-desc">在线歌词来源没有响应。检查网络后重试，或者切到「手动编辑」自己贴一份。</div>
+          <div class="lyricspanel__state-desc">
+            在线歌词来源没有响应。检查网络后重试，或者切到「手动编辑」自己贴一份。
+          </div>
           <div class="lyricspanel__state-detail">${this._onlineError}</div>
           <div class="lyricspanel__state-actions">
             <button class="btn btn--sm" type="button" data-act="lyrics-search" @click=${() => this.searchLyrics()}>
@@ -408,9 +405,7 @@ class MpLyricsPanel extends MpElement {
         <div class="lyricspanel__state" data-online-state="empty">
           ${icon("lyrics")}
           <div class="lyricspanel__state-title">没有找到候选歌词</div>
-          <div class="lyricspanel__state-desc">
-            换个更短的关键词通常更有效（只留歌名、去掉括号里的后缀）。
-          </div>
+          <div class="lyricspanel__state-desc">换个更短的关键词通常更有效（只留歌名、去掉括号里的后缀）。</div>
           <div class="lyricspanel__state-actions">
             ${
               canRetryByTitle
@@ -430,7 +425,12 @@ class MpLyricsPanel extends MpElement {
         <div class="lyricspanel__state-title">还没有开始搜索</div>
         <div class="lyricspanel__state-desc">搜索框里已经填好了当前歌曲，点「搜索」或按回车就能在线匹配歌词。</div>
         <div class="lyricspanel__state-actions">
-          <button class="btn btn--sm btn--primary" type="button" data-act="lyrics-search" @click=${() => this.searchLyrics()}>
+          <button
+            class="btn btn--sm btn--primary"
+            type="button"
+            data-act="lyrics-search"
+            @click=${() => this.searchLyrics()}
+          >
             搜索歌词
           </button>
         </div>
@@ -684,7 +684,12 @@ class MpLyricsPanel extends MpElement {
           >
             −5s
           </button>
-          <button class="btn btn--sm" type="button" data-act="editor-fwd" @click=${() => seekTo(state.position + 5000)}>
+          <button
+            class="btn btn--sm"
+            type="button"
+            data-act="editor-fwd"
+            @click=${() => seekTo(state.position + 5000)}
+          >
             +5s
           </button>
           <span class="editor__clock" data-editor-clock>${formatLrcTime(state.position).slice(1, -1)}</span>
@@ -725,7 +730,9 @@ class MpLyricsPanel extends MpElement {
 
   draftList() {
     if (!draft.lines.length) {
-      return html`<div class="editor__empty">还没有歌词文本。点上面的「编辑歌词文本」粘贴一份，或载入这首歌已有的歌词。</div>`;
+      return html`<div class="editor__empty">
+        还没有歌词文本。点上面的「编辑歌词文本」粘贴一份，或载入这首歌已有的歌词。
+      </div>`;
     }
     return repeat(
       draft.lines,
@@ -1439,8 +1446,12 @@ function openNudgeGuide() {
         <section class="lguide__sec">
           <h4 class="lguide__title">怎么判断该往哪边调</h4>
           <p class="lguide__text">听副歌的第一句，看是歌词先出来还是人声先出来：</p>
-          <div class="lguide__kv"><span class="lguide__k">歌词先出现</span><span>歌词快了 → 点「歌词快了 → 延后 0.5s」</span></div>
-          <div class="lguide__kv"><span class="lguide__k">歌词后出现</span><span>歌词慢了 → 点「歌词慢了 → 提前 0.5s」</span></div>
+          <div class="lguide__kv">
+            <span class="lguide__k">歌词先出现</span><span>歌词快了 → 点「歌词快了 → 延后 0.5s」</span>
+          </div>
+          <div class="lguide__kv">
+            <span class="lguide__k">歌词后出现</span><span>歌词慢了 → 点「歌词慢了 → 提前 0.5s」</span>
+          </div>
         </section>
         <section class="lguide__sec">
           <h4 class="lguide__title">界面上的数字</h4>
@@ -1462,8 +1473,8 @@ function openNudgeGuide() {
           <h4 class="lguide__title">微调还是手动编辑</h4>
           <p class="lguide__text">
             只有少数几句对不上（某句没打轴、某句错位）用「手动编辑」逐行修正；
-            整首歌统一偏移才用微调。两者都改不了「来源优先级」——
-            如果这首歌的歌词来自内嵌歌词或同目录 .lrc，界面会提示要不要同时写入歌曲文件。
+            整首歌统一偏移才用微调。两者都改不了「来源优先级」—— 如果这首歌的歌词来自内嵌歌词或同目录
+            .lrc，界面会提示要不要同时写入歌曲文件。
           </p>
         </section>
         <section class="lguide__sec">

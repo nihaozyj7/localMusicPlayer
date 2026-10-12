@@ -207,11 +207,7 @@ try {
     engine?.res?.preset === "surround" && engine?.res?.applied === true,
     JSON.stringify(engine?.res)
   );
-  check(
-    "引擎报告的请求档位是 surround",
-    engine?.after?.requested === "surround",
-    JSON.stringify(engine?.after)
-  );
+  check("引擎报告的请求档位是 surround", engine?.after?.requested === "surround", JSON.stringify(engine?.after));
   // 还原成 surround（重启后要验证的是它）
   await first.evalJs(`
     const { backend } = await import("/js/bridge.js");

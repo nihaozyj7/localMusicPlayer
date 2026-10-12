@@ -74,11 +74,7 @@ test("复现：装载中途按新歌取补偿 → 旧歌尾部失去 8 dB 的压
   const buggyDuringSwitch = gains["B"] ?? 0; // = 0 → A 的 −8 被冲掉
 
   assert.equal(buggyDuringSwitch, 0);
-  assert.notEqual(
-    buggyDuringSwitch,
-    gains["A"],
-    "旧写法在装载期间就把 A 的补偿丢了 —— 这正是 A 结尾突然变响的来源"
-  );
+  assert.notEqual(buggyDuringSwitch, gains["A"], "旧写法在装载期间就把 A 的补偿丢了 —— 这正是 A 结尾突然变响的来源");
 
   // 新写法：过渡期显式传 null（= 压到 0，不抬升也不压低），
   // 语义是"安全的中间态"，而不是"被新歌的 0 冲掉"
@@ -153,11 +149,7 @@ test("在线试听曲目同样要请求响度补偿（不再按 song.online 跳�
   const online = { id: "bili:BV1xx411c7mD", online: true };
   const local = { id: "t_abc", online: false };
 
-  assert.equal(
-    shouldRequestLoudness(online),
-    true,
-    "在线曲目必须请求补偿 —— 排除它正是用户报的「不受约束」"
-  );
+  assert.equal(shouldRequestLoudness(online), true, "在线曲目必须请求补偿 —— 排除它正是用户报的「不受约束」");
   assert.equal(shouldRequestLoudness(local), true, "本地曲目当然也要");
 });
 
@@ -175,9 +167,5 @@ test("在线曲目补偿的记账与查询走同一张表（不因为 online 而
   gains[onlineId] = 7.5; // setGain 写入
 
   assert.equal(gainDBFor(gains, onlineId), 7.5, "在线曲目的补偿必须能被查回");
-  assert.equal(
-    gainDBFor(gains, onlineId),
-    7.5,
-    "重挂载/切回这首歌时仍应命中同一张表"
-  );
+  assert.equal(gainDBFor(gains, onlineId), 7.5, "重挂载/切回这首歌时仍应命中同一张表");
 });

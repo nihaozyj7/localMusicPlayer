@@ -69,6 +69,11 @@ func (s *PackService) Source() map[string]any {
 		"source":  bootstrap.NormalizePackSource(cfg.PackSource),
 		"default": bootstrap.DefaultPackSource,
 		"channel": bootstrap.NormalizeUpdateChannel(cfg.UpdateChannel),
+		// problem 非空表示「用户填的地址不会被使用」（已落回默认地址）。
+		// 面板必须显示出来：不显示的话，用户看到的现象是「改完地址、刷新一下
+		// 又变回默认了」，只会以为是自己没保存成功。规则只有一份，在 bootstrap
+		//（PackSourceProblem），前端不重复实现。
+		"problem": bootstrap.PackSourceProblem(cfg.PackSource),
 	}
 }
 
