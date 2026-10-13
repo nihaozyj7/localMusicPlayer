@@ -6,7 +6,7 @@
      2. 侧边栏「本地歌曲」命名；
      3. 侧边栏歌单数量与「更多」按钮叠在同一位置（行宽对齐，
         「我喜欢」也有更多按钮）；
-     4. 单击歌曲 = 加入下一首播放（默认），双击 = 立即播放；
+     4. 单击歌曲 = 播放这一首（默认），双击 = 立即播放；
      5. 工具条里没有密度按钮与随机播放按钮；
      6. 设置是弹出层（不是切换视图），里面有列表密度、单击行为、
         「把封面/歌词写进歌曲文件」等设置项；
@@ -275,10 +275,14 @@ try {
   await evalJs(`document.body.click(); return true;`);
   await sleep(200);
 
-  /* 4. 单击 = 下一首播放；双击 = 立即播放 */
+  /* 4. 单击 = 播放这一首（默认）；双击 = 立即播放 */
   const click = await evalJs(`
     const store = await import("/js/store.js");
     store.clearQueue();
+    // 这一条断言的是**默认**行为，而浏览器 profile（%TEMP%\\mp-edge-round2）是复用的 ——
+    // 上一次跑可能留下别的 rowClickAction。显式按模块里的默认值复位，
+    // 避免脏 localStorage 让断言误报（那反映的是上次的交互，不是产品坏了）。
+    store.state.config.rowClickAction = store.DEFAULT_CONFIG.rowClickAction;
     await new Promise((r) => setTimeout(r, 100));
     const row = document.querySelector(".track");
     const id = row.dataset.id;
@@ -293,11 +297,8 @@ try {
     };
   `);
   check(
-    "单击歌曲 = 加入下一首播放（默认），不打断当前播放",
-    click.action === "next" &&
-      click.after.queue.length === 1 &&
-      click.after.queue[0] === click.id &&
-      click.after.current === click.before.current,
+    "单击歌曲 = 播放这一首（默认），并把它加入播放列表",
+    click.action === "play" && click.after.queue.includes(click.id) && click.after.current === click.id,
     JSON.stringify(click)
   );
 

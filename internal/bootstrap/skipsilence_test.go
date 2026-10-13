@@ -15,28 +15,28 @@ import (
 	"testing"
 )
 
-// 默认值：跳过静音默认关闭（会改变用户听到的音频，必须明确开启），
-// 切歌间隔默认 1.5 秒（需求指定的值）。
+// 默认值：跳过静音默认**开启**（首尾都跳 —— 那两段本来就是「没有内容的时间」），
+// 切歌间隔默认 1 秒（用户指定的默认值，见 config.go 的同名常量）。
 func TestSkipSilenceDefaults(t *testing.T) {
 	d := DefaultConfig()
-	if d.SkipSilenceHead {
-		t.Error("skipSilenceHead 默认应当是 false（改动音频的处理必须由用户开启）")
+	if !d.SkipSilenceHead {
+		t.Error("skipSilenceHead 默认应当是 true（开头空白会让「点了播放却不出声」）")
 	}
-	if d.SkipSilenceTail {
-		t.Error("skipSilenceTail 默认应当是 false")
+	if !d.SkipSilenceTail {
+		t.Error("skipSilenceTail 默认应当是 true")
 	}
 	if math.Abs(d.TrackGapSeconds-DefaultTrackGapSeconds) > 1e-9 {
 		t.Errorf("trackGapSeconds 默认 = %v，期望 %v", d.TrackGapSeconds, DefaultTrackGapSeconds)
 	}
-	if DefaultTrackGapSeconds != 1.5 {
-		t.Errorf("默认切歌间隔应当是 1.5 秒，实际 %v", DefaultTrackGapSeconds)
+	if DefaultTrackGapSeconds != 1.0 {
+		t.Errorf("默认切歌间隔应当是 1 秒，实际 %v", DefaultTrackGapSeconds)
 	}
 }
 
 // 切歌间隔的规范化：0 是**合法值**，不能被当成「没设过」而落回默认。
 //
-// 这是本文件最重要的一条：如果把 0 也落回 1.5，用户明确选的
-// 「不留间隔，播完立刻接上」会被静默改成 1.5 秒 ——
+// 这是本文件最重要的一条：如果把 0 也落回 1 秒，用户明确选的
+// 「不留间隔，播完立刻接上」会被静默改成 1 秒 ——
 // 而且他改一次、重启一次就变回来，根本找不到原因。
 func TestNormalizeTrackGapSecondsZeroIsValid(t *testing.T) {
 	if got := NormalizeTrackGapSeconds(0); got != 0 {
@@ -50,7 +50,8 @@ func TestNormalizeTrackGapSecondsClamps(t *testing.T) {
 		{-0.1, 0},   // 极小负数 → 0
 		{0, 0},      // 0 保持
 		{0.5, 0.5},  // 半秒
-		{1.5, 1.5},  // 默认值必须能原样通过
+		{1, 1},      // 默认值必须能原样通过
+		{1.5, 1.5},  // 半秒档仍然合法
 		{2.34, 2.3}, // 一位小数（滑条是 0.1 一档）
 		{2.36, 2.4}, // 四舍五入
 		{10, 10},    // 上限
@@ -109,8 +110,11 @@ func TestSkipSilenceBackfillsLegacyConfig(t *testing.T) {
 	}
 	normalize(parsed)
 
-	if parsed.SkipSilenceHead || parsed.SkipSilenceTail {
-		t.Error("旧配置没有这两个字段时应当保持默认（关闭）")
+	// 缺失的键必须落回**默认值**（现在首尾都是 true），而不是 Go 的零值 false。
+	def := DefaultConfig()
+	if parsed.SkipSilenceHead != def.SkipSilenceHead || parsed.SkipSilenceTail != def.SkipSilenceTail {
+		t.Errorf("旧配置没有这两个字段时应当保持默认（%v, %v），实际 (%v, %v)",
+			def.SkipSilenceHead, def.SkipSilenceTail, parsed.SkipSilenceHead, parsed.SkipSilenceTail)
 	}
 	if math.Abs(parsed.TrackGapSeconds-DefaultTrackGapSeconds) > 1e-9 {
 		t.Errorf("旧配置没有这个字段时应当落回默认 %v，实际 %v",

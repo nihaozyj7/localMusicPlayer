@@ -29,7 +29,7 @@ const DEFAULT_CONFIG = {
   glassAlpha: 62,
   glassAlphaCustom: false, // 用户是否手动调整过面板透明度（true 才按配置实时合成）
   windowCorners: "system", // 主窗口圆角：system | round | small | square（立刻生效，见 WindowService.SetWindowCorners）
-  minimizeToTray: false, // 点关闭按钮时收进系统托盘而不是退出应用
+  minimizeToTray: true, // 点关闭按钮时收进系统托盘而不是退出应用
   animations: true,
   // 过渡速度：fast（0.25s，默认）| medium（0.5s）| slow（0.75s）。
   // 与 Go 侧 bootstrap.Config.AnimationsSpeed 保持一致。
@@ -128,8 +128,9 @@ const DEFAULT_CONFIG = {
   embedMeta: false,
 
   // 交互
-  // 单击歌曲行的行为：play（播放并加入播放列表） | play-list（播放当前列表并替换队列） | next（下一首播放）
-  rowClickAction: "next",
+  // 单击歌曲行的行为：play（播放并加入播放列表，默认） | play-list（播放当前列表并替换队列） | next（下一首播放）
+  // 与 Go 侧 bootstrap.Config 的默认值保持一致（单击即播是多数播放器的心智模型）。
+  rowClickAction: "play",
   // 保留歌曲播放进度：退出应用时记住每首歌的播放位置，下次打开回到上次听的地方。
   // 只恢复进度条位置，不会自动开始播放（见 applyPendingPlayback / audio.js）。
   resumeProgress: true,
@@ -146,14 +147,15 @@ const DEFAULT_CONFIG = {
      两个开关分别控制「跳过开头无声」与「跳过结尾无声」：
        · 开头静音 —— 点播放却迟迟不出声，像播放器卡了；
        · 结尾静音 —— CD 抓轨的尾部空白，自动下一首要白等十几秒。
-     默认都关：它们会改变用户听到的音频，必须由用户明确开启
-     （与「响度均衡」同一立场）。 */
-  skipSilenceHead: false,
-  skipSilenceTail: false,
-  /* 切歌时两首歌之间的间隔（秒），默认 1.5。
+     默认都开：这两段本来就是「没有内容的时间」，跳过的只是会被播放的区间，
+     时长与进度条仍在原曲时间轴上（见 docs/38），不会改变用户听到的声音内容。
+     「听完尾奏再切歌」的人在设置里关掉对应开关即可。 */
+  skipSilenceHead: true,
+  skipSilenceTail: true,
+  /* 切歌时两首歌之间的间隔（秒），默认 1。
      作用于**自动切歌**；手动点下一首不等它（那是明确的即时意图）。
      与 Go 侧 bootstrap.DefaultTrackGapSeconds 保持一致。 */
-  trackGapSeconds: 1.5,
+  trackGapSeconds: 1,
 };
 
 function initialState() {

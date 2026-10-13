@@ -31,9 +31,9 @@ import { esc, fmtCount } from "./utils.js";
    单击 / 双击行为
    --------------------------------------------------------------------------
    单击有三种模式（与 Go 侧 bootstrap.RowClickActions 一一对应）：
-     play       播放        —— 播这一首，并把它加进播放列表（不动现有列表）
+     play       播放        —— 播这一首，并把它加进播放列表（不动现有列表，默认）
      play-list  播放当前列表 —— 播这一首，并用当前整个列表替换播放队列
-     next       下一首播放   —— 插到当前歌曲后面，下一次「下一曲」就播它（默认）
+     next       下一首播放   —— 插到当前歌曲后面，下一次「下一曲」就播它
 
    双击始终是「立即播放并从这一首开始」—— 这是各地播放器的通用约定，
    不受设置影响（否则把设置改成 next 之后就没有「马上听这首」的入口了）。
@@ -41,7 +41,7 @@ import { esc, fmtCount } from "./utils.js";
 export function activateRow(row, { silent = false } = {}) {
   const songId = row?.dataset?.id;
   if (!songId) return;
-  const action = state.config.rowClickAction || "next";
+  const action = state.config.rowClickAction || "play";
 
   if (action === "play") {
     // playSong 保证这首歌一定在播放列表里（不在就追加到末尾），但不会清掉现有列表
@@ -55,7 +55,7 @@ export function activateRow(row, { silent = false } = {}) {
     return;
   }
 
-  // 下一首播放（默认）
+  // 下一首播放
   addNextInQueue(songId);
   if (!silent) toast("已设为下一首播放", { tone: "success", duration: 1500 });
 }

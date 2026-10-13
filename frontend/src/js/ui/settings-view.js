@@ -248,7 +248,7 @@ function applyTrackGap(seconds) {
   // 只推给后端：间隔在音频线程上计时（见 audio.js#applyPlaybackOptions）。
   // 这里刻意不 await —— 滑条按 pointermove 高频触发，等 IPC 会让拖拽发涩。
   const v = Number(seconds);
-  state.config.trackGapSeconds = Number.isFinite(v) ? v : 1.5;
+  state.config.trackGapSeconds = Number.isFinite(v) ? v : 1;
   applyPlaybackOptions();
 }
 
@@ -1240,7 +1240,7 @@ class MpSettingsLayer extends MpElement {
             播放：立刻播放这首歌，并加入播放列表；<br />
             播放当前列表：用当前整个列表替换播放队列，从这首歌开始播；<br />
             下一首播放：插到当前歌曲后面，下一次「下一曲」时播放。`,
-          control: segmented("rowClickAction", ROW_CLICK_ACTIONS, state.config.rowClickAction || "next"),
+          control: segmented("rowClickAction", ROW_CLICK_ACTIONS, state.config.rowClickAction || "play"),
         })}
       </div>
     </section>`;
@@ -2450,11 +2450,11 @@ class MpSettingsLayer extends MpElement {
   sliderValue(key) {
     if (key === "glassBlur") return state.config.glassBlurCustom ? state.config.glassBlur : resolvedGlassBlur();
     if (key === "glassAlpha") return state.config.glassAlphaCustom ? state.config.glassAlpha : resolvedGlassAlpha();
-    // 切歌间隔的兜底是 1.5（而不是 ?? 0）：配置里缺这个字段时，
+    // 切歌间隔的兜底是 1（而不是 ?? 0）：配置里缺这个字段时，
     // 滑条显示 0 秒会让用户以为「切歌没有间隔」，而实际用的是默认值。
     if (key === "trackGapSeconds") {
       const v = Number(state.config.trackGapSeconds);
-      return Number.isFinite(v) ? v : 1.5;
+      return Number.isFinite(v) ? v : 1;
     }
     return state.config[key] ?? 0;
   }

@@ -33,7 +33,7 @@
  * @property {boolean} onlineCover - OnlineCover 是否联网为在线歌曲抓取封面（多来源，见 internal/coverfetch）。
  * @property {boolean} onlineWordLyrics - OnlineWordLyrics 在线歌词是否优先使用「字级（逐字）」来源。 字级歌词只有 QQ 音乐（QRC）与酷狗（KRC）能给，而这两家用的是**第三方私有 编码**：本程序只做兼容性解析以便显示逐字时间轴（见 internal/lyricsfetch）。 关掉后不再请求/解析这两种编码，只用行级来源 —— 歌词照常可用，只是没有逐字高亮。 这是给「不希望涉及私有格式解析」的用户留的开关，默认开启（与加入它之前行为一致）。
  * @property {boolean} embedMeta - EmbedMeta 是否把抓到的封面/歌词写回歌曲文件自身的标签。 默认关闭：写标签会改写用户的音乐文件，必须是用户明确开启的行为。 关闭时封面与歌词仍然可用，只是放在缓存目录里（见 internal/metacache）。
- * @property {string} rowClickAction - —— 交互 —— RowClickAction 单击歌曲行的行为（与前端 settings.js 的 ROW_CLICK_ACTIONS 一一对应）： play      —— 播放：播这一首，并把它加进播放列表（不动现有列表） play-list —— 播放当前列表：播这一首，并用当前整个列表替换播放队列 next      —— 下一首播放：插到当前歌曲后面（默认，不打断当前播放）
+ * @property {string} rowClickAction - —— 交互 —— RowClickAction 单击歌曲行的行为（与前端 settings.js 的 ROW_CLICK_ACTIONS 一一对应）： play      —— 播放：播这一首，并把它加进播放列表（不动现有列表，默认） play-list —— 播放当前列表：播这一首，并用当前整个列表替换播放队列 next      —— 下一首播放：插到当前歌曲后面（不打断当前播放）
  * @property {boolean} resumeProgress - ResumeProgress 是否保留歌曲播放进度：打开后退出应用会记住每首歌播到哪儿， 下次打开回到那个位置（只恢复进度条，不会自动播放）。 每首歌的具体位置由前端随快照存在本地（localStorage），后端只保存这个开关。
  * @property {boolean} rememberVolume - RememberVolume 是否记住上次的音量：关闭后每次启动都用默认音量。
  * @property {string} listDensity - ListDensity 列表密度：compact | cozy | roomy。 原来每张表头各有一个密度按钮，现在统一到设置里，对所有列表生效。

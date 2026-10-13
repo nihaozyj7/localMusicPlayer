@@ -167,9 +167,9 @@ type Config struct {
 
 	// —— 交互 ——
 	// RowClickAction 单击歌曲行的行为（与前端 settings.js 的 ROW_CLICK_ACTIONS 一一对应）：
-	//   play      —— 播放：播这一首，并把它加进播放列表（不动现有列表）
+	//   play      —— 播放：播这一首，并把它加进播放列表（不动现有列表，默认）
 	//   play-list —— 播放当前列表：播这一首，并用当前整个列表替换播放队列
-	//   next      —— 下一首播放：插到当前歌曲后面（默认，不打断当前播放）
+	//   next      —— 下一首播放：插到当前歌曲后面（不打断当前播放）
 	RowClickAction string `json:"rowClickAction"`
 	// ResumeProgress 是否保留歌曲播放进度：打开后退出应用会记住每首歌播到哪儿，
 	// 下次打开回到那个位置（只恢复进度条，不会自动播放）。
@@ -516,13 +516,20 @@ func DefaultConfig() *Config {
 		OnlineWordLyrics: true,
 		EmbedMeta:        false,
 
-		RowClickAction: "next",
+		// 默认「单击 = 播放」：单击一首歌就播它是绝大多数播放器的心智模型
+		//（见 docs/archive/28 审查 P2）；双击仍固定为「立即播放这一首」，
+		// 想排队的人可以在设置里改回「下一首播放」。
+		RowClickAction: "play",
 		// 默认开启：与加入这个开关之前「回到上次那首歌」的体验一致，
 		// 只是把播放位置也一并恢复；不想要可以在设置里关掉。
 		ResumeProgress: true,
 		// 默认记住音量：与加入这个开关之前的行为一致，关掉即每次回到默认音量。
 		RememberVolume: true,
 		ListDensity:    "cozy",
+		// 默认最小化到托盘：关闭按钮的意图通常是「先收起来」而不是「退出」，
+		// 而托盘图标由这个开关创建（见 main.go 的 WindowClosing 钩子）。
+		// 想直接退出的人在设置里关掉它即可。
+		MinimizeToTray: true,
 
 		ShowDesktopLyrics: false,
 		DesktopLyricsX:    DesktopLyricsNoPos,
@@ -542,11 +549,14 @@ func DefaultConfig() *Config {
 		SleepAfterSong:            false,
 		ShuffleMode:               "reshuffle",
 
-		// 跳过静音默认**关闭**：它会改变用户听到的音频（掐掉头尾）。
-		// 与「响度均衡」同一立场 —— 任何改动音频本身的处理都必须由用户明确开启。
-		SkipSilenceHead: false,
-		SkipSilenceTail: false,
-		// 切歌间隔默认 1.5 秒：自动切歌时留一点呼吸感，也让「上一首结束」
+		// 跳过静音默认**开启**（首尾都跳）：这两段空白本身就是「没有内容的时间」，
+		// 用户的实际听感是「点了播放却迟迟不出声」与「播完了还要白等十几秒」。
+		// 跳过的只是**会被播放的区间**，时长与进度条仍在原曲时间轴上
+		//（见 docs/38），所以它不像响度均衡 / 音效那样会改变用户听到的声音内容。
+		// 想「听完尾奏再切歌」的人在设置里关掉对应开关即可。
+		SkipSilenceHead: true,
+		SkipSilenceTail: true,
+		// 切歌间隔默认 1 秒：自动切歌时留一点呼吸感，也让「上一首结束」
 		// 与「下一首开始」在听感上分得开，而不是硬接在一起。
 		TrackGapSeconds: DefaultTrackGapSeconds,
 
@@ -611,7 +621,7 @@ func NormalizeCarouselInterval(seconds int) int {
 // RowClickActions 单击歌曲行的可选行为
 var RowClickActions = []string{"play", "play-list", "next"}
 
-// NormalizeRowClickAction 规范化单击行为，非法值落回 next（默认不打断播放）
+// NormalizeRowClickAction 规范化单击行为，非法值落回 play（默认值，见 DefaultConfig）
 func NormalizeRowClickAction(v string) string {
 	v = strings.ToLower(strings.TrimSpace(v))
 	for _, ok := range RowClickActions {
@@ -619,7 +629,7 @@ func NormalizeRowClickAction(v string) string {
 			return v
 		}
 	}
-	return "next"
+	return "play"
 }
 
 /* --------------------------------------------------------------------------
@@ -628,9 +638,9 @@ func NormalizeRowClickAction(v string) string {
 
 // DefaultTrackGapSeconds 是「两首歌之间间隔」的默认值（秒）。
 //
-// 1.5 秒：短到不至于让用户觉得播放器卡住，长到能把两首歌分得开。
+// 1 秒：短到不至于让用户觉得播放器卡住，长到能把两首歌分得开。
 // 前端 store.js 的 DEFAULT_CONFIG 与设置界面滑块都以这个常量为准。
-const DefaultTrackGapSeconds = 1.5
+const DefaultTrackGapSeconds = 1.0
 
 // 切歌间隔的合法范围（秒）。
 //

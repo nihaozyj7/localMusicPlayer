@@ -293,8 +293,8 @@ func TestRowClickAndDensityRejectGarbage(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := svc.Get()
-	if got.RowClickAction != "next" {
-		t.Fatalf("非法单击行为应落回 next，实际 %q", got.RowClickAction)
+	if got.RowClickAction != "play" {
+		t.Fatalf("非法单击行为应落回默认的 play，实际 %q", got.RowClickAction)
 	}
 	if got.ListDensity != "cozy" {
 		t.Fatalf("非法密度应落回 cozy，实际 %q", got.ListDensity)

@@ -5,7 +5,7 @@
    逐项确认：
 
      1. 三个控件真的渲染出来了（不是只存在于源码里）；
-     2. 切歌间隔滑条的读数显示 1.5 秒（默认值），且格式是「一位小数 + 秒」；
+     2. 切歌间隔滑条的读数显示 1.0 秒（默认值），且格式是「一位小数 + 秒」；
      3. 拨动两个开关之后，state.config 里对应的值跟着变；
      4. 三个键都在「会推给后端的键」清单里。
 
@@ -203,13 +203,16 @@ async function main() {
        1. 打开设置界面
        ------------------------------------------------------------------ */
     const opened = await evaluate(`(async () => {
-      const btn = document.querySelector('[data-act="open-settings"], #settings-btn, [aria-label*="设置"]');
-      if (btn) { btn.click(); }
+      // ★ 必须用 id 选，不能写 [aria-label*="设置"]：主题按钮的 aria-label 是
+      // 「切换主题（按设置里的列表循环）」，里面也有「设置」两个字 ——
+      // 旧选择器实际点到的是主题按钮，而下面的兜底断言又会因为
+      // 「#settings-layer 这个元素一直存在（只是 hidden）」而假装通过。
+      document.querySelector("#btn-settings").click();
       for (let i = 0; i < 40; i += 1) {
         if (document.querySelector('#settings-layer:not([hidden])')) return true;
         await new Promise((r) => setTimeout(r, 100));
       }
-      return Boolean(document.querySelector('#settings-layer'));
+      return false;
     })()`);
     check("设置界面已打开", opened);
 
@@ -232,7 +235,7 @@ async function main() {
     check("「切歌间隔」滑条已渲染", found.gap);
 
     /* ------------------------------------------------------------------
-       3. 默认值：两个开关关闭，间隔显示 1.5 秒
+       3. 默认值：两个开关都开，间隔显示 1.0 秒
        ------------------------------------------------------------------ */
     const defaults = await evaluate(`(() => {
       const layer = document.querySelector('#settings-layer') || document;
@@ -247,10 +250,10 @@ async function main() {
       };
     })()`);
 
-    check("「跳过开头」默认关闭", defaults.headChecked === "false", `aria-checked=${defaults.headChecked}`);
-    check("「跳过结尾」默认关闭", defaults.tailChecked === "false", `aria-checked=${defaults.tailChecked}`);
-    // 默认 1.5 秒：显示必须是 1.5 而不是 2（四舍五入会显示错）也不是 0
-    check("「切歌间隔」默认显示 1.5 秒", defaults.gapText === "1.5 秒", `实际显示「${defaults.gapText}」`);
+    check("「跳过开头」默认开启", defaults.headChecked === "true", `aria-checked=${defaults.headChecked}`);
+    check("「跳过结尾」默认开启", defaults.tailChecked === "true", `aria-checked=${defaults.tailChecked}`);
+    // 默认 1 秒：显示必须是 1.0（保留一位小数）而不是 2（四舍五入会显示错）也不是 0
+    check("「切歌间隔」默认显示 1.0 秒", defaults.gapText === "1.0 秒", `实际显示「${defaults.gapText}」`);
 
     /* ------------------------------------------------------------------
        4. 两个开关是独立的：只拨一个时另一个不动
@@ -276,12 +279,12 @@ async function main() {
 
     check(
       "只拨「跳过开头」时「跳过结尾」不受影响（两个开关相互独立）",
-      toggled.afterHead.head === "true" && toggled.afterHead.tail === "false",
+      toggled.afterHead.head === "false" && toggled.afterHead.tail === "true",
       `拨后 head=${toggled.afterHead.head} tail=${toggled.afterHead.tail}`
     );
     check(
-      "两个开关都能各自打开",
-      toggled.afterBoth.head === "true" && toggled.afterBoth.tail === "true",
+      "两个开关都能各自关闭",
+      toggled.afterBoth.head === "false" && toggled.afterBoth.tail === "false",
       `head=${toggled.afterBoth.head} tail=${toggled.afterBoth.tail}`
     );
 
@@ -305,7 +308,7 @@ async function main() {
 
     check(
       "重绘后两个开关的选中态保持（不会弹回默认）",
-      repaint.head === "true" && repaint.tail === "true",
+      repaint.head === "false" && repaint.tail === "false",
       `head=${repaint.head} tail=${repaint.tail}`
     );
 

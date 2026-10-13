@@ -40,19 +40,19 @@ const engineSrc = read("internal/audioplay/engine.go");
    1. 默认值（前后端必须一致）
    -------------------------------------------------------------------------- */
 
-test("store.js：跳过静音默认关闭，切歌间隔默认 1.5 秒", () => {
-  // 两个跳过开关默认关闭：它们会改变用户听到的音频（把头尾掐掉），
-  // 必须由用户明确开启 —— 与「响度均衡」同一立场。
-  assert.match(storeSrc, /skipSilenceHead:\s*false/, "skipSilenceHead 的默认值应当是 false");
-  assert.match(storeSrc, /skipSilenceTail:\s*false/, "skipSilenceTail 的默认值应当是 false");
-  // 切歌间隔默认 1.5 秒（需求指定的默认值）
-  assert.match(storeSrc, /trackGapSeconds:\s*1\.5/, "trackGapSeconds 的默认值应当是 1.5");
+test("store.js：跳过静音默认开启（首尾都跳），切歌间隔默认 1 秒", () => {
+  // 两个跳过开关默认开启：跳过的只是「会被播放的区间」，时长与进度条仍在
+  // 原曲时间轴上，所以它不像响度均衡那样会改变用户听到的声音内容。
+  assert.match(storeSrc, /skipSilenceHead:\s*true/, "skipSilenceHead 的默认值应当是 true");
+  assert.match(storeSrc, /skipSilenceTail:\s*true/, "skipSilenceTail 的默认值应当是 true");
+  // 切歌间隔默认 1 秒（用户指定的默认值）
+  assert.match(storeSrc, /trackGapSeconds:\s*1\b/, "trackGapSeconds 的默认值应当是 1");
 });
 
 test("Go 侧：默认值与前端一致（改一边忘另一边会让界面显示与实际不符）", () => {
-  assert.match(goConfigSrc, /DefaultTrackGapSeconds\s*=\s*1\.5/, "Go 侧默认间隔应当是 1.5 秒");
-  assert.match(goConfigSrc, /SkipSilenceHead:\s*false/, "Go 侧 skipSilenceHead 默认应当是 false");
-  assert.match(goConfigSrc, /SkipSilenceTail:\s*false/, "Go 侧 skipSilenceTail 默认应当是 false");
+  assert.match(goConfigSrc, /DefaultTrackGapSeconds\s*=\s*1\.0/, "Go 侧默认间隔应当是 1 秒");
+  assert.match(goConfigSrc, /SkipSilenceHead:\s*true/, "Go 侧 skipSilenceHead 默认应当是 true");
+  assert.match(goConfigSrc, /SkipSilenceTail:\s*true/, "Go 侧 skipSilenceTail 默认应当是 true");
   assert.match(goConfigSrc, /TrackGapSeconds:\s*DefaultTrackGapSeconds/, "Go 侧默认值应当引用同一个常量");
 });
 
@@ -110,9 +110,9 @@ test("切歌间隔的滑条量程是 0~10 秒、步进 0.1、保留一位小数"
   // 0 必须可及：用户要能选「不留间隔」。
   assert.match(body, /isTrackGap\s*\n?\s*\?\s*0/, "切歌间隔的下限应当是 0（不留间隔）");
   assert.match(body, /isTrackGap\s*\n?\s*\?\s*10/, "切歌间隔的上限应当是 10 秒");
-  // 默认 1.5 秒要求步进必须小于 1，否则用户调不出 1.5
+  // 默认 1 秒要求步进必须小于 1，否则用户调不出 0.5 这种半秒档位
   assert.match(body, /isTrackGap\s*\?\s*0\.1/, "切歌间隔的步进应当是 0.1 秒");
-  // 显示 1.5 而不是 1（四舍五入会把默认值显示错）
+  // 显示 1.0 而不是 1（四舍五入会把小数档位显示错）
   assert.match(body, /isTrackGap\s*\?\s*1\s*:\s*0/, "切歌间隔应当保留一位小数");
 });
 
