@@ -9,7 +9,16 @@
 import Sortable from "sortablejs";
 import { MpElement, define, html, repeat, icon } from "./base.js";
 import { toast } from "./overlays.js";
-import { LIKED_ID, clearQueue, movePlaylist, playlistById, commit, state } from "../store.js";
+import {
+  LIKED_ID,
+  clearQueue,
+  movePlaylist,
+  playlistById,
+  playlistSongIds,
+  commit,
+  resolvableSongIds,
+  state,
+} from "../store.js";
 import { navigate } from "../shell.js";
 import { openPlaylistMenu, promptNewPlaylist } from "../playlists.js";
 import { fmtCount } from "../utils.js";
@@ -18,7 +27,10 @@ import { fmtCount } from "../utils.js";
 let lastPlaylistDragEndAt = 0;
 
 class MpSidebar extends MpElement {
-  static deps = (s) => [s.view, s.playlistId, s.playlistVersion, s.songs.length, s.queue.length];
+  // 数量标记读的是「当前真的存在几首歌」，所以曲库换了（重扫 / 删除文件）
+  // 会影响徽标 —— 依赖里必须有曲库数组本身，只盯 songs.length 会漏掉
+  // 「删一首、补一首」这种长度不变、内容全变的情况。
+  static deps = (s) => [s.view, s.playlistId, s.playlistVersion, s.songs, s.queue, s.onlineSongs.size];
 
   firstUpdated() {
     this.bindDrag();
@@ -109,7 +121,9 @@ class MpSidebar extends MpElement {
               ${icon("queue", "navitem__icon")}
               <span class="navitem__text">播放列表</span>
               <span class="navitem__tail">
-                <span class="navitem__badge" id="badge-queue">${fmtCount(state.queue.length)}</span>
+                <span class="navitem__badge" id="badge-queue"
+                  >${fmtCount(resolvableSongIds(state.queue).length)}</span
+                >
               </span>
             </button>
           </nav>
@@ -163,7 +177,7 @@ class MpSidebar extends MpElement {
         ${icon(pl.id === LIKED_ID ? "heart" : "playlist", "navitem__icon")}
         <span class="navitem__text">${pl.name}</span>
         <span class="navitem__tail">
-          <span class="navitem__badge">${fmtCount(pl.songIds.length)}</span>
+          <span class="navitem__badge">${fmtCount(playlistSongIds(pl).length)}</span>
           <span class="navitem__more" data-act="pl-more" data-id=${pl.id} role="button" aria-label="${pl.name}操作"
             >${icon("more")}</span
           >

@@ -27,6 +27,7 @@ import {
   playNext,
   playPrev,
   playlistById,
+  resolvableSongIds,
   setVolume,
   state,
   subscribe,
@@ -60,7 +61,12 @@ class MpPlayerbar extends MpElement {
     s.muted,
     s.playMode,
     s.likedIds,
-    s.queue.length,
+    // 队列徽标要按「真的存在几首」算（见 resolvableSongIds），所以依赖里有
+    // 曲库与在线曲目表，而不只是 queue.length —— 删掉一首歌之后长度没变，
+    // 徽标却必须立刻少 1。
+    s.queue,
+    s.songs,
+    s.onlineSongs.size,
     s.queueOpen,
     s.optionsOpen,
     s.sleepOpen,
@@ -210,6 +216,8 @@ class MpPlayerbar extends MpElement {
     const cover = song ? coverOf(song) : "";
     const timer = state.sleepTimer;
     const sleepMinutes = timer?.type === "duration" ? Math.max(1, Math.ceil((timer.until - Date.now()) / 60000)) : 0;
+    // 队列徽标：只数队列里**真的能播**的那些（与队列视图的行数同口径）
+    const queueCount = resolvableSongIds(state.queue).length;
 
     return html`
       <footer class="playerbar" id="playerbar">
@@ -412,7 +420,7 @@ class MpPlayerbar extends MpElement {
             >
               ${icon("playlist")}
               <span class="mode-btn__badge" id="queue-count"
-                >${state.queue.length === 0 ? "" : state.queue.length > 99 ? "99+" : String(state.queue.length)}</span
+                >${queueCount === 0 ? "" : queueCount > 99 ? "99+" : String(queueCount)}</span
               >
             </button>
           </div>

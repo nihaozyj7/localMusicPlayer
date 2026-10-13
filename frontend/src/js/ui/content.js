@@ -203,7 +203,10 @@ class MpContent extends MpElement {
       }`;
     }
     if (v === "playlist" && pl) {
-      return `${fmtCount(pl.songIds.length)} 首 · 共 ${fmtDurationCn(total)} · ${
+      // ★ 用 songs.length（= 列表里真正显示出来的首数），不是 pl.songIds.length：
+      //   后者含指向已删除文件的失效引用，写出来就是「标题说 19 首、列表只有 14 行」。
+      //   与上面的 total（同样按 songs 累加）也由此保持同一口径。
+      return `${fmtCount(songs.length)} 首 · 共 ${fmtDurationCn(total)} · ${
         pl.locked ? "默认歌单（不可删除）" : "自定义歌单"
       }`;
     }

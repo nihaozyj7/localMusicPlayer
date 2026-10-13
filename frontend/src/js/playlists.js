@@ -10,7 +10,15 @@
    ========================================================================== */
 
 import { html } from "lit";
-import { addSongsToPlaylist, createPlaylist, deletePlaylist, playlistById, renamePlaylist, state } from "./store.js";
+import {
+  addSongsToPlaylist,
+  createPlaylist,
+  deletePlaylist,
+  playlistById,
+  playlistSongIds,
+  renamePlaylist,
+  state,
+} from "./store.js";
 import { openMenu, openModal, toast } from "./ui/overlays.js";
 import { navigate } from "./shell.js";
 import { fmtCount } from "./utils.js";
@@ -141,9 +149,16 @@ export function openPlaylistMenu(id, anchor) {
           playPlaylist(pl);
           break;
         case "queue": {
+          // ★ 只把**真的存在**的歌放进队列：歌单里可能留着指向已删除文件的
+          //   失效引用，放进去只会让队列徽标虚高、并且「下一首」跳到一首空歌。
+          const ids = playlistSongIds(pl);
+          if (!ids.length) {
+            toast(`「${pl.name}」里没有可播放的歌曲`, { tone: "warning" });
+            break;
+          }
           const m = await import("./store.js");
-          m.appendToQueue(pl.songIds);
-          toast(`已把 ${fmtCount(pl.songIds.length)} 首加入播放列表`, { tone: "success" });
+          m.appendToQueue(ids);
+          toast(`已把 ${fmtCount(ids.length)} 首加入播放列表`, { tone: "success" });
           break;
         }
         case "rename":
@@ -160,7 +175,14 @@ export function openPlaylistMenu(id, anchor) {
 }
 
 function playPlaylist(pl) {
+  // 与「加入播放列表」同口径：失效引用不进队列（见 playlistSongIds），
+  // 否则「播放这个歌单」会把队列长度算成存档里的引用数。
+  const ids = playlistSongIds(pl);
+  if (!ids.length) {
+    toast(`「${pl.name}」里没有可播放的歌曲`, { tone: "warning" });
+    return;
+  }
   import("./store.js").then(({ playContext }) => {
-    playContext(pl.songIds.slice(), 0, { type: "playlist", id: pl.id });
+    playContext(ids, 0, { type: "playlist", id: pl.id });
   });
 }

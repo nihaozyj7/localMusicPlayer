@@ -816,9 +816,9 @@ function currentSongList() {
   //   5,000 首 0.56ms/次、20,000 首 2.4ms/次、100,000 首 22ms/次，
   // 改走 songIndex 后同样的循环分别是 0.047 / 0.23 / 1.36ms，快 10~16 倍。
   //
-  // songIndex 在 recalcVisible() 里维护，且已经有正确的重建条件
-  //（state.songs 换了引用才重建），所以这里读它是安全的。
-  const byId = songIndex;
+  // 取索引用 currentSongIndex()：索引就绪时它就是 songIndex 本身（零分配），
+  // 只有「曲库刚被整体替换、commit() 还没跑」时才临时建一份，见那里的说明。
+  const byId = currentSongIndex();
   if (view === "queue") {
     // 在线试听曲目不在 songs 里（见 initialState 的说明），但队列里有它的 id。
     // 只在 songs 里查会让整行消失，且 DOM 下标与 state.queue 下标错位 ——
@@ -886,6 +886,45 @@ let songIndexSource = null;
  * 由 recalcVisible() 在 computeVisible() 之前维护。
  */
 let songIndex = new Map();
+
+/**
+ * 曲库 id → song 索引（**保证与 state.songs 对得上**）。
+ *
+ * 正常情况下就是维护好的 songIndex（recalcVisible 在 computeVisible 之前重建它，
+ * 见那里的说明）。只有「曲库刚被整体替换、commit() 还没跑」的那一小段窗口里，
+ * 索引会落后于 state.songs —— 这时临时现建一份，**不写回缓存**
+ * （缓存的所有权属于 recalcVisible，绕开它维护会引入第二套失效规则）。
+ *
+ * 为什么需要这一层：songById / 数量统计这类读取者是**同步**被调用的，
+ * 它们没法保证「一定发生在一次 commit 之后」（例：hydrateFromBackend 里灌完
+ * 曲库、还没 commit 就先问 songById 要时长；界面渲染也可能赶在 commit 的
+ * rAF 之前）。用落后一轮的索引去判定「这首歌还在不在」，结果就是**静默少歌**。
+ */
+function currentSongIndex() {
+  if (songIndexSource === state.songs) return songIndex;
+  return new Map(state.songs.map((s) => [s.id, s]));
+}
+
+/**
+ * 从一串歌曲 id 里挑出**当前真的能显示 / 能播放**的那些（保持原顺序）。
+ *
+ * 歌单与播放队列存的都是 id，而曲库是扫描出来的：文件被删掉 / 移走 / 被过滤规则
+ * 挡掉之后，那些 id 会作为「失效引用」留在存档里。列表渲染本来就会把它们过滤掉
+ * （见 currentSongList），可数量标记过去直接读 `songIds.length` —— 那是**存档里的
+ * 引用数**，不是用户能看到/听到的歌数，于是两边对不上。
+ *
+ * 真实故障：用户偏好里 19 个 likedIds，磁盘上只剩 14 个对应文件 ——
+ * 「我喜欢」列表 14 首、侧边栏徽标却写 19 个。
+ *
+ * ★ 所以凡是「显示数量」或「拿这串 id 去播放」的地方都必须先过这里；
+ *   失效引用本身**不删**（文件万一回来，收藏还在，见 hydrateFromBackend 里
+ *   队列与歌单的处理差异）。
+ */
+export function resolvableSongIds(ids) {
+  if (!Array.isArray(ids) || !ids.length) return [];
+  const byId = currentSongIndex();
+  return ids.filter((id) => byId.has(id) || state.onlineSongs.has(id));
+}
 
 /* --------------------------------------------------------------------------
    曲库筛选的「小写索引」
@@ -1111,6 +1150,17 @@ export function currentContext() {
    -------------------------------------------------------------------------- */
 export function playlistById(id) {
   return state.playlists.find((p) => p.id === id) || null;
+}
+
+/**
+ * 歌单里**当前真正存在的**歌曲 id（含内置的「我喜欢」）。
+ *
+ * 侧边栏徽标 / 头部副标题的数量、以及「播放这个歌单」「加入播放列表」两个动作，
+ * 都必须用它而不是 `pl.songIds.length` —— 歌单里可能留着指向已删除文件的
+ * 失效引用，列表不显示它们，而数量标记会（见 resolvableSongIds 的说明）。
+ */
+export function playlistSongIds(pl) {
+  return resolvableSongIds(pl?.songIds);
 }
 
 export const LIKED_ID = "liked";
@@ -1418,7 +1468,7 @@ export function clearQueue() {
  */
 export function songById(id) {
   if (!id) return null;
-  return songIndex.get(id) || state.onlineSongs.get(id) || null;
+  return currentSongIndex().get(id) || state.onlineSongs.get(id) || null;
 }
 
 /**
