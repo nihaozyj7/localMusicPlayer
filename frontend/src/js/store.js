@@ -2218,7 +2218,6 @@ function noteUserPlay(songId) {
     console.warn("[store] 用户点播钩子抛出异常（已忽略）", err);
   }
 }
-
 /** 是否已有真实音频在驱动进度（后端引擎或 <audio>） */
 function audioEngineActive() {
   if (realAudioActiveProbe) {
