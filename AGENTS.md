@@ -15,7 +15,7 @@ Windows 桌面音乐播放器（绿色版单 exe，`bin/lmplayer.exe`，无需�
 | 前端工程 | 原生 ESM + Vite 7 + npm workspaces + ESLint / Prettier / TypeScript(JSDoc) |
 | 音频 | 内嵌自编译 FFmpeg 8.1.2（LGPL-2.1+，exe 6.0MB / gz 2.2MB）+ 纯 Go 的 EBU R128 响度补偿 |
 
-- Go module：`localmusicplayer`；npm 根包：`locallocalmusicplayer-workspace`（version `0.2.0`）。
+- Go module：`localmusicplayer`；npm 根包：`locallocalmusicplayer-workspace`（version `1.0.0`）。
 - 只保证在 **Windows 10 1809+ / 11 x64** 上可用。
 
 ---

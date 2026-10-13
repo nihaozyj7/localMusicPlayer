@@ -32,7 +32,7 @@ export function OpenURL(raw) {
 }
 
 /**
- * Version 返回应用版本号，例如 "0.2.0"。
+ * Version 返回应用版本号，例如 "1.0.0"。
  * @returns {$CancellablePromise<string>}
  */
 export function Version() {
