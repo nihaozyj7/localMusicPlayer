@@ -65,6 +65,7 @@ import {
 } from "../settings.js";
 import { listThemes, resolvedGlassAlpha, resolvedGlassBlur } from "../theme.js";
 import { AI_VENDORS, aiVendorHint } from "../ai-vendors.js";
+import { aiAutomationActive, aiAutomationState } from "../ai-automation.js";
 import { availableSkins, skinLoadFailures, skinRegistryVersion } from "../playerhost.js";
 import { themeRegistryVersion } from "../theme.js";
 import { closeSettings, doRescan, settingsLayerOpen } from "../shell.js";
@@ -1580,6 +1581,25 @@ class MpSettingsLayer extends MpElement {
           hint: aiThinkingHint(cfg),
           control: switchControl("aiThinking", Boolean(cfg.aiThinking), "启用思考模式"),
         })}
+        <!-- AI 自动化提示：这两个开关的效果都发生在用户看不见的时候
+             （下载结束后台改写标签 / 匹配歌词前多等一次 AI），所以必须在设置里
+             把「会自动做什么、什么时候做、现在开着没有」摆出来。
+             清单本体在 ai-automation.js（唯一一份，与开启时的提醒共用）。 -->
+        <div class="about-note" id="ai-automation-note">
+          <div class="about-note__title"><span>AI 自动化（不用你点，它自己会跑）</span></div>
+          ${aiAutomationState(cfg).map(
+            (a) => html`<div class="about-note__body">
+              · <strong>${a.label}</strong>：${a.when} —— 当前<b>${a.on ? "已开启" : "已关闭"}</b>（${a.detail}）
+            </div>`
+          )}
+          <div class="about-note__body">
+            ${
+              aiAutomationActive(cfg)
+                ? "开着的时候，播放器会在后台自己调用你填的那个接口（会消耗你的额度）。关掉对应的开关即立刻停止，已写进文件的标签不会因此回滚。"
+                : "两项都关着：AI 只在你手动触发时（例如详情页的「AI 清洗」）才会运行。"
+            }
+          </div>
+        </div>
         ${settingRow({
           label: "自动匹配歌词时使用 AI 清洗元数据",
           hint: "自动匹配歌词前先用 AI 从文件名里还原真实的标题 / 歌手。AI 一次调用可能要十几秒，关掉后只做本地整理：匹配更快，但文件名不规范时命中率会低一些",

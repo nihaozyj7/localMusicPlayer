@@ -482,15 +482,34 @@ const menu = await evaluate(`(async () => {
 })()`);
 check("context-menu", menu);
 
-/* ---- 10. 主题 / 深浅色切换 ---- */
+/* ---- 10. 主题按钮：按设置里的列表循环切换（首尾相连） ---- */
+// 设置界面里的主题卡片就是按 theme.js 的注册表顺序渲染的（settings-view.js
+// 直接 map listThemes()），所以这里用同一份列表来核对「走一遍能回到起点」。
 const theme = await evaluate(`(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const btn = document.querySelector("#btn-theme-toggle");
   const before = document.documentElement.dataset.theme;
-  document.querySelector("#btn-theme-toggle").click();
-  await new Promise(r => setTimeout(r, 500));
-  const after = document.documentElement.dataset.theme;
-  document.querySelector("#btn-theme-toggle").click();
-  await new Promise(r => setTimeout(r, 500));
-  return { before, after, back: document.documentElement.dataset.theme };
+  const mod = await import("./js/theme.js");
+  const list = mod.listThemes().map((t) => t.id);
+  const tip = btn.getAttribute("data-tip");
+  const start = list.indexOf(before);
+  const seen = [before];
+  for (let i = 0; i < list.length; i += 1) {
+    btn.click();
+    await wait(300);
+    seen.push(document.documentElement.dataset.theme);
+  }
+  // 每一步都必须落在列表里的下一个（首尾相连）
+  const expected = [];
+  for (let i = 1; i <= list.length; i += 1) expected.push(list[(start + i) % list.length]);
+  return {
+    list,
+    before,
+    seen,
+    tip,
+    wrapped: seen[seen.length - 1] === before,
+    nextMatch: JSON.stringify(seen.slice(1)) === JSON.stringify(expected),
+  };
 })()`);
 check("theme", theme);
 

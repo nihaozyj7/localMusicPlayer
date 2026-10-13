@@ -355,18 +355,44 @@ function seedFor(config, themeId, secondary = false) {
 }
 
 /**
- * 底栏「切换深浅色」按钮：在深色 / 浅色之间切换（写 themeMode，不改 theme）。
+ * 主题按钮的下一个主题 —— 按**设置里那份列表**（`listThemes()` 的注册表顺序）
+ * 往后走一个，走到末尾回到第一个（首尾相连）。
+ *
+ * 为什么按钮改成「循环下一个主题」而不是「深浅色开关」：主题不只有深浅两档
+ * （内置就有 flat-dark / flat-light / cover-dark，用户还能自己往主题目录里放
+ * CSS），一个按钮只翻 `themeMode` 就永远碰不到别的主题。现在它与设置界面里的
+ * 卡片列表**同一份数据、同一个顺序**，点几下就能把每个主题都过一遍。
+ *
+ * 返回 null 只在注册表为空时（理论上不会发生：内置主题由后端在启动时写入）。
+ */
+export function nextTheme(currentId = state.config.theme) {
+  const themes = listThemes();
+  if (!themes.length) return null;
+  const i = themes.findIndex((t) => t.id === currentId);
+  // 当前主题不在列表里（例如它的文件刚被删掉、配置还没来得及回退）：
+  // -1 + 1 = 0，从第一个开始，不会跳到一个不存在的主题上。
+  return themes[(i + 1) % themes.length];
+}
+
+/**
+ * 标题栏的主题按钮：按设置里的列表循环切换（首尾相连）。
+ *
+ * 每一步都走**设置界面点卡片那条路**（同样的 theme + themeMode 落法），
+ * 所以「按钮切过的主题」与「设置里选中的卡片」始终一致。
  *
  * 以前它长在 main.js 里 —— 主题相关的东西散在入口文件并不合适，
  * 迁移时顺手收进主题模块（调用方只有标题栏）。
  */
 export async function toggleTheme() {
-  const resolved = getTheme(state.config.theme);
-  const nextMode = resolved?.mode === "light" ? "dark" : "light";
-  state.config.themeMode = nextMode;
+  const next = nextTheme();
+  if (!next) return;
+  state.config.theme = next.id;
+  // 主题自带深浅（mode 由主题 CSS 声明，例如 flat-light 是 light）：
+  // 这里同步 themeMode，避免「换了浅色主题、系统跟随逻辑却还按深色走」。
+  state.config.themeMode = next.mode;
   await applyResolvedTheme(state.config);
   commit();
-  toast(nextMode === "dark" ? "已切换到深色主题" : "已切换到浅色主题", { duration: 1500 });
+  toast(`已切换到主题「${next.name}」`, { duration: 1500 });
 }
 
 /* --------------------------------------------------------------------------

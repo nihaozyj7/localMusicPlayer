@@ -268,6 +268,14 @@ function initialState() {
     playing: false,
     position: 0,
     duration: 0,
+    /* 「再次点播同一首歌」的计数器（audio.js 消费，见 playSong）。
+       ★ 为什么需要它：队列里只有一首歌时，「下一首」按列表循环的语义就是
+       **重播这一首** —— 而 playSong 认为 currentId 没变就等于「已经装载好了」，
+       只把 position 归零、把 playing 置回 true。后端却还停在上一轮的 EOF 上，
+       收到一次 Play() 就立刻又播完 → player:ended → playNext → playSong …
+       表现是播放/暂停按钮一直闪、歌永远停在末尾。这个计数器告诉音频层
+       「同一首歌也要重新装载（回到 0 起播）」。 */
+    playNonce: 0,
     playMode: "sequence",
     volume: 0.8,
     muted: false,
@@ -1145,6 +1153,10 @@ export function toggleLike(songId) {
   // 默认的 rAF 合并会让底栏比点击慢一帧，用户看到的就是"点了没反应"。
   commit(undefined, { immediate: true });
   if (isWails()) syncToBackend("收藏状态", backend.toggleLike(songId));
+  // ★ 收藏**成功**之后才通知「收藏钩子」：在线歌曲只有试听缓存、没有本地文件，
+  //   收藏完却仍然是一首「离开网络就没了」的歌（见 auto-download.js）。
+  //   取消收藏不通知 —— 那不该触发任何下载。
+  if (set.has(songId)) noteCollected(songId, "like");
 }
 
 /**
@@ -1224,11 +1236,16 @@ export function addSongsToPlaylist(id, songIds) {
   const pl = playlistById(id);
   if (!pl) return 0;
   const before = pl.songIds.length;
+  const existing = new Set(pl.songIds);
   pl.songIds = uniq([...pl.songIds, ...songIds]);
   if (id === LIKED_ID) state.likedIds = new Set(pl.songIds);
   bumpPlaylists();
   commit();
   if (isWails()) syncToBackend("添加歌曲", backend.addSongsToPlaylist(id, songIds));
+  // 只有**这次真的加进去**的那些才通知收藏钩子：重复添加一首歌不该再触发一次下载
+  for (const songId of songIds) {
+    if (!existing.has(songId)) noteCollected(songId, "playlist");
+  }
   return pl.songIds.length - before;
 }
 
@@ -1942,6 +1959,15 @@ export function currentSong() {
 export function playSong(songId, options = {}) {
   const song = songById(songId);
   if (!song) return;
+  // ★ 「又是这一首」= 要求重新起播，而不是「已经装载好了」。
+  //
+  // 队列里只有一首歌时，「下一首 / 上一首」（含播完自动下一首）按列表循环的语义
+  // 就是重播这一首；用户点列表里正在播的那一行、播放完再点一次播放也一样。
+  // 这些情况 currentId 都没变 —— 若只把 position 归零，音频层会认为「同一首歌，
+  // 把播放意图同步一下就行」，而后端仍停在上一轮的 EOF 上：一次 Play() 立刻又
+  // 播完 → player:ended → playNext → playSong …（按钮疯狂闪、歌永远走不出末尾）。
+  // 递增 playNonce 就是告诉音频层：这首歌要**重新装载**。
+  const replay = state.currentId === songId;
   // 用户主动播了别的歌：之前记的「下一首」标记作废
   if (state.forcedNextId && state.forcedNextId !== songId) state.forcedNextId = "";
   if (options.queue && options.queue.length) {
@@ -1957,6 +1983,7 @@ export function playSong(songId, options = {}) {
   state.position = 0;
   state.duration = song.duration || 0;
   state.playing = true;
+  if (replay) state.playNonce += 1;
   commit();
 }
 

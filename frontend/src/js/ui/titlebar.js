@@ -10,7 +10,7 @@
 import { MpElement, define, html, nothing, icon } from "./base.js";
 import { backend, isWails } from "../bridge.js";
 import { commit, state } from "../store.js";
-import { getTheme, toggleTheme } from "../theme.js";
+import { getTheme, nextTheme, toggleTheme } from "../theme.js";
 import { toggleSettings } from "../shell.js";
 import { toggleSearchBox } from "../searchpanel.js";
 import { downloadsSnapshot, toggleDownloadPanel } from "../downloads.js";
@@ -21,13 +21,16 @@ class MpTitlebar extends MpElement {
     const t = getTheme(state.config.theme);
     const dark = t?.mode !== "light";
     const d = downloadsSnapshot();
-    return [dark, state.config.themeMode, state.searchOpen, d.visible, d.badge];
+    // 下一个主题的 id 也进依赖：换完主题后提示文案要跟着变
+    return [dark, state.config.themeMode, state.config.theme, nextTheme(state.config.theme)?.id, state.searchOpen, d.visible, d.badge];
   };
 
   render() {
     const t = getTheme(state.config.theme);
     const dark = t?.mode !== "light";
     const d = downloadsSnapshot();
+    // 主题按钮：按设置里的列表循环切换（首尾相连），提示里直接写出下一个是谁
+    const upcoming = nextTheme(state.config.theme);
     return html`
       <header class="titlebar" id="titlebar">
         <div class="titlebar__brand">
@@ -64,8 +67,8 @@ class MpTitlebar extends MpElement {
             class="titlebar__btn"
             id="btn-theme-toggle"
             type="button"
-            data-tip=${dark ? "切换到浅色" : "切换到深色"}
-            aria-label="切换深浅色"
+            data-tip=${upcoming ? `下一个主题：${upcoming.name}` : "切换主题"}
+            aria-label="切换主题（按设置里的列表循环）"
             @click=${() => toggleTheme()}
           >
             ${icon(dark ? "sun" : "moon")}

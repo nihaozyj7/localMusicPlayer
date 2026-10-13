@@ -23,6 +23,7 @@ import {
 import { backend, isWails, on } from "./bridge.js";
 import { fmtCount, uid } from "./utils.js";
 import { aiVendorHint, aiVendorLabel } from "./ai-vendors.js";
+import { aiAutomationNotice } from "./ai-automation.js";
 import { updateMirror } from "./about-info.js";
 import { applyResolvedTheme, discoverThemes, listThemes, removeTheme } from "./theme.js";
 import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
@@ -1829,6 +1830,13 @@ export function handleSettingControl(actEl, ctx = {}) {
 
     if (toggleKey in state.config) {
       state.config[toggleKey] = next;
+      // AI 的两个自动化开关：打开时必须说清「从现在起它会自己做什么」——
+      // 这两件事都发生在用户看不见的时候（下载结束后台改写文件标签 /
+      // 匹配歌词前多等一次 AI 调用），一句「已开启」是不够的。
+      if (next && (toggleKey === "aiLyricsClean" || toggleKey === "aiDownloadTag")) {
+        const notice = aiAutomationNotice(toggleKey);
+        if (notice) toast(notice, { tone: "warning", duration: 8000 });
+      }
       if (toggleKey === "animations") {
         // 重新按当前「过渡速度」算一遍 --dur：关掉是 0.001ms，打开则回到该档时长
         setRuntimeToken("--dur", animationDurationValue(state.config));

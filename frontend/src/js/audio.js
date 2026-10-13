@@ -66,6 +66,26 @@ let backendReason = "";
 /** 前端**希望**装载的歌曲 id（发出 playerLoad 时就更新） */
 let loadedFor = null;
 /**
+ * 已经处理过的「再次点播」计数（`state.playNonce` 的本地镜像）。
+ *
+ * ★ 为什么音频层需要一个自己的计数器（真实报障：播放列表只有一首歌时，
+ *   「下一首」切不动，播放/暂停按钮一直闪）
+ *
+ * 队列里只有一首歌时，「下一首 / 上一首 / 播完自动下一首」按列表循环的语义
+ * 都是重播这一首 —— currentId 不变，装载记账（loadedFor / backendSongId）
+ * 也说「这首歌已经在后端了」。于是 syncAudio 只把播放意图同步一下
+ * （syncPlayState → Play()），而后端此刻正停在上一轮的 EOF 上：
+ * Play() 清掉 EOF → 引擎立刻又判定播完 → player:ended → playNext
+ * → playSong（同一首）→ 又一次 Play() …… 每 250ms 一轮，
+ * 界面表现就是按钮反复闪、歌永远停在末尾。
+ *
+ * 判据不是「currentId 变了没有」，而是「用户是否又点播了同一首歌」——
+ * 后者由 store 递增 state.playNonce 记录（见 store.js#playSong）。
+ * 计数一变，这里就把装载记账清掉，让 syncAudio 走一次**完整重新装载**
+ * （回到 0 起播），顺手把 anchor / backendPlaying 一起复位。
+ */
+let handledPlayNonce = 0;
+/**
  * 后端**确实已经装载**的歌曲 id（playerLoad 返回后才更新）。
  *
  * 与 loadedFor 分开是必要的：两者在切歌途中会不一致 ——
@@ -663,6 +683,19 @@ export function resetFailureGate(songId) {
    -------------------------------------------------------------------------- */
 
 /**
+ * 「用户又点播了当前这首歌」——消费一次 playNonce 变化。
+ *
+ * 只有 store 递增过计数时才为真（见 handledPlayNonce 的长注释）。
+ * 计数在这里就记账了：即便这次没走到重新装载（例如歌曲已被卸载），
+ * 也不能让同一次点播在后续每一跳里反复触发。
+ */
+function replayRequested() {
+  if (state.playNonce === handledPlayNonce) return false;
+  handledPlayNonce = state.playNonce;
+  return true;
+}
+
+/**
  * 播放状态变化时被 runtime 的 tick 调用。
  *
  * 现在的职责变成了「把前端的意图同步给后端」：换歌时装载新曲目，
@@ -684,6 +717,18 @@ export async function syncAudio() {
       await unloadCurrent();
     }
     return;
+  }
+
+  // ★ 用户又点播了同一首歌（队列只有一首时的「下一首」、点正在播的那一行、
+  //   播完再按一次播放）：必须**重新装载**，不能让 syncPlayState 把它当成
+  //   「已经装载好了，同步一下播放意图就行」—— 那会在后端停在 EOF 时来回空转，
+  //   表现为播放/暂停按钮一直闪、歌停在末尾（见 handledPlayNonce 的长注释）。
+  if (replayRequested() && loadedFor === song.id) {
+    loadedFor = null;
+    backendSongId = null;
+    backendPlaying = null;
+    anchor = null;
+    lastPushedPosition = -1;
   }
 
   if (loadedFor !== song.id) {
@@ -1395,6 +1440,17 @@ async function syncLegacy() {
       switchPhase = SWITCH_IDLE;
     }
     return;
+  }
+
+  // 同一首歌被再次点播（队列只有一首时的「下一首」、点正在播的那一行）：
+  // <audio> 在 ended 之后 play() 本来就会回到 0，但**暂停在末尾**时不会，
+  // 显式回 0，让两条链路（后端引擎 / legacy <audio>）行为一致。
+  if (replayRequested() && loadedFor === song.id && switchPhase !== SWITCH_LOADING) {
+    try {
+      node.currentTime = 0;
+    } catch {
+      /* 元数据还没到时忽略：随后的装载会从 0 开始 */
+    }
   }
 
   if (loadedFor !== song.id) {
