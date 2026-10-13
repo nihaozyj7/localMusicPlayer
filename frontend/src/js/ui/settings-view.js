@@ -19,7 +19,7 @@
 import { MpElement, define, html, nothing, icon } from "./base.js";
 import { animationMs, setRuntimeToken } from "../runtime-tokens.js";
 import { toast } from "./overlays.js";
-import { applyRules, commit, compileRegex, flushConfigSync, state } from "../store.js";
+import { applyRules, commit, compileRegex, flushConfigSync, state, userFolders } from "../store.js";
 import { cssUrl, fmtCount, fmtSize, rafThrottle } from "../utils.js";
 import { providerFallbackLabel, providerName } from "../provider-names.js";
 import {
@@ -512,8 +512,12 @@ class MpSettingsLayer extends MpElement {
      ======================================================================== */
   foldersCard() {
     const derived = this.settingsDerived();
-    const rows = state.folders.length
-      ? state.folders.map((f) => {
+    // 隐式下载根（auto_downloads）不进这张列表：它是程序管理的扫描根，
+    // 不是用户添加的文件夹，而且它不在 config.Folders 里 —— 列出来也删不掉。
+    // 这里再滤一遍是兜底：localStorage 里可能存着旧版本写进去的那一行。
+    const list = userFolders();
+    const rows = list.length
+      ? list.map((f) => {
           // 状态字面量来自后端 internal/library#walkFolder（ok / missing /
           // denied / partial / error），两边必须一一对应 —— 有一条测试逐个比对
           //（frontend/tests/folder-status.test.js）。
@@ -601,7 +605,7 @@ class MpSettingsLayer extends MpElement {
       </div>
       <div class="card__foot">
         <span>支持格式：mp3 · flac · wav · m4a · ogg · aac（ape / wma 需转码）</span>
-        <span class="u-num">${fmtCount(state.folders.length)} 个文件夹</span>
+        <span class="u-num">${fmtCount(list.length)} 个文件夹</span>
       </div>
       ${this.unplayableSection()}
     </section>`;

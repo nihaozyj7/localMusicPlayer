@@ -1114,6 +1114,21 @@ export function playlistById(id) {
 export const LIKED_ID = "liked";
 
 /**
+ * 下载目录作为扫描根时后端用的固定 id（Go 侧 bootstrap.DownloadFolderID）。
+ *
+ * 它是**程序管理**的隐式扫描根，不是用户添加的文件夹：曲库会扫它（下载的歌
+ * 直接出现在「本地歌曲」里），但它不该出现在用户的文件夹列表里 —— 它既不在
+ * config.Folders 里（后端 Folders() 已经把它滤掉），界面上也会再滤一遍，
+ * 兜住「localStorage 里存着旧版本写进去的那一行」这种情况。
+ */
+export const DOWNLOAD_FOLDER_ID = "auto_downloads";
+
+/** 用户配置的音乐文件夹（排除隐式下载根），界面上凡是要「列出文件夹」都用它 */
+export function userFolders(folders = state.folders) {
+  return (folders || []).filter((f) => f.id !== DOWNLOAD_FOLDER_ID);
+}
+
+/**
  * 歌单数据变了（新增/改名/删除/增删歌曲/排序）。
  *
  * 为什么要显式版本号：歌单是**原地修改**的（`pl.name = …`、`pl.songIds = …`），

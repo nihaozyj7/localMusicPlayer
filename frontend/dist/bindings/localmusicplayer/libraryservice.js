@@ -38,7 +38,16 @@ export function DropSong(songID) {
 }
 
 /**
- * Folders 返回已配置的音乐文件夹
+ * Folders 返回**用户配置的**音乐文件夹（给设置界面用）。
+ * 
+ * ★ 刻意不返回隐式下载根（bootstrap.DownloadFolderID）：它是程序管理的
+ * 「下载目录」的一种派生形态（见 bootstrap.Config.EffectiveFolders），
+ * 不是用户添加的文件夹。把它混进来会有两个后果：
+ *   - 设置界面的文件夹列表里冒出一条用户从没添加过的路径；
+ *   - 那条路径的「移除」按钮永远失败（它不在 config.Folders 里，删不掉），
+ *     用户看到的是一个删不掉、又不认识的行。
+ * 
+ * 曲库真正扫描哪些根仍然由 EffectiveFolders 决定（含下载目录），与本方法无关。
  * @returns {$CancellablePromise<bootstrap$0.Folder[] | null>}
  */
 export function Folders() {

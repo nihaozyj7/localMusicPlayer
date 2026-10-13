@@ -27,7 +27,7 @@ import {
   sortField as sortFieldDef,
   state,
 } from "../store.js";
-import { LIKED_ID, currentContext, playlistById as playlistOf } from "../store.js";
+import { LIKED_ID, currentContext, playlistById as playlistOf, userFolders } from "../store.js";
 import { clearLocalFilter, doRescan, navigate } from "../shell.js";
 import { handleSettingsAction } from "../settings.js";
 import { locateCurrentSong, playAllVisible } from "../tracks.js";
@@ -193,7 +193,7 @@ class MpContent extends MpElement {
     if (v === "library") {
       const s = state.lastScan;
       return `${fmtCount(songs.length)} 首 · 共 ${fmtDurationCn(total)} · ${fmtCount(
-        state.folders.filter((f) => f.id !== "auto_downloads").length
+        userFolders().length
       )} 个文件夹${s && s.excluded ? ` · 已过滤 ${fmtCount(s.excluded)} 个文件` : ""}`;
     }
     if (v === "queue") {

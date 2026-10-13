@@ -335,6 +335,9 @@ func (s *CoverService) PickLocal() (CoverResult, error) {
 		AddFilter("所有文件", "*.*").
 		PromptForSingleSelection()
 	if err != nil {
+		if isDialogCancelled(err) {
+			return CoverResult{Cancelled: true}, nil
+		}
 		return CoverResult{}, fmt.Errorf("打开文件选择器失败: %w", err)
 	}
 	path := strings.TrimSpace(selected)

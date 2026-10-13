@@ -84,9 +84,26 @@ func (s *LibraryService) Songs() []bootstrap.Song {
 	return s.lib.Songs()
 }
 
-// Folders 返回已配置的音乐文件夹
+// Folders 返回**用户配置的**音乐文件夹（给设置界面用）。
+//
+// ★ 刻意不返回隐式下载根（bootstrap.DownloadFolderID）：它是程序管理的
+// 「下载目录」的一种派生形态（见 bootstrap.Config.EffectiveFolders），
+// 不是用户添加的文件夹。把它混进来会有两个后果：
+//   - 设置界面的文件夹列表里冒出一条用户从没添加过的路径；
+//   - 那条路径的「移除」按钮永远失败（它不在 config.Folders 里，删不掉），
+//     用户看到的是一个删不掉、又不认识的行。
+//
+// 曲库真正扫描哪些根仍然由 EffectiveFolders 决定（含下载目录），与本方法无关。
 func (s *LibraryService) Folders() []bootstrap.Folder {
-	return s.lib.Folders()
+	all := s.lib.Folders()
+	out := make([]bootstrap.Folder, 0, len(all))
+	for _, f := range all {
+		if f.ID == bootstrap.DownloadFolderID {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 /* --------------------------------------------------------------------------
@@ -279,8 +296,10 @@ func (s *LibraryService) Stats() map[string]any {
 		"count":      len(songs),
 		"durationMs": totalMS,
 		"bytes":      totalBytes,
-		"folders":    len(s.lib.Folders()),
-		"scanning":   s.lib.IsScanning(),
+		// 与 Folders() 口径一致：只数用户配置的文件夹（隐式下载根不算），
+		// 否则「关于」页的数字会比设置界面里列出来的多一个。
+		"folders":  len(s.Folders()),
+		"scanning": s.lib.IsScanning(),
 	}
 }
 
@@ -319,9 +338,37 @@ func (s *LibraryService) pickDirectory() (string, error) {
 		CanCreateDirectories(true).
 		PromptForSingleSelection()
 	if err != nil {
+		if isDialogCancelled(err) {
+			// 用户点了取消 / 关闭：这是正常结果，不是错误。
+			return "", nil
+		}
 		return "", fmt.Errorf("打开目录选择器失败: %w", err)
 	}
 	return selected, nil
+}
+
+// isDialogCancelled 判断系统对话框返回的错误到底是「用户取消」还是真的失败。
+//
+// ★ 为什么必须分开：Wails v3 的 Windows 实现（内部走 go-common-file-dialog）
+// 把「用户点了取消 / 关了窗口」**也**变成一个 error 抛上来，文本是
+// `cancelled by user`（见 wails internal/go-common-file-dialog/cfd 的
+// ErrorCancelled）。不区分的话，「取消」会被上层当成「选择器打不开」——
+// 前端以前据此弹出「请手动输入路径」的回退框：用户明明只是点了取消，
+// 却被追着要一个路径。桌面版里 Go 后端总在，这个回退纯属误伤。
+//
+// 为什么不直接 errors.Is(err, cfd.ErrorCancelled)：那个包在 wails 模块的
+// internal 下，按 Go 规则不可导入，只能按错误文本判定。文本匹配失败的最坏
+// 后果是退回「当成失败」，不会再出现误报成功。
+func isDialogCancelled(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	// 两种拼写都认（上游不同版本 / 不同平台用过 canceled 与 cancelled）
+	return strings.Contains(msg, "cancelled by user") || strings.Contains(msg, "canceled by user")
 }
 
 func (s *LibraryService) emit(name string, payload any) {

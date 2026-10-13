@@ -103,6 +103,9 @@ func (s *SkinService) Import() (map[string]any, error) {
 		CanCreateDirectories(false).
 		PromptForSingleSelection()
 	if err != nil {
+		if isDialogCancelled(err) {
+			return map[string]any{"cancelled": true}, nil
+		}
 		return nil, fmt.Errorf("打开目录选择器失败: %w", err)
 	}
 	if strings.TrimSpace(selected) == "" {

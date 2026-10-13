@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -147,8 +149,9 @@ func TestServiceAddFolderEndToEnd(t *testing.T) {
 	_ = dataDir
 
 	// 2) 曲库必须已经看到这个文件夹（服务内部会 ReloadFolders）。
-	//    这里按「用户配置的文件夹」计数：Folders() 里还会包含下载目录
-	//    这个程序管理的隐式扫描根（见 bootstrap.EffectiveFolders）。
+	//    注意 svc.Folders() 是**界面口径**：只含用户配置的文件夹，
+	//    隐式下载根（bootstrap.DownloadFolderID）由服务层滤掉了
+	//    （它不该出现在设置界面的文件夹列表里，见 TestServiceFoldersHidesImplicitDownloadRoot）。
 	userFolders := 0
 	for _, f := range svc.Folders() {
 		if f.ID != bootstrap.DownloadFolderID {
@@ -246,6 +249,76 @@ func waitIdle(t *testing.T, svc *LibraryService, timeout time.Duration) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("等待扫描结束超时")
+}
+
+// TestServiceFoldersHidesImplicitDownloadRoot 下载目录是**程序管理**的隐式扫描根，
+// 它必须出现在「真正被扫描的根」里，但不能出现在设置界面的文件夹列表里。
+//
+// 用户报的现象：添加歌曲路径时，下载目录赫然在列，而且那一行的「移除」永远失败
+// （它不在 config.Folders 里，自然删不掉）—— 一个用户没添加过、又删不掉的行。
+func TestServiceFoldersHidesImplicitDownloadRoot(t *testing.T) {
+	svc, store, _ := newTestService(t)
+	music := t.TempDir()
+	writeTestWAV(t, filepath.Join(music, "one.wav"), 2)
+	if _, err := svc.AddFolder(music); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, svc, 15*time.Second)
+
+	// 前置条件：扫描根里确实有隐式下载根（否则这条测试什么都没验证）
+	hasImplicit := false
+	for _, f := range store.Get().EffectiveFolders() {
+		if f.ID == bootstrap.DownloadFolderID {
+			hasImplicit = true
+		}
+	}
+	if !hasImplicit {
+		t.Fatal("前置条件不成立：EffectiveFolders 里应当自动带上下载目录")
+	}
+
+	// 界面口径：只剩用户自己加的那一个
+	folders := svc.Folders()
+	if len(folders) != 1 {
+		t.Fatalf("界面列表应只有 1 个用户文件夹，实际 %d 个：%#v", len(folders), folders)
+	}
+	if folders[0].ID == bootstrap.DownloadFolderID || folders[0].Path != music {
+		t.Fatalf("界面列表里的应是被添加的那个文件夹，实际 %#v", folders[0])
+	}
+
+	// 「关于」页的数字必须与列表同口径，否则显示 2 个文件夹而列表只有 1 行
+	if got := svc.Stats()["folders"]; got != 1 {
+		t.Fatalf("Stats().folders 应与 Folders() 同口径（1），实际 %v", got)
+	}
+}
+
+// TestIsDialogCancelled 系统对话框的「用户取消」必须被认出来（见 services.go 的说明）。
+//
+// 认不出来的后果就是用户报的那个：点「取消」被当成「选择器打不开」，
+// 前端弹出「请手动输入路径」的回退框，追着用户要一个他刚拒绝提供的东西。
+func TestIsDialogCancelled(t *testing.T) {
+	// Wails 的 Windows 实现把取消包成这个错误文本（cfd.ErrorCancelled）
+	cancelled := []error{
+		errors.New("cancelled by user"),
+		errors.New("Canceled by user"), // 另一种拼写
+		fmt.Errorf("打开目录选择器失败: %w", errors.New("cancelled by user")), // 已被包一层
+		context.Canceled,
+	}
+	for _, err := range cancelled {
+		if !isDialogCancelled(err) {
+			t.Errorf("%q 应被认成「用户取消」", err)
+		}
+	}
+
+	// 真失败不能被误判成取消：否则用户点「添加文件夹」会毫无反应、也没有任何提示
+	for _, err := range []error{
+		nil,
+		errors.New("打开目录选择器失败: 设备未就绪"),
+		errors.New("access denied"),
+	} {
+		if isDialogCancelled(err) {
+			t.Errorf("%v 不是「用户取消」，不能当成取消处理", err)
+		}
+	}
 }
 
 // TestServiceScanAlwaysReportsStarted 扫描语义：只要调用 Scan 就一定会有

@@ -485,7 +485,15 @@ func (m *Manager) Songs() []bootstrap.Song {
 
 	// 仍然拷贝一份给调用方：快照必须保持不可变，否则调用方一改就污染后续所有请求。
 	// 这一份拷贝是必要的代价（实测 10k 首约 0.5ms）；排序那 2ms 才是省下来的大头。
-	return append([]bootstrap.Song(nil), m.sortedSnapshot...)
+	//
+	// ★ 必须返回**非 nil** 的空切片，不能用 `append([]Song(nil), …)`：
+	// Go 的 nil 切片经 Wails 序列化成 JSON `null`，而前端对这几个绑定一律是
+	// 「`if (Array.isArray(x))` 才更新状态」，`null` 被当成「这次没拿到数据」，
+	// 于是**保留旧列表**。真实故障：把下载目录里的歌删干净再重扫，曲库已经是空的，
+	// 界面上的歌却还在（直到播放时才报「文件不存在」）。
+	out := make([]bootstrap.Song, len(m.sortedSnapshot))
+	copy(out, m.sortedSnapshot)
+	return out
 }
 
 // SongByID 按 id 取歌曲
@@ -534,11 +542,16 @@ func (m *Manager) DropSong(id string) bool {
 	return true
 }
 
-// Folders 返回当前文件夹列表（含曲目数统计）
+// Folders 返回当前文件夹列表（含曲目数统计）。
+//
+// 与 Songs 同理：空列表也必须返回非 nil 切片（nil 会序列化成 JSON null，
+// 前端会把它当成「没拿到数据」而保留旧列表）。
 func (m *Manager) Folders() []bootstrap.Folder {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append([]bootstrap.Folder(nil), m.folders...)
+	out := make([]bootstrap.Folder, len(m.folders))
+	copy(out, m.folders)
+	return out
 }
 
 // ReloadFolders 重新从配置读取文件夹列表。

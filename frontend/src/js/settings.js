@@ -1007,27 +1007,20 @@ export async function handleSettingsAction(actEl, ctx = {}) {
 
     /* 文件夹 */
     case "add-folder": {
-      // 后端模式：由 Go 弹出系统目录选择器，选完直接写配置并开始扫描
+      // 后端模式：由 Go 弹出系统目录选择器，选完直接写配置并开始扫描。
+      //
+      // ★ 这里**没有**「选择器打不开 → 手动输入路径」的回退。
+      // 桌面版里 Go 后端始终在，选择器打不开只可能是真的出错；而用户点「取消」
+      // 以前会被误判成「打不开」（Go 侧现在把取消如实返回 cancelled=true，
+      // 见 services.go#isDialogCancelled），于是取消之后弹出一个要人粘路径的
+      // 输入框。那既不是用户要的，也把「取消」这个正常操作变成了打扰。
       if (isWails()) {
         let res = null;
         try {
           res = await backend.addFolder("");
         } catch (err) {
-          // 系统选择器打不开时（少见，但确实发生过）退化为手动输入，
-          // 否则用户只会看到「点了没反应」。
-          toast(`系统目录选择器不可用：${err?.message ?? err}`, { tone: "warning", duration: 5000 });
-          res = null;
-        }
-
-        if (res === null) {
-          const manual = await promptPath({ manual: true });
-          if (!manual) return;
-          try {
-            res = await backend.addFolder(manual);
-          } catch (err) {
-            toast(`添加失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
-            return;
-          }
+          toast(`添加文件夹失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
+          return;
         }
 
         if (res?.cancelled) return;
@@ -1047,7 +1040,7 @@ export async function handleSettingsAction(actEl, ctx = {}) {
         return;
       }
 
-      // 预览模式：手动输入路径（无后端可用）
+      // 预览模式：没有 Go 后端，也就没有系统目录选择器，只能手输路径
       const manual = await promptPath();
       if (!manual) return;
       state.folders.push({
@@ -1796,13 +1789,18 @@ async function confirmAIFirstUse() {
   });
 }
 
-export function promptPath({ manual = false } = {}) {
+/**
+ * 手输文件夹路径（**只给浏览器预览模式用**）。
+ *
+ * 桌面版不走这里：那边由 Go 弹系统目录选择器，「取消」也算正常结果
+ * （见 Go 侧 services.go#isDialogCancelled）。以前它还被当成「选择器打不开」
+ * 的回退方案，于是用户点取消就会看到一个要人粘路径的输入框 —— 已移除。
+ */
+export function promptPath() {
   return new Promise((resolve) => {
     openModal({
       title: "添加音乐文件夹",
-      desc: manual
-        ? "系统目录选择器没能打开，请直接粘贴文件夹完整路径。"
-        : "浏览器预览模式下无法调用系统目录选择器，请手动输入路径。",
+      desc: "浏览器预览模式下无法调用系统目录选择器，请手动输入路径。",
       body: html`<input class="input" data-field="path" type="text" placeholder="D:\\Music" />`,
       okText: "添加",
       onOk: (values) => {
