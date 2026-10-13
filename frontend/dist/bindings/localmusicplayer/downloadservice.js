@@ -35,6 +35,17 @@ export function ApplyDir(dir, migrate) {
 }
 
 /**
+ * Busy 报告此刻是否有下载在进行（含正在从试听缓存复制的那一步）。
+ * 
+ * 空闲清理的判据之一：下载在跑的时候绝不删缓存 —— 那种「正在被复制的源文件
+ * 突然消失」的故障最难查（表现是下载失败，而不是清理失败）。
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function Busy() {
+    return $Call.ByID(2881777728);
+}
+
+/**
  * ClearFinished 只清掉已结束（成功/失败）的任务，正在下载的不动。
  * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
  */

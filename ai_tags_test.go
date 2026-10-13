@@ -386,7 +386,7 @@ func readSongTags(t *testing.T, path string) tag.Metadata {
 
 // ★ onDownloaded 回调必须在**两条**下载路径上都被触发。
 //
-// 一条是「从试听缓存搬运」（tryMoveFromCache），另一条是「走网络下载」（run）。
+// 一条是「从试听缓存复制」（tryCopyFromCache），另一条是「走网络下载」（run）。
 // 网络那条需要真实的 B 站接口，这里不联网 —— 改为断言源头：
 // 两个分支里都必须出现 notifyDownloaded 的调用。
 //
@@ -400,13 +400,13 @@ func TestDownloadNotifiesOnDownloadedBothPaths(t *testing.T) {
 	}
 	text := string(src)
 
-	// 两条路径各自的收尾标志：一条在 tryMoveFromCache 里（fromCache 事件），
+	// 两条路径各自的收尾标志：一条在 tryCopyFromCache 里（fromCache 事件），
 	// 一条在 run 里（download:done 事件带上 duration）。
 	markers := []struct {
 		name   string
 		anchor string
 	}{
-		{"从试听缓存搬运", `"fromCache": true`},
+		{"从试听缓存复制", `"fromCache": true`},
 		{"走网络下载", `"duration": durationMS`},
 	}
 	for _, m := range markers {

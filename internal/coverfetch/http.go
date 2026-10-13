@@ -28,7 +28,7 @@ const UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 
 // 应用版本），main 在装配时会用 SetAppUserAgent 覆盖成带版本的形式。
 var appUserAgent = "LMPlayer (+https://github.com/nihaozyj7/localMusicPlayer)"
 
-// SetAppUserAgent 覆盖应用标识 UA（建议形如 `LMPlayer/0.1.5 (+<仓库地址>)`）。
+// SetAppUserAgent 覆盖应用标识 UA（建议形如 `LMPlayer/<版本号> (+<仓库地址>)`）。
 // 传空串表示不修改。
 func SetAppUserAgent(ua string) {
 	if strings.TrimSpace(ua) != "" {

@@ -15,7 +15,7 @@ Windows 桌面音乐播放器（绿色版单 exe，`bin/lmplayer.exe`，无需�
 | 前端工程 | 原生 ESM + Vite 7 + npm workspaces + ESLint / Prettier / TypeScript(JSDoc) |
 | 音频 | 内嵌自编译 FFmpeg 8.1.2（LGPL-2.1+，exe 6.0MB / gz 2.2MB）+ 纯 Go 的 EBU R128 响度补偿 |
 
-- Go module：`localmusicplayer`；npm 根包：`locallocalmusicplayer-workspace`（version `0.1.5`）。
+- Go module：`localmusicplayer`；npm 根包：`locallocalmusicplayer-workspace`（version `0.2.0`）。
 - 只保证在 **Windows 10 1809+ / 11 x64** 上可用。
 
 ---
@@ -69,7 +69,7 @@ wails3 task check:go        # node tools/check-gofmt.mjs + go vet + go test -rac
 | `tools/check-app.mjs` / `onlinecheck.mjs` / `settingscheck.mjs` / `probe-live-settings.mjs` | 真实应用（Go + WebView2）里的皮肤加载 / 在线链路 / 设置落盘 / 设置层几何 |
 
 真实应用里调试：`$env:LMPLAYER_DEBUG_PORT = "9333"; .\bin\lmplayer.exe`，再开 `http://127.0.0.1:9333/json`。
-完整工具清单见 `docs/19-开发说明.md`；`tools/` 下共 71 个入库文件（59 个 `.mjs` + 7 个 `.go` + 2 个 `.ps1` + 2 个 `.js` + 1 个 `.json`），
+完整工具清单见 `docs/19-开发说明.md`；`tools/` 下共 75 个入库文件（61 个 `.mjs` + 7 个 `.go` + 2 个 `.ps1` + 2 个 `.js` + 2 个 `.json` + 1 个 `.py`），
 临时探针一律命名成 `.tmp-*.mjs`（已在 `.gitignore` 里，不要提交、也不要留在 `tools/` 以外）。
 
 ---
@@ -119,7 +119,7 @@ wails3 task check:go        # node tools/check-gofmt.mjs + go vet + go test -rac
 | `loudness/` | EBU R128（`bs1770.go` 纯 Go 实现）、测量缓存、播放优先队列调度 |
 | `ffmpeg/` | 内嵌 ffmpeg 的定位、解包（`bin/*.gz` 不入库）、转码与 `LoudnessScanner` |
 | `metacache/` | 多封面/歌词缓存 + **写回文件标签**（`embed.go`：m4a 多个 `covr`、flac 多个 `PICTURE`） |
-| `covercache/` `onlinecache/` | 封面缓存；在线试听音频缓存（临时目录、原子落盘、下载时搬走） |
+| `covercache/` `onlinecache/` `onlinesource/` | 封面缓存；在线试听音频缓存（临时目录、原子落盘、**下载时复制**——缓存留着，播放仍走缓存）；在线来源台账（jsonl：试听缓存 / 已下载的来源与存在性） |
 | `coverfetch/` `lyricsfetch/` `bilibili/` | ★ 三个**随时会变**的第三方接口，各自独立成包，上游只依赖聚合器 |
 | `skins/` | 样式包目录扫描（只读内置资源 + 数据目录第三方）、`/skins/` 同源只读托管 |
 | `theme/` | 主题目录扫描（内置主题 `builtin/` 随二进制分发） |
@@ -227,6 +227,7 @@ frontend/dist/       Vite 产物 + bindings 副本 + 内置主题同步源（**�
 | `%APPDATA%\LocalMusicPlayer\` | `config.json`、`themes\`、曲库缓存、歌词与封面缓存 |
 | `%LOCALAPPDATA%\LocalMusicPlayer\bin\` | 解包出来的 `ffmpeg.exe`（按内容哈希命名，只解包一次） |
 | `%TEMP%\LocalMusicPlayer\online\` | 试听音频缓存（可丢弃的派生数据，不进下载目录、不进扫描） |
+| `%APPDATA%\LocalMusicPlayer\online-sources.jsonl` | 在线来源台账（jsonl，一行一条：试听缓存 / 已下载的 bvid、路径、来源、时间）。搜索结果的「已下载」标注与空闲清理的引用判定都读它；存在性在读取时 stat |
 | `<cacheDir>/meta/covers/` 与 `meta/lyrics/` | 封面原图与歌词文本 + 各自的 `index.json` |
 | `<cacheDir>/loudness/<songID>.json` | 响度测量与各挡位增益（**唯一的响度写入**，绝不改源文件） |
 | `%USERPROFILE%\Music\downloads` | 默认下载目录；`EffectiveFolders() = 用户文件夹 + 下载目录` |

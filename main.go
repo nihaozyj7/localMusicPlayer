@@ -54,9 +54,11 @@ type appState struct {
 	appSvc      *AppService
 	loudnessSvc *LoudnessService
 	downloadSvc *DownloadService
-	coverSvc    *CoverService
-	lyricsSvc   *LyricsService
-	playerSvc   *PlayerService
+	// onlineCleanup 是试听缓存的空闲清理器（见 online_cache_cleanup.go）
+	onlineCleanup *onlineCacheCleanup
+	coverSvc      *CoverService
+	lyricsSvc     *LyricsService
+	playerSvc     *PlayerService
 	// unplayableSvc 记录「播放时确认放不出来」的文件（见 services_unplayable.go）
 	unplayableSvc *UnplayableService
 	metaCache     *metacache.Store
@@ -297,8 +299,36 @@ func main() {
 
 	state.downloadSvc = NewDownloadService(store, onlineClient)
 	// 下载与试听**共用同一份缓存**：用户在搜索结果里试听过的歌，
-	// 点下载时可以直接从缓存搬到下载目录，不必重新走一遍网络。
+	// 点下载时可以直接从缓存复制到下载目录，不必重新走一遍网络。
 	state.downloadSvc.setCache(onlineSvc.files)
+	// 来源记账（试听缓存 / 已下载）两个服务**共用同一实例**：
+	// 下载写进去的记录必须能被在线服务立刻查到，否则搜索结果标不出「已下载」。
+	state.downloadSvc.setSourceLedger(onlineSvc.sourceLedger())
+
+	// 试听缓存的空闲清理：只在「连着几分钟没声音、没有下载、在线链路也闲着」
+	// 的时候动手，且只删「没被歌单/播放列表引用 + 闲置够久」的缓存
+	// （判据与理由见 online_cache_cleanup.go 的文件头）。
+	state.onlineCleanup = newOnlineCacheCleanup(onlineCleanupDeps{
+		store: onlineSvc.files,
+		referenced: func() map[string]bool {
+			return onlineSvc.referencedOnlineIDs()
+		},
+		playerState: func() (string, bool) {
+			if state.playerSvc == nil {
+				return "", false
+			}
+			st := state.playerSvc.State()
+			songID, _ := st["songId"].(string)
+			playing, _ := st["playing"].(bool)
+			return songID, playing
+		},
+		busy: func() bool {
+			return onlineSvc.Busy() || (state.downloadSvc != nil && state.downloadSvc.Busy())
+		},
+	})
+	// 回填给在线服务：让「立刻清理一次」（OnlineService.CleanupCache）走到同一个
+	// 清理器 —— 判据只有一份，后台自动清与用户手动清不会各按各的规则删。
+	onlineSvc.setCleaner(state.onlineCleanup)
 	// 版本更新：检测 GitHub Release，下载走代理降级，安装靠自替换脚本。
 	state.updateSvc = NewUpdateService(store)
 	// 封面/歌词缓存放在配置的缓存目录下（默认 %APPDATA%\LocalMusicPlayer\cache）
@@ -673,6 +703,9 @@ func main() {
 		if state.watch != nil {
 			state.watch.Stop()
 		}
+		// 先停空闲清理：它会在退出过程中去删缓存目录里的文件，
+		// 而下面几个 Stop 的顺序已经和退出时机有关，不让它掺进来。
+		state.onlineCleanup.Stop()
 		if state.media != nil {
 			state.media.Stop()
 		}
@@ -704,6 +737,11 @@ func main() {
 		}
 		startWatchers()
 	}()
+
+	// 试听缓存的空闲清理：启动之后才开始计时（起 3 分钟宽限期，见
+	// online_cache_cleanup.go）。放在这里而不是 main 开头，是因为「空闲」
+	// 的判据里包含「启动多久了」与「播放器在不在播」，两者都要等装配完。
+	state.onlineCleanup.Start()
 
 	// 启动时静默检查一次更新。
 	//

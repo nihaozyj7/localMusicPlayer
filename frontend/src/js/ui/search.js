@@ -18,7 +18,7 @@
 
 import { MpElement, define, html, nothing, repeat, requestAppUpdate, icon } from "./base.js";
 import { openModal, toast } from "./overlays.js";
-import { backend, isWails } from "../bridge.js";
+import { backend, isWails, on } from "../bridge.js";
 import { playContext, registerOnlineSong, state } from "../store.js";
 import { commit } from "../store.js";
 import { fmtCount, fmtTime } from "../utils.js";
@@ -57,12 +57,69 @@ const searchState = {
   loading: false,
   message: "",
   rev: 0,
+  /* 来源索引：bvid → { exists, dir, title, at }。
+     ------------------------------------------------------------------
+     它来自后端台账（backend.onlineSourceIndex），**每次都要重新问**：
+     exists 是后端当场 stat 出来的，用户把下载目录里那份删掉之后
+     这里就不该再显示「已下载」。前端不自己记「下载过」这件事 ——
+     那样会得到一份永远乐观、且和磁盘不一致的副本。 */
+  sources: {},
 };
 
 function bump() {
   searchState.rev += 1;
   // 关键词 / 候选 / 历史都在模块级状态里：广播一次让组件重绘
   requestAppUpdate();
+}
+
+/* --------------------------------------------------------------------------
+   来源索引（哪些结果已经下载过）
+   --------------------------------------------------------------------------
+   需求原文：「在搜索结果页中标注已下载（标注之前，再判断一下这个已下载的
+   歌曲是否存在，比如是否被用户删除）」。
+
+   两件事都在后端做，前端只负责画：
+     · 「下载过没有」来自台账（online-sources.jsonl，跨进程）；
+     · 「文件还在不在」是后端每次读取时 stat 出来的 exists。
+   所以这里一次都不缓存「已下载」这个结论 —— 只缓存后端给的那份快照，
+   并在「重新搜索 / 打开弹层 / 下载完成」这三个时刻重新问一遍。
+   -------------------------------------------------------------------------- */
+
+/** 刷新来源索引；失败时静默（标注是锦上添花，不该弹错误提示）。 */
+async function refreshSources() {
+  if (!isWails()) return;
+  try {
+    const idx = await backend.onlineSourceIndex();
+    const downloads = idx?.downloads;
+    searchState.sources = downloads && typeof downloads === "object" ? downloads : {};
+    bump();
+  } catch (err) {
+    console.warn("[search] 读取在线来源索引失败（不影响搜索与试听）", err);
+  }
+}
+
+/**
+ * 这首歌此刻可以标成「已下载」吗。
+ *
+ * ★ 判据只有一条：后端说**文件现在还在**（exists）。台账里有记录但文件被
+ * 用户删掉的，一律按「没下载」处理 —— 标一个已经不在的文件，比不标更糟。
+ */
+function downloadedInfo(song) {
+  const bvid = song?.bvid || String(song?.id || "").replace(/^bili:/, "");
+  if (!bvid) return null;
+  const info = searchState.sources[bvid];
+  return isDownloadedSource(info) ? info : null;
+}
+
+/**
+ * 一条来源记录此刻算不算「已下载」（纯函数，单测直接盯它）。
+ *
+ * 只认后端给的 `exists === true`：类型不对（字符串 "true"）、字段缺失、
+ * 记录不存在都算「没下载」。宁可少标一个，也不能标错一个 —— 标错会让用户
+ * 以为文件还在，点开却什么都没有。
+ */
+export function isDownloadedSource(info) {
+  return Boolean(info && info.exists === true);
 }
 
 class MpSearchOverlay extends MpElement {
@@ -261,54 +318,66 @@ class MpSearchOverlay extends MpElement {
     return repeat(
       s.results,
       (song) => song.id,
-      (song) => html`
-        <div
-          class="search-row"
-          data-search-id=${song.id}
-          data-search-online="1"
-          role="button"
-          tabindex="0"
-          @click=${() => previewOnline(song.id)}
-        >
-          <span class="search-row__cover">
+      (song) => {
+        // 「已下载」标注：只有后端确认文件还在时才画（见 downloadedInfo）
+        const done = downloadedInfo(song);
+        return html`
+          <div
+            class="search-row"
+            data-search-id=${song.id}
+            data-search-online="1"
+            data-downloaded=${done ? "1" : "0"}
+            role="button"
+            tabindex="0"
+            @click=${() => previewOnline(song.id)}
+          >
+            <span class="search-row__cover">
+              ${
+                song.coverUrl
+                  ? html`<img src=${song.coverUrl} alt="" loading="lazy" />`
+                  : html`<span class="search-row__cover-fallback">${icon("music")}</span>`
+              }
+            </span>
+            <span class="search-row__main">
+              <span class="search-row__title">${song.title || "未命名"}</span>
+              <span class="search-row__sub">${song.artist || "未知"} · ${fmtTime(song.duration)}</span>
+            </span>
             ${
-              song.coverUrl
-                ? html`<img src=${song.coverUrl} alt="" loading="lazy" />`
-                : html`<span class="search-row__cover-fallback">${icon("music")}</span>`
+              done
+                ? html`<span class="search-row__badge" data-tip=${done.dir ? `已下载到 ${done.dir}` : "已下载"}
+                    >已下载</span
+                  >`
+                : nothing
             }
-          </span>
-          <span class="search-row__main">
-            <span class="search-row__title">${song.title || "未命名"}</span>
-            <span class="search-row__sub">${song.artist || "未知"} · ${fmtTime(song.duration)}</span>
-          </span>
-          <span class="search-row__actions">
-            <button
-              class="btn btn--sm btn--primary"
-              type="button"
-              data-search-act="preview"
-              data-id=${song.id}
-              @click=${(e) => {
-                e.stopPropagation();
-                previewOnline(song.id);
-              }}
-            >
-              ${icon("play")}<span>试听</span>
-            </button>
-            <button
-              class="btn btn--sm"
-              type="button"
-              data-search-act="download"
-              data-id=${song.id}
-              @click=${(e) => {
-                e.stopPropagation();
-                downloadOnline(song);
-              }}
-            >
-              ${icon("file")}<span>下载</span>
-            </button>
-          </span>
-        </div>
-      `
+            <span class="search-row__actions">
+              <button
+                class="btn btn--sm btn--primary"
+                type="button"
+                data-search-act="preview"
+                data-id=${song.id}
+                @click=${(e) => {
+                  e.stopPropagation();
+                  previewOnline(song.id);
+                }}
+              >
+                ${icon("play")}<span>试听</span>
+              </button>
+              <button
+                class="btn btn--sm"
+                type="button"
+                data-search-act="download"
+                data-id=${song.id}
+                @click=${(e) => {
+                  e.stopPropagation();
+                  downloadOnline(song);
+                }}
+              >
+                ${icon("file")}<span>${done ? "再下载" : "下载"}</span>
+              </button>
+            </span>
+          </div>
+        `;
+      }
     );
   }
 
@@ -403,6 +472,8 @@ class MpSearchOverlay extends MpElement {
       searchState.query = keyword;
       searchState.loading = false;
       bump();
+      // 结果到手就补「已下载」标注（不阻塞结果上屏：先画出来再补标注）
+      void refreshSources();
     } catch (err) {
       if (seq !== searchState.seq) return;
       searchState.results = [];
@@ -428,6 +499,9 @@ export function toggleSearchBox(force) {
 export function openOverlay() {
   state.searchOpen = true;
   commit();
+  // 每次打开都重新问一遍「哪些结果已经下载过」：用户可能在上一轮之后
+  // 删过下载目录里的文件（存在性是后端当场 stat 出来的，不能靠旧快照）。
+  void refreshSources();
 }
 
 /** 关闭只是隐藏，不清空结果 —— 下次搜索直接复用 */
@@ -442,6 +516,12 @@ export function initSearchPanel() {
     if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "f") return;
     e.preventDefault();
     openOverlay();
+  });
+
+  // 下载完成 → 立刻补上「已下载」标注（不用等用户重新搜索或重开弹层）。
+  // 后端在写完下载文件之后才发这个事件，所以此刻它 stat 出来的确实存在。
+  on("download:done", () => {
+    void refreshSources();
   });
 }
 

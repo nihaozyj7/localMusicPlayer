@@ -11,6 +11,14 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "/wails
 import * as http$0 from "../net/http/models.js";
 
 /**
+ * Busy 报告在线链路此刻是否有活干。
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function Busy() {
+    return $Call.ByID(1707716639);
+}
+
+/**
  * CacheDir 返回试听缓存目录（供设置界面显示 / 排查）。
  * @returns {$CancellablePromise<string>}
  */
@@ -24,6 +32,17 @@ export function CacheDir() {
  */
 export function CacheStats() {
     return $Call.ByID(2100814171);
+}
+
+/**
+ * CleanupCache 立即清理一次试听缓存（只删「没被引用 + 闲置够久」的那些）。
+ * 
+ * 与后台空闲清理的区别：这里是**用户主动触发**，不受「空闲」判据约束
+ * （在播时也可以点，判据里的引用保护照旧）。返回清理报告。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function CleanupCache() {
+    return $Call.ByID(859427136);
 }
 
 /**
@@ -141,6 +160,33 @@ export function ProbeLyricsFormat(provider, id) {
 }
 
 /**
+ * ProtectIDs 记录「正在被播放列表（播放队列）引用」的在线歌曲 id。
+ * 
+ * 前端在队列变化时推过来（见 frontend/src/js/online-cache.js）。传空数组
+ * 等于「队列里没有在线歌曲了」—— 会清掉上一次的集合，不会残留旧引用。
+ * 
+ * 为什么需要它：清理只删「没有被播放列表和歌单引用」的缓存，而播放队列
+ * **不在后端**（前端 state.queue，随快照写 localStorage），后端读不到。
+ * 这份引用只能由前端报到；歌单与「我喜欢」在后端配置里，直接读。
+ * @param {string[] | null} ids
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function ProtectIDs(ids) {
+    return $Call.ByID(3955492157, ids);
+}
+
+/**
+ * PruneSources 清掉「文件已经不在」的来源记录（用户删了下载、系统清了临时目录）。
+ * 
+ * 返回清掉的条数。前端不需要直接调它：空闲清理会顺带做这件事
+ * （见 online_cache_cleanup.go），这里是给设置界面/排查手动触发用的。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function PruneSources() {
+    return $Call.ByID(2684781880);
+}
+
+/**
  * @param {string} keyword
  * @param {number} page
  * @param {number} pageSize
@@ -186,4 +232,18 @@ export function SearchLyrics(keyword, title, artist, duration) {
  */
 export function SetCacheDir(dir) {
     return $Call.ByID(2647159887, dir);
+}
+
+/**
+ * SourceIndex 返回在线歌曲的来源索引（前端搜索结果里标「已下载」用）。
+ * 
+ * 结构：{ path, downloads: {bvid: {…, exists}}, cache: {bvid: {…, exists}} }。
+ * 
+ * ★ exists 是**每次调用时 stat 出来的**，不是记录里存的：用户可能已经把
+ * 下载目录里的那份删了。界面必须按 exists 决定要不要显示「已下载」——
+ * 这正是「标注之前再判断一次这个文件还在不在」那条要求。
+ * @returns {$CancellablePromise<{ [_ in string]?: any } | null>}
+ */
+export function SourceIndex() {
+    return $Call.ByID(3694737997);
 }

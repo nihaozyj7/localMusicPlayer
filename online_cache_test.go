@@ -21,7 +21,10 @@ import (
    这一组测试盯住的正是这三件事：
      1. 试听会**落盘**（否则后端解析不到，播放必然失败）；
      2. 缓存**不进入下载目录**（用户没点下载，就不该在下载目录里看到文件）；
-     3. 点下载时**优先从缓存搬运**，不重新走网络。
+     3. 点下载时**优先从缓存复制**，不重新走网络 —— 而且**缓存要留着**
+        （第六轮之后的用户报障：下载会把缓存搬走，于是「下载 A 之后再点试听 A」
+         变成重新联网下载，那一跳一失败就是「找不到歌曲 / 无法播放」；
+         见 TestPreviewStillUsesCacheAfterDownload）。
    ========================================================================== */
 
 // newCacheForTest 建一个隔离的试听缓存（指向 t.TempDir，不污染真实临时目录）。
@@ -39,7 +42,7 @@ func payloadOf(n int) []byte {
 	return b
 }
 
-func TestDownloadMovesFromPreviewCache(t *testing.T) {
+func TestDownloadCopiesFromPreviewCache(t *testing.T) {
 	cache := newCacheForTest(t)
 	dir := t.TempDir()
 	const bvid = "BV1cache00001"
@@ -58,8 +61,8 @@ func TestDownloadMovesFromPreviewCache(t *testing.T) {
 	svc.tasks = []*DownloadTask{task}
 	svc.running = map[string]bool{bvid: true}
 
-	if !svc.tryMoveFromCache(task.ID, bvid, "测试歌曲", dir) {
-		t.Fatal("缓存命中时应当走搬运分支")
+	if !svc.tryCopyFromCache(task.ID, bvid, "测试歌曲", dir) {
+		t.Fatal("缓存命中时应当走复制分支")
 	}
 
 	// 1. 文件出现在下载目录，内容完整
@@ -69,12 +72,19 @@ func TestDownloadMovesFromPreviewCache(t *testing.T) {
 		t.Fatalf("下载目录里应当有文件: %v", err)
 	}
 	if !bytes.Equal(got, data) {
-		t.Fatal("搬运后的内容与缓存不一致")
+		t.Fatal("复制后的内容与缓存不一致")
 	}
 
-	// 2. 缓存被**消费掉**（移动而不是复制）
-	if cache.Exists(bvid) {
-		t.Fatal("搬运到下载目录后，缓存里不该还留着一份")
+	// 2. ★ 缓存必须**留着**（复制而不是移动）。
+	//
+	// 这是用户报障的直接根因之一：缓存被搬走之后，同一首歌在缓存里就不存在了，
+	// 而「在线曲目能不能播」挂在缓存文件上（后端原生播放需要一个真实存在的
+	// 本地文件）—— 表现就是「下载 A 之后再点试听 A 无法播放」。
+	if !cache.Exists(bvid) {
+		t.Fatal("下载不该消费掉试听缓存：搬走之后缓存未命中，再试听就得重新联网（失败即「无法播放」）")
+	}
+	if _, ok := cache.Lookup(bvid, "m4a"); !ok {
+		t.Fatal("下载之后试听缓存必须仍然是有效命中")
 	}
 
 	// 3. 任务被正确收尾
@@ -94,7 +104,59 @@ func TestDownloadMovesFromPreviewCache(t *testing.T) {
 	}
 }
 
-// 缓存里没有这首歌时，搬运分支必须老实返回 false（让调用方走网络下载）。
+// ★ 用户报障的端到端复现：「先试听、再下载、然后**再试听**」必须仍走缓存。
+//
+// 这条把两个动作串起来断言，因为单独看任何一边都看不出问题：
+//
+//	· 下载侧复制得对（缓存留着）；
+//	· 播放侧在缓存命中时**登记虚拟表**（重开程序后虚拟表是空的，
+//	  不登记就会被后端解析成「歌曲不存在」）。
+func TestPreviewStillUsesCacheAfterDownload(t *testing.T) {
+	store := newTestStore(t)
+	svc := NewOnlineService(store, nil, nil, nil) // client=nil：这条用例里绝不允许联网
+	cacheDir := t.TempDir()
+	svc.SetCacheDir(cacheDir)
+	dir := t.TempDir()
+	const bvid = "BV1reuse0001"
+
+	// ① 先试听：音频落进缓存（走缓存自己的写盘路径，文件名规则与线上一致）
+	cachePath, ok := svc.files.Path(bvid, "m4a")
+	if !ok {
+		t.Fatal("拿不到缓存文件名")
+	}
+	if _, err := svc.files.Store(bvid, "m4a", bytes.NewReader(payloadOf(32*1024))); err != nil {
+		t.Fatal(err)
+	}
+
+	// ② 再下载：必须命中缓存并把文件复制到下载目录
+	dl := &DownloadService{files: svc.files, sources: svc.sources}
+	dl.tasks = []*DownloadTask{{ID: bvid + "-1", BVID: bvid, Title: "测试歌曲", State: DownloadRunning, Dir: dir}}
+	if !dl.tryCopyFromCache(bvid+"-1", bvid, "测试歌曲", dir) {
+		t.Fatal("下载应当命中试听缓存")
+	}
+
+	// ③ 然后再试听：必须仍然是**缓存命中**，且登记了虚拟表（不再联网）
+	var registered []string
+	svc.setVirtualResolver(func(gotBVID, path, ext string) {
+		registered = append(registered, gotBVID+"|"+path+"|"+ext)
+	})
+	gotPath, gotExt, err := svc.EnsureCached(t.Context(), bvid)
+	if err != nil {
+		// client 是 nil：走到联网那条路必然失败 —— 报错本身就是「没命中缓存」的证据
+		t.Fatalf("下载之后再试听必须仍走缓存（不该重新联网）: %v", err)
+	}
+	if gotPath != cachePath || gotExt != "m4a" {
+		t.Fatalf("再试听解析到 (%q, %q)，期望缓存里的 (%q, %q)", gotPath, gotExt, cachePath, "m4a")
+	}
+	if len(registered) != 1 {
+		t.Fatalf("缓存命中也要登记虚拟表（否则重开程序后报「歌曲不存在」），实际登记 %d 次", len(registered))
+	}
+	if want := bvid + "|" + cachePath + "|m4a"; registered[0] != want {
+		t.Fatalf("登记内容 = %q，期望 %q", registered[0], want)
+	}
+}
+
+// 缓存里没有这首歌时，复制分支必须老实返回 false（让调用方走网络下载）。
 func TestDownloadWithoutCacheFallsBack(t *testing.T) {
 	cache := newCacheForTest(t)
 	dir := t.TempDir()
@@ -103,8 +165,8 @@ func TestDownloadWithoutCacheFallsBack(t *testing.T) {
 	svc := &DownloadService{files: cache}
 	svc.tasks = []*DownloadTask{{ID: bvid + "-1", BVID: bvid, State: DownloadRunning, Dir: dir}}
 
-	if svc.tryMoveFromCache(bvid+"-1", bvid, "没有缓存", dir) {
-		t.Fatal("没有缓存时不该报告搬运成功")
+	if svc.tryCopyFromCache(bvid+"-1", bvid, "没有缓存", dir) {
+		t.Fatal("没有缓存时不该报告复制成功")
 	}
 	// 也不该在下载目录里留下任何东西
 	entries, _ := os.ReadDir(dir)
@@ -141,7 +203,7 @@ func bootstrap_DownloadDirForTest(t *testing.T, musicDir string) string {
 	return filepath.Join(musicDir, "downloads")
 }
 
-// 搬运时遇到同名文件要走重名处理，绝不能覆盖用户已有的文件。
+// 复制时遇到同名文件要走重名处理，绝不能覆盖用户已有的文件。
 func TestDownloadFromCacheDoesNotOverwrite(t *testing.T) {
 	cache := newCacheForTest(t)
 	dir := t.TempDir()
@@ -158,8 +220,8 @@ func TestDownloadFromCacheDoesNotOverwrite(t *testing.T) {
 	svc := &DownloadService{files: cache}
 	svc.tasks = []*DownloadTask{{ID: bvid + "-1", BVID: bvid, State: DownloadRunning, Dir: dir}}
 
-	if !svc.tryMoveFromCache(bvid+"-1", bvid, "重名", dir) {
-		t.Fatal("应当搬运成功（换一个不冲突的文件名）")
+	if !svc.tryCopyFromCache(bvid+"-1", bvid, "重名", dir) {
+		t.Fatal("应当复制成功（换一个不冲突的文件名）")
 	}
 
 	// 原文件必须完好无损
@@ -168,7 +230,7 @@ func TestDownloadFromCacheDoesNotOverwrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(raw) != "用户自己已有的文件" {
-		t.Fatal("搬运不该覆盖下载目录里已有的同名文件")
+		t.Fatal("搬运复制不该覆盖下载目录里已有的同名文件")
 	}
 	// 搬过来的那份应当带 (2) 后缀
 	if _, err := os.Stat(filepath.Join(dir, "重名 (2).m4a")); err != nil {

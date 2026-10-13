@@ -18,6 +18,7 @@ import (
 	"localmusicplayer/internal/bilibili"
 	"localmusicplayer/internal/bootstrap"
 	"localmusicplayer/internal/onlinecache"
+	"localmusicplayer/internal/onlinesource"
 )
 
 // DownloadService 把在线歌曲保存到本地。
@@ -36,6 +37,13 @@ type DownloadService struct {
 	// files 是试听缓存。下载优先从这里「搬运」而不是重新走网络：
 	// 用户试听过再点下载时，音频其实已经在本地了（见 internal/onlinecache）。
 	files *onlinecache.Store
+
+	// sources 是在线歌曲的来源记账（见 internal/onlinesource）。
+	//
+	// 它记「这首歌下载到哪儿了」，于是搜索结果能标出「已下载」（并在标注前
+	// 核实文件还在不在），空闲清理也知道哪些缓存还被下载引用过。
+	// 可以是 nil：记账是辅助信息，写不进去不该影响下载本身。
+	sources *onlinesource.Ledger
 
 	// emitFn 由 main 注入（与 LibraryService 一致，避免服务直接依赖应用生命周期）
 	emitFn func(string, any)
@@ -118,6 +126,35 @@ func NewDownloadService(store *bootstrap.Store, client *bilibili.Client) *Downlo
 func (s *DownloadService) setCache(store *onlinecache.Store) {
 	if store != nil {
 		s.files = store
+	}
+}
+
+// setSourceLedger 注入来源记账（与 OnlineService 共用同一个实例）。
+//
+// ★ 必须共用：两个实例各读一份文件，彼此的增量互相看不见 ——
+// 下载写进去的记录，在线服务那边查不到，搜索结果就永远标不出「已下载」。
+func (s *DownloadService) setSourceLedger(l *onlinesource.Ledger) { s.sources = l }
+
+// recordDownload 记一条「这首下载过」的来源。
+//
+// 两条下载路径（命中缓存搬运 / 走网络）都要调它，且字段必须一致：
+// 用户看到的结果不该因为「文件是怎么来的」而不同（与 download:done 事件同理）。
+func (s *DownloadService) recordDownload(bvid, title, target, dir, from string) {
+	if s.sources == nil {
+		return
+	}
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(target)), ".")
+	rec := onlinesource.Record{
+		BVID:  bvid,
+		Kind:  onlinesource.KindDownload,
+		Title: title,
+		Ext:   ext,
+		Path:  target,
+		Dir:   dir,
+		From:  from,
+	}
+	if err := s.sources.Record(rec); err != nil {
+		log.Printf("[download] 来源记账写入失败（不影响下载结果）: %v", err)
 	}
 }
 
@@ -362,6 +399,16 @@ func (s *DownloadService) Tasks() map[string]any {
 	return s.tasksLocked()
 }
 
+// Busy 报告此刻是否有下载在进行（含正在从试听缓存复制的那一步）。
+//
+// 空闲清理的判据之一：下载在跑的时候绝不删缓存 —— 那种「正在被复制的源文件
+// 突然消失」的故障最难查（表现是下载失败，而不是清理失败）。
+func (s *DownloadService) Busy() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.running) > 0
+}
+
 func (s *DownloadService) tasksLocked() map[string]any {
 	out := make([]DownloadTask, 0, len(s.tasks))
 	active := 0
@@ -462,7 +509,7 @@ func (s *DownloadService) run(taskID, bvid, title string, durationMS int64, dir 
 	//
 	// 搬运失败（跨盘符、缓存被清理、权限问题）不是错误路径的终点 ——
 	// 直接回退到下面的网络下载，用户仍然能拿到文件。
-	if s.tryMoveFromCache(taskID, bvid, title, dir) {
+	if s.tryCopyFromCache(taskID, bvid, title, dir) {
 		return
 	}
 
@@ -541,6 +588,7 @@ func (s *DownloadService) run(taskID, bvid, title string, durationMS int64, dir 
 		"bytes":    size,
 		"duration": durationMS,
 	})
+	s.recordDownload(bvid, title, target, dir, onlinesource.FromNetwork)
 
 	// 让刚下载的文件立刻进曲库。
 	//
@@ -562,15 +610,23 @@ func (s *DownloadService) run(taskID, bvid, title string, durationMS int64, dir 
 	go s.notifyDownloaded(target)
 }
 
-// tryMoveFromCache 尝试把试听缓存里的文件直接搬到下载目录。
+// tryCopyFromCache 尝试把试听缓存里的文件**复制**到下载目录。
 //
-// 返回 true 表示「缓存命中且搬运成功」，任务已经收尾，调用方应当直接返回；
-// 返回 false 表示「没有可用缓存或搬运失败」，调用方继续走网络下载。
+// 返回 true 表示「缓存命中且复制成功」，任务已经收尾，调用方应当直接返回；
+// 返回 false 表示「没有可用缓存或复制失败」，调用方继续走网络下载。
 //
-// 为什么用「移动」而不是「复制」：缓存是**可丢弃的派生数据**，
-// 搬到下载目录之后就该从缓存里消失 —— 否则同一首歌在磁盘上会有两份，
-// 而且用户清缓存时也不会想到下载目录里那份其实是同一个来源。
-func (s *DownloadService) tryMoveFromCache(taskID, bvid, title, dir string) bool {
+// ★ 为什么是复制而不是移动（原来这里是 Move，本轮改掉了）：
+//
+// 移动省一份磁盘，却让「下载」这个动作**破坏播放链路** —— 缓存文件被搬走
+// 之后，同一首歌在缓存里就不存在了，而「在线曲目能不能播」恰恰挂在缓存文件上
+// （后端原生播放需要一个真实存在的本地文件，见 internal/onlinecache 的说明）。
+// 用户报的现象正是这条链路的结果：「下载 A 之后再点试听 A，找不到歌曲、无法播放」。
+//
+// 缓存是可丢弃、可再生的派生数据，下载是用户的文件，两者不该互相消耗：
+// 复制之后试听依旧走缓存（命中即播，也不再依赖远端直链是否仍然有效），
+// 下载目录里也有一份用户自己的文件。多占的那一份磁盘由缓存预算
+// （onlinecache 的 cacheBudgetBytes）与空闲清理（见 online_cache_cleanup.go）负责。
+func (s *DownloadService) tryCopyFromCache(taskID, bvid, title, dir string) bool {
 	if s.files == nil {
 		return false
 	}
@@ -594,9 +650,8 @@ func (s *DownloadService) tryMoveFromCache(taskID, bvid, title, dir string) bool
 	// 「预定」这个名字（那是为网络下载准备的：下载过程可能长达几分钟，
 	// 必须防住别人中途抢占同名文件）。
 	//
-	// 但搬运是**立刻完成**的，这两个占位反而是障碍：
-	//   · target 已存在会让 os.Rename 直接覆盖它 —— 没问题，但语义上更希望
-	//     「移动到一个干净的目标」；
+	// 但复制是**立刻完成**的，这两个占位反而是障碍：
+	//   · target 已存在会让复制结果落到一个「已被占位」的名字上；
 	//   · target.part 会变成一个**没人清理的垃圾文件**（Windows 上还因为
 	//     句柄没关而删不掉）。
 	// 所以这里把两个占位句柄都关掉、两个占位文件都删掉：名字已经预定过了，
@@ -610,15 +665,15 @@ func (s *DownloadService) tryMoveFromCache(taskID, bvid, title, dir string) bool
 	_ = os.Remove(target)
 	_ = os.Remove(target + ".part")
 
-	if err := s.files.MovePath(src, target); err != nil {
-		log.Printf("[download] 从试听缓存搬运失败，回退到网络下载: %v", err)
+	if err := s.files.CopyPath(src, target); err != nil {
+		log.Printf("[download] 从试听缓存复制失败，回退到网络下载: %v", err)
 		_ = os.Remove(target)
 		return false
 	}
 
 	st, err := os.Stat(target)
 	if err != nil {
-		log.Printf("[download] 搬运后的文件不可用，回退到网络下载: %v", err)
+		log.Printf("[download] 复制后的文件不可用，回退到网络下载: %v", err)
 		return false
 	}
 	size := st.Size()
@@ -643,6 +698,7 @@ func (s *DownloadService) tryMoveFromCache(taskID, bvid, title, dir string) bool
 		"duration":  0,
 		"fromCache": true,
 	})
+	s.recordDownload(bvid, title, target, dir, onlinesource.FromCache)
 	log.Printf("[download] %s 命中试听缓存，已直接移动到 %s", bvid, target)
 
 	// 与网络下载一致：让新文件立刻进曲库

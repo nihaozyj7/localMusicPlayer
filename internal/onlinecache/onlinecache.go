@@ -407,11 +407,12 @@ func cacheName(name string) string {
 	return ""
 }
 
-// Move 把 bvid 的缓存文件搬到 dst（下载时用）。
+// Move 把 bvid 的缓存文件搬到 dst。
 //
-// 语义是**移动**而不是复制：缓存是派生数据，搬到下载目录之后就该从缓存里
-// 消失（否则同一首歌在磁盘上存在两份）。跨盘符时 os.Rename 会失败，
-// 此时退化成「复制 + 删除」，复制没成功就绝不动原缓存。
+// 语义是**移动**：搬完缓存里就没有了。下载链路**不用它**（用的是 CopyPath ——
+// 缓存必须留着，否则「下载之后再试听」就得重新联网，见 CopyPath 的说明）；
+// 现在只剩「换下载目录时迁移用户文件」这一条路径会用到，那里源本就该消失。
+// 跨盘符时 os.Rename 会失败，此时退化成「复制 + 删除」，复制没成功就绝不动原缓存。
 func (s *Store) Move(bvid, dst string) error {
 	path, _, ok := s.LookupAny(bvid, "")
 	if !ok {
@@ -421,6 +422,10 @@ func (s *Store) Move(bvid, dst string) error {
 }
 
 // MovePath 把一个已知的缓存路径搬到 dst（调用方已经 Lookup 过时用）。
+//
+// 注意：这条语义是**消费掉缓存**。下载链路已经不用它了（改用 CopyPath，
+// 见那里的说明），现在只剩「换下载目录时迁移文件」（services_download.go
+// #migrateDir）在用它 —— 那里搬的确实是用户目录里的文件，源本就该消失。
 func (s *Store) MovePath(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
@@ -430,6 +435,35 @@ func (s *Store) MovePath(src, dst string) error {
 	}
 	s.forget(nameOf(src))
 	return nil
+}
+
+// CopyPath 把缓存文件**复制**到 dst，源缓存保留（调用方已经 Lookup 过时用）。
+//
+// 与 MovePath 的差别只有一条：源文件留不留。为什么需要「留」：
+//
+//	下载一首试听过的歌，以前是把缓存**搬走**（Move）—— 省一份磁盘，代价是
+//	这首歌从此在缓存里消失了。于是「下载之后再点试听」就变成缓存未命中，
+//	而命中判定与后端可播放性（虚拟表登记）都挂在缓存文件上：一旦中间任何一环
+//	（重开进程后的虚拟表、重新解析直链失败）没接上，用户看到的就是
+//	「找不到歌曲 / 无法播放」。
+//
+// 缓存是**可丢弃、可再生**的派生数据，而下载是用户的文件：让两者各自独立，
+// 播放链路就再也不会被「下载」这个动作破坏。多占的那一份磁盘由缓存预算
+// （cacheBudgetBytes）与空闲清理负责，见 internal/onlinesource 与
+// online_cache_cleanup.go。
+func (s *Store) CopyPath(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	if err := copyAndSync(in, dst); err != nil {
+		_ = in.Close()
+		return err
+	}
+	return in.Close()
 }
 
 // MoveFile 把一个文件搬到 dst：优先 os.Rename（同盘符时原子完成），
@@ -545,6 +579,91 @@ func (s *Store) Clear() error {
 	s.entries = map[string]*entry{}
 	s.mu.Unlock()
 	return nil
+}
+
+// BudgetBytes 是试听缓存的总预算（512MB），导出给空闲清理用。
+//
+// 为什么需要它：预算平时由写缓存时的 LRU 兜住（evictIfNeeded），但「上一轮
+// 运行留下的、本进程从没写过的东西」不在这条路径上 —— 空闲清理要用同一个
+// 数字判断「是不是该启用磁盘压力条款」。
+func BudgetBytes() int64 { return cacheBudgetBytes }
+
+// Entry 是缓存目录里的一个**成品**文件快照（供空闲清理决策用）。
+//
+// 为什么不复用内存里的 entries：那份记账只覆盖「本次进程写入过的东西」，
+// 而缓存是跨进程的 —— 上次运行留下的文件同样是有效缓存，空闲清理必须
+// 看到它们（它们恰恰是最可能长期没被碰过的那批）。
+type Entry struct {
+	// Name 是文件名（形如 `<bvid>.m4a`）。
+	Name string
+	// Path 是完整路径。
+	Path string
+	// BVID 是从文件名解析出来的视频 id（拿不到时为空，调用方应跳过）。
+	BVID string
+	// Size 是文件字节数。
+	Size int64
+	// ModTime 是文件最后修改时间 —— 也就是**最后一次写入**的时间。
+	//
+	// 它是清理判据里「闲置了多久」的依据：命中缓存播放只刷新内存 LRU，
+	// 不会改文件时间；而判据要的正是「多久没重新下载过」，比 mtime 更保守
+	// （宁可留着，也不删用户昨天刚听过的歌）。
+	ModTime time.Time
+}
+
+// List 列出缓存目录里的成品文件（跳过半成品与不认识的名字）。
+//
+// 只读目录、不碰 index.json 之类的无关文件（见 Clear 的说明）。
+func (s *Store) List() []Entry {
+	list, err := os.ReadDir(s.dir)
+	if err != nil {
+		return nil
+	}
+	out := make([]Entry, 0, len(list))
+	for _, e := range list {
+		if e.IsDir() || !namePattern.MatchString(e.Name()) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, Entry{
+			Name:    e.Name(),
+			Path:    filepath.Join(s.dir, e.Name()),
+			BVID:    bvidOfName(e.Name()),
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+		})
+	}
+	return out
+}
+
+// RemoveName 按文件名删掉一个缓存文件，并同步内存记账。
+//
+// 只删**合法缓存名**的文件：调用方可能传进任意字符串（界面/清理逻辑），
+// 这里再挡一道，绝不删缓存目录里不属于我们的东西。
+func (s *Store) RemoveName(name string) error {
+	if cacheName(name) == "" {
+		return fmt.Errorf("onlinecache: %q 不是缓存文件名", name)
+	}
+	err := os.Remove(filepath.Join(s.dir, name))
+	// 文件本来就不在也算删成功（清理的目标是「它不在」）。
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	s.forget(bvidOfName(name))
+	return nil
+}
+
+// bvidOfName 从缓存文件名解析 bvid（形如 `BV1xx.m4a` → `BV1xx`）。
+//
+// 认不出时返回空串：调用方必须把空串当作「不认识这个名字」而不是
+// 「一个叫空的歌曲」——否则清理会漏掉判断、误删。
+func bvidOfName(name string) string {
+	if !namePattern.MatchString(name) {
+		return ""
+	}
+	return strings.TrimSuffix(name, filepath.Ext(name))
 }
 
 // Stats 返回缓存的文件数与总字节数（供设置界面显示）。

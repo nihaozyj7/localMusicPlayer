@@ -21,6 +21,7 @@ import (
 	"localmusicplayer/internal/lyrics"
 	"localmusicplayer/internal/lyricsfetch"
 	"localmusicplayer/internal/onlinecache"
+	"localmusicplayer/internal/onlinesource"
 )
 
 type OnlineService struct {
@@ -47,8 +48,163 @@ type OnlineService struct {
 	// 由 main 注入（见 main.go 的 resolve 装配），nil 时只做缓存不登记。
 	resolveVirtual func(bvid, path, ext string)
 
+	// sources 是在线歌曲的来源记账（试听缓存 / 已下载，见 internal/onlinesource）。
+	//
+	// 它回答的是「这首歌是从哪儿来的、那个来源现在还在不在」——
+	// 搜索结果里的「已下载」标注、以及空闲清理「哪些缓存可以删」都读它。
+	// 可以是 nil（记账文件打不开时），此时所有记录动作静默跳过：
+	// 记账是辅助信息，绝不能因为它让试听或下载失败。
+	sources *onlinesource.Ledger
+
 	mu    sync.Mutex
 	cache map[string]*onlineAudioCache
+
+	// protected 是前端推过来的「正在被播放队列（播放列表）引用」的在线 id。
+	//
+	// ★ 为什么必须由前端推：播放队列只存在前端（localStorage 快照里），
+	// 后端读不到。而空闲清理只删「没有被播放列表和歌单引用」的缓存 ——
+	// 歌单在后端配置里能读到，播放列表只能靠前端报到。
+	protected map[string]bool
+
+	// busy 是「正在联网解析 / 正在写缓存」的计数（空闲清理的判据之一）。
+	busy atomic.Int64
+
+	// cleaner 是试听缓存的空闲清理器（main 装配之后回填）。
+	//
+	// ★ 方向说明：清理器**依赖**本服务（要引用集合、要列缓存目录），
+	// 所以只能等两边都建好再回填这个指针，适合用结构体字段而不是构造参数。
+	cleaner *onlineCacheCleanup
+}
+
+// sourceLedgerName 是来源记账的文件名（在数据目录下）。
+//
+// 为什么放数据目录而不是试听缓存目录：下载记录讲的是**用户目录里的文件**，
+// 它的生命周期比临时目录长得多（缓存被系统清掉之后，那份记账仍然必须有效）。
+const sourceLedgerName = "online-sources.jsonl"
+
+// openSourceLedger 在数据目录下打开来源记账。
+//
+// 打不开（磁盘只读 / 权限异常）时返回 nil 并记日志：来源记账是辅助信息，
+// 缺了它在线试听与下载仍然要能用。
+func openSourceLedger(store *bootstrap.Store) *onlinesource.Ledger {
+	if store == nil {
+		return nil
+	}
+	ledger, err := onlinesource.Open(filepath.Join(store.DataDir(), sourceLedgerName))
+	if err != nil {
+		log.Printf("[online] 来源记账不可用（不影响试听与下载）: %v", err)
+		return nil
+	}
+	return ledger
+}
+
+// sourceLedger 返回来源记账（供 main 注入给 DownloadService；可能为 nil）。
+func (s *OnlineService) sourceLedger() *onlinesource.Ledger { return s.sources }
+
+/* --------------------------------------------------------------------------
+   引用集合与「忙不忙」：空闲清理的输入
+   -------------------------------------------------------------------------- */
+
+// ProtectIDs 记录「正在被播放列表（播放队列）引用」的在线歌曲 id。
+//
+// 前端在队列变化时推过来（见 frontend/src/js/online-cache.js）。传空数组
+// 等于「队列里没有在线歌曲了」—— 会清掉上一次的集合，不会残留旧引用。
+//
+// 为什么需要它：清理只删「没有被播放列表和歌单引用」的缓存，而播放队列
+// **不在后端**（前端 state.queue，随快照写 localStorage），后端读不到。
+// 这份引用只能由前端报到；歌单与「我喜欢」在后端配置里，直接读。
+func (s *OnlineService) ProtectIDs(ids []string) map[string]any {
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		// 前端可能把本地曲目 id 一起推过来（它不区分），这里只留在线曲目。
+		if _, ok := onlineBVID(id); !ok {
+			continue
+		}
+		set[id] = true
+	}
+	s.mu.Lock()
+	s.protected = set
+	s.mu.Unlock()
+	return map[string]any{"protected": len(set)}
+}
+
+// referencedOnlineIDs 返回「此刻不能被清理」的在线歌曲 id 集合。
+//
+// 三个来源缺一不可：
+//   - 歌单（含「我喜欢」，它是 id=liked 的受限歌单）；
+//   - 前端推来的播放队列（ProtectIDs）；
+//   - 正在播放/已装载的那首（即使它不在任何歌单里，也绝不能删缓存）。
+func (s *OnlineService) referencedOnlineIDs() map[string]bool {
+	out := map[string]bool{}
+
+	if s.store != nil {
+		cfg := s.store.Get()
+		for _, id := range cfg.LikedIDs {
+			out[id] = true
+		}
+		for _, pl := range cfg.Playlists {
+			for _, id := range pl.SongIDs {
+				out[id] = true
+			}
+		}
+	}
+
+	s.mu.Lock()
+	for id := range s.protected {
+		out[id] = true
+	}
+	s.mu.Unlock()
+	return out
+}
+
+// beginBusy / endBusy 标记「在线链路正在干活」（解析直链、写缓存、代理转发）。
+//
+// 用途只有一个：空闲清理要避开这些时刻（磁盘与网络正忙时再去删几十个文件，
+// 只会让当前这次播放卡顿，而清理本身一点也不急）。
+func (s *OnlineService) beginBusy() { s.busy.Add(1) }
+func (s *OnlineService) endBusy()   { s.busy.Add(-1) }
+
+// Busy 报告在线链路此刻是否有活干。
+func (s *OnlineService) Busy() bool { return s.busy.Load() > 0 }
+
+// setCleaner 注入空闲清理器（main 装配）。
+func (s *OnlineService) setCleaner(c *onlineCacheCleanup) { s.cleaner = c }
+
+// CleanupCache 立即清理一次试听缓存（只删「没被引用 + 闲置够久」的那些）。
+//
+// 与后台空闲清理的区别：这里是**用户主动触发**，不受「空闲」判据约束
+// （在播时也可以点，判据里的引用保护照旧）。返回清理报告。
+func (s *OnlineService) CleanupCache() map[string]any {
+	if s.cleaner == nil {
+		return map[string]any{"deleted": 0, "skipped": "清理器未启用"}
+	}
+	rep := s.cleaner.runNow(cleanupMinIdleAge)
+	return map[string]any{
+		"deleted":    rep.Deleted,
+		"bytes":      rep.Bytes,
+		"scanned":    rep.Scanned,
+		"total":      rep.Total,
+		"totalBytes": rep.TotalBytes,
+	}
+}
+
+// setSourceLedger 注入来源记账（装配与测试用）。
+func (s *OnlineService) setSourceLedger(l *onlinesource.Ledger) { s.sources = l }
+
+// recordSource 追加一条来源记录。
+//
+// 所有失败都只记日志：「记录来源」不是功能路径，写不进去不该让用户的操作失败。
+func (s *OnlineService) recordSource(rec onlinesource.Record) {
+	if s.sources == nil {
+		return
+	}
+	if err := s.sources.Record(rec); err != nil {
+		log.Printf("[online] 来源记账写入失败（不影响本次操作）: %v", err)
+	}
 }
 
 // setAI 注入 AI 元数据清洗服务（可选）。故意不导出，避免出现在前端绑定里。
@@ -102,6 +258,8 @@ func NewOnlineService(store *bootstrap.Store, client *bilibili.Client, aggregate
 		token:  bootstrap.RandomID("ol"),
 		cache:  map[string]*onlineAudioCache{},
 		files:  onlinecache.New(""),
+		// 来源记账（试听缓存 / 已下载）：搜索结果里的「已下载」与空闲清理都靠它。
+		sources: openSourceLedger(store),
 	}
 }
 
@@ -135,7 +293,68 @@ func (s *OnlineService) CacheStats() map[string]any {
 // 应有的语义，缓存目录本来就在临时目录下。
 func (s *OnlineService) ClearCache() map[string]any {
 	_ = s.files.Clear()
+	// 缓存文件没了，对应的来源记录也就没意义了（留着会让界面显示
+	// 「已缓存」而实际点开要重下）。下载记录不受影响：那是用户的文件。
+	if s.sources != nil {
+		for _, rec := range s.sources.CacheEntries() {
+			s.sources.Forget(rec.BVID, onlinesource.KindCache)
+		}
+	}
 	return s.CacheStats()
+}
+
+// SourceIndex 返回在线歌曲的来源索引（前端搜索结果里标「已下载」用）。
+//
+// 结构：{ path, downloads: {bvid: {…, exists}}, cache: {bvid: {…, exists}} }。
+//
+// ★ exists 是**每次调用时 stat 出来的**，不是记录里存的：用户可能已经把
+// 下载目录里的那份删了。界面必须按 exists 决定要不要显示「已下载」——
+// 这正是「标注之前再判断一次这个文件还在不在」那条要求。
+func (s *OnlineService) SourceIndex() map[string]any {
+	out := map[string]any{
+		"path":      "",
+		"downloads": map[string]map[string]any{},
+		"cache":     map[string]map[string]any{},
+	}
+	if s.sources == nil {
+		return out
+	}
+	out["path"] = s.sources.Path()
+	out["downloads"] = statusMap(s.sources.Downloads())
+	out["cache"] = statusMap(s.sources.CacheEntries())
+	return out
+}
+
+// PruneSources 清掉「文件已经不在」的来源记录（用户删了下载、系统清了临时目录）。
+//
+// 返回清掉的条数。前端不需要直接调它：空闲清理会顺带做这件事
+// （见 online_cache_cleanup.go），这里是给设置界面/排查手动触发用的。
+func (s *OnlineService) PruneSources() map[string]any {
+	if s.sources == nil {
+		return map[string]any{"pruned": 0, "path": ""}
+	}
+	dropped := s.sources.Prune()
+	return map[string]any{"pruned": dropped, "path": s.sources.Path()}
+}
+
+// statusMap 把来源快照转成「bvid → 状态」的映射（前端按 bvid 查）。
+func statusMap(list []onlinesource.Status) map[string]map[string]any {
+	out := make(map[string]map[string]any, len(list))
+	for _, st := range list {
+		out[st.BVID] = map[string]any{
+			"bvid":   st.BVID,
+			"title":  st.Title,
+			"artist": st.Artist,
+			"kind":   st.Kind,
+			"path":   st.Path,
+			"dir":    st.Dir,
+			"from":   st.From,
+			"at":     st.At,
+			"exists": st.Exists,
+			"size":   st.Size,
+		}
+	}
+	return out
 }
 
 const onlinePrefix = "/online/"
@@ -450,6 +669,9 @@ func (s *OnlineService) checkToken(r *http.Request) bool {
 }
 
 func (s *OnlineService) handleAudio(w http.ResponseWriter, r *http.Request) {
+	// 在线链路正在干活（空闲清理要避开这些时刻，见 beginBusy 的说明）
+	s.beginBusy()
+	defer s.endBusy()
 	if !s.checkToken(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -640,6 +862,9 @@ const cachePipeBufferBytes = 2 << 20
 // 单独抽成方法是为了能直接测它：下面这个死锁发生在两个 goroutine 之间
 // （转发侧与旁路），不把旁路真的跑起来就测不出来。见 online_tee_test.go 的 ③。
 func (s *OnlineService) cacheStream(stream *bilibili.AudioStream, path string, pr *bytePipeReader, sink *teeSink) {
+	// 正在写缓存（空闲清理要避开，见 beginBusy）
+	s.beginBusy()
+	defer s.endBusy()
 	// ★ 旁路退出前必须**主动**放掉管道，否则转发侧会卡住。
 	//
 	// 管道是有界的（bytePipe）：写端要一直等到「缓冲区有空位」或「管道被关」
@@ -664,6 +889,16 @@ func (s *OnlineService) cacheStream(stream *bilibili.AudioStream, path string, p
 	// 缓存就绪后立刻登记成后端可播放的歌曲：
 	// 前端下一次「后端装载」才能解析到它（见 EnsureCached 的说明）。
 	s.registerVirtual(stream.BVID, path, "m4a")
+	// 顺手记一条来源（试听缓存）：搜索结果里的「已下载」判定、
+	// 以及空闲清理「这条缓存是谁」都读它。
+	s.recordSource(onlinesource.Record{
+		BVID:   stream.BVID,
+		Kind:   onlinesource.KindCache,
+		Title:  stream.Title,
+		Ext:    "m4a",
+		Path:   path,
+		Origin: stream.URL,
+	})
 }
 
 // pipeTee 是「边转发边写缓存」的转发侧。
@@ -781,7 +1016,15 @@ var errTeeAborted = errors.New("试听转发提前结束")
 var errTeeCacheFailed = errors.New("试听缓存写入失败")
 
 // registerVirtual 把一个已缓存的在线音频登记成后端可解析的歌曲。
+//
+// 文件**已经不在**时不登记：虚拟表里放一条指向不存在文件的记录，只会让
+// 后端解析给出 `文件不存在`（而不是「缓存未命中」），把调用方推向错误的
+// 处理分支 —— 登记前先核实文件在不在，语义才对得上「登记的是可播放的东西」。
 func (s *OnlineService) registerVirtual(bvid, path, ext string) {
+	if _, err := os.Stat(path); err != nil {
+		log.Printf("[online] 音频文件不存在，跳过登记（%s）: %v", bvid, err)
+		return
+	}
 	s.mu.Lock()
 	fn := s.resolveVirtual
 	s.mu.Unlock()
@@ -798,12 +1041,43 @@ func (s *OnlineService) registerVirtual(bvid, path, ext string) {
 //     调用方通常在前端已经显示「加载中」的切歌路径上，可以接受；
 //     接口本身也有超时兜底。
 func (s *OnlineService) EnsureCached(ctx context.Context, bvid string) (string, string, error) {
+	// 可能正在联网下载整首歌（空闲清理要避开，见 beginBusy）
+	s.beginBusy()
+	defer s.endBusy()
 	bvid = strings.TrimSpace(bvid)
 	if bvid == "" {
 		return "", "", errors.New("缺少视频 id")
 	}
 	if path, ext, ok := s.files.LookupAny(bvid, "m4a"); ok {
-		return path, strings.TrimPrefix(ext, "."), nil
+		// ★ 命中也要登记虚拟表（第六轮之后的用户报障修复）。
+		//
+		// 为什么命中必须登记：虚拟表（media.Server 的 virtual）是**内存里的**，
+		// 而缓存文件在磁盘上、比进程活得久。重开一次程序，缓存还在、虚拟表却是空的，
+		// 于是「昨天听过的在线歌今天再点」会命中这里直接返回 —— 后端解析时
+		// 曲库查不到、虚拟表也没有，报 `歌曲不存在`，用户看到的就是
+		// 「找不到歌曲、无法播放」。登记是幂等的（RegisterVirtual 已保证），
+		// 命中路径每次登记一遍没有任何代价。
+		normalized := onlinecache.NormalizeExt(ext)
+		s.registerVirtual(bvid, path, strings.TrimPrefix(normalized, "."))
+		return path, strings.TrimPrefix(normalized, "."), nil
+	}
+
+	// 缓存里没有 —— 但这首歌可能**已经下载到用户目录了**（用户先下载、
+	// 之后缓存被清掉或被系统临时目录回收）。播放直接走那份已下载的文件：
+	// 只登记、不动文件（那是用户的文件），比重新联网下载可靠得多 ——
+	// 重新下载这一跳任何失败（直链过期、网络抖动、403）都会变成「无法播放」。
+	if st, ok := s.sources.Downloaded(bvid); ok {
+		ext := st.Ext
+		if ext == "" {
+			ext = strings.TrimPrefix(strings.ToLower(filepath.Ext(st.Path)), ".")
+		}
+		if ext == "" {
+			ext = "m4a"
+		}
+		ext = onlinecache.NormalizeExt(ext)
+		s.registerVirtual(bvid, st.Path, strings.TrimPrefix(ext, "."))
+		log.Printf("[online] %s 的试听缓存已不在，改用已下载的文件播放: %s", bvid, st.Path)
+		return st.Path, strings.TrimPrefix(ext, "."), nil
 	}
 
 	stream, err := s.resolve(ctx, bvid)
@@ -828,6 +1102,15 @@ func (s *OnlineService) EnsureCached(ctx context.Context, bvid string) (string, 
 		}
 		if lastErr = s.downloadToCache(ctx, rawURL, path); lastErr == nil {
 			s.registerVirtual(bvid, path, ext)
+			s.recordSource(onlinesource.Record{
+				BVID:   bvid,
+				Kind:   onlinesource.KindCache,
+				Title:  stream.Title,
+				Artist: stream.Artist,
+				Ext:    ext,
+				Path:   path,
+				Origin: rawURL,
+			})
 			return path, strings.TrimPrefix(onlinecache.NormalizeExt(ext), "."), nil
 		}
 	}

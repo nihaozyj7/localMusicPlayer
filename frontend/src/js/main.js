@@ -59,6 +59,8 @@ import { primeCoverAccent } from "./cover-accent.js";
 import { probeDesktopWallpaperSupport } from "./desktop-wallpaper.js";
 import { initSearchPanel } from "./searchpanel.js";
 import { initDownloads } from "./downloads.js";
+import { initOnlineCacheSync } from "./online-cache.js";
+import { searchState } from "./ui/search.js";
 import { startRuntime } from "./runtime.js";
 import { startMediaKeys } from "./media-keys.js";
 
@@ -579,6 +581,9 @@ async function main() {
   initSearchPanel();
   // 标题栏「下载任务」入口 + 下载面板（按钮初始 hidden，有任务时才出现）
   await initDownloads();
+  // 把播放队列里的在线歌曲报给后端（试听缓存的空闲清理据此判断
+  // 「有没有被播放列表引用」—— 队列只在前端，后端读不到）
+  initOnlineCacheSync();
   // 桌面背景歌词依赖系统桌面窗口结构，探一次并把能力写进 state
   void probeDesktopWallpaperSupport();
   bindShortcuts();
@@ -721,4 +726,11 @@ window.__app = {
   // 自动化验收钩子（tools/check-app.mjs）：/skins/ 资源路由带**随进程随机**的
   // token，页面外的工具拿不到它 —— 与上面 setPlayerViewMode 同类的测试入口。
   skinsToken: () => backend.skinsToken(),
+  // 在线链路的验收钩子：生产包里模块 URL 是带哈希的，页面外的工具
+  // `import("./js/bridge.js")` 拿不到模块（会 404），所以把「来源索引 / 队列引用
+  // 上报 / 立即清理」和搜索结果状态一起挂出来。它们只是转发，不含任何业务判断。
+  sourceIndex: () => backend.onlineSourceIndex(),
+  protectIDs: (ids) => backend.onlineProtectIDs(ids),
+  cleanupCache: () => backend.onlineCleanupCache(),
+  searchState,
 };

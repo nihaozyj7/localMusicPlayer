@@ -380,6 +380,15 @@ const backendImpl = {
     call(bindings?.Online?.CoverLookup, title, artist, album, duration, fallback),
   coverProviders: () => call(bindings?.Online?.CoverProviders),
   coverInvalidate: () => call(bindings?.Online?.InvalidateCovers),
+  /* 来源索引：搜索结果里标「已下载」用。
+     后端每次都会 stat 一遍文件 —— 用户把下载目录里那份删掉之后，
+     返回的 exists 就是 false，界面据此去掉标注（不靠猜、不靠缓存的老状态）。 */
+  onlineSourceIndex: () => call(bindings?.Online?.SourceIndex),
+  /* 把播放队列里的在线歌曲报给后端：试听缓存的空闲清理据此判断
+     「有没有被播放列表引用」（队列只在前端，后端读不到）。 */
+  onlineProtectIDs: (ids) => call(bindings?.Online?.ProtectIDs, ids),
+  /* 立即清理一次试听缓存（用户主动触发，不受空闲判据约束） */
+  onlineCleanupCache: () => call(bindings?.Online?.CleanupCache),
 
   /* ---- 下载 ---- */
   downloadStart: (bvid, title, duration) => call(bindings?.Download?.Start, bvid, title, duration),
