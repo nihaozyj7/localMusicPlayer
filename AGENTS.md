@@ -147,9 +147,11 @@ frontend/src/js/
 │                   spectrum.js  media-keys.js  desktop-lyrics.js  desktop-wallpaper.js
 ├── 宿主（皮肤契约）playerhost.js（播放详情页宿主）skinhost.js
 ├── 业务动作        shell.js tracks.js playlists.js settings.js coverpanel.js searchpanel.js
-│   （渲染已剥离）  lyrics-panel.js downloads.js playerbar.js dom.js
+│   （渲染已剥离）  lyrics-panel.js downloads.js playerbar.js dom.js online-cache.js
+│                   auto-download.js（收藏 / 加入歌单时给「只有试听缓存」的在线歌曲补一份本地文件）
 ├── 工具/主题       utils.js theme.js cover-accent.js runtime-tokens.js desktop-mode.js
 │                   slider.js probe.js mock.js ai-vendors.js provider-names.js about-info.js
+│                   ai-automation.js（两个 AI 自动化开关的清单与提示文案，设置界面与守卫测试共用）
 ├── 独立窗口页      desktop-lyrics-window.js  desktop-wallpaper-window.js
 └── ui/（Lit 组件，light DOM）
                     base.js app.js overlays.js titlebar.js sidebar.js content.js
