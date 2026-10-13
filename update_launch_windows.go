@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -30,6 +31,11 @@ import (
    为什么用 `cmd /c` 而不是直接执行 .bat：
      Go 在 Windows 上不能直接执行批处理文件（会报
      "not a valid Win32 application"），必须显式交给 cmd.exe。
+
+   环境变量承载了源 / 目标 / 备份路径与重启参数（见 update_install.go）：
+   这些值**不能**写进脚本正文，否则中文路径会被 cmd 按控制台代码页解错。
+   环境块是 UTF-16，和代码页无关 —— 这一条是实测出来的（旧实现会在中文
+   目录下把程序换坏，只剩一个 lmplayer.exe.old）。
    ========================================================================== */
 
 // createNewProcessGroup 与 internal/executil 里用的是同一个常量，
@@ -37,12 +43,16 @@ import (
 const createNewProcessGroup = 0x00000200
 
 // launchInstallScript 用一条独立的 cmd 进程执行引导脚本，然后立刻返回。
-func launchInstallScript(scriptPath string) error {
-	cmd := exec.Command("cmd.exe", "/c", scriptPath)
+func launchInstallScript(plan installPlan) error {
+	cmd := exec.Command("cmd.exe", "/c", plan.ScriptPath)
 
-	// 工作目录设成脚本所在目录：脚本里写的都是绝对路径，
+	// 工作目录设成脚本所在目录：脚本里用到的都是环境变量里的绝对路径，
 	// 但把 cwd 放在这里能让「用户手动重跑这个脚本」的行为完全一致。
-	cmd.Dir = filepath.Dir(scriptPath)
+	cmd.Dir = filepath.Dir(plan.ScriptPath)
+
+	// 路径与参数走环境块（UTF-16，与代码页无关）。
+	// 追加而不是替换：cmd.exe 自己要用 SystemRoot 之类的变量。
+	cmd.Env = append(os.Environ(), installEnv(plan)...)
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: createNewProcessGroup,

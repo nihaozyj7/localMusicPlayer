@@ -485,17 +485,19 @@ func (s *UpdateService) Install() (map[string]any, error) {
 	dir := s.installDir()
 	script := filepath.Join(dir, "apply-update.bat")
 
-	scriptPath, err := prepareInstall(installPlan{
+	plan := installPlan{
 		SourcePath:  pending.Path,
 		TargetPath:  target,
 		ScriptPath:  script,
 		RestartArgs: os.Args[1:],
-	})
+	}
+
+	scriptPath, err := prepareInstall(plan)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := launchInstallScript(scriptPath); err != nil {
+	if err := launchInstallScript(plan); err != nil {
 		return nil, fmt.Errorf("启动更新脚本失败：%w", err)
 	}
 

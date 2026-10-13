@@ -23,6 +23,6 @@ import (
    ========================================================================== */
 
 // launchInstallScript 在非 Windows 平台不可用。
-func launchInstallScript(scriptPath string) error {
+func launchInstallScript(plan installPlan) error {
 	return fmt.Errorf("当前平台（%s）不支持自动替换安装，请到发布页面手动下载", runtime.GOOS)
 }
