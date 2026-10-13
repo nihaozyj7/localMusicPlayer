@@ -32,6 +32,20 @@ It also ships some online capabilities (search, preview, download, automatic cov
 but **every online feature is optional**: offline, it is a completely self-contained player — your
 library, cover art and lyric cache all live on your own disk.
 
+### What 0.2.0 fixes
+
+- **Fixed**: after downloading track A from the online search results, previewing A again failed with
+  "song not found". The download used to *move* the preview cache away while playback still resolved the
+  cache path. Downloads now **copy** it (so no re-download either), and downloaded tracks get a
+  **"Downloaded" badge** in the search results — shown only after the file is **re-checked on disk**, so it
+  disappears when you delete the file.
+- **New**: **idle cleanup** for the preview cache. Cached audio that is not referenced by a playlist or the
+  play queue and has been idle for over a week is reclaimed while you are idle (see
+  [Download](#download)); online origins are recorded in a jsonl **ledger** that both the badge and the
+  cleanup reference check read.
+- Looking for an older build? Every release is on the
+  [Releases](https://github.com/nihaozyj7/localMusicPlayer/releases) page.
+
 ### Three things you don't need
 
 - **No bundled browser engine**: the UI runs on the WebView2 that ships with Windows — no copy of
@@ -51,7 +65,7 @@ library, cover art and lyric cache all live on your own disk.
 | [Cover art](#cover-art) | Several covers per track, cache vs embedded managed separately, five online sources, atomic write-back |
 | [Lyrics](#lyrics) | Four-level fallback, word-level (karaoke) lyrics, lyrics workbench, floating desktop lyrics, wallpaper lyrics |
 | [Interface](#interface) | Three themes + custom CSS, two player skins, sorting / columns / density / frame-rate presets |
-| [Online & AI](#online--ai) | Search → preview → download, preview-is-cache, optional AI metadata cleanup and post-download tagging |
+| [Online & AI](#online--ai) | Search → preview → download, preview-is-cache, downloaded badges with a source ledger, idle cache cleanup, optional AI metadata cleanup and post-download tagging |
 | [Updates](#updates) | Manual or on-start update check, multi-mirror downloads, per-version skip |
 
 ---
@@ -133,12 +147,19 @@ library, cover art and lyric cache all live on your own disk.
 - Search → preview → download to your machine (the download folder is configurable and migratable, and
   finished downloads are added to the library automatically);
 - **Previews are cached on disk**: audio is saved locally as it streams, which is what lets an online track
-  in your queue decode and play exactly like a local one. Hitting download then simply moves that cached
-  file into your download folder instead of fetching it twice;
+  in your queue decode and play exactly like a local one;
+- **Downloading copies the cache instead of moving it** (0.2.0): the cached copy stays where the player
+  expects it, so previewing a song again after downloading it keeps working — no more "song not found";
+- **Downloads are marked in the search results**: a downloaded track carries a "Downloaded" badge (hovering
+  shows the folder it went to) and the button turns into "Download again". The badge is only shown after the
+  file is **re-checked on disk** — delete the downloaded file and the badge disappears by itself;
+- **The preview cache cleans up after itself**: cached audio that is not referenced by a playlist or the
+  play queue and has been idle for over a week is reclaimed while you are **idle** (criteria in the
+  [Download](#download) section — it is not a scheduled wipe);
 - **AI metadata cleanup** (optional): point it at any OpenAI-compatible endpoint and it will recover the
   real title / artist from messy file names before online matching runs;
 - **AI metadata tagging after download** (optional, on by default): once a download finishes (either a
-  direct download or a move out of the preview cache) it asks the AI for the real title / artist / album
+  direct download or a copy out of the preview cache) it asks the AI for the real title / artist / album
   and writes them back into the file. m4a and flac are supported; other formats only update the library.
 
 ### Updates
@@ -153,19 +174,33 @@ library, cover art and lyric cache all live on your own disk.
 
 ## Screenshots
 
-| Main view (dark) | Player · classic | Player · immersive |
-| --- | --- | --- |
-| ![Main view (dark)](docs/screenshots/01-main-dark.png) | ![Player · classic](docs/screenshots/06-player-classic.png) | ![Player · immersive](docs/screenshots/07-player-immersive.png) |
+Everything below is a screenshot of the **real application** (Go + WebView2), not a mock-up and not a
+browser preview. The library it shows is a set of **demo tracks generated on the spot** by
+[`tools/demo-library.py`](tools/demo-library.py), so the titles, covers and lyrics are synthetic
+content — using them as material keeps somebody's personal collection off the internet.
 
-| Main view (light) | Player · light | Cover-derived theme |
-| --- | --- | --- |
-| ![Main view (light)](docs/screenshots/02-main-light.png) | ![Player · light](docs/screenshots/09-player-light.png) | ![Cover-derived theme](docs/screenshots/10-cover-dark.png) |
+**The "Downloaded" badge in the online search results** (0.2.0):
 
-| Queue | Playlists | Settings · folders |
-| --- | --- | --- |
-| ![Queue](docs/screenshots/03-queue.png) | ![Playlists](docs/screenshots/04-playlist.png) | ![Settings · folders](docs/screenshots/05-settings-folders.png) |
+![Downloaded badge in online search results](docs/screenshots/11-search-downloaded.png)
 
-More (narrow-window layout, light player, multi-cover panel, …) are in [`docs/screenshots`](docs/screenshots).
+*A downloaded row carries the "Downloaded" badge and the button reads "Download again"; hovering shows
+the folder it went to. Delete the file and the badge disappears the next time it is shown.*
+
+| Main view · dark | Main view · light | Queue |
+| --- | --- | --- |
+| ![Main view · dark](docs/screenshots/01-main-dark.png) | ![Main view · light](docs/screenshots/02-main-light.png) | ![Queue](docs/screenshots/03-queue.png) |
+
+| Player · classic | Player · immersive | Player · light |
+| --- | --- | --- |
+| ![Player · classic](docs/screenshots/06-player-classic.png) | ![Player · immersive](docs/screenshots/07-player-immersive.png) | ![Player · light](docs/screenshots/08-player-light.png) |
+
+| Playlists | Cover-derived theme | Settings · library | Narrow window |
+| --- | --- | --- | --- |
+| ![Playlists](docs/screenshots/04-playlist.png) | ![Cover-derived theme](docs/screenshots/09-cover-dark.png) | ![Settings · library](docs/screenshots/05-settings-folders.png) | ![Narrow window](docs/screenshots/10-min-window.png) |
+
+To re-capture them: `wails3 task build`, then `python tools/demo-library.py` (builds the demo library;
+needs Pillow and a full ffmpeg), then `node tools/shots.mjs` (launches the real app and captures each
+view). All shots live in [`docs/screenshots`](docs/screenshots).
 
 ---
 
@@ -185,6 +220,33 @@ On first launch the embedded FFmpeg is unpacked into your data directory:
 Previewed online audio is cached in the system temp directory (`%TEMP%\LocalMusicPlayer\online\`).
 It deliberately stays **out** of your download folder and out of the library scan — it is disposable
 derived data, so if the system clears it, the next preview simply downloads again.
+
+### How the preview cache expires (0.2.0)
+
+The player never "wipes the cache on a schedule". Instead it reclaims files while you are **idle**,
+under a set of deliberately conservative criteria — deleting the wrong file costs you a re-download:
+
+| Criterion | Value | Why this value |
+| --- | --- | --- |
+| Silence before "idle" | 5 minutes | A track runs 3–5 minutes; shorter would fire while you step away mid-pause |
+| Check interval | 1 minute | Well below the idle threshold, so landing on the boundary costs 1 minute, not a whole round |
+| Grace after launch | 3 minutes | Launch does the library scan, loudness work and ffmpeg unpacking — stay out of the way |
+| Idle age before deletion | 7 days | Untouched for a week **and** unreferenced is the real long tail |
+| Disk-pressure clause | 24 hours once over budget | Only relax it when the cache actually fills up |
+| Minimum gap between runs | 30 minutes | Cleaning more often is not better |
+| Per-run cap | 64 files / 128 MB | Idle does not mean it may hammer the disk; the rest waits for the next round |
+
+**Three things are never deleted**, and all three are required:
+
+1. tracks in your **playlists** and **Liked** list;
+2. tracks in your **play queue**;
+3. the **currently loaded / playing** track — even while paused (one click resumes it; deleting its cache
+   would turn that into a re-download).
+
+Next to the cache there is also a **source ledger** at `%APPDATA%\LocalMusicPlayer\online-sources.jsonl`:
+one line per entry, recording where each preview cache file and each download came from, its path and its
+timestamp. The "Downloaded" badge reads it, and it **re-checks that the file still exists every time it is
+displayed** — remove the file and the badge goes away with it.
 
 ### Requirements
 

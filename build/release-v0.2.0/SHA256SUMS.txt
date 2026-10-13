@@ -1,0 +1,1 @@
+b2c070dec74316e147a01af18107e0420379f2124305ced784f6c64fad189cb2  LMPlayer-v0.2.0-windows-x64.exe
