@@ -250,7 +250,11 @@ test("store.js：playSong 必须在「又是这一首」时递增 playNonce", ()
   const code = stripLineComments(storeSrc);
   const body = bodyOf(code, "export function playSong(songId, options = {}) {");
   assert.match(body, /const replay = state\.currentId === songId;/, "要判断「是不是又在点这一首」");
-  assert.match(body, /if \(replay\) state\.playNonce \+= 1;/, "★ 必须递增 playNonce —— 少了它，音频层永远不会重新装载同一首歌");
+  assert.match(
+    body,
+    /if \(replay\) state\.playNonce \+= 1;/,
+    "★ 必须递增 playNonce —— 少了它，音频层永远不会重新装载同一首歌"
+  );
   assert.ok(
     code.includes("playNonce: 0,"),
     "state.playNonce 必须在初始 state 里声明（本项目要求「state 有哪些字段」在代码里有唯一答案）"
@@ -266,7 +270,7 @@ test("audio.js：syncAudio 必须在 playNonce 变化时清掉装载记账", () 
   const body = bodyOf(audioCode, "export async function syncAudio() {");
   assert.match(
     body,
-    /\n  if \(replayRequested\(\) && loadedFor === song\.id\) \{/,
+    /\n {2}if \(replayRequested\(\) && loadedFor === song\.id\) \{/,
     "★ syncAudio 必须在这个信号上清掉装载记账：否则只会推一次 Play()，后端停在 EOF 上空转（断言刻意锚定 `if (replayRequested() …` 的完整形式 —— 被 `false &&` 短路掉的死代码不算修好）"
   );
   assert.match(body, /loadedFor = null;/, "清掉 loadedFor 才会走下面的完整重新装载");
@@ -280,7 +284,7 @@ test("audio.js：legacy 回退链路也要回到 0（两条路径行为一致）
   const body = bodyOf(audioCode, "async function syncLegacy() {");
   assert.match(
     body,
-    /\n  if \(replayRequested\(\) && loadedFor === song\.id && switchPhase !== SWITCH_LOADING\) \{/,
+    /\n {2}if \(replayRequested\(\) && loadedFor === song\.id && switchPhase !== SWITCH_LOADING\) \{/,
     "legacy 链路同样要认这个信号（同样不接受被短路掉的形式）"
   );
   assert.match(body, /node\.currentTime = 0;/, "暂停在末尾时 play() 不会回到 0，必须显式 seek");

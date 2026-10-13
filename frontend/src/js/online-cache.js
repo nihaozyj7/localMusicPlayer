@@ -18,6 +18,8 @@
 
 import { backend, isWails } from "./bridge.js";
 import { state, subscribe } from "./store.js";
+import { requestAppUpdate } from "./ui/base.js";
+import { toast } from "./ui/overlays.js";
 
 /**
  * 从播放队列里挑出需要保护的在线歌曲 id。
@@ -69,4 +71,90 @@ export function initOnlineCacheSync() {
 
   subscribe(push);
   push(); // 启动时先推一次：队列可能来自上次的 localStorage 快照
+}
+
+/* --------------------------------------------------------------------------
+   试听缓存的统计与「清理未引用缓存」按钮
+   --------------------------------------------------------------------------
+   需求（用户原话）：「在线歌曲的缓存定期清理，改为在设置中添加一个缓存清理的
+   按钮，这个按钮点击后会清理掉播放器中没有引用的缓存歌曲，比如还在播放列表
+   的歌曲」。
+
+   谁是「有引用」由**后端**判定（歌单与「我喜欢」在配置里、播放队列由本模块
+   推过去、正在播放的那首由播放器自报），前端一个字都不重复实现 ——
+   前端只负责「按下按钮 → 把回执说出来」。
+   -------------------------------------------------------------------------- */
+
+/** 最近一次读到的缓存占用（后端 CacheStats 的快照） */
+let stats = null;
+/** 数据版本号：设置层把它放进依赖数组（非 store 数据的响应式入口） */
+let statsRev = 0;
+
+export function onlineCacheSnapshot() {
+  return { stats, rev: statsRev };
+}
+
+/**
+ * 读一次试听缓存占用（打开设置层时调用；失败静默）。
+ *
+ * 失败不该弹错误：设置页少一行「已缓存 N 个」不影响任何功能，
+ * 而弹一个「读取缓存失败」只会让用户以为播放器坏了。
+ */
+export async function refreshOnlineCacheStats() {
+  if (!isWails()) return null;
+  try {
+    const s = await backend.onlineCacheStats();
+    stats = s && typeof s === "object" ? s : null;
+    statsRev += 1;
+    requestAppUpdate();
+    return stats;
+  } catch (err) {
+    console.warn("[online-cache] 读取试听缓存占用失败", err);
+    return null;
+  }
+}
+
+/** 缓存的占用文案（供设置界面显示；纯函数） */
+export function onlineCacheSummaryText(snapshot) {
+  const s = snapshot?.stats;
+  if (!s) return "正在读取…";
+  const mb = ((Number(s.bytes) || 0) / 1024 / 1024).toFixed(1);
+  return `已缓存 ${Number(s.count) || 0} 个试听文件，共 ${mb} MB`;
+}
+
+/** 把一次清理的回执说成一句人话（纯函数，单测盯它） */
+export function cleanupResultText(res) {
+  if (!res) return "清理失败";
+  if (res.skipped) return `未清理：${res.skipped}`;
+  const deleted = Number(res.deleted) || 0;
+  const mb = ((Number(res.bytes) || 0) / 1024 / 1024).toFixed(1);
+  const kept = Number(res.kept) || 0;
+  const keptText = kept > 0 ? `，保留 ${kept} 个还在播放列表 / 歌单 / 喜欢里的` : "";
+  if (deleted === 0) return `没有可清理的试听缓存${kept > 0 ? `（${kept} 个都还在引用中）` : ""}`;
+  return `已清理 ${deleted} 个未引用的试听缓存（${mb} MB）${keptText}`;
+}
+
+/**
+ * 「清理未引用缓存」按钮的动作。
+ *
+ * 不弹确认框：这个动作**只删没被引用的派生数据**（试听缓存本来就在临时目录，
+ * 后端还做了引用保护），加一道确认只会让常用的清理变得啰嗦。
+ */
+export async function cleanupUnreferencedCache() {
+  if (!isWails()) {
+    toast("浏览器预览无法清理缓存", { tone: "warning" });
+    return null;
+  }
+  const busy = toast("正在清理未引用的试听缓存…", { duration: 0 });
+  try {
+    const res = await backend.onlineCleanupCache();
+    await refreshOnlineCacheStats();
+    toast(cleanupResultText(res), { duration: 4200 });
+    return res;
+  } catch (err) {
+    toast(`清理失败：${err?.message ?? err}`, { tone: "error", duration: 6000 });
+    return null;
+  } finally {
+    busy?.close?.();
+  }
 }

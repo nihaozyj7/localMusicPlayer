@@ -22,6 +22,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -353,8 +354,95 @@ func TestCleanupRunNowIgnoresIdleGates(t *testing.T) {
 	}
 }
 
-// 半成品（下载中断留下的 .part / 旧式随机名）不该进清理名单：
-// 它们由缓存自身的 LRU 与写入路径负责，清理只管成品。
+// runAll 是设置界面「清理未引用的缓存」按钮的路径。
+//
+// 与 runNow（后台/排查用）的区别只有两条，都是「用户已经明确按了按钮」推出来的：
+// 闲置门槛归零、单轮上限解除。需求原话是「清理掉播放器中没有引用的缓存歌曲，
+// 比如还在播放列表的歌曲」—— 所以引用保护是本用例的核心断言。
+func TestCleanupRunAll(t *testing.T) {
+	start := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	store, dir := cleanupTestStore(t, map[string]time.Time{
+		"BVfresh.m4a": start.Add(-2 * time.Minute), // 刚听完：runNow 会留着，runAll 要删
+		"BVref.m4a":   start.Add(-30 * 24 * time.Hour),
+		"BVold.m4a":   start.Add(-30 * 24 * time.Hour),
+	})
+	h := newCleanupHarness(t, store, start)
+	h.refs[onlineSongID("BVref")] = true
+
+	rep := h.cleanup.runAll()
+
+	if rep.Deleted != 2 {
+		t.Fatalf("该删「刚听过但没人引用」与「很旧且没人引用」两个，实际 %d", rep.Deleted)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "BVref.m4a")); err != nil {
+		t.Error("还在播放列表 / 歌单里引用的必须保留（需求就是这一条）")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "BVfresh.m4a")); !os.IsNotExist(err) {
+		t.Error("用户主动清理时，闲置门槛归零 —— 刚听过的未引用缓存也该回收")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "BVold.m4a")); !os.IsNotExist(err) {
+		t.Error("旧的未引用缓存必须删掉")
+	}
+	if rep.Referenced != 1 {
+		t.Errorf("回执要能说出「保留了几个还在引用里的」，实际 referenced=%d", rep.Referenced)
+	}
+	if rep.Total != 1 || rep.TotalBytes <= 0 {
+		t.Errorf("清理后的规模必须是对的（设置界面要显示它），实际 total=%d bytes=%d", rep.Total, rep.TotalBytes)
+	}
+}
+
+// 正在播放的那首也算「被引用」：它可能不在任何歌单里，但删了就等于把当前这首弄哑。
+func TestCleanupRunAllKeepsCurrentSong(t *testing.T) {
+	start := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	store, dir := cleanupTestStore(t, map[string]time.Time{
+		"BVnow.m4a": start.Add(-time.Minute),
+		"BVold.m4a": start.Add(-30 * 24 * time.Hour),
+	})
+	h := newCleanupHarness(t, store, start)
+	h.songID = onlineSongID("BVnow")
+
+	rep := h.cleanup.runAll()
+	if rep.Deleted != 1 {
+		t.Fatalf("只该删没人引用的那个，实际 %d", rep.Deleted)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "BVnow.m4a")); err != nil {
+		t.Fatal("正在播放的那首不能被清掉")
+	}
+}
+
+// 单轮上限对**手动**清理不适用：用户点一次就该清干净，而不是点 5 次。
+func TestCleanupRunAllHasNoPerRunCap(t *testing.T) {
+	start := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	files := map[string]time.Time{}
+	for i := 0; i < cleanupMaxFilesPerRun+5; i++ {
+		files[fmt.Sprintf("BVcap%03d.m4a", i)] = start.Add(-30 * 24 * time.Hour)
+	}
+	store, _ := cleanupTestStore(t, files)
+	h := newCleanupHarness(t, store, start)
+
+	rep := h.cleanup.runAll()
+	if rep.Deleted != len(files) {
+		t.Fatalf("手动清理应当一次清完 %d 个，实际 %d", len(files), rep.Deleted)
+	}
+}
+
+// 后台清理仍然保留单轮上限（它跑在空闲时，不能长时间占磁盘）。
+func TestCleanupRunNowKeepsPerRunCap(t *testing.T) {
+	start := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	files := map[string]time.Time{}
+	for i := 0; i < cleanupMaxFilesPerRun+5; i++ {
+		files[fmt.Sprintf("BVcap%03d.m4a", i)] = start.Add(-30 * 24 * time.Hour)
+	}
+	store, _ := cleanupTestStore(t, files)
+	h := newCleanupHarness(t, store, start)
+
+	rep := h.cleanup.runNow(cleanupMinIdleAge)
+	if rep.Deleted != cleanupMaxFilesPerRun {
+		t.Fatalf("后台路径一轮最多 %d 个，实际 %d", cleanupMaxFilesPerRun, rep.Deleted)
+	}
+}
+
+// 半成品（下载中断留下的 .part / 旧式随机名）不该进清理名单：// 它们由缓存自身的 LRU 与写入路径负责，清理只管成品。
 func TestCleanupListIgnoresPartialFiles(t *testing.T) {
 	start := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	store, dir := cleanupTestStore(t, map[string]time.Time{

@@ -2516,6 +2516,9 @@ func applyPatch(c *bootstrap.Config, patch map[string]any) {
 		case "aiDownloadTag":
 			// 下载完成后是否用 AI 提取元数据并写回文件（会改写用户文件，可关）
 			c.AIDownloadTag = asBool(raw, c.AIDownloadTag)
+		case "autoDownloadOnCollect":
+			// 收藏 / 加入歌单时，是否把「只有试听缓存」的在线歌曲自动下载到本地
+			c.AutoDownloadOnCollect = asBool(raw, c.AutoDownloadOnCollect)
 		}
 	}
 }

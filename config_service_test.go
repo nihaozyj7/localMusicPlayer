@@ -225,6 +225,39 @@ func TestAIDownloadTagTogglePersists(t *testing.T) {
 	}
 }
 
+// TestAutoDownloadOnCollectTogglePersists 「收藏时自动下载到本地」开关要落盘。
+//
+// 同一类陷阱（设计约束 #8）：前端 SYNCED_KEYS、Go 字段、applyPatch 三处漏一处
+// 就会被静默丢弃。这里漏掉的后果是「用户关掉了自动下载，重启后又开始下」——
+// 而那会产生真实的网络请求与磁盘占用。
+func TestAutoDownloadOnCollectTogglePersists(t *testing.T) {
+	svc, _ := newCfgFixture(t)
+	if !svc.Get().AutoDownloadOnCollect {
+		t.Fatal("AutoDownloadOnCollect 默认应为 true（收藏是长期意图，试听缓存可丢弃）")
+	}
+	if _, err := svc.Set(map[string]any{"autoDownloadOnCollect": false}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := bootstrap.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Get().AutoDownloadOnCollect {
+		t.Fatal("autoDownloadOnCollect=false 未落盘（重启后会继续偷偷下载）")
+	}
+
+	if _, err := svc.Set(map[string]any{"autoDownloadOnCollect": true}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := bootstrap.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !again.Get().AutoDownloadOnCollect {
+		t.Fatal("autoDownloadOnCollect=true 未落盘")
+	}
+}
+
 // TestResetKeepsWritingToDisk 「恢复默认设置」之后设置必须还能存进磁盘。
 //
 // 对应审查报告第 9 条（高危）。旧实现是 `*c = *def`，而 DefaultConfig() 里

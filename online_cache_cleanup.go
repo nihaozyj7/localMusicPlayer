@@ -413,7 +413,38 @@ func (c *onlineCacheCleanup) runNow(minAge time.Duration) cleanupReport {
 	return c.runNowLocked(minAge)
 }
 
+// runAll 清掉**所有没被引用**的试听缓存（设置界面的「清理未引用缓存」按钮）。
+//
+// 与后台清理 / runNow 的两点区别，都是从「用户已经明确按下了按钮」推出来的：
+//
+//	· 闲置门槛为 0：判据只剩「有没有被引用」。后台那 7 天门槛是为了少让用户
+//	  重下 —— 他可能过十分钟又来听同一首；而按下按钮意味着他此刻要的是空间。
+//	· 单轮上限解除：64 个 / 128MB 是为了让后台清理不长时间占磁盘。手动清理
+//	  只跑一次，清一半会让用户以为按钮失效，只能反复点。
+//
+// 引用保护照旧（歌单 / 「我喜欢」/ 播放队列 / 正在播放的那首）—— 需求原话是
+// 「清理掉播放器中没有引用的缓存歌曲，比如还在播放列表的歌曲」。
+func (c *onlineCacheCleanup) runAll() cleanupReport {
+	if c == nil || c.store() == nil {
+		return cleanupReport{Skipped: "没有试听缓存"}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.runLocked(0, 0, 0)
+}
+
 func (c *onlineCacheCleanup) runNowLocked(minAge time.Duration) cleanupReport {
+	return c.runLocked(minAge, cleanupMaxFilesPerRun, cleanupMaxBytesPerRun)
+}
+
+// runLocked 是一次「立刻清理」的共用实现。
+//
+// maxFiles / maxBytes 为 0 表示不设上限（手动清理用）。分类计数（referenced /
+// fresh）在这里补齐 —— 设置界面的回执要能说出「保留了几首还在歌单里的」，
+// 而「保留了」比「删掉了几个」更能让用户确认按钮干对了事。
+//
+// 调用方必须已持有 c.mu。
+func (c *onlineCacheCleanup) runLocked(minAge time.Duration, maxFiles int, maxBytes int64) cleanupReport {
 	now := c.deps.now()
 	referenced := map[string]bool{}
 	if c.deps.referenced != nil {
@@ -429,10 +460,18 @@ func (c *onlineCacheCleanup) runNowLocked(minAge time.Duration) cleanupReport {
 		Now:        now,
 		MinAge:     minAge,
 		Referenced: referenced,
-		MaxFiles:   cleanupMaxFilesPerRun,
-		MaxBytes:   cleanupMaxBytesPerRun,
+		MaxFiles:   maxFiles,
+		MaxBytes:   maxBytes,
 	})
 	report := cleanupReport{At: now.UnixMilli(), Scanned: len(entries)}
+	for _, e := range entries {
+		switch {
+		case referenced[onlineSongID(e.BVID)]:
+			report.Referenced++
+		case now.Sub(e.ModTime) < minAge:
+			report.Fresh++
+		}
+	}
 	for _, e := range plan {
 		if err := c.store().RemoveName(e.Name); err != nil {
 			log.Printf("[online] 手动清理：删除 %s 失败: %v", e.Name, err)

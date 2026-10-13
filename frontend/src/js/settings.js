@@ -24,6 +24,7 @@ import { backend, isWails, on } from "./bridge.js";
 import { fmtCount, uid } from "./utils.js";
 import { aiVendorHint, aiVendorLabel } from "./ai-vendors.js";
 import { aiAutomationNotice } from "./ai-automation.js";
+import { refreshOnlineCacheStats, cleanupUnreferencedCache } from "./online-cache.js";
 import { updateMirror } from "./about-info.js";
 import { applyResolvedTheme, discoverThemes, listThemes, removeTheme } from "./theme.js";
 import { invalidateLoudnessForTarget, refreshLoudnessGains, refreshLoudnessState } from "./audio.js";
@@ -1438,6 +1439,13 @@ export async function handleSettingsAction(actEl, ctx = {}) {
       break;
     }
 
+    /* 清理没有被引用的试听缓存（歌单 / 喜欢 / 播放列表里的会保留）。
+       判定与执行都在后端（online_cache_cleanup.go#runAll），这里只按回执说话。 */
+    case "online-cache-cleanup":
+      await cleanupUnreferencedCache();
+      ctx.render?.();
+      break;
+
     /* 把缓存里已有的封面/歌词补写进歌曲文件 */
     case "embed-cache-write":
       await promptEmbedExistingCache({ ctx, force: true });
@@ -1714,6 +1722,8 @@ export function ensureCoverProviders() {
     : Promise.resolve(null);
 
   Promise.all([refreshCoverProviders(), stats]).then(() => {
+    // 试听缓存的占用也要拉一次（「清理未引用的缓存」按钮上方要显示它）
+    void refreshOnlineCacheStats();
     // 主题 / 来源 / 缓存概况都是 Lit 组件之外的数据：广播一次让设置层重新求值依赖。
     // 迁移前这里要手工找到那几处 DOM 就地改写（refreshOnlineCard / refreshCacheHints），
     // 现在由组件的依赖数组覆盖，不再需要「改哪一处文案」的隐性分工。

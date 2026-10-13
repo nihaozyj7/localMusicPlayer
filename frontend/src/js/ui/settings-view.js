@@ -66,6 +66,7 @@ import {
 import { listThemes, resolvedGlassAlpha, resolvedGlassBlur } from "../theme.js";
 import { AI_VENDORS, aiVendorHint } from "../ai-vendors.js";
 import { aiAutomationActive, aiAutomationState } from "../ai-automation.js";
+import { onlineCacheSnapshot, onlineCacheSummaryText } from "../online-cache.js";
 import { availableSkins, skinLoadFailures, skinRegistryVersion } from "../playerhost.js";
 import { themeRegistryVersion } from "../theme.js";
 import { closeSettings, doRescan, settingsLayerOpen } from "../shell.js";
@@ -279,6 +280,9 @@ class MpSettingsLayer extends MpElement {
     s.coverProviders,
     s.coverBreaker,
     s.coverCache,
+    // 试听缓存的占用（「清理未引用的缓存」上方那行）。用版本号而不是数据对象：
+    // 那个快照是被整体替换的，但组件依赖比较的是**值**，用对象会漏掉刷新。
+    onlineCacheSnapshot().rev,
     s.loudnessState,
     s.ffmpegState,
     // 版本更新：检查结果 / 下载进度 / 待安装的包都在这里（见 store.js）。
@@ -1435,6 +1439,18 @@ class MpSettingsLayer extends MpElement {
         </div>
 
         ${settingRow({
+          label: "收藏时自动下载到本地",
+          hint:
+            "把只有试听缓存的在线歌曲加进「我喜欢」或某个歌单时，自动保存一份到下载目录。" +
+            "试听缓存放在临时目录里（会被清理、也可能被系统清掉），收藏却是长期意图 —— " +
+            "不补这一份，收藏夹里会混进一批过几天就打不开的歌。已经下载过或正在下载的不会重复下载",
+          control: switchControl(
+            "autoDownloadOnCollect",
+            state.config.autoDownloadOnCollect !== false,
+            "收藏时自动下载到本地"
+          ),
+        })}
+        ${settingRow({
           label: "联网获取封面",
           hint: `在线搜索到的歌曲会自动去公开曲库匹配封面：${providerText}`,
           control: switchControl("onlineCover", state.config.onlineCover !== false, "联网获取封面"),
@@ -1482,6 +1498,24 @@ class MpSettingsLayer extends MpElement {
             </button>
             <button class="btn btn--ghost btn--sm" type="button" data-act="cache-open-lyrics">
               ${icon("lyrics")}<span>歌词</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 试听缓存清理：在线歌曲只为试听下载的那份音频（临时目录里的派生数据）。
+             需求原话是「清理掉播放器中没有引用的缓存歌曲，比如还在播放列表的歌曲」，
+             所以这里必须把「什么会被保留」写在按钮旁边 —— 否则用户不敢点。 -->
+        <div class="setting setting--stack" id="online-cache-block">
+          <div class="setting__main">
+            <div class="setting__label">试听缓存</div>
+            <div class="setting__hint">
+              在线歌曲只为试听下载的那一份音频（在临时目录里，不是下载目录里的文件）。清理只删<b>没有被引用</b>的：还在播放列表、歌单或「我喜欢」里的会保留，正在播放的那首也保留。当前
+              ${onlineCacheSummaryText(onlineCacheSnapshot())}
+            </div>
+          </div>
+          <div class="card__actions">
+            <button class="btn btn--sm" type="button" data-act="online-cache-cleanup">
+              ${icon("refresh")}<span>清理未引用的缓存</span>
             </button>
           </div>
         </div>
@@ -1588,9 +1622,10 @@ class MpSettingsLayer extends MpElement {
         <div class="about-note" id="ai-automation-note">
           <div class="about-note__title"><span>AI 自动化（不用你点，它自己会跑）</span></div>
           ${aiAutomationState(cfg).map(
-            (a) => html`<div class="about-note__body">
-              · <strong>${a.label}</strong>：${a.when} —— 当前<b>${a.on ? "已开启" : "已关闭"}</b>（${a.detail}）
-            </div>`
+            (a) =>
+              html`<div class="about-note__body">
+                · <strong>${a.label}</strong>：${a.when} —— 当前<b>${a.on ? "已开启" : "已关闭"}</b>（${a.detail}）
+              </div>`
           )}
           <div class="about-note__body">
             ${

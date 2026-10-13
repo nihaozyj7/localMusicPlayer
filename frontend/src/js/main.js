@@ -60,6 +60,7 @@ import { probeDesktopWallpaperSupport } from "./desktop-wallpaper.js";
 import { initSearchPanel } from "./searchpanel.js";
 import { initDownloads } from "./downloads.js";
 import { initOnlineCacheSync } from "./online-cache.js";
+import { installCollectAutoDownload } from "./auto-download.js";
 import { searchState } from "./ui/search.js";
 import { startRuntime } from "./runtime.js";
 import { startMediaKeys } from "./media-keys.js";
@@ -584,6 +585,9 @@ async function main() {
   // 把播放队列里的在线歌曲报给后端（试听缓存的空闲清理据此判断
   // 「有没有被播放列表引用」—— 队列只在前端，后端读不到）
   initOnlineCacheSync();
+  // 收藏 / 加入歌单「只有试听缓存」的在线歌曲时，自动补一份本地文件
+  // （试听缓存是可丢弃的派生数据，收藏是长期意图，见 auto-download.js）
+  installCollectAutoDownload();
   // 桌面背景歌词依赖系统桌面窗口结构，探一次并把能力写进 state
   void probeDesktopWallpaperSupport();
   bindShortcuts();

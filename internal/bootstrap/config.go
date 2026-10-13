@@ -387,6 +387,14 @@ type Config struct {
 	// 用户不必等它 —— 所以它可以默认开启，但仍然必须能被关掉：
 	// 写标签会改写用户的音乐文件，这是不可撤销的操作。
 	AIDownloadTag bool `json:"aiDownloadTag"`
+	// AutoDownloadOnCollect 收藏 / 加入歌单时，是否把「只有试听缓存」的在线歌曲
+	// 自动下载一份到本地。
+	//
+	// 为什么需要它：在线歌曲的试听缓存是可丢弃的派生数据（清理、临时目录清空、
+	// 换机都会没），而「我喜欢」/ 歌单是用户明确的长期意图 —— 收藏了一首只能
+	// 在线试听的歌，等于收藏了一个随时会失效的引用。默认开启，把那份意图落成
+	// 真实文件；同时必须能被关掉，因为它会产生网络流量与磁盘占用。
+	AutoDownloadOnCollect bool `json:"autoDownloadOnCollect"`
 
 	Folders     []Folder     `json:"folders"`
 	FilterRules []FilterRule `json:"filterRules"`
@@ -572,6 +580,10 @@ func DefaultConfig() *Config {
 		// 它不占用用户任何等待时间（下载已经结束），而下载来的文件通常
 		// 标题就是 B 站视频标题、歌手/专辑全空 —— 不整理等于全程脏数据。
 		AIDownloadTag: true,
+		// 默认开启：把「只有试听缓存」的在线歌曲收进「我喜欢」/ 歌单时，
+		// 自动下载一份到本地。收藏是长期意图，试听缓存却是可丢弃的派生数据；
+		// 不这么做的话，收藏夹里会混进一批「过几天就打不开」的歌。
+		AutoDownloadOnCollect: true,
 	}
 }
 

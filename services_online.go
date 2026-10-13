@@ -174,19 +174,24 @@ func (s *OnlineService) Busy() bool { return s.busy.Load() > 0 }
 // setCleaner 注入空闲清理器（main 装配）。
 func (s *OnlineService) setCleaner(c *onlineCacheCleanup) { s.cleaner = c }
 
-// CleanupCache 立即清理一次试听缓存（只删「没被引用 + 闲置够久」的那些）。
+// CleanupCache 立即清理一次试听缓存（设置界面的「清理未引用缓存」按钮）。
 //
-// 与后台空闲清理的区别：这里是**用户主动触发**，不受「空闲」判据约束
-// （在播时也可以点，判据里的引用保护照旧）。返回清理报告。
+// 判据只有一条：**没有被引用**（歌单 / 「我喜欢」/ 播放队列 / 正在播放的那首）。
+// 后台空闲清理还有 7 天的闲置门槛与单轮上限，用户主动点按钮时两条都不适用
+// —— 理由见 online_cache_cleanup.go#runAll。
 func (s *OnlineService) CleanupCache() map[string]any {
 	if s.cleaner == nil {
 		return map[string]any{"deleted": 0, "skipped": "清理器未启用"}
 	}
-	rep := s.cleaner.runNow(cleanupMinIdleAge)
+	rep := s.cleaner.runAll()
 	return map[string]any{
-		"deleted":    rep.Deleted,
-		"bytes":      rep.Bytes,
-		"scanned":    rep.Scanned,
+		"deleted": rep.Deleted,
+		"bytes":   rep.Bytes,
+		"scanned": rep.Scanned,
+		// kept = 因为还被引用而留下的（还在歌单 / 喜欢 / 队列 / 正在播放里）。
+		// 界面要能把这句说出来：用户点「清理」时最想确认的就是「我收藏的没被删」。
+		"kept":       rep.Referenced,
+		"fresh":      rep.Fresh,
 		"total":      rep.Total,
 		"totalBytes": rep.TotalBytes,
 	}

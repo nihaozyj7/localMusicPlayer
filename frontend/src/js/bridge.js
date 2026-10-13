@@ -389,6 +389,8 @@ const backendImpl = {
   onlineProtectIDs: (ids) => call(bindings?.Online?.ProtectIDs, ids),
   /* 立即清理一次试听缓存（用户主动触发，不受空闲判据约束） */
   onlineCleanupCache: () => call(bindings?.Online?.CleanupCache),
+  /* 试听缓存的占用（设置界面的「清理未引用缓存」按钮上方显示） */
+  onlineCacheStats: () => call(bindings?.Online?.CacheStats),
 
   /* ---- 下载 ---- */
   downloadStart: (bvid, title, duration) => call(bindings?.Download?.Start, bvid, title, duration),

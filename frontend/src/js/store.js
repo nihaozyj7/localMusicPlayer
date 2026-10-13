@@ -89,6 +89,10 @@ const DEFAULT_CONFIG = {
   // 下载歌曲完成后，在后台用 AI 提取元数据并写回文件标签。
   // 与 aiLyricsClean 不同：它不占用户等待时间（下载已经结束），所以默认开启。
   aiDownloadTag: true,
+  // 收藏 / 加入歌单时，把「只有试听缓存」的在线歌曲自动下载一份到本地。
+  // 试听缓存是可丢弃的派生数据，收藏却是长期意图 —— 不补这一份，收藏夹里
+  // 会混进一批「过几天就打不开」的歌。会占流量与磁盘，所以给一个开关。
+  autoDownloadOnCollect: true,
   cacheDir: "%APPDATA%\\LocalMusicPlayer\\cache",
   scanConcurrency: 4,
 
@@ -2203,6 +2207,8 @@ export function setRealAudioProbe(fn) {
  * 自动跳下一首（playNext）不触发这个钩子，正是为了不解除闸门。
  */
 let userPlayHook = null;
+/** 收藏钩子（见 setCollectHook）：在线歌曲被收进「我喜欢」/ 歌单时补一份本地文件 */
+let collectHook = null;
 
 /** 由 audio.js 注册「用户主动点播」的钩子 */
 export function setUserPlayProbe(fn) {
@@ -2216,6 +2222,32 @@ function noteUserPlay(songId) {
     userPlayHook(songId);
   } catch (err) {
     console.warn("[store] 用户点播钩子抛出异常（已忽略）", err);
+  }
+}
+
+/**
+ * 收藏钩子：这首歌刚被**收进**「我喜欢」或某个歌单。
+ *
+ * 与 noteUserPlay 同一套注入方式（store 是底层模块，不能反过来 import
+ * 网络 / 下载模块）。用途只有一个：在线歌曲**只有试听缓存**的时候，
+ * 收藏 / 加入歌单之后它仍然是一首「离开网络就没了」的歌 —— 装上这个钩子
+ * 之后会自动在后台补一份本地文件（见 auto-download.js）。
+ *
+ * 为什么是「立即上报」而不是攒起来批量做：用户点爱心是明确的意图，
+ * 当场开始下载才符合预期；批量做还得引入定时器与去重表，收益却为零。
+ */
+export function setCollectHook(fn) {
+  collectHook = typeof fn === "function" ? fn : null;
+}
+
+function noteCollected(songId, reason) {
+  if (!collectHook) return;
+  const song = songById(songId);
+  if (!song) return;
+  try {
+    collectHook(song, reason);
+  } catch (err) {
+    console.warn("[store] 收藏钩子抛出异常（已忽略）", err);
   }
 }
 /** 是否已有真实音频在驱动进度（后端引擎或 <audio>） */
@@ -2391,6 +2423,7 @@ const SYNCED_KEYS = [
   "aiModelId",
   "aiLyricsClean",
   "aiDownloadTag",
+  "autoDownloadOnCollect",
   "cacheDir",
   "loudnessMode",
   "loudnessTarget",

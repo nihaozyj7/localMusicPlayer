@@ -21,7 +21,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-import { AI_AUTOMATIONS, aiAutomationActive, aiAutomationNotice, aiAutomationState } from "../src/js/ai-automation.js";
+import {
+  AI_AUTOMATIONS,
+  aiAutomationActive,
+  aiAutomationNotice,
+  aiAutomationState,
+} from "../src/js/ai-automation.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const viewSrc = readFileSync(join(root, "frontend", "src", "js", "ui", "settings-view.js"), "utf8");
@@ -54,7 +59,11 @@ test("状态口径与界面开关一致：只有显式 false 才算关（缺字�
     [false, false]
   );
   assert.equal(aiAutomationActive({ aiLyricsClean: false, aiDownloadTag: false }), false);
-  assert.equal(aiAutomationActive({ aiLyricsClean: false, aiDownloadTag: true }), true, "只要还有一项开着，就还有后台 AI 调用");
+  assert.equal(
+    aiAutomationActive({ aiLyricsClean: false, aiDownloadTag: true }),
+    true,
+    "只要还有一项开着，就还有后台 AI 调用"
+  );
 });
 
 /* --------------------------------------------------------------------------

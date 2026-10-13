@@ -22,7 +22,15 @@ class MpTitlebar extends MpElement {
     const dark = t?.mode !== "light";
     const d = downloadsSnapshot();
     // 下一个主题的 id 也进依赖：换完主题后提示文案要跟着变
-    return [dark, state.config.themeMode, state.config.theme, nextTheme(state.config.theme)?.id, state.searchOpen, d.visible, d.badge];
+    return [
+      dark,
+      state.config.themeMode,
+      state.config.theme,
+      nextTheme(state.config.theme)?.id,
+      state.searchOpen,
+      d.visible,
+      d.badge,
+    ];
   };
 
   render() {
