@@ -1,0 +1,256 @@
+/* ==========================================================================
+   atlas/skin.css — 「铅字盘」的舞台外壳与 HUD
+   --------------------------------------------------------------------------
+   宿主把这一份整体包进：
+
+     @layer skin { @scope (.playerview[data-skin="atlas"], .skin-bg[data-skin="atlas"]) { … } }
+
+   （清单里 `background: true`，所以两份作用域都存在：舞台 + 整窗背景层。）
+   于是这里的规矩是：
+     · 选择器**相对舞台根**写（舞台自身用 ::scope），不写 .playerview[data-skin="…"] 前缀；
+     · 不写 :root / html / body / * / 裸标签 / !important；
+     · 想影响宿主壳（标题栏 / 底栏 / 浮层）的颜色，只有两条合法通道 ——
+       清单 colors（静态兜底）+ ctx.actions.reportBackdrop()（防抖上报）。
+
+   ★ 铅字盘的**正文一个字都不在 DOM 里**：整面歌词是 canvas 画的（见 skin.js）。
+     这份 CSS 只管四件事：
+       1. 底（近黑的墨、极淡的纸纹与暗角，纯渐变、不挂 filter）；
+       2. canvas 的位置；
+       3. HUD（曲名 / 行号 / 时间码）—— 必须让开 --skin-inset-* 两条带子；
+       4. 空态与海报形态（关歌词时只剩曲名的大字排版）。
+
+     动画一律只碰 opacity/transform（安全区带子里的文字不能被相机运动带跑）。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   舞台与背景层
+   -------------------------------------------------------------------------- */
+.at,
+.at-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--at-bg, #0b0a08);
+  color: var(--at-fg, #f2e9d8);
+}
+
+/* 纸纹（1px 亮 + 3px 暗，静态渐变）+ 暗角，都压在**画布上面**：
+   画布是不透明的"纸"，装饰放它下面会被盖掉。
+   指针事件必须放行，否则整块舞台点不动；不用 filter（静态渐变只合成一次）。 */
+.at::after,
+.at-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, var(--at-fg-04) 0 1px, transparent 1px 3px),
+    radial-gradient(118% 92% at 50% 46%, transparent 42%, var(--at-vig) 100%);
+}
+
+.at-bg::after {
+  opacity: 0.6;
+}
+
+/* --------------------------------------------------------------------------
+   画布：两层叠在一起 —— 底层是整块盘子，顶层只有当前那一根条
+   -------------------------------------------------------------------------- */
+.at__cv {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* 逐字落版与航线都在 canvas 里，指针事件由舞台接（命中测试自己做） */
+  pointer-events: none;
+}
+
+/* 命中到某根条时换成手型（由 JS 写 data-over） */
+.at[data-over="1"] {
+  cursor: pointer;
+}
+
+.at[data-over="0"] {
+  cursor: default;
+}
+
+/* --------------------------------------------------------------------------
+   HUD —— 只在人的视线里（安全区内的四条边），空闲时淡下去
+   -------------------------------------------------------------------------- */
+.at__hud {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  pointer-events: none;
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  transition: opacity 900ms ease;
+}
+
+/* HUD 的上下两条带子压一层暮色：底下是**铺满的**铅字盘，不压一层就读不清字。
+   静态渐变、只合成一次；跟随 .at__hud 一起在空闲时淡下去。 */
+.at__hud::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(to bottom, var(--at-scrim, rgba(11, 10, 8, 0.8)) 0, transparent 17%),
+    linear-gradient(to top, var(--at-scrim, rgba(11, 10, 8, 0.8)) 0, transparent 15%);
+}
+
+/* 每一段读数再套一张"标签底片"：全宽渐变只能压淡，压不实 ——
+   而铅字盘是铺满的，任何淡底上都还看得见字。标签式的底片才读得清。 */
+.at__hud-top > span,
+.at__hud-bottom > span {
+  background: var(--at-chip, rgba(11, 10, 8, 0.72));
+  padding: 3px 8px;
+  border-radius: 3px;
+}
+
+.at[data-idle="1"] .at__hud {
+  opacity: 0.26;
+}
+
+.at[data-empty="1"] .at__hud,
+.at[data-poster="1"] .at__hud {
+  opacity: 0;
+}
+
+.at__hud-top {
+  position: absolute;
+  left: 26px;
+  right: 26px;
+  top: calc(var(--skin-inset-top, 0px) + 16px);
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--at-fg-72, rgba(242, 233, 216, 0.72));
+}
+
+.at__hud-bottom {
+  position: absolute;
+  left: 26px;
+  right: 26px;
+  bottom: calc(var(--skin-inset-bottom, 0px) + 14px);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--at-fg-72, rgba(242, 233, 216, 0.72));
+}
+
+.at__title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--at-fg-82);
+}
+
+.at__tc,
+.at__count,
+.at__density {
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+.at__density {
+  color: var(--at-accent, #e0a63c);
+}
+
+.at__hint {
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  opacity: 0.75;
+}
+
+/* 空态 / 海报：**默认都不显示**，由 JS 写 data-* 显式打开。
+   反过来的写法（默认显示、[data-x="0"] 隐藏）有个致命前提：属性必须永远存在 ——
+   只要有一次没写上（比如首次同步被"值没变"提前 return），海报就会盖在铅字盘上。 */
+.at__empty,
+.at__poster {
+  display: none;
+}
+
+.at[data-empty="1"] .at__empty {
+  display: block;
+}
+
+.at[data-poster="1"] .at__poster {
+  display: block;
+}
+
+/* --------------------------------------------------------------------------
+   空态 / 海报
+   -------------------------------------------------------------------------- */
+.at__empty {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  z-index: 3;
+  transform: translateY(-50%);
+  padding: 0 30px;
+  text-align: center;
+  font-size: 15px;
+  line-height: 1.9;
+  letter-spacing: 0.04em;
+  color: var(--at-fg-55);
+  pointer-events: none;
+}
+
+.at__poster {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  z-index: 3;
+  transform: translateY(-52%);
+  padding: 0 8%;
+  text-align: center;
+  pointer-events: none;
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+}
+
+.at__poster-title {
+  font-size: clamp(28px, 6.2vw, 66px);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  color: var(--at-fg);
+}
+
+.at__poster-sub {
+  margin-top: 14px;
+  font-size: clamp(13px, 1.6vw, 18px);
+  letter-spacing: 0.22em;
+  color: var(--at-accent, #e0a63c);
+}
+
+/* 窄窗口：HUD 收边、字号收一档 */
+.at[data-narrow="1"] .at__hud-top,
+.at[data-narrow="1"] .at__hud-bottom {
+  left: 16px;
+  right: 16px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.at[data-narrow="1"] .at__hint {
+  display: none;
+}
+
+/* 关动效 / 静止档：连淡入淡出也去掉（画面只由补丁驱动） */
+.at[data-animations="0"] .at__hud {
+  transition: none;
+}

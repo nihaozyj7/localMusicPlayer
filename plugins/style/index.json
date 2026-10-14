@@ -64,6 +64,62 @@
       ]
     },
     {
+      "id": "atlas",
+      "dir": "atlas",
+      "name": "铅字盘",
+      "version": "1.0.0",
+      "author": "第三方样式",
+      "description": "整篇歌词被压进一张密集的活字盘：长短不一的横条与竖条（中文竖排）咬合铺满一条带子，摄像机跟着当前唱的那一根巡游，字一个个「落版」砸进纸面，曲末拉远看全貌。",
+      "apiVersion": "3.0",
+      "swatch": [
+        "#0b0a08",
+        "#f2e9d8",
+        "#e0a63c"
+      ],
+      "files": [
+        {
+          "path": "atlas/README.md",
+          "size": 13002,
+          "sha256": "483f2609419a56f53e843abfc25c1cf174ff27f4c153b5047c9e139996fd7c64"
+        },
+        {
+          "path": "atlas/assets/icon.svg",
+          "size": 945,
+          "sha256": "5ece8e2c83fcdb18ab5ece673f644134fdb25a8823cbe6cf7c907de3ff6d9d21"
+        },
+        {
+          "path": "atlas/lib/camera.js",
+          "size": 11688,
+          "sha256": "81aafe940cba4eeed0eeeec08a542504f357ff2114100054120b0e814279e480"
+        },
+        {
+          "path": "atlas/lib/pack.js",
+          "size": 18788,
+          "sha256": "6ca124fe3c8f9c8e163cbb5894ce3b9a3334a197c985024ba9258c78f5a84ab2"
+        },
+        {
+          "path": "atlas/lib/timing.js",
+          "size": 10333,
+          "sha256": "2e87c001468585bf8197d04d9c10d12eeb213510d377769534653aec262c94f0"
+        },
+        {
+          "path": "atlas/skin.css",
+          "size": 7336,
+          "sha256": "8ba9d451130ebdab7860a3b54647217c92d4d3a7713e14b71154db2e7f1fa6e5"
+        },
+        {
+          "path": "atlas/skin.js",
+          "size": 56282,
+          "sha256": "a25c1db625d09500e60d4fe5ecc07cf42758ab9827b36f78641ea0e14052f055"
+        },
+        {
+          "path": "atlas/skin.json",
+          "size": 666,
+          "sha256": "2d9c16595927d1f3a4beed3358a9ab59d7f2ba5212fc504c04ae78807af67af1"
+        }
+      ]
+    },
+    {
       "id": "darkroom",
       "dir": "darkroom",
       "name": "暗房",
