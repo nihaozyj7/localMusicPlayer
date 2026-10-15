@@ -367,7 +367,7 @@ patch 只带与该类型相关的字段；不确定时用 ctx.track() / ctx.lyri
 【四、CSS 约定】
 1. 选择器**相对舞台根**写，不要自己再加 .playerview[data-skin="<样式id>"] 前缀（宿主已经包了 @scope，加了反而可能匹配不到）：
    · 舞台里面的元素 → 直接写：.demo { … }、.playerview__stage { … }
-   · 舞台**自身**   → 用 ::scope { … }
+   · 舞台**自身**   → 用 :scope { … }
 2. 不要写 :root / html / body / * 级别或裸标签选择器，不要用 !important 去覆盖别人的规则。
 3. 你的 CSS 在 @layer skin 里，**压不过**宿主壳的规则；也**碰不到**宿主 UI（标题栏、底栏、侧边栏、播放队列等都不在作用域内）。想影响宿主控件的观感只有一条路：在清单 colors 里声明配色（宿主会保证对比度）。
 4. 可以直接使用主题令牌，深浅色会自动跟随：
@@ -376,9 +376,9 @@ patch 只带与该类型相关的字段；不确定时用 ctx.track() / ctx.lyri
     读它。样式包想改字号就在自己的作用域里覆盖它；但**不要**为了"固定一个好看的
     字号"而无条件写死 —— 那等于替用户关掉了这个设置。相关旋钮还有
     --lyric-size-active（当前行字号）与 --lyric-dim（非当前行压暗程度），
-    都按使用点兜底读取，写在 ::scope 上即可生效。）
+    都按使用点兜底读取，写在 :scope 上即可生效。）
 5. 不要改布局令牌（--h-titlebar / --w-sidebar / --h-playerbar / --h-header / --row-h / --row-h-compact），改了会破坏固定布局。
-6. 需要私有变量时定义在自己的作用域里（::scope { --my-…: … }），不要写到 :root。
+6. 需要私有变量时定义在自己的作用域里（:scope { --my-…: … }），不要写到 :root。
 
 【五、行为约束】
 1. 不要 import 应用内部模块（store / bridge / utils / playerhost / @localmusicplayer/player-skins 等）；数据只从 ctx 拿，动作只走 ctx.actions；不要直接操作音频元素或应用状态。
@@ -398,7 +398,7 @@ patch 只带与该类型相关的字段；不确定时用 ctx.track() / ctx.lyri
 1. 目录名 = skin.json 的 id = skin.js 里的 id（若写了）；
 2. skin.json 有 apiVersion "3.0"，有 entry/styles，且 colors 是 bg/fg 或 theme:true 二选一；
 3. skin.js 是 export default 插件对象，零裸包名 import，有 mount；
-4. CSS 选择器是相对舞台根写的（舞台自身用 ::scope），没有加 .playerview[data-skin=…] 前缀；
+4. CSS 选择器是相对舞台根写的（舞台自身用 :scope），没有加 .playerview[data-skin=…] 前缀；
 5. 没有 fetch、没有 setInterval 轮询、没有全局选择器、没有 !important、没有碰宿主 UI 的选择器；
 6. 换歌、歌词装载、进度更新、深浅色切换、窗口缩放、切走再切回都不会报错，也不留残余节点或监听；
 7. 声明了 spectrum 才调 ctx.spectrum()（拉取式，不调不采样）；用了背景层才声明 background。

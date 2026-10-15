@@ -1,0 +1,15 @@
+{
+  "id": "ninja",
+  "name": "水果忍者",
+  "version": "1.0.0",
+  "apiVersion": "3.0",
+  "author": "第三方样式",
+  "description": "舞台是一块深木案板：当前这句歌词的每个字都是一枚被抛起来的水果，唱到哪个字，一道刀光就把那枚水果劈成两半，果汁顺着案板渗开、把那个字染亮；连击与分数摆在角上，长间奏会抛出一枚引线在烧的炸弹，下一句开口时炸成金色烟花。全部水果与果肉都是现场画的，不带一张图片。",
+  "entry": "skin.js",
+  "styles": ["skin.css"],
+  "icon": { "file": "assets/icon.svg" },
+  "order": 290,
+  "capabilities": { "spectrum": true, "background": true, "interactive": true },
+  "colors": { "bg": "#1b1008", "fg": "#f7ecd8", "accent": "#e2543a" },
+  "performance": { "budgetFps": 45 }
+}

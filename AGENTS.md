@@ -275,7 +275,7 @@ frontend/dist/       Vite 产物 + bindings 副本 + 内置主题同步源（**�
     脚本里的 `import("./js/store.js")` 会拿到**另一个空实例**（断言全读到 `songs=0`，看着像功能坏了）。
 10. **皮肤插件零 import**：`player-skins` 里只允许包内相对路径；数据只从 `ctx` 拿、动作只走 `ctx.actions`、
     复用零件走 `ctx.sdk`。第三方样式是运行时从 `/skins/` import 的，一旦依赖 `store.js` 之类，接口就没法演进。
-11. **插件 CSS 由宿主强制包裹**（`@layer skin` + `@scope(舞台)`）：选择器**相对舞台根**写（舞台自身用 `::scope`），
+11. **插件 CSS 由宿主强制包裹**（`@layer skin` + `@scope(舞台)`）：选择器**相对舞台根**写（舞台自身用 `:scope`），
     不要写 `.playerview[data-skin="<id>"]` 前缀；想影响宿主控件观感只有一条路 —— 在清单 `colors` 里声明配色。
     **舞台安全区**：`capabilities.background` 为真的样式舞台铺满整窗（`inset: 0`），宿主的「标题栏 + 详情页头部行」
     与「底部播放控件栏」浮在它**上面**（高度由宿主写成 `--skin-inset-top` / `--skin-inset-bottom`）——
@@ -284,7 +284,7 @@ frontend/dist/       Vite 产物 + bindings 副本 + 内置主题同步源（**�
     ★ **`@layer` 管不到自定义属性的继承**：图层只决定同一条声明谁赢，而 `--lyric-size` 这类自定义属性
     是普通继承 —— 祖先元素上的一句声明就近压过 `:root`，图层胜负根本轮不上。骨架样式表（`lyrics.css` 等）
     一律**不在元素上声明可定制量**，改在使用点写兜底（`font-size: var(--lyric-size, 16px)`）；插件要改就写在
-    自己的作用域（`::scope { … }`）上，并且**不许写死宿主下发的用户设置**（历史故障：设置里拖歌词字号没反应）。
+    自己的作用域（`:scope { … }`）上，并且**不许写死宿主下发的用户设置**（历史故障：设置里拖歌词字号没反应）。
     见 `docs/42` §8.2。
 12. **写用户文件的代码只做最小插入**（`internal/metacache/embed.go`）：不改动音频数据、不改动任何 chunk 的语义与顺序；
     但**该同步的偏移必须同步** —— 容器头部变大后（往 `moov` 加 `covr`、往 FLAC 的 metadata 区加 `PICTURE`），

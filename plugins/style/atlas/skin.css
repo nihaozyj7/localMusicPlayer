@@ -7,7 +7,7 @@
 
    （清单里 `background: true`，所以两份作用域都存在：舞台 + 整窗背景层。）
    于是这里的规矩是：
-     · 选择器**相对舞台根**写（舞台自身用 ::scope），不写 .playerview[data-skin="…"] 前缀；
+     · 选择器**相对舞台根**写（舞台自身用 :scope），不写 .playerview[data-skin="…"] 前缀；
      · 不写 :root / html / body / * / 裸标签 / !important；
      · 想影响宿主壳（标题栏 / 底栏 / 浮层）的颜色，只有两条合法通道 ——
        清单 colors（静态兜底）+ ctx.actions.reportBackdrop()（防抖上报）。

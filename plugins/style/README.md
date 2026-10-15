@@ -40,8 +40,9 @@ magic-circle/
 2. **子模块用 `await import()` 而不是静态 import**：`/skins/` 是逐文件鉴权的，
    ES 模块解析相对说明符时会**丢掉 query**，静态 import 会请求到没带 token 的
    URL（403）。细则见 `magic-circle/skin.js` 的文件头。
-3. **CSS 由宿主强制包裹**（`@layer skin` + `@scope(舞台)`）：选择器**相对舞台根**写
-   （舞台自身用 `::scope`），不要写 `.playerview[data-skin="<id>"]` 前缀。
+3. **CSS 由宿主强制包裹**（`@layer skin` + `@scope(舞台)`）：选择器**相对舞台根**写，
+   不要写 `.playerview[data-skin="<id>"]` 前缀。给舞台**自身**写规则（比如默认变量）
+   用 `:scope`（**伪类**）—— `:scope` 不是合法伪元素，整条规则会被静默丢掉。
    想影响宿主控件观感只有一条路 —— 在清单 `colors` 里声明配色，由宿主办对比度。
 4. **让开宿主壳（安全区）**：`background: true` 的样式舞台是**铺满整窗**的，而宿主的
    「标题栏 + 详情页头部行」与「底部播放控件栏」是**浮在画面上**的

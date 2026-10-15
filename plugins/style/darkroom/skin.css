@@ -6,7 +6,7 @@
      @layer skin { @scope (.playerview[data-skin="darkroom"], .skin-bg[data-skin="darkroom"]) { … } }
 
    于是这里的规矩是：
-     · 选择器**相对舞台根**写（舞台自身用 ::scope），不要写 .playerview[data-skin="…"] 前缀；
+     · 选择器**相对舞台根**写（舞台自身用 :scope），不要写 .playerview[data-skin="…"] 前缀；
      · 不许写 :root / html / body / * / 裸标签 / !important；
      · 想影响宿主壳（标题栏 / 底栏 / 浮层）的颜色，只有一条合法通道 ——
        清单 colors（静态兜底）+ ctx.actions.reportBackdrop()（随封面动态上报）。

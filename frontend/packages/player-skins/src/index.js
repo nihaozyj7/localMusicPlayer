@@ -37,7 +37,7 @@ import { createSdk } from "./sdk.js";
 // ★ 这些骨架表**不声明**它们想让你覆盖的那些变量（--lyric-size / --lyric-dim…）：
 //   自定义属性是普通继承，元素上一旦有同名声明，祖先（含宿主写在 :root 上的
 //   用户字号）就被就近压掉。所有可定制量一律在使用点用 var(--x, 兜底) 读，
-//   于是插件写在 ::scope 上的值能生效 —— 详见 lyrics.css 里的说明。
+//   于是插件写在 :scope 上的值能生效 —— 详见 lyrics.css 里的说明。
 import "./lyrics.css";
 import "./fx-lyrics.css";
 import "./background-layer.css";

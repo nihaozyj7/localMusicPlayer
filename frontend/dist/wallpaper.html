@@ -36,7 +36,7 @@
 
       ⚠️ `.app[data-mode="<样式id>"]` 是 **v2 时代的写法，别再用它写插件样式** ——
       v3 的插件 CSS 由宿主强制包进 `@layer skin { @scope(舞台) }`，插件够不到 .app；
-      插件能用的只有 `::scope` 相对选择器与 `ctx.backgroundRoot`（.skin-bg[data-skin=…]）。
+      插件能用的只有 `:scope` 相对选择器与 `ctx.backgroundRoot`（.skin-bg[data-skin=…]）。
       data-mode 这里照旧打着，但它现在只是调试与历史钩子。
 
       所以这里的结构与主界面逐字一致：.app 带 data-mode="<样式id>" 和
