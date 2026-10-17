@@ -47,6 +47,28 @@
       ]
     },
     {
+      "id": "holo-diva",
+      "name": "全息歌姬",
+      "version": "1.0.0",
+      "author": "LMPlayer 插件包",
+      "description": "深空全息演唱会：青 / 紫 / 品红辉光打底，深蓝玻璃面板，全息唱片与青色落点描边",
+      "mode": "dark",
+      "swatch": [
+        "#05060f",
+        "#0a1230",
+        "#57e6ff",
+        "#9b7bff",
+        "#ff7ad9"
+      ],
+      "files": [
+        {
+          "path": "holo-diva.css",
+          "size": 8158,
+          "sha256": "a3995c7318c31ed1b5b837b0a7c1e3c0bd83169e084ddbb292ac7ee1e67f7394"
+        }
+      ]
+    },
+    {
       "id": "vibrant-dark",
       "name": "活力满满 · 深色",
       "version": "1.0.0",

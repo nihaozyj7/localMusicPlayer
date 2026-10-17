@@ -176,6 +176,87 @@
       ]
     },
     {
+      "id": "diva",
+      "dir": "diva",
+      "name": "虚拟歌姬 · 全息舞台",
+      "version": "1.0.0",
+      "author": "第三方样式（程序化绘制的全息演唱会舞台）",
+      "description": "深空演唱会舞台：程序化绘制的全息歌姬随人声开合口型、按节拍摆身与眨眼，128 段频谱直驱光环刻度与舞台光束，底部卡拉 OK 逐字歌词。全部画面由代码绘制，无任何版权图片素材。",
+      "apiVersion": "3.0",
+      "swatch": [
+        "#05060f",
+        "#eaf6ff",
+        "#57e6ff"
+      ],
+      "files": [
+        {
+          "path": "diva/README.md",
+          "size": 11936,
+          "sha256": "1e637f7493f1158effef9f86a79144a454a02294fe01f3cc5fc54356a35f13c9"
+        },
+        {
+          "path": "diva/assets/icon.svg",
+          "size": 778,
+          "sha256": "36b6c53cbf4afa93e6fb33fb93f6a94dd5937c4de8561306ab6820fcf91b6365"
+        },
+        {
+          "path": "diva/lib/config.js",
+          "size": 4803,
+          "sha256": "da72f5ae222b9319d324a844b19417fcc642ff8b2721b692cd97a0fe6601a4c8"
+        },
+        {
+          "path": "diva/lib/diva.js",
+          "size": 70422,
+          "sha256": "2918b0d5649f60fc75ba56eb17600db76611754d4c3e5acba56068c6ba444336"
+        },
+        {
+          "path": "diva/lib/hud.js",
+          "size": 7842,
+          "sha256": "8351b52e019e584fbd0361bfe7b1a07fbff07f4ffaafbcac75e5118eb95631e9"
+        },
+        {
+          "path": "diva/lib/lyrics.js",
+          "size": 18488,
+          "sha256": "219ff949d721e00a83bb76ba58e6c4fd31005c3e07a0f3d32fb8c167a64d41dd"
+        },
+        {
+          "path": "diva/lib/palette.js",
+          "size": 10440,
+          "sha256": "cc38e4e5fab358a6f27f0f0fb66b13754b33220510ac8ca116f5180f17336e15"
+        },
+        {
+          "path": "diva/lib/spectrum.js",
+          "size": 12184,
+          "sha256": "2fa086e841fe0926af24434b3e7378d0204470ec715948466567eebac824922c"
+        },
+        {
+          "path": "diva/lib/stage.js",
+          "size": 37488,
+          "sha256": "819662a436ff09ef2cb04ccc55dcd01df05422821e453b34576ce0a5fd626dbf"
+        },
+        {
+          "path": "diva/lib/util.js",
+          "size": 6407,
+          "sha256": "812732246f36de940a2f9b9cd9947f8c9f17530ead16ecd736030848d4fe38ac"
+        },
+        {
+          "path": "diva/skin.css",
+          "size": 14464,
+          "sha256": "065965d0b0f0309be704b4726b580d76260e0aa5a0d07f7878aec01ff1cadd76"
+        },
+        {
+          "path": "diva/skin.js",
+          "size": 18863,
+          "sha256": "0ebd9b402499fb3ab095f50485da64c8f144a7e732995adc6b55ccd8c59c6c6f"
+        },
+        {
+          "path": "diva/skin.json",
+          "size": 777,
+          "sha256": "ff129ebb2c664286bb70866c61986acda01d8c7d6cb840fe9d153c07213826d8"
+        }
+      ]
+    },
+    {
       "id": "letterpress",
       "dir": "letterpress",
       "name": "活字",

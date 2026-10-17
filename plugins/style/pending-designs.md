@@ -236,6 +236,7 @@ plugins/style/<id>/
 | 06 | 深渊 | `abyss` | `plugins/style/abyss/` | 270 | 像素 / 着色器 | WebGL2（P1） | **已签收** |
 | 07 | 铅字盘 | `atlas` | `plugins/style/atlas/` | 280 | 空间 / 装箱 | Canvas2D 双层 + 天际线装箱（无新平台假设） | **已签收** |
 | 08 | 水果忍者 | `ninja` | `plugins/style/ninja/` | 290 | 程序化实体 + 斩击物理 | Canvas2D 程序化绘制（无新平台假设、无图片素材） | **已签收** |
+| 09 | 全息歌姬 | `diva` | `plugins/style/diva/` | 310 | 程序化人物 + 全息舞台 | Canvas2D 程序化绘制（无图片素材、无既有 IP 角色） | **已交付 · 待实机复核** |
 
 ### 签收记录
 
@@ -479,6 +480,13 @@ plugins/style/<id>/
     设置页里给 AI 的那段提示词……）。**代码与文档都已改成 `:scope`**，
     并在这一包的自检里加了一条静态扫描（`!/::scope/` + `/:scope\s*\{/`）钉住它。
   - `node plugins/build-index.mjs` → `plugins/style/index.json` 已更新（9 个条目），`--check` 通过。
+- 2026-10-17 `diva`（「虚拟歌姬 · 全息舞台」：程序化绘制的全息歌姬 + 演唱会舞台 + 逐字提词器）：
+  - `node --experimental-test-isolation=none --test "plugins/style/diva/tests/*.test.js"` → **112/112 通过**（7 个测试文件：人物姿态/口型/眨眼/绘制预算与确定性、频谱分频段/质心/通量/节拍冷却/衰减/脏数据、舞台光尘/刻度/perf 降档/离屏只建一次、歌词逐字边界/均摊/末字兜底/多语言/空态、HUD 三态/时间码去重、封面取色圆均值/色相带约束/兜底，以及包结构/清单/契约纪律/安全区/主题令牌完整性的静态扫描）。
+  - `node plugins/style/diva/tests/diva-check.mjs` → **63/63 通过**（自带静态服务 + 假宿主 + 无头 Edge，连跑三次全绿）：挂载 / HUD / 逐字歌词、画布真的在动（像素指纹变化）、频谱与节拍驱动、暂停 6 秒停帧与恢复、前后台停帧、`animations:false` / `reducedMotion` 静止形态（0 帧但画面完整）、performance 档限帧与 dpr 封顶、安全区（1280×820 88/92、窄窗 820 86、归零档）、点击舞台 / 歌词、`interactive:false`、封面取色 `reportBackdrop`（合法 hex / 对比度 / 色相带）、空态、destroy 零残留与可重挂、控制台零 error。
+  - `node plugins/style/diva/tests/diva-check.mjs --shot` → 画布与整页合成截图（`.tmp-diva-canvas.png` / `.tmp-diva-composed.png`），人工复核人物 / 舞台 / 歌词可读。
+  - 配套主题 `plugins/theme/holo-diva.css`：`_template.css` 的 76 个视觉令牌全覆盖；WCAG 正文 18.40:1 / 按钮字 12.82:1（`.tmp-diva-theme-check.mjs` 12/12）。
+  - `node plugins/build-index.mjs` → `plugins/style/index.json`（10 条目 / 89 文件）与 `plugins/theme/index.json`（5 条目）已更新，`--check` 通过。
+  - **S8 真机未跑**：本机 prebuilt `bin/lmplayer.exe` 在本会话环境里 `CreateCoreWebView2Controller` 报 `800700aa`（资源被占用；带 / 不带 `LMPLAYER_DEBUG_PORT`、Node spawn 与 WMI 外部启动都一样），判定为本会话环境 / WebView2 运行时不兼容，与皮肤无关。插件侧已按契约做完静态与无头验证；待用户在正常桌面环境里直接安装复核，或跑 `node .tmp-skin-live.mjs --skin diva`。
 
 ---
 
@@ -1318,7 +1326,7 @@ ctx.root（舞台）                                ← background:true ⇒ 铺�
 
 ---
 
-## 6. 附：八款速查
+## 6. 附：九款速查
 
 | id | 一句话 | 播放界面最抢眼的一刻 |
 | :--- | :--- | :--- |
@@ -1330,3 +1338,4 @@ ctx.root（舞台）                                ← background:true ⇒ 铺�
 | `abyss` | 歌词是水面被压出的凹陷 | 低频涌上来时整个水面抬升，字从水里浮出来 |
 | `atlas` | 整篇歌词铺成一张密集的活字盘，镜头在盘上巡游 | 当前那一根沿自己的方向放大 1.45 倍，字一个一个从凹痕里「落版」升起来、晕开一圈墨 |
 | `ninja` | 每个字是一枚被抛起来的水果，唱到就切开 | 刀光落下的同一帧水果裂成两半，果汁在案板上渗开、把那个字从左到右染亮 |
+| `diva` | 深空舞台上一位程序化绘制的全息歌姬，随人声开合口型、按节拍摆身 | 副歌低频压下来时她屈膝下沉、光环刻度整圈亮起，逐字歌词从她脚边一排排点亮 |

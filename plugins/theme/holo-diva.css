@@ -1,0 +1,179 @@
+/* ==========================================================================
+   主题：全息歌姬（holo-diva）
+   --------------------------------------------------------------------------
+   取向：**深空全息演唱会**，与 plugins/style/diva 样式包共用一套配色
+   （底色 #05060f / #070a1c、主色青 #57e6ff、副色紫 #9b7bff、点缀品红 #ff7ad9）。
+
+     · 底色是带靛蓝的深空而不是纯黑：纯黑会把深蓝玻璃的暗部一起吃进去，
+       面板与背景的分界就没了。顶上压一层青色辉光、底下压一层紫色辉光，
+       右侧留一团极淡品红 —— 玻璃面板的 backdrop-filter 必须背后真的有东西
+       可糊，否则模糊半径再大也只是一块灰板。
+     · 面板是**深蓝玻璃**：半透明藏蓝底（不是纯黑）、冷青色 1px 边、顶部
+       青色内高光；模糊 26px、饱和度 1.8，介于「一层雾」与「实心硬壳」之间。
+     · 强调色只有一个青：实底按钮上压深墨字 #03121a（对青色 12.8:1），
+       正文仍是冷白（对深空底 18.4:1）；彩色只出现在辉光、唱片与状态点上。
+     · 唱片做成全息盘：青 → 紫的斜向渐变 + 1px 间隔的细密轨道纹。
+     · 封面虚化组保留常规档位：本主题不铺封面（--cover-bg 只在「封面取色」
+       主题下才会被写入），这组值只当换主题那一瞬间的兜底。
+
+   仅声明令牌，不写任何组件样式（改这里**不可能**移动任何元素）。
+
+   @theme-name 全息歌姬
+   @theme-mode dark
+   @theme-swatch #05060f #0a1230 #57e6ff #9b7bff #ff7ad9
+   @theme-version 1.0.0
+   @theme-author LMPlayer 插件包
+   @theme-desc 深空全息演唱会：青 / 紫 / 品红辉光打底，深蓝玻璃面板，全息唱片与青色落点描边
+   ========================================================================== */
+
+:root[data-theme="holo-diva"] {
+  color-scheme: dark;
+
+  /* —— 1. 表面 —— */
+  --bg-app: #05060f;
+  /* 窗口底色 --bg-window 由 tokens.css 从 --bg-app 派生，不要在这里覆盖它。 */
+  /* 青色顶部辉光 + 紫色底部辉光 + 右下一团极淡品红（层次，不抢色）。 */
+  --bg-canvas:
+    radial-gradient(1180px 760px at 50% -14%, rgba(87, 230, 255, 0.24), transparent 60%),
+    radial-gradient(900px 680px at 100% 4%, rgba(155, 123, 255, 0.2), transparent 58%),
+    radial-gradient(1020px 820px at 52% 114%, rgba(155, 123, 255, 0.26), transparent 62%),
+    radial-gradient(680px 560px at -6% 92%, rgba(255, 122, 217, 0.12), transparent 66%);
+
+  /* 标题栏 / 底栏共用的极淡渐变：顶面偏青、底面偏紫，玻璃壳才有一道看得见的边。 */
+  --bg-chrome-top: linear-gradient(
+    180deg,
+    rgba(87, 230, 255, 0.09) 0,
+    rgba(87, 230, 255, 0.02) 44%,
+    transparent 100%
+  );
+  --bg-chrome-bottom: linear-gradient(
+    0deg,
+    rgba(155, 123, 255, 0.08) 0,
+    rgba(87, 230, 255, 0.015) 48%,
+    transparent 100%
+  );
+
+  --surface-1: rgba(126, 200, 255, 0.05);
+  --surface-2: rgba(126, 200, 255, 0.09);
+  --surface-3: rgba(126, 200, 255, 0.14);
+  --surface-hover: rgba(126, 200, 255, 0.08);
+  --surface-active: rgba(126, 200, 255, 0.13);
+
+  /* —— 2. 深蓝毛玻璃 ——
+     透是为了露出背后的青 / 紫辉光，糊是为了把光斑化开成一层冷色雾；
+     饱和度 1.8 是把模糊摊平掉的颜色补回来（不补就发灰）。 */
+  --glass-bg: rgba(12, 24, 52, 0.56);
+  --glass-bg-strong: rgba(8, 16, 38, 0.78);
+  --glass-bg-weak: rgba(18, 34, 70, 0.4);
+  --glass-blur: 26px;
+  --glass-saturate: 1.8;
+  --glass-border: rgba(120, 214, 255, 0.16);
+  --glass-highlight: linear-gradient(
+    180deg,
+    rgba(126, 226, 255, 0.16) 0,
+    rgba(126, 226, 255, 0.02) 46%,
+    transparent 72%
+  );
+  /* 四层：环境投影 + 接触投影 + 顶部 1px 青色内高光 + 内侧暗环（面板厚度）。 */
+  --glass-shadow:
+    0 22px 54px rgba(2, 6, 20, 0.62),
+    0 2px 10px rgba(2, 8, 26, 0.42),
+    inset 0 1px 0 rgba(126, 226, 255, 0.16),
+    inset 0 0 0 1px rgba(6, 14, 34, 0.55);
+
+  /* —— 2b. 拟态（深蓝玻璃上的浮起 / 凹陷）—— */
+  --neu-raised: 0 10px 26px -12px rgba(2, 6, 20, 0.75), inset 0 1px 0 rgba(126, 226, 255, 0.13);
+  --neu-raised-sm: 0 4px 12px -6px rgba(2, 6, 20, 0.62), inset 0 1px 0 rgba(126, 226, 255, 0.11);
+  --neu-inset: inset 0 2px 6px rgba(2, 6, 20, 0.55);
+  --neu-pressed: inset 0 2px 8px rgba(2, 6, 20, 0.68);
+  --neu-knob: 0 1px 4px rgba(2, 6, 20, 0.6);
+  --neu-accent: 0 6px 20px -4px color-mix(in srgb, var(--accent) 42%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  --neu-under: 0 10px 22px -16px rgba(2, 6, 20, 0.82);
+  --neu-edge-bottom: inset 0 -12px 24px -20px rgba(2, 6, 20, 0.75), inset 0 -1px 0 rgba(126, 226, 255, 0.1);
+  --neu-edge-top: inset 0 12px 24px -20px rgba(2, 6, 20, 0.75), inset 0 1px 0 rgba(126, 226, 255, 0.08);
+
+  /* —— 3. 文字：冷白（不用纯白，纯白会发光、和辉光抢注意力）—— */
+  --text-1: #eaf6ff;
+  --text-2: rgba(234, 246, 255, 0.68);
+  --text-3: rgba(234, 246, 255, 0.42);
+  --text-inverse: #050a16;
+
+  /* —— 4. 描边 —— */
+  --border-1: rgba(126, 200, 255, 0.12);
+  --border-2: rgba(126, 200, 255, 0.2);
+  --divider: rgba(126, 200, 255, 0.09);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 72%, transparent);
+
+  /* —— 5. 强调色：全息青 ——
+     实底按钮上压深墨字 #03121a（对 #57e6ff 12.8:1），
+     作为落点 / 选中 / 进度的色用文本对深空底 13.6:1，两处都稳。 */
+  --accent: #57e6ff;
+  --accent-weak: rgba(87, 230, 255, 0.16);
+  --accent-weak-hover: rgba(87, 230, 255, 0.27);
+  --accent-text: #03121a;
+  --accent-contrast: #03121a;
+
+  /* —— 6. 点缀与状态：彩色只在小面积出现 —— */
+  --heart: #ff7ad9;
+  --heart-off: var(--text-3);
+  --danger: #ff6b8a;
+  --success: #3de0b0;
+  --warning: #ffd166;
+
+  /* —— 7. 播放页：沉浸压暗带一点蓝，全息唱片 = 青紫渐变 + 细密轨道纹 —— */
+  --immersive-veil: rgba(3, 6, 16, 0.42);
+  --vinyl:
+    radial-gradient(circle at 50% 50%, rgba(234, 246, 255, 0.1) 0 18%, transparent 19%),
+    repeating-radial-gradient(circle at 50% 50%, rgba(140, 235, 255, 0.09) 0 1px, transparent 1px 4px),
+    linear-gradient(150deg, #071a34 0%, #0f4a63 30%, #24306e 52%, #3a2a78 68%, #0a1026 88%, #05060f 100%);
+
+  /* —— 8. 遮罩与浮层的模糊 —— */
+  --scrim-bg: rgba(3, 7, 18, 0.5);
+  --scrim-blur: 14px;
+  --scrim-tint: rgba(126, 200, 255, 0.05);
+  --veil-blur: 6px;
+  --scan-blur: 5px;
+  --popover-blur: 16px;
+
+  /* —— 9. 封面虚化（本主题不铺封面，这组值只作切换主题时的兜底）—— */
+  --cover-blur: 56px;
+  --cover-blur-strong: 60px;
+  --cover-saturate: 1.35;
+  --cover-brightness: 0.6;
+  --cover-veil: linear-gradient(180deg, rgba(5, 9, 26, 0.42) 0%, rgba(3, 6, 16, 0.78) 100%);
+
+  /* —— 10. 零散阴影与滤镜：深色主题悬停往亮里推（压深会让青变灰）—— */
+  --thumb-shadow: 0 1px 6px rgba(2, 6, 20, 0.6);
+  --accent-hover-filter: brightness(1.1) saturate(1.06);
+  --slider-idle-filter: brightness(0.62) saturate(0.85);
+
+  /* —— 11. 视觉强度 —— */
+  --op-strong: 0.9;
+  --op-icon: 0.8;
+  --op-dim: 0.7;
+  --op-soft: 0.6;
+  --op-hint: 0.55;
+  --op-half: 0.5;
+  --op-disabled: 0.45;
+  --op-dragging: 0.35;
+  --op-ghost: 0.25;
+
+  /* —— 12. 「定位到当前播放」的落点描边（青色，与样式包的光环同色）——
+     时长必须 < 1500ms（tracks.js 的 LOCATE_HIGHLIGHT_MS）。 */
+  --locate-dur: 1.4s;
+  --locate-ring: inset 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
+  --locate-ring-mid: inset 0 0 0 2px color-mix(in srgb, var(--accent) 48%, transparent);
+
+  /* —— 13. 圆角：比默认「小圆角」松一档，但比玻璃拟态紧 —— */
+  --r-xs: 6px;
+  --r-sm: 9px;
+  --r-md: 13px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+  --btn-radius: var(--r-sm);
+
+  /* —— 14. 动效：比默认稍慢，接近线性收尾，像仪表推进而不是弹跳 —— */
+  --dur: 260ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.24, 1);
+}

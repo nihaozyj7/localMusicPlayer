@@ -1,0 +1,579 @@
+/* ==========================================================================
+   diva/skin.css — 「虚拟歌姬 · 全息演唱会」外观
+   --------------------------------------------------------------------------
+   ★ 选择器相对舞台根写（宿主把本文件包成
+       @layer skin { @scope (.playerview[data-skin="diva"],
+                             .skin-bg[data-skin="diva"]) { … } }
+     所以不要自己写 `.playerview[...]` 前缀，也不要碰宿主壳。
+   ★ 宿主壳（标题栏 / 详情页头部行 / 底栏）浮在画面上：所有**要读的文字**
+     都用 `calc(var(--skin-inset-*, 0px) + Npx)` 让开（S11）。
+   ★ 画布上的东西全部由 JS 绘制；这里只管 DOM 层（HUD / 歌词 / 提示 / 装饰）。
+   ★ 不用 CSS 键帧动画（本文件在 @scope 里，嵌套作用域下的键帧不可靠）；
+     节奏感由 JS 写到 `.dv` 上的 `--dv-beat` / `--dv-energy` 驱动。
+   ========================================================================== */
+
+/* 舞台自身：铺满、裁边、兜底色（颜色由清单 colors 声明兜底） */
+:scope {
+  position: relative;
+  overflow: hidden;
+  background: #04050c;
+}
+
+.dv {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: #eaf6ff;
+  /* 插件自己的可定制量：palette.js / entry 会在运行期改这些 */
+  --dv-accent: #57e6ff;
+  --dv-violet: #9b7bff;
+  --dv-pink: #ff7ad9;
+  --dv-glow: rgba(87, 230, 255, 0.55);
+  --dv-lsize: 30px;
+  --dv-beat: 0;
+  --dv-energy: 0;
+  --dv-hud-fg: #eaf6ff;
+  --dv-hud-dim: rgba(186, 214, 255, 0.66);
+  font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.dv__canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+/* 舞台可交互时给一个「可以点」的提示；静止 / 只读舞台不要 pointer */
+.dv[data-dv-interactive="1"] .dv__canvas {
+  cursor: pointer;
+}
+
+/* 上下两条压暗带：保证 HUD / 歌词压在亮舞台上也可读。
+   装饰层，可以压到宿主壳底下（壳自己还会再盖一层）。 */
+.dv__scrim {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+
+.dv__scrim--top {
+  top: 0;
+  height: 30%;
+  background: linear-gradient(180deg, rgba(3, 4, 12, 0.82) 0%, rgba(3, 4, 12, 0.34) 38%, rgba(3, 4, 12, 0) 100%);
+}
+
+.dv__scrim--bottom {
+  bottom: 0;
+  height: 38%;
+  background: linear-gradient(0deg, rgba(3, 4, 12, 0.92) 0%, rgba(3, 4, 12, 0.44) 42%, rgba(3, 4, 12, 0) 100%);
+}
+
+/* 四角装饰框：只做视觉，不吃指针事件 */
+.dv__frame {
+  position: absolute;
+  inset: calc(var(--skin-inset-top, 0px) + 10px) 14px calc(var(--skin-inset-bottom, 0px) + 8px);
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.dv__corner {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--dv-accent);
+  opacity: 0.5;
+}
+
+.dv__corner--tl {
+  left: 0;
+  top: 0;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+.dv__corner--tr {
+  right: 0;
+  top: 0;
+  border-left: 0;
+  border-bottom: 0;
+}
+
+.dv__corner--bl {
+  left: 0;
+  bottom: 0;
+  border-right: 0;
+  border-top: 0;
+}
+
+.dv__corner--br {
+  right: 0;
+  bottom: 0;
+  border-left: 0;
+  border-top: 0;
+}
+
+/* ==========================================================================
+   HUD（宿主的标题栏 / 头部行 / 底栏都浮在上面，这里全部让开）
+   ========================================================================== */
+
+.dv-hud {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  box-sizing: border-box;
+  padding: calc(var(--skin-inset-top, 0px) + 20px) 26px calc(var(--skin-inset-bottom, 0px) + 16px);
+  pointer-events: none;
+}
+
+.dv-hud__left {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+  max-width: 58%;
+}
+
+.dv-hud__badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(87, 230, 255, 0.42);
+  background: rgba(6, 14, 30, 0.55);
+  box-shadow: 0 0 18px rgba(87, 230, 255, 0.14), inset 0 0 12px rgba(87, 230, 255, 0.08);
+  color: var(--dv-accent);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  white-space: nowrap;
+  transition: border-color 260ms ease, color 260ms ease, opacity 260ms ease;
+}
+
+.dv-hud__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 10px currentColor;
+  /* 节拍由 JS 写 --dv-beat：0..1，暂停时回 0 */
+  transform: scale(calc(0.9 + var(--dv-beat) * 0.55));
+  opacity: calc(0.55 + var(--dv-beat) * 0.45);
+  transition: transform 90ms linear, opacity 90ms linear;
+}
+
+.dv-hud__badge[data-state="standby"] {
+  color: rgba(170, 196, 238, 0.72);
+  border-color: rgba(140, 170, 220, 0.28);
+  box-shadow: none;
+}
+
+.dv-hud__badge[data-state="paused"] {
+  color: rgba(196, 214, 245, 0.86);
+  border-color: rgba(150, 180, 230, 0.34);
+  box-shadow: none;
+}
+
+.dv-hud__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dv-hud__title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--dv-hud-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 14px rgba(2, 4, 12, 0.8);
+}
+
+.dv-hud__artist {
+  font-size: 12.5px;
+  color: var(--dv-hud-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 10px rgba(2, 4, 12, 0.75);
+}
+
+/* 在线试听的角标（hud.js 用 hidden 控制显隐；这里只给视觉） */
+.dv-hud__kind {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 122, 217, 0.34);
+  background: rgba(255, 122, 217, 0.1);
+  color: rgba(255, 170, 230, 0.86);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-indent: 0.14em;
+  line-height: 1.4;
+}
+
+.dv-hud__kind[hidden] {
+  display: none;
+}
+
+.dv-hud__right {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.dv-hud__stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  letter-spacing: 0.26em;
+  text-indent: 0.26em;
+  color: rgba(170, 200, 240, 0.58);
+  white-space: nowrap;
+}
+
+.dv-hud__stageDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+  transform: rotate(45deg);
+  background: var(--dv-accent);
+  opacity: calc(0.35 + var(--dv-beat) * 0.65);
+}
+
+.dv-hud__band {
+  color: rgba(150, 182, 230, 0.42);
+  letter-spacing: 0.18em;
+  text-indent: 0.18em;
+}
+
+.dv-hud__time {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: rgba(196, 220, 255, 0.78);
+  text-shadow: 0 1px 10px rgba(2, 4, 12, 0.7);
+}
+
+.dv-hud__cur {
+  color: var(--dv-hud-fg);
+}
+
+.dv-hud__slash {
+  color: rgba(150, 182, 230, 0.36);
+}
+
+/* ==========================================================================
+   歌词：底部全息提词器（当前行逐字点亮 + 上下各一行上下文）
+   ========================================================================== */
+
+.dv__lyrics {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  z-index: 5;
+  box-sizing: border-box;
+  width: min(84%, 880px);
+  padding: 0 10px calc(var(--skin-inset-bottom, 0px) + 26px);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.dv-lrc {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.dv-lrc__stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+}
+
+.dv-lrc__line {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.42;
+  letter-spacing: 0.015em;
+  transition: opacity 260ms ease, color 220ms ease, font-size 220ms ease;
+}
+
+.dv-lrc__line--prev,
+.dv-lrc__line--next {
+  font-size: calc(var(--dv-lsize) * 0.78);
+  font-weight: 400;
+  color: rgba(198, 220, 255, 0.3);
+  text-shadow: 0 1px 12px rgba(2, 4, 12, 0.85);
+}
+
+.dv-lrc__line--prev {
+  opacity: 0.78;
+}
+
+.dv-lrc__line--next {
+  opacity: 0.62;
+}
+
+.dv-lrc__line--cur {
+  font-size: calc(var(--dv-lsize) * 1.12);
+  font-weight: 600;
+  color: rgba(226, 240, 255, 0.32);
+  text-shadow: 0 1px 18px rgba(2, 4, 12, 0.9);
+  transition: color 220ms ease, text-shadow 220ms ease;
+}
+
+.dv-lrc__line--cur[data-kind="empty"] {
+  color: rgba(190, 214, 255, 0.5);
+  font-weight: 400;
+  font-size: calc(var(--dv-lsize) * 0.94);
+}
+
+/* 逐字素：未唱 = 暗，唱到 = 亮 + 双色光晕（glow 由 palette 写进 --dv-glow） */
+.dv-lrc__g {
+  display: inline-block;
+  white-space: pre;
+  color: rgba(222, 238, 255, 0.28);
+  transition: color 140ms linear, text-shadow 160ms linear, transform 180ms ease;
+  will-change: color;
+}
+
+.dv-lrc__g[data-lit="1"] {
+  color: #ffffff;
+  text-shadow: 0 0 10px var(--dv-glow), 0 0 26px var(--dv-glow), 0 1px 2px rgba(2, 4, 12, 0.8);
+}
+
+.dv-lrc__g[data-lit="2"] {
+  color: rgba(206, 236, 255, 0.92);
+  text-shadow: 0 0 8px rgba(87, 230, 255, 0.28);
+}
+
+.dv-lrc__trans {
+  min-height: 0;
+  font-size: calc(var(--dv-lsize) * 0.62);
+  line-height: 1.5;
+  color: rgba(178, 206, 246, 0.56);
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 12px rgba(2, 4, 12, 0.8);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dv-lrc__trans:empty {
+  display: none;
+}
+
+/* 可点的歌词行（interactive 才加 pointer-events） */
+.dv[data-dv-interactive="1"] .dv-lrc__line {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.dv[data-dv-interactive="1"] .dv-lrc__line:hover {
+  color: rgba(236, 248, 255, 0.72);
+}
+
+/* 空态：无歌 / 无歌词 / 歌词加载中 */
+.dv-lrc__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0 2px;
+}
+
+.dv-lrc__empty[hidden] {
+  display: none;
+}
+
+.dv-lrc__emptyRing {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid rgba(87, 230, 255, calc(0.22 + var(--dv-beat) * 0.5));
+  box-shadow:
+    0 0 16px rgba(87, 230, 255, calc(0.08 + var(--dv-beat) * 0.22)),
+    inset 0 0 12px rgba(155, 123, 255, 0.18);
+  position: relative;
+}
+
+.dv-lrc__emptyRing::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(87, 230, 255, 0.85), rgba(155, 123, 255, 0));
+  opacity: calc(0.4 + var(--dv-energy) * 0.5);
+}
+
+.dv-lrc__emptyText {
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  text-indent: 0.16em;
+  color: rgba(186, 212, 250, 0.62);
+  text-shadow: 0 1px 14px rgba(2, 4, 12, 0.8);
+}
+
+/* ==========================================================================
+   交互提示（首次出现几秒后淡出；窄窗隐藏，避免压住 HUD）
+   ========================================================================== */
+
+.dv__hint {
+  position: absolute;
+  left: 26px;
+  bottom: calc(var(--skin-inset-bottom, 0px) + 30px);
+  z-index: 6;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(87, 230, 255, 0.18);
+  background: rgba(6, 12, 26, 0.5);
+  color: rgba(190, 218, 255, 0.7);
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 520ms ease;
+}
+
+.dv__hint[hidden] {
+  display: none;
+}
+
+.dv__hint[data-fade="1"] {
+  opacity: 0;
+}
+
+/* ==========================================================================
+   整窗背景层（ctx.backgroundRoot 里的 .skin-bg）
+   --------------------------------------------------------------------------
+   舞台铺满整窗后这一层基本被盖住；它只在详情页滑入 / 滑出、舞台半透明的
+   那几帧里出场，负责底下那块同色夜空，避免「画面在滑、后面是死底色」。
+   ========================================================================== */
+
+.dv-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 82% at 50% 16%, rgba(38, 44, 120, 0.5) 0%, rgba(5, 6, 15, 0) 62%),
+    radial-gradient(90% 70% at 16% 92%, rgba(52, 30, 108, 0.46) 0%, rgba(5, 6, 15, 0) 66%),
+    linear-gradient(180deg, #05060f 0%, #070a1c 58%, #04050c 100%);
+}
+
+.dv-bg__aurora {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.dv-bg__aurora--a {
+  width: 52vw;
+  height: 52vw;
+  left: -10vw;
+  top: -16vh;
+  background: radial-gradient(circle, rgba(87, 230, 255, 0.34) 0%, rgba(87, 230, 255, 0) 70%);
+}
+
+.dv-bg__aurora--b {
+  width: 46vw;
+  height: 46vw;
+  right: -10vw;
+  bottom: -18vh;
+  background: radial-gradient(circle, rgba(155, 123, 255, 0.36) 0%, rgba(155, 123, 255, 0) 70%);
+}
+
+.dv-bg__veil {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 92% at 50% 46%, rgba(0, 0, 0, 0) 42%, rgba(0, 0, 0, 0.42) 100%);
+}
+
+/* ==========================================================================
+   窄窗 / 降级档
+   --------------------------------------------------------------------------
+   ★ 覆盖 padding 时**必须**把安全区 `calc(var(--skin-inset-*, 0px) + Npx)`
+     原样带过去（这是历史上最常漏的一处）。
+   ========================================================================== */
+
+.dv[data-dv-narrow="1"] .dv-hud {
+  padding: calc(var(--skin-inset-top, 0px) + 16px) 18px calc(var(--skin-inset-bottom, 0px) + 12px);
+  gap: 16px;
+}
+
+.dv[data-dv-narrow="1"] .dv-hud__left {
+  gap: 10px;
+  max-width: 62%;
+}
+
+.dv[data-dv-narrow="1"] .dv-hud__title {
+  font-size: 15px;
+}
+
+.dv[data-dv-narrow="1"] .dv-hud__stageLabel,
+.dv[data-dv-narrow="1"] .dv-hud__band,
+.dv[data-dv-narrow="1"] .dv__hint {
+  display: none;
+}
+
+.dv[data-dv-narrow="1"] .dv__lyrics {
+  width: min(92%, 880px);
+  padding: 0 12px calc(var(--skin-inset-bottom, 0px) + 20px);
+}
+
+.dv[data-dv-tiny="1"] .dv-hud__badgeText,
+.dv[data-dv-tiny="1"] .dv-hud__artist {
+  display: none;
+}
+
+.dv[data-dv-tiny="1"] .dv-hud__badge {
+  padding: 0 8px;
+  gap: 0;
+}
+
+.dv[data-dv-tiny="1"] .dv-lrc__line--prev,
+.dv[data-dv-tiny="1"] .dv-lrc__line--next {
+  display: none;
+}
+
+/* 静止档（animations:false / reducedMotion）：不要过渡，画面定住 */
+.dv[data-dv-anim="0"] .dv-lrc__g,
+.dv[data-dv-anim="0"] .dv-lrc__line,
+.dv[data-dv-anim="0"] .dv__hint,
+.dv[data-dv-anim="0"] .dv-hud__badge,
+.dv[data-dv-anim="0"] .dv-hud__dot {
+  transition: none;
+}

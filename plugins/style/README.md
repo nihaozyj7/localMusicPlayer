@@ -32,6 +32,26 @@ magic-circle/
 └── tests/             这份样式包自己的自检（见下）
 ```
 
+### `diva/` — 虚拟歌姬 · 全息舞台
+
+一句话：**一座会跟着歌呼吸的全息演唱会舞台。** 深空舞台中央是程序化绘制的全息歌姬
+（随人声开合口型、按节拍摆身、会眨眼，发丝与裙摆按频谱飘动），背后是巨型全息光环 /
+体积光 / 透视地面，底部是卡拉 OK 逐字提词器。**全部画面由代码绘制，无图片素材、
+无既有 IP 角色。**
+
+```
+diva/
+├── skin.json          清单：id / 名称 / 版本 / capabilities / colors
+├── skin.js            入口：唯一一条 rAF + 补丁处理 + 交互
+├── skin.css           外观（宿主包 @layer skin + @scope；HUD / 歌词 / 提示 / 装饰）
+├── assets/icon.svg
+├── lib/               config / util / spectrum / stage / diva / lyrics / hud / palette
+└── tests/             7 份纯逻辑单测 + diva-check.mjs（63 项浏览器自检）
+```
+
+配套主题：`plugins/theme/holo-diva.css`（深空青紫霓虹 + 深蓝玻璃面板）。
+安装后进设置 →「播放界面样式」重新扫描；自检命令见 `diva/README.md`。
+
 ## 写样式包时的硬约束（契约 v3）
 
 1. **零裸包名 import**：只允许包内相对路径。数据只从 `ctx` 拿、动作只走
