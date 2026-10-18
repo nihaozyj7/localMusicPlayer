@@ -327,12 +327,18 @@ function bindBackendEvents() {
     commit();
   });
 
-  on("player:state", (payload) => {
-    if (!payload) return;
-    if (typeof payload.position === "number") state.position = payload.position;
-    if (typeof payload.duration === "number") state.duration = payload.duration;
-    if (typeof payload.playing === "boolean") state.playing = payload.playing;
-  });
+  /* ---- 播放进度 ----
+     ★ player:state **只由 audio.js 订阅**（它维护 switchPending 闸门与锚点外推），
+     这里不要再挂第二个监听器去写 state.position / state.playing。
+
+     为什么这是一条硬规则：后端引擎到达 EOF 后，Tick 会补推一条 playing=false 的
+     锚点（见 services_player.go#Tick），它正好落在「自动下一首」那次 playerLoad
+     的装载窗口里。audio.js 的 applyAnchor 会因为 switchPending 把它丢掉，而任何
+     绕过闸门的重复监听器都会把 playSong 刚置上的 state.playing=true 覆盖回 false
+     —— loadSong 装载完成时按 state.playing 决定要不要 playerPlay()，于是新歌
+     装载好了却不播放（表现是「播完不切 / 切了没声音」）。
+     旧写法还读了 payload.position / payload.duration，这两个字段在后端根本不存在
+     （锚点是 positionMs / durationMs），所以它今天只剩 playing 这一句有害。 */
 
   /* ---- 封面变化 ----
      后端在「自动匹配 / 手动应用 / 写回文件 / 清空缓存」后都会广播 cover:changed。

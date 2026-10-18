@@ -183,6 +183,94 @@ async function call(fn, ...args) {
 }
 
 /* --------------------------------------------------------------------------
+   有限等待：桥调用只要后端不返回就会永远挂着
+   --------------------------------------------------------------------------
+   调用封装的两条路径只覆盖了「未连接（返回 null）」与「正常返回」，缺一条
+   「长时间没有响应」。真实后果有两处：
+
+     · Player.Available 挂起 → main.js 的 await probeBackend() 永不返回，
+       其后的 startRuntime / 媒体键 / beforeunload 注册全部不执行；
+     · Player.Load 挂起 → audio.js 的 switchPending 没人解除，界面永远停在
+       「切歌中」，失败自动跳转也不会发生（legacy <audio> 路径早有
+       SWITCH_TIMEOUT_MS 看门狗，后端引擎这条链路以前没有）。
+
+   所以这里给需要的调用套一层「最多等多久」。它只影响**调用方看到的**结果：
+   底层那次调用仍在后端跑，迟到的 resolve/reject 由 Promise.race 丢弃，
+   不会覆盖调用方在超时之后建立的新状态（切歌用 requestSeq 闸门，见 audio.js）。
+   -------------------------------------------------------------------------- */
+
+/**
+ * 桥调用超时（withTimeout 抛出的可判别错误）。
+ *
+ * 为什么要有类型/标记，而不是让调用方匹配错误文案：文案会改（秒数口径、措辞），
+ * 靠 includes("超过") 之类的判断会在某次改文案之后**静默**失效 —— 那时 audio.js
+ * 会把「播放引擎无响应」当成「文件坏了」处理，正好是这次要避免的灾难。
+ * 另外带一个 `isTimeout` 标记，给不方便 instanceof 的调用方做兜底判据。
+ */
+export class BridgeTimeoutError extends Error {
+  constructor(label, ms) {
+    super(`[bridge] ${label} 超过 ${Math.round(ms / 1000)}s 没有返回（已放弃等待）`);
+    this.name = "BridgeTimeoutError";
+    /** 可判别标记：audio.js#isEngineTimeout 只看这个，不做字符串匹配 */
+    this.isTimeout = true;
+    /** 超时的调用名（Player.Available / Player.Load …），便于日志定位 */
+    this.label = label;
+    /** 实际使用的阈值（毫秒） */
+    this.timeoutMs = ms;
+  }
+}
+
+/**
+ * 给一个 promise 套上「最多等 ms 毫秒」的限制。
+ *
+ * ms 传 0 / 负数 = 不设限（交给调用方自己管时序）。
+ * 计时器在任意一边先 settle 时都会清掉（finally），否则会挂住 node:test 进程。
+ * 超时抛 {@link BridgeTimeoutError}（带 `isTimeout` 标记），不是靠文案区分。
+ *
+ * @template T
+ * @param {Promise<T>} promise 底层调用
+ * @param {number} ms 最长等待毫秒数
+ * @param {string} label 出错信息里的调用名（能直接定位是哪个绑定挂住了）
+ * @returns {Promise<T>}
+ */
+export function withTimeout(promise, ms, label = "backend") {
+  if (!(ms > 0)) return promise;
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new BridgeTimeoutError(label, ms));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer !== null) clearTimeout(timer);
+  });
+}
+
+/**
+ * `call()` 的「有限等待」版本。
+ *
+ * 未连接后端时与 call() 一样返回 null（不设无谓的计时器）；绑定同步抛出的错误
+ * 也照样变成 reject（调用方原本就是 await + try/catch 的写法）。
+ */
+async function callWithTimeout(ms, label, fn, ...args) {
+  if (!active || !bindings || typeof fn !== "function") return null;
+  return withTimeout(
+    Promise.resolve().then(() => fn(...args)),
+    ms,
+    label
+  );
+}
+
+/**
+ * Player.Available 的等待上限：启动时的一次探测。
+ *
+ * 12s 远大于打开声卡（实测几十毫秒），但比「永远等下去」好得多 —— 超时后
+ * probeBackend 会按「后端不可用」降级到 legacy <audio>，界面照常可用
+ * （见 audio.js#probeBackend）。
+ */
+export const PLAYER_AVAILABLE_TIMEOUT_MS = 12_000;
+
+/* --------------------------------------------------------------------------
    契约自检：漏接线要报得清楚，而不是变成一句 "is not a function"
    --------------------------------------------------------------------------
    绑定层的方法名由 `wails3 generate bindings` 生成，而下面这个映射是**手写的
@@ -294,7 +382,8 @@ const backendImpl = {
   /* ---- 后端原生播放（见 services_player.go） ----
      音频的「解码 + 输出」在 Go 进程里做，前端只发指令、收锚点与频谱。
      这样网页卡顿不会影响出声，音量合成器里也是本程序的图标。 */
-  playerAvailable: () => call(bindings?.Player?.Available),
+  playerAvailable: () =>
+    callWithTimeout(PLAYER_AVAILABLE_TIMEOUT_MS, "Player.Available", bindings?.Player?.Available),
   playerLoad: (songId) => call(bindings?.Player?.Load, songId),
   playerPlay: () => call(bindings?.Player?.Play),
   playerPause: () => call(bindings?.Player?.Pause),

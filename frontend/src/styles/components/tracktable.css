@@ -148,6 +148,15 @@
   transform: rotate(180deg);
 }
 
+/* —— 窗口化的上下占位块 ——
+   大列表（> WINDOW_MIN_ROWS 行）只渲染滚动位置附近的行，两端用这两个块把
+  滚动条长度撑到与「全部行都在」时一致。高度由 track-table.js 按实测行高写
+  在元素上（量出来的值，不是视觉常量），这里只声明它不参与命中测试。 */
+.tracks__pad {
+  flex: none;
+  pointer-events: none;
+}
+
 /* —— 行 —— */
 .track {
   display: grid;

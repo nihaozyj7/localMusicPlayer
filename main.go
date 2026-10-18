@@ -107,7 +107,18 @@ func main() {
 
 	songs := func(id string) (bootstrap.Song, bool) { return lib.SongByID(id) }
 	mediaSrv := media.New(songs)
-	mediaSrv.SetCacheDir(filepath.Join(store.DataDir(), "cache", "transcode"))
+	// 转码缓存落在 config.cacheDir 下（与封面/歌词缓存同一个根），而不是写死
+	// DataDir/cache —— 转码缓存是这里体量最大的一份（600MB 预算），用户把
+	// 「缓存目录」改到大盘上时，它也应当跟着走。
+	transcodeDir := transcodeCacheDir(store.Get())
+	mediaSrv.SetCacheDir(transcodeDir)
+	// 老版本把落点写死在 DataDir/cache/transcode，用户改过 cacheDir 之后那份
+	// 旧目录就再没人管了。这里顺手清一次：里面的内容只可能是上次运行留下的
+	// tc_ 产物，进程重启后本来就不会被复用（见 media.SetCacheDir），清掉不会
+	// 造成重复转码之外的功能损失 —— 换来的是几百 MB 不在旧位置悄悄堆积。
+	if legacy := legacyTranscodeCacheDir(store); !sameCleanPath(legacy, transcodeDir) {
+		mediaSrv.PurgeLeftovers(legacy)
+	}
 	state.media = mediaSrv
 
 	// 在线能力共用一个 bilibili 客户端：WBI 签名密钥与设备标识只需要取一次。
@@ -766,6 +777,35 @@ func main() {
 	if err := app.Run(); err != nil {
 		log.Fatalf("app exit: %v", err)
 	}
+}
+
+// transcodeCacheDir 返回转码缓存的落点：config.cacheDir 下的 transcode 子目录。
+//
+// 走配置而不是数据目录下的写死路径：设置界面把 cacheDir 展示成「缓存目录」，
+// 用户把它挪到大盘上时，转码缓存（600MB 预算，体量最大的一份）必须跟着挪，
+// 否则「改了缓存目录」只对封面/歌词生效，转码产物仍然堆在 C 盘。
+func transcodeCacheDir(cfg bootstrap.Config) string {
+	root := strings.TrimSpace(cfg.CacheDir)
+	if root == "" {
+		// 配置还没填上（理论上 normalize 会补，见 bootstrap.Config）时退回默认位置，
+		// 与 config 里 cacheDir 的默认值保持一致。
+		root = filepath.Join(cfg.DataDir, "cache")
+	}
+	return filepath.Join(root, "transcode")
+}
+
+// legacyTranscodeCacheDir 是老版本写死的转码缓存落点。
+//
+// 只用于在「用户改过 cacheDir」时清一次旧目录（见 main 里的调用），
+// 新代码不再往这里写任何东西。
+func legacyTranscodeCacheDir(store *bootstrap.Store) string {
+	return filepath.Join(store.DataDir(), "cache", "transcode")
+}
+
+// sameCleanPath 判断两个路径是否指向同一个位置（大小写不敏感，Windows 盘符
+// 大小写不统一；Clean 顺带处理尾部斜杠与 ".."）。
+func sameCleanPath(a, b string) bool {
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 }
 
 // setDocumentCSPHeader 给 HTML 文档的响应补上 `frame-ancestors 'none'`。

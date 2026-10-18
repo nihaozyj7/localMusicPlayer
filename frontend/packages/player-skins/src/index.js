@@ -205,18 +205,61 @@ export function wrapPluginCss(css, skinId, background) {
   return `@layer skin {\n${scope} {\n${css}\n}\n}`;
 }
 
-/** 摘掉某个样式的 <style>（切换 / 卸载 / 重扫时用） */
+/**
+ * 摘掉某个样式的 <style>（切换 / 卸载 / 重扫时用）。
+ *
+ * ★ 按**选择器全量清理**，不是只认 styleEls 里那一个。
+ *
+ * 并发注入（重扫被点两次、启动扫描与手动重扫重叠）会往 head 里放进两份同名
+ * <style>，而 styleEls 只记得最后一份 —— 只删那一份的话，另一份会永久留在
+ * head 里无人回收，用户后来移除或更新这套样式时旧规则还在生效。
+ * 见 injectSkinStyles 的串行化说明。
+ */
 export function removeSkinStyles(skinId) {
-  const el = styleEls.get(skinId);
-  if (el) {
-    el.remove();
-    styleEls.delete(skinId);
+  const key = String(skinId ?? "").trim();
+  if (!key) return;
+  // 记账里的那一份先摘（Node 单测没有 document，这一步是唯一能做的）
+  styleEls.get(key)?.remove();
+  styleEls.delete(key);
+  // 再按选择器全量扫一遍：并发注入的残留 / 手动插进来的同名 <style> 都在这里收口
+  if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return;
+  for (const el of document.querySelectorAll("style[data-skin]")) {
+    // 用 getAttribute 而不是 dataset：querySelectorAll 的元素类型是 Element，
+    // 没有 dataset（tsc 会报 TS2339），而属性写法两者等价。
+    if (el.getAttribute("data-skin") === key) el.remove();
   }
 }
 
 /** 摘掉全部插件样式（重扫前清场） */
 export function clearAllSkinStyles() {
-  for (const id of [...styleEls.keys()]) removeSkinStyles(id);
+  for (const el of styleEls.values()) el?.remove();
+  styleEls.clear();
+  if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return;
+  for (const el of document.querySelectorAll("style[data-skin]")) el.remove();
+}
+
+/* --------------------------------------------------------------------------
+   CSS 注入
+   --------------------------------------------------------------------------
+   ★ 同一 skinId 的注入必须**串行化**，完全相同的请求还要**复用**在途的那一次。
+
+   为什么：注入分「fetch → 造 <style> → append」三步，中间有 await。两次并发
+   注入都会走到 append，于是 head 里出现两份同名 <style>，而 styleEls 只记
+   最后一份 —— 另一份永远摘不掉（实测并发注入 10/10 命中「2 个 style，
+   removeSkinStyles 后残留 1 个」）。真实触发路径：设置页「重新扫描样式」被
+   点两次，或启动扫描还没结束就点了重扫 —— playerhost#reloadSkins 会把
+   skinsReady 置空，两次调用就各扫一遍、每款样式各注入一次。
+
+   串行化在这里做（而不是在上游加锁）的理由：这是**唯一**的注入出口，两个宿主
+   （主窗口 / 桌面背景窗口）都经过它；把纪律放进漏斗里，上游就漏不掉。
+   -------------------------------------------------------------------------- */
+
+/** skinId → { signature, chain }；同 id 的注入排队执行 */
+const injectChains = new Map();
+
+/** 一次注入请求的指纹：URL 列表 + 是否整窗背景（决定 wrapPluginCss 的根） */
+function injectSignature(list, opts) {
+  return `${list.join("\u0000")}\u0001${opts?.background === true}`;
 }
 
 /**
@@ -226,14 +269,44 @@ export function clearAllSkinStyles() {
  * 而外链样式表又必须能被包进层里，才能保证插件压不过宿主壳。
  * CSS 体积都不大（单款样式 2~70KB），一次 fetch + 一次 replace 完全可接受。
  *
+ * 先 fetch 再换（而不是先 remove）：中途失败时**旧样式仍然生效** ——
+ * 重扫时网络抖一下不该让正挂着的皮肤瞬间失去全部 CSS。
+ *
  * @param {string} skinId
  * @param {string[]} hrefs 可直接 fetch 的 URL
  * @param {{background?:boolean}} [opts]
  */
-export async function injectSkinStyles(skinId, hrefs, opts = {}) {
-  removeSkinStyles(skinId);
+export function injectSkinStyles(skinId, hrefs, opts = {}) {
+  const key = String(skinId ?? "");
   const list = (hrefs || []).filter(Boolean);
-  if (!list.length) return;
+  const signature = injectSignature(list, opts);
+  const running = injectChains.get(key);
+  // 完全相同的注入正在飞：复用它，别把同一份 CSS 抓两遍、插两份
+  if (running && running.signature === signature) return running.chain;
+
+  const entry = { signature, chain: null };
+  entry.chain = (running ? running.chain.catch(() => {}) : Promise.resolve())
+    .then(() => injectSkinStylesNow(key, list, opts))
+    .finally(() => {
+      // 只有自己还是队尾时才清账，否则会把后来者的链误删
+      if (injectChains.get(key) === entry) injectChains.delete(key);
+    });
+  injectChains.set(key, entry);
+  return entry.chain;
+}
+
+/**
+ * 真正干活的注入（只由 injectSkinStyles 调用，保证同一 id 不会重入）。
+ *
+ * @param {string} skinId
+ * @param {string[]} list 已经滤过空值的 URL 列表
+ * @param {{background?:boolean}} opts
+ */
+async function injectSkinStylesNow(skinId, list, opts) {
+  if (!list.length) {
+    removeSkinStyles(skinId);
+    return;
+  }
   const texts = await Promise.all(
     list.map(async (href) => {
       const res = await fetch(href, { cache: "no-store" });
@@ -244,6 +317,8 @@ export async function injectSkinStyles(skinId, hrefs, opts = {}) {
   const style = document.createElement("style");
   style.dataset.skin = skinId;
   style.textContent = wrapPluginCss(texts.join("\n"), skinId, opts.background === true);
+  // 换上去之前把同名的（含并发残留）全部摘掉，保证 head 里这个 id 只有一份
+  removeSkinStyles(skinId);
   document.head.appendChild(style);
   styleEls.set(skinId, style);
 }

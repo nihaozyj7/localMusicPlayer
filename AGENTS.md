@@ -231,7 +231,7 @@ frontend/dist/       Vite 产物 + bindings 副本 + 内置主题同步源（**�
 | `%TEMP%\LocalMusicPlayer\online\` | 试听音频缓存（可丢弃的派生数据，不进下载目录、不进扫描） |
 | `%APPDATA%\LocalMusicPlayer\online-sources.jsonl` | 在线来源台账（jsonl，一行一条：试听缓存 / 已下载的 bvid、路径、来源、时间）。搜索结果的「已下载」标注与空闲清理的引用判定都读它；存在性在读取时 stat |
 | `<cacheDir>/meta/covers/` 与 `meta/lyrics/` | 封面原图与歌词文本 + 各自的 `index.json` |
-| `<cacheDir>/loudness/<songID>.json` | 响度测量与各挡位增益（**唯一的响度写入**，绝不改源文件） |
+| `<DataDir>/loudness-cache.json` | 响度测量与各挡位增益（**唯一的响度写入**，绝不改源文件；单份 JSON，按 `path+size+modTime` 做 key，不跟随 `cacheDir`） |
 | `%USERPROFILE%\Music\downloads` | 默认下载目录；`EffectiveFolders() = 用户文件夹 + 下载目录` |
 
 关键 URL（同源，CSP 与 WebView2 都要求这样）：`/audio/<songID>?t=<token>`（转发到 `internal/media`）、

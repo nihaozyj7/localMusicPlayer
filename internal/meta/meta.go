@@ -413,14 +413,23 @@ func mp4Duration(path string) durationInfo {
 	}
 	defer f.Close()
 
-	head := make([]byte, 2<<20) // mvhd 一般在文件头部；必要时下面会扩大读取
+	// 缓冲区按文件实际大小分配：以前固定 2MB，意味着扫描一首 100KB 的 m4a
+	// 也要白白分配并清零 2MB —— 全库扫描时这是一笔可观的瞬时内存与 GC 压力。
+	// mvhd 一般在文件头部，2MB 足够扫到绝大多数文件，只有更大的文件才真需要它。
+	readLen := int64(2 << 20)
+	if st, statErr := f.Stat(); statErr == nil && st.Size() < readLen {
+		readLen = st.Size()
+	}
+	head := make([]byte, readLen)
 	n, _ := io.ReadFull(f, head)
 	head = head[:n]
 
 	ms := mp4DurationFromMvhd(head)
 	sampleRate := mp4SampleRate(head)
 
-	// mvhd 不在头部 2MB 内（少数文件 moov 在尾部）：整体再读一次
+	// mvhd 不在头部 2MB 内（少数文件 moov 在尾部）：整体再读一次。
+	// 这份兜底同样按文件实际大小分配（st.Size()），并保留 64MB 上限 ——
+	// 超过它的文件不再整读，宁可解析不出时长也不把内存吃满。
 	if ms == 0 {
 		if st, err := os.Stat(path); err == nil && st.Size() > int64(len(head)) && st.Size() <= 64<<20 {
 			whole := make([]byte, st.Size())

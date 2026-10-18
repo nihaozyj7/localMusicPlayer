@@ -23,6 +23,7 @@ package loudness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -63,8 +64,18 @@ type managerQueue struct {
 	// urgent / queue 按优先级分两条，避免每次出队都扫描整个切片
 	urgent []*Request
 	queue  []*Request
-	// queued 是「已在队列里」的集合（按测量 key 去重），出队时同步删除
-	queued map[string]bool
+	// flight 是「在飞请求」表：测量 key → 该请求（排队中或正在跑）。
+	//
+	// 它同时承担两件事：
+	//   · 去重 —— 同一首歌不会排两次队、不会白跑两次 ffmpeg；
+	//   · 结果共享 —— 后来者不是再排一次队，而是等这一个请求的 Done
+	//     （见 Submit）。旧实现只去重「还没出队」的请求，等的人靠轮询
+	//     缓存拿结果，于是被去重的那一次失败/取消后，等的人只能等自己的
+	//     ctx 超时。
+	//
+	// 条目在**请求真正结束时**（dispatch 收尾 / nextRequest 丢弃取消项）
+	// 才删除，所以「正在跑」的请求也在表里。
+	flight map[string]*Request
 	// running 是当前占用槽位的数量
 	running int
 	// inter 是「交互请求在排队」的计数，供后台任务判断是否让路
@@ -74,7 +85,7 @@ type managerQueue struct {
 }
 
 func newManagerQueue() *managerQueue {
-	return &managerQueue{queued: map[string]bool{}, wake: make(chan struct{}, 1)}
+	return &managerQueue{flight: map[string]*Request{}, wake: make(chan struct{}, 1)}
 }
 
 // requestKey 是队列去重用的键：与测量缓存的 key 一致。
@@ -249,38 +260,65 @@ type Request struct {
 var ErrSuperseded = fmt.Errorf("测量请求已被取消")
 
 // Submit 把一首歌排进测量队列并等它完成。
+//
+// ★ 去重是 singleflight 语义：同一首歌同时只有一个请求在飞，后来者
+// **共享它的结果**（不是再排一次队，也不是轮询缓存）。
+//
+// 为什么必须是共享结果而不是轮询缓存：轮询只能看到「成功」这一种结局
+// （m.Get 命中），被去重的那一次若以失败或被取消告终，缓存里永远不会
+// 出现这首歌，等的人就只能等自己的 ctx 超时 —— 生产路径上 Measure 的
+// ctx 是 3 分钟，用户看到的是「测量中」卡满 3 分钟 + 一条误导性的
+// context deadline exceeded，而不是真实的解码错误。
 func (m *Manager) Submit(ctx context.Context, song bootstrap.Song, prio Priority) (Measurement, error) {
-	// 快速路径：已经测过就直接返回，不进队列、不抢槽位。
-	// 批量预热里绝大多数歌曲走的都是这一条（重复调用是廉价的）。
-	if item, ok := m.Get(song); ok {
-		return item, nil
-	}
-
-	req := &Request{Song: song, Priority: prio, Done: make(chan struct{})}
-	if !m.enqueue(req) {
-		// 同一首歌已经在队列里：等它出结果，不重复排队（否则两处都会跑
-		// 一次 ffmpeg，纯浪费）。用轮询缓存而不是共享同一个 Request：
-		// 两个调用方各自要能取消，共享一条会互相牵连。
-		//
-		// 为什么不上条件变量：这里最多等一首歌的分析时间，轮询开销
-		// （每秒 50 次 map 读）可以忽略，而条件变量要维护一套通知生命周期，
-		// 在「等的人自己也被取消」时会多出一堆边界情况。
-		t := time.NewTicker(20 * time.Millisecond)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return Measurement{}, ctx.Err()
-			case <-t.C:
-				if item, ok := m.Get(song); ok {
-					return item, nil
-				}
-			}
+	for {
+		// 每轮开头都看一次取消：下面的重试路径（前置被取消）不能因为
+		// 一直被别人的取消打断而忘了自己的 ctx 已经超时。
+		if err := ctx.Err(); err != nil {
+			return Measurement{}, err
 		}
-	}
+		// 快速路径：已经测过就直接返回，不进队列、不抢槽位。
+		// 批量预热里绝大多数歌曲走的都是这一条（重复调用是廉价的）。
+		if item, ok := m.Get(song); ok {
+			return item, nil
+		}
 
+		req := &Request{Song: song, Priority: prio, Done: make(chan struct{})}
+		if m.enqueue(req) {
+			return m.awaitOwn(ctx, req)
+		}
+
+		// 同一首歌已经有请求在飞（排队中或正在跑）：等它的结果。
+		dup, ok := m.inflight(song)
+		if !ok {
+			// 极端竞态：它刚好在这两行之间结束并从表里摘除。重试一轮
+			// （下一轮要么命中缓存，要么自己成为新的在飞请求）。
+			continue
+		}
+		item, err := m.awaitShared(ctx, dup)
+		if errors.Is(err, ErrSuperseded) {
+			// 被去重的那一次在真正测量前被它的发起方取消了（取消批量 /
+			// 切歌）。等待者自己的 ctx 还活着，不能就此失败 —— 自己接着
+			// 测（下一轮会成为新的在飞请求，其他人再共享它）。
+			continue
+		}
+		return item, err
+	}
+}
+
+// awaitOwn 等自己排进去的那个请求，并在 ctx 取消时把它作废。
+//
+// 与 awaitShared 的区别只有一个：取消时**由自己**负责把请求标记作废。
+// 共享者不能这么做 —— 那会把别人的测量一起取消掉。
+func (m *Manager) awaitOwn(ctx context.Context, req *Request) (Measurement, error) {
 	select {
 	case <-req.Done:
+		if errors.Is(req.Err, ErrSuperseded) {
+			// 自己取消自己（ctx 先到、调度器后处理）：按调用方的取消语义返回。
+			if err := ctx.Err(); err != nil {
+				return Measurement{}, err
+			}
+			return Measurement{}, ErrSuperseded
+		}
 		return req.Result, req.Err
 	case <-ctx.Done():
 		// 取消后不再等：用户切歌时不该让前端卡在这一个调用上。
@@ -290,17 +328,40 @@ func (m *Manager) Submit(ctx context.Context, song bootstrap.Song, prio Priority
 	}
 }
 
-// enqueue 入队；返回 false 表示同一首歌已在队列里。
+// awaitShared 等另一个调用方排进去的请求，共享它的 Result/Err。
+//
+// 只读，不改动请求状态：共享者提前离开（自己的 ctx 超时）不该影响
+// 仍在等结果的其他人。
+func (m *Manager) awaitShared(ctx context.Context, req *Request) (Measurement, error) {
+	select {
+	case <-req.Done:
+		return req.Result, req.Err
+	case <-ctx.Done():
+		return Measurement{}, ctx.Err()
+	}
+}
+
+// inflight 取同一首歌当前在飞的请求（没有则 false）。调用方正要为它
+// 等待，所以返回的指针在 Done 关闭前一直有效。
+func (m *Manager) inflight(song bootstrap.Song) (*Request, bool) {
+	q := &m.q
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	r, ok := q.flight[requestKey(song)]
+	return r, ok
+}
+
+// enqueue 入队；返回 false 表示同一首歌已经有请求在飞。
 func (m *Manager) enqueue(req *Request) bool {
 	q := &m.q
 	key := requestKey(req.Song)
 
 	q.mu.Lock()
-	if q.queued[key] {
+	if _, ok := q.flight[key]; ok {
 		q.mu.Unlock()
 		return false
 	}
-	q.queued[key] = true
+	q.flight[key] = req
 	if req.Priority == PriorityInterrupt {
 		// 交互请求插到**队首**：后到的往往就是用户刚点开的那首，
 		// 它应当比之前排队的所有交互请求更早被处理。
@@ -359,8 +420,10 @@ func (m *Manager) dispatch() {
 			defer func() {
 				q.mu.Lock()
 				q.running--
+				// 先从「在飞」表摘除再关 Done：新来的 Submit 要么命中缓存，
+				// 要么自己发起一次新测量，不会挂在一个已经结束的请求上。
+				m.finishLocked(r)
 				q.mu.Unlock()
-				close(r.Done)
 				m.signalWake()
 			}()
 			m.runRequest(r)
@@ -387,7 +450,6 @@ func (m *Manager) nextRequest() *Request {
 		case len(q.urgent) > 0:
 			r := q.urgent[0]
 			q.urgent = q.urgent[1:]
-			m.dropQueuedLocked(r)
 			// ★ 递减必须紧跟「出队」，不能放到 return 之前。
 			//
 			// q.inter 是「还有交互请求在排队」的计数，YieldIfPending() 靠它
@@ -400,16 +462,21 @@ func (m *Manager) nextRequest() *Request {
 				q.inter--
 			}
 			if r.cancelled {
-				close(r.Done)
+				// 给等待者一个可解释的结局：它据此重新发起自己的测量
+				// （见 Submit 对 ErrSuperseded 的处理）。
+				r.Err = ErrSuperseded
+				m.finishLocked(r)
 				continue
 			}
+			// 正常出队：请求进入运行态，仍留在「在飞」表里 ——
+			// 后来者要在这里共享它的结果。
 			return r
 		case len(q.queue) > 0:
 			r := q.queue[0]
 			q.queue = q.queue[1:]
-			m.dropQueuedLocked(r)
 			if r.cancelled {
-				close(r.Done)
+				r.Err = ErrSuperseded
+				m.finishLocked(r)
 				continue
 			}
 			return r
@@ -419,9 +486,14 @@ func (m *Manager) nextRequest() *Request {
 	}
 }
 
-// dropQueuedLocked 把请求从「已在队列」集合里移除。调用方需持有 q.mu。
-func (m *Manager) dropQueuedLocked(r *Request) {
-	delete(m.q.queued, requestKey(r.Song))
+// finishLocked 结束一个请求：从「在飞」表摘除并关闭 Done。
+// 调用方必须持有 q.mu。
+//
+// 关闭 Done 是给所有共享者（awaitOwn / awaitShared）的唤醒信号；
+// Result / Err 在这之前已经写好，靠 channel close 建立 happens-before。
+func (m *Manager) finishLocked(r *Request) {
+	delete(m.q.flight, requestKey(r.Song))
+	close(r.Done)
 }
 
 // measureTimeout 是单次响度测量的上限。

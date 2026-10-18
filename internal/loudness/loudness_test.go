@@ -146,7 +146,12 @@ func TestGainPerTargetIsPersisted(t *testing.T) {
 	}
 }
 
-// TestInvalidateTargetKeepsEverything 兼容接口不再删任何测量数据
+// TestInvalidateTargetKeepsEverything 兼容接口不再删任何测量数据，
+// 而且**别的挡位**的增益行也必须原样保留。
+//
+// ★ 这条用例以前是恒真的：它断言 InvalidateTarget 的返回值（旧实现恒为 0），
+// 又用 GainFor 判断「-14 还在」—— 而 GainFor 未命中时会现算并返回 ok=true，
+// 所以哪怕 -14 的行被删光也照样通过。现在直接断言增益表条数与落盘内容。
 func TestInvalidateTargetKeepsEverything(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, 2)
@@ -157,23 +162,52 @@ func TestInvalidateTargetKeepsEverything(t *testing.T) {
 	m.GainFor(a, -14)
 	m.GainFor(b, -14)
 
-	// 切到 -16 时前端会调它 —— 它必须什么都不删
+	before := m.GainCount()
+	if before != 2 {
+		t.Fatalf("前置条件：应有 2 条 -14 增益，实际 %d", before)
+	}
+
+	// 切到 -16 时前端会调它 —— 它必须一条都不删
 	if n := m.InvalidateTarget(-16); n != 0 {
-		t.Errorf("换挡位不应丢弃任何记录，实际丢了 %d 条", n)
+		t.Errorf("换挡位不应丢弃任何增益，实际丢了 %d 条", n)
 	}
 	if m.Count() != 2 {
 		t.Errorf("测量记录应全部保留，实际剩 %d 条", m.Count())
 	}
-	// -14 的增益也还在（用户切回去应当立刻命中）
-	if _, ok := m.GainFor(a, -14); !ok {
-		t.Error("-14 挡位的增益不应被丢弃")
+	if got := m.GainCount(); got != before {
+		t.Errorf("别的挡位的增益行被删了：条数 %d -> %d", before, got)
 	}
+	// 必须真的落在表里，而不是靠 GainFor 现算（现算也会返回 ok=true）
+	m.mu.RLock()
+	_, hitA := m.gains[a.ID][targetKey(-14)]
+	_, hitB := m.gains[b.ID][targetKey(-14)]
+	m.mu.RUnlock()
+	if !hitA || !hitB {
+		t.Errorf("-14 挡位的增益行不应被丢弃（a=%v b=%v）", hitA, hitB)
+	}
+
+	// 切到 -16 应能现算出来（并落表）；落盘重启后每一条都还在
 	if _, ok := m.GainFor(b, -16); !ok {
 		t.Error("-16 挡位应能现算出来")
 	}
+	want := m.GainCount()
+	if err := m.Save(); err != nil {
+		t.Fatalf("落盘失败: %v", err)
+	}
+	m2 := NewManager(dir, 2)
+	m2.ensureLoaded()
+	if got := m2.GainCount(); got != want {
+		t.Errorf("落盘后重启：增益条数 = %d，期望 %d（-14 的行不能丢）", got, want)
+	}
+	m2.mu.RLock()
+	_, hit := m2.gains[a.ID][targetKey(-14)]
+	m2.mu.RUnlock()
+	if !hit {
+		t.Error("重启后 -14 挡位的增益行丢失")
+	}
 }
 
-// TestInvalidateStaleGainsDropsMismatched 自校验：目标值与自述不符的条目会被清掉
+// TestInvalidateStaleGainsDropsMismatched 自校验：槽位与自述目标不符的条目会被清掉
 //
 // 它防的是"坏数据"（手工改缓存、旧格式迁移出岔子），而不是换挡位。
 func TestInvalidateStaleGainsDropsMismatched(t *testing.T) {
@@ -189,7 +223,7 @@ func TestInvalidateStaleGainsDropsMismatched(t *testing.T) {
 	}
 	m.mu.Unlock()
 
-	if n := m.InvalidateStaleGains(-14); n != 1 {
+	if n := m.InvalidateStaleGains(); n != 1 {
 		t.Fatalf("应清掉 1 条目标不符的条目，实际 %d", n)
 	}
 	// 清掉之后重新取，应按真值算。
@@ -200,6 +234,39 @@ func TestInvalidateStaleGainsDropsMismatched(t *testing.T) {
 	}
 	if math.Abs(g-2) > 0.011 {
 		t.Errorf("重算增益 = %.2f，期望 +2.00（被真峰值保护收口）", g)
+	}
+}
+
+// TestInvalidateStaleGainsKeepsOffGridTarget 守「非 0.1 LU 网格上的目标」。
+//
+// targetKey 把目标四舍五入到 0.1（-16.55 → "-166"）。若自校验用浮点差
+// （|g.Target - 槽位反解值| <= 0.001），-16.55 这条记录每次自校验都会被
+// 当成坏数据删掉（GainCount 1→0），取增益时再重写 —— 手改过 config.json
+// 或将来加目标滑杆就会踩。判据改成 targetKey(g.Target) != key 后，非网格
+// 目标只会匹配它自己的槽位。
+func TestInvalidateStaleGainsKeepsOffGridTarget(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir, 2)
+	song := bootstrap.Song{ID: "t_offgrid", Path: "D:/m/off.flac", Size: 1, ModTime: 1}
+	m.Store(song, Measurement{Integrated: -20, TruePeak: -3, Measured: true})
+
+	const target = -16.55
+	if _, ok := m.GainFor(song, target); !ok {
+		t.Fatal("非网格目标的增益算不出来")
+	}
+	if got := m.GainCount(); got != 1 {
+		t.Fatalf("前置条件：应有 1 条增益，实际 %d", got)
+	}
+
+	if n := m.InvalidateStaleGains(); n != 0 {
+		t.Errorf("非网格目标不是坏数据，不该被清掉：dropped=%d", n)
+	}
+	if got := m.GainCount(); got != 1 {
+		t.Errorf("非网格目标的增益行丢失：条数 = %d，期望 1", got)
+	}
+	// 必须仍命中它自己的槽位（而不是靠在写到别处）
+	if _, ok := m.GainFor(song, target); !ok {
+		t.Error("清理后仍应命中该目标的增益")
 	}
 }
 

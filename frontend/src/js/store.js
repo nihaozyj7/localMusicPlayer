@@ -2195,6 +2195,15 @@ export function noteProgress(ms) {
   if (!id || state.config.resumeProgress !== true) return;
   if (!Number.isFinite(ms) || ms < 0) return;
   if (!state.progress || typeof state.progress !== "object") state.progress = {};
+  // ★ 已存在的键要先删再写。
+  //
+  // 对象属性的插入顺序只在**新增**时确定：`progress[id] = ms` 对已有键只是改值，
+  // 键还停在它第一次被听到时那个位置上。而 pruneProgress 是按插入顺序取「最后
+  // PROGRESS_MAX 个」，于是真正被裁掉的是**最早开始听**的那批歌 —— 常听的老歌
+  // （第一次播得很早、之后一直在播）反而先丢续播位置，留下的是最近才第一次听、
+  // 之后再没播过的歌。delete + 赋值把「最近写入」重新排到末尾，裁剪才等于
+  // 「保留最近在听的 N 首」。
+  if (Object.prototype.hasOwnProperty.call(state.progress, id)) delete state.progress[id];
   state.progress[id] = Math.round(ms);
 }
 

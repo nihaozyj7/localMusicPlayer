@@ -434,31 +434,36 @@ func (m *Manager) Missing(songs []bootstrap.Song) []bootstrap.Song {
 	return out
 }
 
-// InvalidateTarget 保留旧签名，但**不再删除任何测量数据**。
-//
-// 历史行为是「把 target 不等于当前值的记录全删掉」，代价是用户每换一次挡位
-// 就丢掉整库已算好的结果（在几个挡位之间来回切 = 反复重算同一批歌）。
-// 现在测量与挡位解耦，换挡位只需要按新目标现算增益，没有任何东西需要失效。
-//
-// 保留这个方法是为了不动前端绑定（见 services.go 的 InvalidateTarget）；
-// 返回 0 表示「本次没有任何缓存被丢弃」。
-func (m *Manager) InvalidateTarget(targetLUFS float64) int {
-	m.InvalidateStaleGains(targetLUFS)
-	return 0
+// InvalidateTarget 兼容旧接口：参数只保留给调用方（services.go），
+// 已不参与判据。返回本次真正丢弃的增益条数。
+func (m *Manager) InvalidateTarget(_ float64) int {
+	return m.InvalidateStaleGains()
 }
 
-// InvalidateStaleGains 丢弃「目标值与记录自述不符」的增益条目，返回丢弃条数。
+// InvalidateStaleGains 丢弃「记录自述的目标与它所在槽位不符」的增益条目，
+// 返回丢弃条数。
 //
-// 它不是给换挡位用的（换挡位不需要任何失效），而是自校验：万一有增益被写到
-// 了错误的挡位下，这里能把坏数据清掉，而不是让它去影响音量补偿。
-func (m *Manager) InvalidateStaleGains(targetLUFS float64) int {
+// ★ 判据必须是**槽位**，而不是「调用方此刻的目标」。
+//
+// 增益表按 targetKey(目标) 分槽，同一首歌在几个挡位各有一条是**正常状态**
+// （这正是「测量与挡位是两件事」的落点）。旧实现拿
+// 「g.Target != 传入的当前目标」当坏数据判据，于是前端每次换挡
+// （audio.js#invalidateLoudnessForTarget）都会把其它挡位的增益行删光 ——
+// 与「换挡位不丢数据、每多用一挡只多一条几个字节的记录」的设计正好相反。
+// ★ 比较用 targetKey(g.Target) != key，而不是浮点差。
+//
+// targetKey 会把目标归一到 0.1 LU 的网格；非网格目标（例如 -16.55 →
+// key "-166"）反解回来是 -16.6，浮点差 0.05 > 0.001，会被误判成坏数据、
+// 反复删掉它自己的行（GainCount 1→0）。两边都过同一套网格归一之后，
+// 非网格目标只会匹配它自己的槽位；槽位确实写错（坏数据）才会被清掉。
+func (m *Manager) InvalidateStaleGains() int {
 	m.ensureLoaded()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	dropped := 0
 	for id, bucket := range m.gains {
 		for key, g := range bucket {
-			if math.Abs(g.Target-targetLUFS) > 0.001 || g.Algo != AlgoVersion {
+			if targetKey(g.Target) != key || g.Algo != AlgoVersion {
 				delete(bucket, key)
 				dropped++
 			}

@@ -34,7 +34,7 @@
    （见下面的 legacy 分支）—— 宁可退化成旧行为，也不能没声音。
    ========================================================================== */
 
-import { backend, isWails, on } from "./bridge.js";
+import { backend, isWails, on, withTimeout } from "./bridge.js";
 import {
   commit,
   currentSong,
@@ -216,6 +216,10 @@ const SWITCH_TIMEOUT_MS = 12_000;
 /**
  * 探测后端音频是否可用。启动时调用一次。
  * 不可用时把 backendReady 置 false，后续所有控制都走 legacy 路径。
+ *
+ * ★ backend.playerAvailable 自带有限等待（见 bridge.js#withTimeout 与
+ *   PLAYER_AVAILABLE_TIMEOUT_MS）：后端不返回时这里会走 catch 降级到 legacy
+ *   <audio>，不会把启动永久卡在 main.js 的 await probeBackend() 上。
  */
 export async function probeBackend() {
   if (probed) return backendReady;
@@ -785,6 +789,69 @@ async function unloadCurrent() {
   }
 }
 
+/**
+ * 装载一首歌的最长等待：超过即判定「后端卡住了」。
+ *
+ * 阈值必须比后端自己的处理时间更长，否则正常慢转码会被误杀：后端 Player.Load
+ * 会等一次 resolve（ctx 上限 6 分钟）与一次 ffmpeg 转码（5 分钟），所以取 7 分钟。
+ * 看门狗挡的不是「慢」，而是「永远不返回」—— 没有它，下面这次 await 永远不落地，
+ * switchPending 就没有任何人解除（成功 / 失败 / 卸载三处都到不了），界面会永久
+ * 停在「切歌中」，失败自动跳转也不会发生。
+ *
+ * ★ 超时**不能**按「文件坏了」处理：看门狗超时说明引擎无响应，走
+ *   handlePlaybackFailure 会把它登记进「放不出来」清单并自动跳下一首 ——
+ *   后端整体挂死时会每首卡满看门狗、把一批本来没问题的歌依次拉黑。
+ *   分流见下面的 isEngineTimeout / handleLoadTimeout。
+ */
+export const LOAD_WATCHDOG_MS = 7 * 60 * 1000;
+
+/**
+ * 这个装载错误是不是「看门狗超时」（播放引擎无响应），而不是文件本身坏了。
+ *
+ * 只认 bridge.js#BridgeTimeoutError 打的可判别标记，不做字符串匹配 ——
+ * 文案以后会改，靠 includes("超过") 的判断会在某次改文案后静默失效。
+ */
+export function isEngineTimeout(err) {
+  return err?.isTimeout === true;
+}
+
+/**
+ * 装载超时（引擎无响应）的收尾：退回停止并明确提示，**不登记坏文件、不自动跳下一首**。
+ *
+ * 与 handlePlaybackFailure 的区别是刻意的：
+ *   · 坏文件（转码 / 解码失败）→ 登记「放不出来」并自动跳下一首，用户不用管；
+ *   · 引擎无响应 → 这是**播放器**的问题，不是用户文件的问题。登记会污染清单
+ *     （后端还会把文件从曲库摘掉），自动跳下一首则会让每首歌都卡满看门狗、
+ *     一路错下去。所以只把界面退回「已停止」并说清楚，重试交给用户
+ *     （用 failedSongId 闸门压住自动重试，见函数体里的说明）。
+ *
+ * 抽成导出函数是为了能单测：真跑一次超时要等 7 分钟（阈值不能改小，否则正常
+ * 慢转码会被误杀），测试传假的 commit / toast 直接驱动这条收尾。
+ *
+ * @param {{id?:string, title?:string}|null} song 超时的那首歌
+ * @param {{commit?:Function, toast?:Function, reason?:string}} [deps] 仅供测试注入
+ */
+export function handleLoadTimeout(song, deps = {}) {
+  const doCommit = typeof deps.commit === "function" ? deps.commit : commit;
+  const doToast = typeof deps.toast === "function" ? deps.toast : toast;
+  const title = song?.title || song?.id || "当前歌曲";
+  loadedFor = null;
+  backendSongId = null;
+  anchor = null;
+  lastPushedPosition = -1;
+  switchPending = false;
+  // ★ 顺带压住「自动重试」：loadedFor 被清空后，下一次 runtime tick 会立刻再进一次
+  //   loadSong（syncAudio 不看 state.playing），引擎还挂着的话界面就重新回到
+  //   「切歌中」再等一遍看门狗 —— 等于把刚退出的冻结状态又演一次。复用现有的
+  //   failedSongId 闸门（syncAudio / syncLegacy 命中它时直接 return），用户主动
+  //   点这首歌时 resetFailureGate 会清掉它，重试就真正交给用户了。
+  if (song?.id) failedSongId = song.id;
+  state.playing = false;
+  console.warn("[audio] 装载超时（播放引擎无响应，未登记为「放不出来」）：", title, deps.reason || "");
+  doCommit();
+  doToast(`播放引擎无响应：${title}（不是文件损坏；可稍后重试）`, { tone: "error", duration: 8000 });
+}
+
 /** 装载一首歌并起播 */
 async function loadSong(song) {
   loadedFor = song.id;
@@ -838,7 +905,7 @@ async function loadSong(song) {
   await pushLoudnessToBackend(null);
 
   try {
-    const res = await backend.playerLoad(song.id);
+    const res = await withTimeout(backend.playerLoad(song.id), LOAD_WATCHDOG_MS, "Player.Load");
     if (seq !== requestSeq) return; // 期间又切歌了
     // 后端的代际校验：这次装载在 resolve（转码）期间被后来的切歌/停止取代了。
     // 后端已经放弃它、也没改任何状态，这里同样静默收工 —— 绝不把它当成功
@@ -916,6 +983,20 @@ async function loadSong(song) {
     if (st) applyAnchor(st);
   } catch (err) {
     if (seq !== requestSeq) return;
+
+    // ★ 先分流「引擎无响应」与「文件坏了」。
+    //
+    // 看门狗超时（isEngineTimeout）说明这次 playerLoad 超过了 LOAD_WATCHDOG_MS，
+    // 是**播放器 / 后端**的问题，不是这个文件解不开。绝不能走下面的
+    // handlePlaybackFailure：它会 reportUnplayable（后端还会把歌从曲库摘掉）
+    // 并 playNext(true) 自动跳下一首 —— 后端整体挂死时就会每首卡满看门狗、
+    // 把一批本来没问题的歌依次拉黑，直到连败 5 次熔断（累计几十分钟）。
+    // 超时只退回停止并提示，重试交给用户。
+    if (isEngineTimeout(err)) {
+      handleLoadTimeout(song, { reason: err?.message });
+      return;
+    }
+
     // 装载失败（转码失败 / 文件损坏 / 取不到地址）走统一处理：
     // 提示一条并自动跳到下一首。这里**不再**自己 toast —— 那条提示由
     // handlePlaybackFailure 统一发，顺便把去重与熔断一起做了。

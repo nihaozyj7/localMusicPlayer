@@ -402,11 +402,11 @@ func TestQueueRespectsConcurrency(t *testing.T) {
 //
 // 调度器的记账是分段的（见 manager.go）：
 //
-//	入队    → q.queued[key]=true，进 q.queue / q.urgent
-//	出队    → dropQueuedLocked 立刻把 key 从 q.queued 删掉，再交给 goroutine
-//	跑完    → q.running--，close(req.Done)
+//	入队    → q.flight[key]=req，进 q.queue / q.urgent
+//	出队    → 正常出队仍留在 flight 里（后来者要共享它的结果）
+//	结束    → finishLocked 摘除 flight 并 close(req.Done)
 //
-// 也就是说「queued + running」**只在任务还没跑完时有意义**。原实现把断言
+// 也就是说「flight + running」**只在任务还没跑完时有意义**。原实现把断言
 // 放在 wg.Wait() 之后，而在 Linux 上这些请求会用不存在的路径（`D:\m\...`）
 // 立刻失败跑完 —— 于是它们既不在 queued 里、也不在 running 里，
 // 总数自然凑不齐 50（实测 30）。那不是并发 bug，是断言用错了量。
@@ -464,16 +464,17 @@ func TestQueueConcurrentSubmitIsSafe(t *testing.T) {
 		}
 	}
 
-	// 去重集合不该超过请求数（重复入队会让它多计）
+	// 「在飞」表在请求结束的那一刻就摘除（先摘除再 close(Done)），
+	// 所以等完所有 Done 之后它必须是空的 —— 这同时证明没有条目泄漏。
 	q := &m.q
 	q.mu.Lock()
-	seen := len(q.queued)
+	inflight := len(q.flight)
 	queued := len(q.urgent) + len(q.queue)
 	running := q.running
 	q.mu.Unlock()
 
-	if seen > n {
-		t.Errorf("去重集合不该超过 %d，实际 %d", n, seen)
+	if inflight != 0 {
+		t.Errorf("全部请求结束后「在飞」表应为空，实际 %d", inflight)
 	}
 	// 全部跑完之后，队列里不该还压着东西
 	if queued != 0 || running != 0 {

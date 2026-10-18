@@ -177,14 +177,24 @@ func (s *WindowService) watchDesktopLyricsMove(w *application.WebviewWindow) {
 }
 
 // scheduleDesktopLyricsPosSave 去抖地把当前位置写进配置。
+//
+// ★ 世代序号的分配与读取都在 desktopMu 里（与 main_window_geometry.go 的
+// 同款去抖一致）。旧实现把 nextPosSaveSeq() 放在锁外、定时器回调又在锁外读
+// s.posSaveSeq —— 一个写一个读，-race 直接报数据竞争；并发下代际判断还可能
+// 误判成「这次作废」，表现为拖完窗口的位置偶尔没落盘（关窗前那次补写能兜住
+// 一部分场景，所以现象是偶发而不是必现）。
 func (s *WindowService) scheduleDesktopLyricsPosSave(w *application.WebviewWindow) {
-	id := s.nextPosSaveSeq()
 	s.desktopMu.Lock()
+	id := s.nextPosSaveSeqLocked()
 	if s.posSaveTimer != nil {
 		s.posSaveTimer.Stop()
 	}
 	s.posSaveTimer = time.AfterFunc(desktopLyricsPosSettle, func() {
-		if id != s.posSaveSeq {
+		// 与 nextPosSaveSeqLocked 同一把锁：序号只在这里读。
+		s.desktopMu.Lock()
+		stale := id != s.posSaveSeq
+		s.desktopMu.Unlock()
+		if stale {
 			// 期间又有新的移动：这一次作废，由最后一次负责写
 			return
 		}
@@ -193,7 +203,11 @@ func (s *WindowService) scheduleDesktopLyricsPosSave(w *application.WebviewWindo
 	s.desktopMu.Unlock()
 }
 
-func (s *WindowService) nextPosSaveSeq() uint64 {
+// nextPosSaveSeqLocked 分配下一个位置保存世代号。调用方必须持有 desktopMu。
+//
+// 名字里的 Locked 是契约的一部分：这个计数器被窗口事件回调写、被去抖定时器
+// 回调读，两边必须用同一把锁，否则就是数据竞争。
+func (s *WindowService) nextPosSaveSeqLocked() uint64 {
 	s.posSaveSeq++
 	return s.posSaveSeq
 }

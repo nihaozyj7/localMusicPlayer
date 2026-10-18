@@ -405,17 +405,41 @@ export function locateCurrentSong({ notify = true } = {}) {
   }
   const body = document.getElementById("content-body");
   const found = body ? currentRowIn(body) : null;
-  if (!found) {
-    if (notify) {
-      toast("当前播放的歌曲不在这个列表里", {
-        tone: "info",
-        duration: 2200,
-      });
-    }
-    return false;
+  if (found) {
+    scrollAndHighlight(found.el);
+    return true;
   }
-  scrollAndHighlight(found.el);
-  return true;
+
+  // 窗口化之后目标行可能不在 DOM 里（长列表只渲染滚动位置附近的行）——
+  // 这时候「查不到行」不等于「这首歌不在列表里」。先让表格把它滚进窗口、
+  // 渲染出来，再定位。见 ui/track-table.js#revealRow。
+  const table = body?.querySelector("mp-track-table");
+  if (table?.revealRow?.(state.currentId)) {
+    // 行是下一次 Lit 更新才出现的：updateComplete 之后重查一次；
+    // 极少数情况下还没到位（同帧又有别的更新排队）就再等一帧。
+    const highlightIfFound = () => {
+      const row = body ? currentRowIn(body) : null;
+      if (row) {
+        scrollAndHighlight(row.el);
+        return;
+      }
+      requestAnimationFrame(() => {
+        const late = body ? currentRowIn(body) : null;
+        if (late) scrollAndHighlight(late.el);
+      });
+    };
+    if (typeof table.updateComplete?.then === "function") table.updateComplete.then(highlightIfFound);
+    else requestAnimationFrame(highlightIfFound);
+    return true;
+  }
+
+  if (notify) {
+    toast("当前播放的歌曲不在这个列表里", {
+      tone: "info",
+      duration: 2200,
+    });
+  }
+  return false;
 }
 
 export function locateCurrentQueueItem({ notify = true } = {}) {

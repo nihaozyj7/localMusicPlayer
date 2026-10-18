@@ -595,6 +595,19 @@ func (c *Client) downloadOnce(ctx context.Context, opts DownloadOptions, url str
 		res.Verified = true
 	}
 
+	// 校验通过后把 <asset>.partN 改成最终文件名。
+	//
+	// 为什么不能把 .partN 当结果返回：这个目录就是「设置 → 关于 → 打开下载目录」
+	// 里的那个，安装失败时界面会让用户去双击安装包手动更新 —— 一个 .part1
+	// 后缀的文件在 Windows 上没有关联程序、双击也不会运行。改名是同目录内的
+	// 原子操作；失败就按下载失败处理（清掉临时文件），不把看不懂的名字交出去。
+	final, err := finalizeDownload(target, opts.AssetName)
+	if err != nil {
+		_ = os.Remove(target)
+		return DownloadResult{}, err
+	}
+	res.Path = final
+
 	if opts.OnProgress != nil {
 		opts.OnProgress(Progress{
 			Done: written, Total: total, Percent: 100,
@@ -603,6 +616,43 @@ func (c *Client) downloadOnce(ctx context.Context, opts DownloadOptions, url str
 		})
 	}
 	return res, nil
+}
+
+// finalizeDownload 把下载完成的临时文件 <asset>.partN 改成最终文件名。
+//
+// 目标已存在时不覆盖：那个文件可能是用户自己放进来准备双击的（目录就在
+// 数据目录下、设置里能打开），也可能是上一次下载留下的 —— 两种情况下
+// 「悄悄删掉再看不懂的东西」都比「多留一个带序号的副本」更糟，所以这里
+// 给同名文件加序号（保留扩展名，仍然可双击）。
+//
+// 失败时由调用方清掉临时文件。
+func finalizeDownload(target, assetName string) (string, error) {
+	dir := filepath.Dir(target)
+	name := safeFileName(assetName)
+
+	final := ""
+	for i := 0; i <= 1000; i++ {
+		candidate := name
+		if i > 0 {
+			ext := filepath.Ext(name)
+			stem := strings.TrimSuffix(name, ext)
+			candidate = fmt.Sprintf("%s-%d%s", stem, i, ext)
+		}
+		p := filepath.Join(dir, candidate)
+		// Stat 报错（不存在、或权限等）都当成「这个候选可用」：真正的失败
+		// 会由下面的 Rename 报出来，不必在这里猜。
+		if _, err := os.Stat(p); err != nil {
+			final = p
+			break
+		}
+	}
+	if final == "" {
+		return "", fmt.Errorf("整理下载文件失败：%s 的同名副本过多", name)
+	}
+	if err := os.Rename(target, final); err != nil {
+		return "", fmt.Errorf("整理下载文件失败：%w", err)
+	}
+	return final, nil
 }
 
 // isTruncation 判断一个传输错误是不是「对端提前断开」这一类。

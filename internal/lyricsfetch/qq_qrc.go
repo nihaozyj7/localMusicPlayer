@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -296,6 +297,26 @@ func qqUnwrapLyric(raw string) string {
  * 失败一律返回 error，绝不「原样返回密文」：密文会被上层当成一行歌词推给界面
  * （一整串 hex），那比没有歌词更糟。
  */
+
+// maxQRCLyricBytes 是解压后歌词文本的字节上限（4MB）。
+//
+// 依据：逐字 QRC 是一串 [起,长] 时间戳加逐字标记，实测一首 5 分钟的歌不足
+// 200KB，4MB 已经留出两个数量级的余量。而**输入端**可以很大：上游响应体的
+// 上限是 12MB（见 http.go），zlib 的压缩比又能到 500x 以上 —— 不设上限时
+// 一次被构造过/被污染的响应就能让 io.ReadAll 分配 GB 级内存（实测 1MB 密文
+// → 256MiB 明文、堆分配约 830MiB），直接把进程 OOM 掉。
+//
+// 歌词是可选增强：宁可把这种响应当成「这首没有可用的逐字歌词」，也不能
+// 为了它把整个程序撑爆。
+const maxQRCLyricBytes = 4 << 20
+
+// errQRCLyricTooLarge 表示解压结果超过 maxQRCLyricBytes。
+//
+// 单独一个可 errors.Is 的错误：它和「密钥/密文不对导致 inflate 失败」是
+// 两类完全不同的故障（前者说明上游在传异常内容，后者说明我们解不开），
+// 排查与上报时不该混在一起。
+var errQRCLyricTooLarge = errors.New("qrc: 解压后的歌词超过上限")
+
 func qrcDecrypt(encrypted string) (string, error) {
 	raw := strings.TrimSpace(encrypted)
 	if raw == "" {
@@ -321,9 +342,14 @@ func qrcDecrypt(encrypted string) (string, error) {
 		return "", fmt.Errorf("qrc: 解密后不是 zlib 流（密钥或密文不对）: %w", err)
 	}
 	defer zr.Close()
-	out, err := io.ReadAll(zr)
+	// 多读 1 字节：只有这样才能区分「正好等于上限」与「确实超限」，
+	// 不会把一个恰好 4MB 的歌词无声截断（与 limitRemoteAudio 同款理由）。
+	out, err := io.ReadAll(io.LimitReader(zr, maxQRCLyricBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("qrc: zlib 解压失败: %w", err)
+	}
+	if len(out) > maxQRCLyricBytes {
+		return "", fmt.Errorf("%w（超过 %d 字节）", errQRCLyricTooLarge, maxQRCLyricBytes)
 	}
 	return string(out), nil
 }

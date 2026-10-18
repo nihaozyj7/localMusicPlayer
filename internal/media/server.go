@@ -186,8 +186,9 @@ func (s *Server) VirtualSong(id string) (bootstrap.Song, bool) {
 //     重启后同一首歌照样重新转码（会覆盖同名文件）。所以删掉它们
 //     不损失任何功能，只是把「看不见的垃圾」清掉。
 //
-// 删除范围与 ClearCache 完全一致：只删 `tc_` 前缀的 .wav。cacheDir 是
-// 用户可配置的（设置界面里会展示它），指到音乐目录时绝不能碰别人的文件。
+// 删除范围与 ClearCache 完全一致：只删本服务生成的转码产物（`tc_` 前缀的
+// .wav，以及转码中途的 .wav.pcm / .wav.part）。cacheDir 是用户可配置的
+// （设置界面里会展示它），指到音乐目录时绝不能碰别人的文件。
 func (s *Server) SetCacheDir(dir string) {
 	s.mu.Lock()
 	s.cacheDir = dir
@@ -210,17 +211,95 @@ func (s *Server) purgeStaleTranscodes() {
 	if !empty {
 		return
 	}
+	// 目录还不存在时没什么可清，removeTranscodeArtifacts 会吞掉这个错误。
+	_ = removeTranscodeArtifacts(dir, nil)
+}
+
+// PurgeLeftovers 清理指定目录里遗留的转码产物（含进程被强杀留下的 .pcm/.part）。
+//
+// 只给装配层在「转码缓存目录换了位置」时清一次**旧目录**用：老版本把落点写死
+// 在 DataDir/cache/transcode，用户改了 config.cacheDir 之后那份旧目录就再没有
+// 人管。与启动清理同一条纪律：只在进程内还没有任何转码时执行 —— 此刻磁盘上
+// 的产物只可能是上一次运行留下的死文件（缓存索引在内存里，重启后本来也不会
+// 被复用，见 SetCacheDir 的说明）。
+func (s *Server) PurgeLeftovers(dir string) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return
+	}
+	s.cacheMu.Lock()
+	empty := len(s.cache) == 0
+	s.cacheMu.Unlock()
+	if !empty {
+		return
+	}
+	_ = removeTranscodeArtifacts(dir, nil)
+}
+
+// 转码产物的文件名前缀与中间文件后缀。
+//
+// 最终产物是 ffmpeg.TranscodeToWAV* 写出的 out（本服务命名为
+// StableID(key,"tc")+".wav"）；中间文件由 internal/ffmpeg 生成：
+//
+//	<out>.pcm   ffmpeg 输出的裸 PCM（整首歌大小，最占地方）
+//	<out>.part  补 WAV 头时的临时文件，写完后原子改名成 out
+//
+// 正常路径两者都会被删/改名，只有进程被强杀才会留下 —— 它们不匹配旧的
+// 「tc_ 前缀 + .wav 结尾」规则，于是成了任何清理路径都看不见的占盘垃圾。
+// 这里按后缀识别；internal/ffmpeg 改中间文件名时要同步。
+const (
+	transcodeFilePrefix = "tc_"
+	transcodePCMSuffix  = ".pcm"
+	transcodePartSuffix = ".part"
+)
+
+// isTranscodeArtifact 判断 name 是不是本服务生成的转码产物（含中间文件）。
+//
+// 范围必须收窄：cacheDir 是用户可配置的，指到音乐目录时绝不能把别人的
+// 文件当垃圾清掉。
+func isTranscodeArtifact(name string) bool {
+	if !strings.HasPrefix(name, transcodeFilePrefix) {
+		return false
+	}
+	base := strings.TrimSuffix(strings.TrimSuffix(name, transcodePCMSuffix), transcodePartSuffix)
+	return strings.HasSuffix(base, ".wav")
+}
+
+// transcodeArtifactOwner 返回一个文件所属的最终产物名（<out>.pcm → <out>）。
+// 用于「正在转码中的条目 → 跳过它的所有文件」。
+func transcodeArtifactOwner(name string) string {
+	if strings.HasSuffix(name, transcodePCMSuffix) {
+		return strings.TrimSuffix(name, transcodePCMSuffix)
+	}
+	if strings.HasSuffix(name, transcodePartSuffix) {
+		return strings.TrimSuffix(name, transcodePartSuffix)
+	}
+	return name
+}
+
+// removeTranscodeArtifacts 删除 dir 下的转码产物（含中间文件）。
+//
+// skip 里的名字（最终产物名，如 "tc_xxx.wav"）会被跳过 —— 那是正在转码中的
+// 条目，清空缓存不该动它们（见 ClearCache）。目录不存在不是错误。
+func removeTranscodeArtifacts(dir string, skip map[string]bool) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return // 目录还不存在：没什么可清的
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".wav") || !strings.HasPrefix(name, "tc_") {
+		if e.IsDir() || !isTranscodeArtifact(name) {
+			continue
+		}
+		if skip != nil && skip[transcodeArtifactOwner(name)] {
 			continue
 		}
 		_ = os.Remove(filepath.Join(dir, name))
 	}
+	return nil
 }
 
 // SetLoudnessSink 注入「转码时顺手扫描」的接收者（main 装配时调用）。
@@ -696,34 +775,35 @@ func (s *Server) evictIfNeeded() {
 // ClearCache 清空转码缓存（设置界面用）
 func (s *Server) ClearCache() error {
 	dir := s.getCacheDir()
+
+	// 正在转码中的条目要留着并跳过它们的文件：<out>.pcm 此刻正被写盘。
+	// 虽然 Windows 上打开中的文件删不掉（os.Remove 会失败并被忽略），但
+	// 「清空」返回后 CacheStats 与实际不符、换到别的文件系统还会直接毁掉
+	// 这次转码，都不该发生。它们完成之后就是普通缓存项，再清一次即可 ——
+	// 而 CacheStats 本来也不统计未完成的条目（size 还是 0）。
+	skip := map[string]bool{}
 	s.cacheMu.Lock()
-	s.cache = map[string]*cacheItem{}
+	for k, it := range s.cache {
+		if it.inflight {
+			skip[filepath.Base(it.path)] = true
+			continue
+		}
+		delete(s.cache, k)
+	}
 	s.cacheMu.Unlock()
+
 	if dir == "" {
 		return nil
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	// 只删**我们自己生成的**转码产物：文件名是 StableID(key,"tc") + ".wav"，
-	// 即 "tc_<base36>.wav"。
+	// 只删**我们自己生成的**转码产物：最终产物是 StableID(key,"tc") + ".wav"
+	// （即 "tc_<base36>.wav"），中间文件是它的 .pcm / .part —— 强杀留下的正是
+	// 后两者，旧实现一条都不匹配，于是磁盘占用永远不会被回收（见 isTranscodeArtifact）。
 	//
 	// 为什么必须收窄：cacheDir 是用户可配置的（见 ToolsInfo 的 cacheDir），
 	// 设置界面里也会展示它。以前这里是「删掉目录下所有 *.wav」——用户一旦把
 	// 缓存目录指到音乐目录，「清空转码缓存」就会删掉无关的 WAV 文件，
 	// 属于不可恢复的数据丢失，而不只是性能问题。
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".wav") || !strings.HasPrefix(name, "tc_") {
-			continue
-		}
-		_ = os.Remove(filepath.Join(dir, name))
-	}
-	return nil
+	return removeTranscodeArtifacts(dir, skip)
 }
 
 // CacheStats 返回缓存占用（供设置界面显示）

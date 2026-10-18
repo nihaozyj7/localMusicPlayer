@@ -653,23 +653,28 @@ func (s *DownloadService) tryCopyFromCache(taskID, bvid, title, dir string) bool
 	// 「预定」这个名字（那是为网络下载准备的：下载过程可能长达几分钟，
 	// 必须防住别人中途抢占同名文件）。
 	//
-	// 但复制是**立刻完成**的，这两个占位反而是障碍：
-	//   · target 已存在会让复制结果落到一个「已被占位」的名字上；
-	//   · target.part 会变成一个**没人清理的垃圾文件**（Windows 上还因为
-	//     句柄没关而删不掉）。
-	// 所以这里把两个占位句柄都关掉、两个占位文件都删掉：名字已经预定过了，
-	// 此刻不会有人插进来。
+	// ★ target 这个占位必须**留到复制改名完成**为止，绝不能提前删：
+	//   它一旦消失，整个复制期间这个名字就重新变回「空闲」，另一个同名任务
+	//   进入 uniquePath 会预订同一个名字，两份内容各自改名到同一路径 ——
+	//   后改名的一方把前一份**静默覆盖**，而两个任务都会报「已完成」
+	//   （同名不同 bvid 的歌、Live 版、搜索结果里的重复项都会命中）。
+	//   CopyPath → copyAndSync 内部是「独占临时文件 + os.Rename 覆盖 dst」，
+	//   Windows 上 os.Rename 允许覆盖已存在的目标，所以这个 0 字节占位
+	//   不影响写入，它只承担「这个名字有人占了」这一个作用。
+	//
+	// target.part 则不该留：复制不经过它（copyAndSync 用的是
+	// <target>.<随机>.moving），留着只会变成没人清理的 0 字节垃圾。
 	if reserved != nil {
 		_ = reserved.Close()
 	}
 	if partReserved != nil {
 		_ = partReserved.Close()
 	}
-	_ = os.Remove(target)
 	_ = os.Remove(target + ".part")
 
 	if err := s.files.CopyPath(src, target); err != nil {
 		log.Printf("[download] 从试听缓存复制失败，回退到网络下载: %v", err)
+		// 失败时连自己建的占位一起清掉，别在用户目录里留一个 0 字节空文件。
 		_ = os.Remove(target)
 		return false
 	}
@@ -677,6 +682,9 @@ func (s *DownloadService) tryCopyFromCache(taskID, bvid, title, dir string) bool
 	st, err := os.Stat(target)
 	if err != nil {
 		log.Printf("[download] 复制后的文件不可用，回退到网络下载: %v", err)
+		// 复制已经改名成功过，这个文件是我们建的（占位被覆盖了）：
+		// 留着会变成一份谁也认不出来的孤儿，清掉再回退网络下载。
+		_ = os.Remove(target)
 		return false
 	}
 	size := st.Size()
@@ -702,7 +710,7 @@ func (s *DownloadService) tryCopyFromCache(taskID, bvid, title, dir string) bool
 		"fromCache": true,
 	})
 	s.recordDownload(bvid, title, target, dir, onlinesource.FromCache)
-	log.Printf("[download] %s 命中试听缓存，已直接移动到 %s", bvid, target)
+	log.Printf("[download] %s 命中试听缓存，已复制到 %s", bvid, target)
 
 	// 与网络下载一致：让新文件立刻进曲库
 	if s.onFileAdded != nil {

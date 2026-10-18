@@ -398,18 +398,30 @@ const likedPlaylistID = "liked"
 func (s *PlaylistService) List() []bootstrap.Playlist {
 	cfg := s.store.Get()
 
+	// 绑定返回的列表字段永远不能是 nil（第 19 条约定）：没有一首「我喜欢」时
+	// append([]string(nil), ...) 会得到 nil，序列化出来是 "songIds":null，
+	// 而前端对这类列表是「Array.isArray 才更新状态」—— null 会被当成
+	// 「这次没拿到数据」，于是取消收藏最后一首后界面上那首歌还在。
+	likedIDs := make([]string, 0, len(cfg.LikedIDs))
+	likedIDs = append(likedIDs, cfg.LikedIDs...)
 	liked := bootstrap.Playlist{
 		ID:        likedPlaylistID,
 		Name:      "我喜欢",
 		Locked:    true,
 		Builtin:   true,
-		SongIDs:   append([]string(nil), cfg.LikedIDs...),
+		SongIDs:   likedIDs,
 		CreatedAt: 0,
 	}
-	out := []bootstrap.Playlist{liked}
+	out := make([]bootstrap.Playlist, 0, len(cfg.Playlists)+1)
+	out = append(out, liked)
 	for _, p := range cfg.Playlists {
 		if p.ID == likedPlaylistID {
 			continue
+		}
+		// 同上：老配置或手工编辑过的 config.json 里可能存着 null，
+		// 直接透传会让自定义歌单也返回 songIds:null。
+		if p.SongIDs == nil {
+			p.SongIDs = []string{}
 		}
 		out = append(out, p)
 	}
@@ -1467,7 +1479,8 @@ func measureResult(item loudness.Measurement, gain, target float64) map[string]a
 
 // InvalidateTarget 兼容旧接口。
 //
-// ★ 它现在**什么都不删**（返回 dropped=0）。
+// ★ 正常换挡**一行都不删**（返回 dropped=0 且不落盘）；只有「增益自述的
+// 目标与它所在槽位不符」的坏数据才会被清掉，那时返回 >0 并落盘。
 //
 // 历史上这个方法是「把 target 不等于当前值的记录全删掉」，代价是用户每换
 // 一次挡位就丢掉整库已算好的结果 —— 四个挡位来回切就是反复重算同一批歌，

@@ -370,8 +370,16 @@ type Engine struct {
 	monoScratch []float64
 
 	// file 是当前喂给声卡的 PCM 文件（WAV，44 字节头已跳过）
-	file    *os.File
-	pcmSize int64 // 去掉头之后的 PCM 字节数
+	file *os.File
+
+	// pcmSize 是去掉 WAV 头之后的 PCM 字节数（进度条时长的分母）。
+	//
+	// ★ 它由 posMu 保护，不能只靠 e.mu：Position / TrimRange 会在**不持
+	// e.mu** 的情况下读它，而 Load 换歌时会改写它 —— 只用 e.mu 保护就是
+	// 数据竞争（-race 实测：Load 写 vs Position 读）。锁序固定为
+	// e.mu → posMu（Load / SeekToFrame 持 e.mu 再取 posMu），音频回调只碰
+	// posMu、从不取 e.mu，所以不会成环。
+	pcmSize int64
 
 	// endFrame 是「播到这里就算结束」的帧下标（不含）。
 	//
@@ -957,7 +965,6 @@ func (e *Engine) Load(path string, startFrame, endFrame int64, gain float64) err
 		_ = e.file.Close()
 	}
 	e.file = f
-	e.pcmSize = pcmSize
 	e.ring.reset()
 	e.ring.setClosed(false)
 	e.analyzer.Reset()
@@ -1004,7 +1011,12 @@ func (e *Engine) Load(path string, startFrame, endFrame int64, gain float64) err
 		end = start
 	}
 
+	// pcmSize 与 positionFrame / endFrame / trimStart 在**同一个临界区**里
+	// 一起发布：分开写的话，切歌瞬间 Position 可能读到「新 pcmSize + 旧 frame」
+	// 的混合快照，进度条会瞬跳（与锁无关，是快照不一致）。
+	// 临界区里只有整数赋值，没有阻塞调用。
 	e.posMu.Lock()
+	e.pcmSize = pcmSize
 	e.positionFrame = start
 	e.endFrame = end
 	e.trimStart = start
@@ -1200,8 +1212,9 @@ func (e *Engine) SeekToFrame(frame int64) error {
 	// 而不是停在文件末尾那段用户根本听不到的静音里。
 	e.posMu.Lock()
 	end := e.endFrame
+	total := e.pcmSize
 	e.posMu.Unlock()
-	maxFrames := e.pcmSize / FrameSize
+	maxFrames := total / FrameSize
 	if end > 0 && end < maxFrames {
 		maxFrames = end
 	}
@@ -1270,9 +1283,12 @@ func (e *Engine) GainTarget() float64 {
 func (e *Engine) Position() (posMs, durMs int64) {
 	e.posMu.Lock()
 	frame := e.positionFrame
-	e.posMu.Unlock()
 	// 分母恒为文件总长：进度条要覆盖整首歌，包括被跳过的首尾。
-	return frameToMs(frame), frameToMs(e.pcmSize / FrameSize)
+	// 在同一把锁里取 pcmSize：Load 换歌会改写它，分开取就是数据竞争
+	//（见 pcmSize 字段的说明）。
+	durMs = frameToMs(e.pcmSize / FrameSize)
+	e.posMu.Unlock()
+	return frameToMs(frame), durMs
 }
 
 // TrimStart 返回本次装载「实际起播」的位置（毫秒，原曲时间轴）。
@@ -1330,8 +1346,8 @@ func (e *Engine) TrimRange() (start, end, total int64) {
 	e.posMu.Lock()
 	start = e.trimStart
 	end = e.endFrame
-	e.posMu.Unlock()
 	total = e.pcmSize / FrameSize
+	e.posMu.Unlock()
 	if end <= 0 {
 		end = total
 	}
