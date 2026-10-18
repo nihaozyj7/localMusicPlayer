@@ -516,8 +516,8 @@ func DefaultConfig() *Config {
 		OnlineWordLyrics: true,
 		EmbedMeta:        false,
 
-		// 默认「单击 = 播放」：单击一首歌就播它是绝大多数播放器的心智模型
-		//（见 docs/archive/28 审查 P2）；双击仍固定为「立即播放这一首」，
+		// 默认「单击 = 播放」：单击一首歌就播它是绝大多数播放器的心智模型，
+		// 双击仍固定为「立即播放这一首」，
 		// 想排队的人可以在设置里改回「下一首播放」。
 		RowClickAction: "play",
 		// 默认开启：与加入这个开关之前「回到上次那首歌」的体验一致，

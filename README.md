@@ -80,17 +80,7 @@ Go · Wails v3 · Lit 3 · Vite · FFmpeg
   播放界面背景动效另有**帧率档位**：流畅（跟随刷新率）/ 性能优先（限帧、暂停即定格，更省电）。
 
 
-| 主界面 · 深色 | 主界面 · 浅色 | 播放队列 |
-| --- | --- | --- |
-| ![主界面 · 深色](docs/screenshots/01-main-dark.png) | ![主界面 · 浅色](docs/screenshots/02-main-light.png) | ![播放队列](docs/screenshots/03-queue.png) |
-
-| 播放界面 · 经典 | 播放界面 · 沉浸 | 播放界面 · 浅色 |
-| --- | --- | --- |
-| ![播放界面 · 经典](docs/screenshots/06-player-classic.png) | ![播放界面 · 沉浸](docs/screenshots/07-player-immersive.png) | ![播放界面 · 浅色](docs/screenshots/08-player-light.png) |
-
-| 歌单 | 封面取色主题 | 设置 · 曲库 | 窄窗口 |
-| --- | --- | --- | --- |
-| ![歌单](docs/screenshots/04-playlist.png) | ![封面取色主题](docs/screenshots/09-cover-dark.png) | ![设置 · 曲库](docs/screenshots/05-settings-folders.png) | ![窄窗口](docs/screenshots/10-min-window.png) |
+界面截图不再入库（会随每次 UI 改动反复改写二进制）；需要时用 `node tools/shots.mjs` 对真实应用重新生成到 `docs/screenshots/`。
 
 ---
 

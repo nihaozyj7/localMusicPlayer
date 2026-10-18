@@ -16,7 +16,6 @@ plugins/
 │   └── vibrant-light.css      活力满满 · 浅色
 └── style/                     播放界面样式包（皮肤，契约 v3）
     ├── README.md              样式包开发说明
-    ├── pending-designs.md     待设计清单 + 签收台账（六款第三方样式）
     ├── index.json             生成物：客户端「从仓库获取」读它
     └── magic-circle/          魔法阵歌词舞台
         ├── skin.json          清单（id / 版本 / 能力 / 配色声明）

@@ -453,8 +453,8 @@ func findDescendant(root uintptr, class string, depth int) (uintptr, bool) {
 // 包级缓存：调用方只有 findWallpaperLayer 一条（打开桌面背景窗口时跑一次，
 // 一次会话个位数次），而 Go 1.11 之后回调是从按需分配的跳板页里取的 ——
 // 不存在「2000 个回调就 panic」那种上限，代价只是几百字节、进程结束才回收。
-// 为这点收益去动一段已经在真机上验过（`tools/verify-wallpaper-first-frame.mjs`）
-// 的 Win32 枚举代码不划算。第六轮审查 §4.3 把这条列在 `WindowService` 名下，
+// 为这点收益去动一段已经在真机上验过的
+// Win32 枚举代码不划算。第六轮审查 §4.3 把这条列在 `WindowService` 名下，
 // 名字对不上（它不在 WindowService 里），按上述理由保留原样并在此说明。
 func lastTopLevelWindow(class string) uintptr {
 	var last uintptr

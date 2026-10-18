@@ -6,9 +6,8 @@
    预览、工具自带的静态服务器）都会"一个样式都看不到"。
 
    这个模块把 `internal/skins` 的扫描与清单归一化**镜像**成一份 Node 实现，
-   供两个没有 Go 的宿主共用：
+   供没有 Go 后端的宿主共用：
      · frontend/vite.config.js      浏览器预览（npm run dev / preview）
-     · tools/verify-wallpaper-first-frame.mjs  验收用的假后端
 
    ⚠ 与 internal/skins/skins.go 的 Reload / normalizeManifest 字段形状必须
    同形（改一边要改另一边）—— 真机永远走 Go，这份只是影子。
