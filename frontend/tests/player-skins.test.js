@@ -567,12 +567,12 @@ test("deriveChrome：强调色家族跟着插件走（主题那套是按主题�
   assert.ok(lp.vars["--chrome-accent-weak"].includes("color-mix"), "淡底也要跟着强调色");
 
   // 没声明 accent：用插件自己的前景色 —— 壳是一套单色画面，不混进主题的色相
-  // （实测：主题蓝灰 #8b9bb4 落在纸白上只有 2.5:1，看起来就是"另一个颜色"）
+  // （实测：主题强调色落在纸白上只有约 2.6:1，看起来就是"另一个颜色"）
   const mono = deriveChrome({ bg: "#f2efe7", fg: "#171610" });
   assert.equal(mono.vars["--chrome-accent"], "rgb(23 22 16)", "缺 accent 时用插件的前景色");
   assert.equal(mono.vars["--chrome-accent-text"], "rgb(242 239 231)");
 
-  // 强调色与底色撞在一起（对比度 < 2）：推到黑/白，保证进度条填充看得见
+  // 强调色与底色撞在一起（对比度 < 2）：推到黑/白，保证选中块 / 选中行看得见
   const flat = deriveChrome({ bg: "#f2efe7", fg: "#171610", accent: "#f6f2e9" });
   assert.equal(flat.vars["--chrome-accent"], "rgb(0 0 0)");
 

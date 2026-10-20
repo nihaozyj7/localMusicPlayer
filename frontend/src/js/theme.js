@@ -21,7 +21,7 @@ const BUILTIN_THEMES = [
     name: "简约深色",
     mode: "dark",
     builtin: true,
-    swatch: ["#101113", "#1b1d21", "#3b4048", "#e6e8eb", "#8b9bb4"],
+    swatch: ["#101113", "#1b1d21", "#3b4048", "#e6e8eb", "#4d95ff"],
   },
   {
     id: "flat-light",

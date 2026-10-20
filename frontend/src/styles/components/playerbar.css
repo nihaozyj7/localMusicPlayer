@@ -250,28 +250,25 @@
   transform: scale(0.94);
 }
 
+/* 按下态同样只用字色：底栏传输控件一律不使用强调色（需求：与其余控件保持
+   一致，强调色留给歌词与选中态）。 */
 .transport__btn[aria-pressed="true"] {
-  color: var(--accent);
+  color: var(--text-1);
 }
 
-/* 播放/暂停主按钮：不要实心底色（需求：移除背景色、保留 padding/尺寸）。
-   它靠「更大的点击区 + accent 图标色」表达主操作，悬停时才浮出一层浅底，
-   这样底栏整体更安静、更沉浸。
-   同样不带常态阴影：理由见上面的 .transport__btn。 */
+/* 播放/暂停主按钮：不要实心底色（需求：移除背景色、保留 padding/尺寸），
+   图标色也**与上一首/下一首完全一致**（需求：不使用强调色，和其他控件保持
+   一致即可 —— 强调色留给歌词），只靠「更大的点击区」表达主操作，
+   悬停底色同样由上面的 .transport__btn 给出。
+   这里只保留尺寸；常态阴影的取舍理由见上面的 .transport__btn。 */
 .transport__btn--main {
   width: var(--btn-lg);
   height: var(--btn-lg);
-  color: var(--accent);
 }
 
 .transport__btn--main svg {
   width: 19px;
   height: 19px;
-}
-
-.transport__btn--main:hover {
-  color: var(--accent);
-  background: var(--surface-hover);
 }
 
 .transport__btn--main:active {
@@ -353,6 +350,15 @@
   box-shadow: var(--thumb-shadow);
   transform: translateY(-50%) scale(0);
   transition: transform var(--dur-fast) var(--ease);
+}
+
+/* —— 底栏的进度条 / 音量条不使用强调色（需求：与底栏其余控件保持一致）——
+   填充与手柄改用中性字色 --text-2，与相邻图标的颜色完全相同。
+   作用域必须点名 .playerbar：上面 .slider__fill / .slider__thumb 的强调色
+   继续服务浮层里的滑条（歌词字号 / 透明度 / 定时停止），那里不受这条约束。 */
+.playerbar .slider__fill,
+.playerbar .slider__thumb {
+  background: var(--text-2);
 }
 
 .slider:hover {
