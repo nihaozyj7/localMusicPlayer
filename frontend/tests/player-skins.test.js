@@ -285,6 +285,48 @@ test("splitGraphemes：与 words 下标共用同一套切法（emoji 不被劈�
   assert.ok(line.words.slice(1).every((w) => w === 12300));
 });
 
+test("parseLrc：词级（word-level）来源的词内字母均摊成连续点亮", () => {
+  // QRC/YRC 对英文是**按词**打轴的：一个词一个时间戳，词内字母共享起点。
+  // 修复前这些共享起点直接进 wordEndsOf：词内字母跨度为 0 被 60ms 下限兜住，
+  // 整个词一闪全亮、字母成了各自为政的独立计时单元（「每个字母分别逐字」）。
+  const lines = parseLrc("[00:50.00]<00:50.000>It's <00:50.218>funny\n[00:52.00]next");
+  const words = lines[0].words;
+  assert.equal(lines[0].text, "It's funny");
+  // "It's "（5 字素）：218ms 的词窗口均摊 → 相邻步长 43~44ms
+  assert.deepEqual(words.slice(0, 5), [50000, 50044, 50087, 50131, 50174]);
+  // "funny"（行尾最后一个词）：用下一行起点封顶，并按典型时值给上限
+  assert.deepEqual(words.slice(5), [50218, 50305, 50392, 50480, 50567]);
+  for (let k = 1; k < words.length; k += 1) {
+    assert.ok(words[k] >= words[k - 1], "均摊后的起点必须单调不减（否则填充边界会回退）");
+  }
+  // wordEndsOf 接力：每个字母拿到自己的一段窗口，边界从词首连续扫到词尾
+  // （快速字母仍受 60ms 最短填充下限约束 —— end = max(下一个字母起点, start+60)）
+  const ends = wordEndsOf(words, lines[1].time);
+  for (let k = 0; k < 4; k += 1) {
+    assert.ok(ends[k] >= words[k + 1], `第 ${k} 个字母的窗口没追到下一个字母的起点`);
+    assert.ok(ends[k] - words[k] >= 60, "保持 wordEndsOf 的 60ms 最短填充下限");
+  }
+});
+
+test("parseLrc：QRC 的 (起始毫秒,时长) 是绝对毫秒（与 Go 侧 wordlevel.go 一致）", () => {
+  // 实测晴天 QRC：行标签 [2250,2250] 的首段是 (2250,450)。按相对偏移解析
+  // 会把整行逐字时间推后一个行首时长（歌词工作台粘贴 QRC 原文时会看到）。
+  const line = parseLrc("[2250,2250]Tell(2250,450) me(2700,300)")[0];
+  assert.equal(line.time, 2250);
+  assert.equal(line.text, "Tell me");
+  assert.deepEqual(line.words.slice(0, 4), [2250, 2363, 2475, 2588], "Tell 均摊在 [2250,2700) 内");
+  assert.deepEqual(line.words.slice(4), [2700, 3000, 3300], " me 从 2700 开始，行尾按典型时值展开");
+});
+
+test("parseLrc：词窗口极窄时不产生回退，也不产生 NaN", () => {
+  const words = parseLrc("[00:12.00]<00:12.000>abc<00:12.001>d")[0].words;
+  assert.equal(words.length, 4);
+  for (let k = 1; k < words.length; k += 1) {
+    assert.ok(words[k] >= words[k - 1], `第 ${k} 个字素的起点回退了：${JSON.stringify(words)}`);
+  }
+  assert.ok(words.every((w) => Number.isFinite(w)));
+});
+
 test("lyricDisplayText：单语言原样返回，多语言用分隔符拼成一行", () => {
   assert.equal(lyricDisplayText({ time: 0, text: "Hello" }), "Hello");
   assert.equal(lyricDisplayText({ time: 0, text: "Hello", trans: ["你好"] }), "Hello · 你好");

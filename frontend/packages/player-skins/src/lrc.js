@@ -216,12 +216,17 @@ function tokenizeWords(s, lineStart, qrcForm) {
     const content = s.slice(i + 1, j);
     const next = j + 1;
 
-    // (偏移,时长) —— QRC 的词级后缀标记
+    // (起始毫秒,时长) —— QRC 的词级后缀标记
+    //
+    // 与 Go 侧 internal/lyrics/wordlevel.go 一致：括号里是**绝对**毫秒
+    // （实测晴天 QRC：行标签 [2250,2250] 的首段是 (2250,450)，不是 (0,450)）。
+    // 少数来源写成相对偏移（首段为 0）时，由 parseLyricLine 里「逐字时间早于
+    // 行标签就整体平移」的兜底接住 —— 两种写法的最终结果与 Go 侧完全一致。
     if (c === "(") {
       const pair = pairTag(content);
       if (pair && qrcForm) {
-        flush(lineStart + pair[0]);
-        cur = lineStart + pair[0] + pair[1];
+        flush(pair[0]);
+        cur = pair[0] + pair[1];
         wordy = true;
         i = next;
         continue;
@@ -268,7 +273,8 @@ function tokenizeWords(s, lineStart, qrcForm) {
  * 的行结构与以前完全一样。
  *
  * `words` 只有字级（逐字）歌词才有：每个字素一个起始毫秒，与
- * `splitGraphemes(text)` 一一对应。
+ * `splitGraphemes(text)` 一一对应。词级（word-level）来源里同一个词的
+ * 字素共享起点时，会先按 spreadWordRuns 均摊成连续点亮（见那里）。
  *
  * @param {string} text
  * @returns {Array<{time:number,text:string,trans?:string[],words?:number[]}>}
@@ -307,7 +313,84 @@ export function parseLrc(text) {
       grouped.push(line);
     }
   }
-  return grouped;
+  return spreadWordRuns(grouped);
+}
+
+/**
+ * 词级（word-level）时间轴 → 「每个字素一个起点」的连续点亮。
+ *
+ * ★ 为什么要有这一步（真实报障：英文歌词的逐字是「每个字母分别逐字」）
+ *
+ * QRC / YRC 这类来源对英文是**按词**打轴的：一个词一个时间戳，词内的
+ * 字母共享同一起点（实测缓存：`"It's so funny"` → segLens [5,3,6,…]）。
+ * 之前把共享起点直接交给 wordEndsOf：词内字母的「结束 = 下一个字母的起点
+ * = 自己的起点」，跨度为 0 被 60ms 下限兜住 —— 整个词在起点后 60ms 内
+ * 一闪全亮，词与词之间只剩空格在慢慢扫，既没有连续的扫光，字母还成了
+ * 各自为政的独立计时单元。
+ *
+ * 这里把「一个词的窗口」均匀摊给词内的每个字素：词内第 t 个字母的起点是
+ * `S + round(t × 词窗口 / 字母数)`。摊完之后起点互不相同，wordEndsOf
+ * 自然给出每字母一段连续的窗口 —— 边界从词首平滑扫到词尾，观感与逐字
+ * 来源一致；字级（逐字）来源的起点本来就各不相同（run 长度为 1），不受
+ * 影响。
+ *
+ * 词窗口的取法：
+ *   · 词内（后面还有别的词）：到**下一个不同起点**为止，就是这个词的真实
+ *     演唱窗口；
+ *   · 行尾最后一个词：没有下一个词可参照，用「下一行的起点」封顶，且与
+ *     wordEndsOf 的尾巴规则一致 —— 按行内典型时值给上限，避免最后一个词
+ *     在长间奏里慢慢吞掉整个间奏。
+ *
+ * @param {Array<{time:number,text:string,words?:number[]}>} lines 已按时间升序
+ * @returns 同一批对象（原地修改 words）
+ */
+function spreadWordRuns(lines) {
+  for (let i = 0; i < lines.length; i += 1) {
+    const words = lines[i].words;
+    if (!Array.isArray(words) || words.length < 2) continue;
+    // 没有共享起点（纯逐字来源）就不用动
+    let hasRun = false;
+    for (let k = 1; k < words.length; k += 1) {
+      if (words[k] === words[k - 1]) {
+        hasRun = true;
+        break;
+      }
+    }
+    if (!hasRun) continue;
+
+    // 典型字时值 = 相邻**不同**起点间隔的中位数（与 wordEndsOf 同一套兜底）
+    const gaps = [];
+    for (let k = 1; k < words.length; k += 1) {
+      const g = words[k] - words[k - 1];
+      if (g > 0) gaps.push(g);
+    }
+    gaps.sort((a, b) => a - b);
+    const typical = gaps.length ? gaps[gaps.length >> 1] : 320;
+    const tailMax = Math.max(400, Math.min(typical * 2, 1400));
+    const nextLineTime = lines[i + 1]?.time;
+
+    let s = 0;
+    while (s < words.length) {
+      let e = s;
+      while (e + 1 < words.length && words[e + 1] === words[s]) e += 1;
+      const m = e - s + 1;
+      if (m > 1) {
+        const start = words[s];
+        let total;
+        if (e + 1 < words.length) {
+          total = words[e + 1] - start;
+        } else {
+          const lineEnd = Number.isFinite(nextLineTime) && nextLineTime > start ? nextLineTime - start : 0;
+          total = Math.min(lineEnd || tailMax, tailMax);
+        }
+        if (total > 0) {
+          for (let t = 1; t < m; t += 1) words[s + t] = start + Math.round((t * total) / m);
+        }
+      }
+      s = e + 1;
+    }
+  }
+  return lines;
 }
 
 /**

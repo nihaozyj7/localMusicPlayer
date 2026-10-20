@@ -372,6 +372,31 @@ function extrapolate() {
   // 切歌途中不推进：此刻 anchor 还是上一首的，推进它就是在给进度条喂旧位置
   if (switchPending) return;
 
+  pushPosition(livePosition(), false);
+}
+
+/**
+ * 当前**应该显示**的播放位置（毫秒）：把锚点外推到「调用这一刻」。
+ *
+ * ★ 为什么消费方要位置就得调它，而不是读 state.position（真实报障：
+ *   逐字歌词的填充边界会周期性地往回跳一小段）
+ *
+ * state.position 是 250ms 一档的量化值，而且是在 tick 里算好之后，
+ * 经过 notify → 订阅 → 渲染 → 宿主推送给皮肤 / 桌面歌词窗口才被消费的 ——
+ * 消费方拿到的永远是「几十毫秒前算出来的」位置；而渲染侧（逐字填充）又在
+ * 拿墙钟向前外推。两边一合成就变成「每 250ms 推送一次、每次回退一小段
+ * （回退量 ≈ 推送链路延迟）」，正是「逐字突然回退」的来源。
+ *
+ * 这个方法按锚点现算，与调用时刻对齐，没有运输延迟。进度条 / 记忆进度
+ * 这类要「状态」的地方仍然读 state.position —— 它们要的是可持久化的量化值。
+ *
+ * 没有可用锚点（后端不可用 / legacy <audio> 路径 / 切歌途中）时退回
+ * state.position，行为与迁移前完全一致。
+ *
+ * @returns {number} 毫秒
+ */
+export function livePosition() {
+  if (!anchor || !backendReady || switchPending) return state.position;
   let pos = anchor.positionMs;
   if (anchor.playing) {
     pos = anchor.positionMs + (performance.now() - anchor.at);
@@ -380,7 +405,7 @@ function extrapolate() {
   if (anchor.durationMs > 0) {
     pos = Math.min(pos, anchor.durationMs);
   }
-  pushPosition(pos, false);
+  return Math.round(pos);
 }
 
 /**

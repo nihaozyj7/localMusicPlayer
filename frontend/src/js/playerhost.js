@@ -24,7 +24,7 @@ import { $ } from "./dom.js";
 import { requestAppUpdate } from "./ui/base.js";
 import { MOCK_LYRICS, MOCK_LYRICS_ALT } from "./mock.js";
 import { backend, isWails } from "./bridge.js";
-import { seekTo, spectrumSnapshot } from "./audio.js";
+import { livePosition, seekTo, spectrumSnapshot } from "./audio.js";
 import { commit, isLiked, playNext, playPrev, songById, state, toggleLike, togglePlay } from "./store.js";
 import { DEFAULT_COVER, clamp, coverOf } from "./utils.js";
 import { animationMs } from "./runtime-tokens.js";
@@ -791,7 +791,10 @@ const lastPushed = {
 
 function playbackSnapshot() {
   return {
-    position: state.position,
+    // 用 livePosition（锚点现算）而不是 state.position（250ms 量化 + 推送
+    // 链路延迟）：皮肤的逐字填充与桌面背景歌词都拿这个位置再自己按墙钟
+    // 外推，喂旧值会让填充边界每次推送都回退一小段（见 audio.js#livePosition）。
+    position: livePosition(),
     duration: state.duration,
     playing: state.playing,
     volume: state.volume,

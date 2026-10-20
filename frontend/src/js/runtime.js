@@ -16,7 +16,7 @@
    ========================================================================== */
 
 import { subscribe, songById, state } from "./store.js";
-import { applyGainForSong, syncAudio } from "./audio.js";
+import { applyGainForSong, livePosition, syncAudio } from "./audio.js";
 import { desktopLyricsEnabled, pushDesktopLyrics } from "./desktop-lyrics.js";
 import { desktopWallpaperEnabled, pushDesktopWallpaper } from "./desktop-wallpaper.js";
 import { currentLyricFrame, ensureLyricsLoaded } from "./playerhost.js";
@@ -72,7 +72,10 @@ function run() {
       chars: frame ? frame.chars : [],
       words: frame ? frame.words : [],
       wordEnds: frame ? frame.wordEnds : [],
-      posMs: Math.round(state.position || 0),
+      // posMs 必须与 atMs 同一时刻对齐（livePosition 锚点现算）：窗口那边
+      // 拿 (posMs, atMs) 按墙钟外推，喂「250ms 前算好的」位置会让逐字填充
+      // 每次推送都回退一小段 —— 真实报障的「逐字突然回退」就有一半在这。
+      posMs: livePosition(),
       atMs: Date.now(),
       playing: Boolean(state.playing),
       // 桌面歌词是「隔着整个桌面看」的，比详情页里的歌词字号放大一点才看得清
