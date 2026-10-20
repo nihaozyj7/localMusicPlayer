@@ -73,6 +73,8 @@ export const PATCH_TYPES = [
   "media", // 封面变化 / 轮播切图：{ song, cover, covers, coverIndex, lyrics }
   "lyrics", // 歌词装载完成或更新：{ lyrics }
   "progress", // 播放进度（宿主约 4Hz 推送；位置按 250ms 一档量化，插件需自行插值）：{ position, duration, playing, lyricIndex }
+  //           ★ position 已按锚点外推到推送时刻且单调不减（小幅回退被吸附）；
+  //             插件自己外推时仍要过 ctx.sdk.steadyPosition（见 sdk.js 的说明）。
   "state", // 播放状态变化（播放/暂停/音量/静音）：{ playing, volume, muted }
   // ★「spectrum」补丁已移除：契约 v3 的频谱是**拉取式** —— 插件调
   //   ctx.spectrum() 主动取全谱，读到才采样（30Hz 节流，固定 128 段）。
@@ -239,6 +241,12 @@ export const PATCH_TYPES = [
  * @property {(el: HTMLElement, text: string) => void} marqueeText 标题单行显示，
  *   放不下时横向来回滚动（元素上会被加上宿主零件类 `.mp-marquee`，
  *   布局在骨架样式表 marquee.css 里；幂等，可在每次 update 里直接调）
+ * @property {(prev:number, next:number) => number} steadyPosition
+ *   播放位置防回退：小幅回退（引擎位置按音频缓冲块推进造成的对齐抖动，≤300ms）
+ *   吸附到 prev，大幅回退（seek / 换歌）照单全收。**自己按墙钟外推逐字进度**
+ *   的样式（canvas 类）必须过它，否则已点亮的字会周期性被取消再重亮。
+ *   createLyricsView / createFxLyrics 内部已经用了它。
+ * @property {number} POSITION_HOLD_MS 上面那个「小幅回退」的阈值（毫秒）
  * @property {Function} applyFit 把「舞台短边 / 基准短边」写进自定义属性
  * @property {Function} fitScale
  * @property {Function} fitScaleOf

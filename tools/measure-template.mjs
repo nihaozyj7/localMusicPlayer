@@ -95,6 +95,7 @@ export const MEASURE_CODE = `
 /** 裸包名 → 量测页里可直接解析的同源路径（没有打包器，也没有 import map 可用） */
 const BARE_SPECIFIERS = [
   ["@localmusicplayer/player-skins/contract", "/packages/player-skins/src/contract.js"],
+  ["@localmusicplayer/player-skins/position", "/packages/player-skins/src/position.js"],
   ["@localmusicplayer/player-skins", "/packages/player-skins/src/index.js"],
 ];
 

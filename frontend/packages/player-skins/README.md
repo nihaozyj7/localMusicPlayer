@@ -26,6 +26,7 @@
 <样式id>/
   skin.json     清单（元数据 + 能力 + 配色，必需）
   skin.js       入口（清单 entry，默认 skin.js），export default 插件对象
+  types.js      （模板自带）契约的 JSDoc 类型清单：只给编辑器补全，运行期不加载
   skin.css      外观（清单 styles；不写就取目录顶层全部 *.css）
   assets/       自带图标与贴图（清单 icon.file 引用）
   lib/          自带私有模块（只允许包内相对 import）
@@ -83,7 +84,7 @@ ctx.options()    { showLyrics, lyricsFontSize, animations, coverCarousel, …, i
 ctx.env()        { themeId, mode, width, height, dpr, reducedMotion, foreground }
 ctx.spectrum()   { bands: Float32Array(128 段对数全谱, 0..1), at } | null
                  ← 拉取式：调用才采样（30Hz 节流）；不调不采、没声明不给
-ctx.sdk          复用零件（见 sdk.js）
+ctx.sdk          复用零件（见 sdk.js）；含 steadyPosition —— 自己外推逐字进度时必须过它
 ctx.actions      seek / seekBy / seekRatio / togglePlay / next / prev /
                  toggleLike / like / unlike / openFolder / openCoverPanel /
                  openLyricsPanel / reportBackdrop({bg, fg})
@@ -97,10 +98,13 @@ ctx.defaultCover / ctx.themeId / ctx.mode
 | --- | --- | --- |
 | `mount` | 全量快照 | 挂载后立即一次 |
 | `song` / `media` / `lyrics` | 对应快照 | 换歌 / 封面轮播 / 歌词装载 |
-| `progress` | `{ position, duration, playing, lyricIndex }` | 宿主约 4Hz 推一次（位置按 250ms 一档量化），插件需自行在两帧之间插值 |
+| `progress` | `{ position, duration, playing, lyricIndex }` | 宿主约 4Hz 推一次；`position` 已按锚点外推到推送时刻且**单调不减**，插件在两帧之间插值时仍要过 `ctx.sdk.steadyPosition` |
 | `state` | `{ playing, volume, muted }` | 播放状态与音量 |
-| `options` / `theme` / `resize` / `visibility` / `chrome` | 对应对象 | 设置、主题、尺寸、前后台、壳层配色 |
+| `options` / `theme` / `resize` | 对应对象 | 设置、主题 / 深浅色、舞台尺寸 |
 | `close` / `destroy` | — | 收起 / 即将卸载 |
+
+> `visibility` / `chrome` 从来不是真正的补丁类型（宿主一次都没推过）；壳层配色走
+> 清单 `colors` → `--chrome-*` CSS 变量，不走推送。见 `contract.js#PATCH_TYPES`。
 
 **没有 `spectrum` 补丁**：实时频谱是**拉取式** `ctx.spectrum()`（固定 128 段全谱、
 读到才采样，见上）。插件不读 = 一次采样都没有；也不再有"补丁在两帧之间到达"的错位。

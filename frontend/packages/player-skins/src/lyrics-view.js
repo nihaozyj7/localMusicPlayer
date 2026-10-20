@@ -21,6 +21,7 @@
    ========================================================================== */
 
 import { findLyricIndex, splitGraphemes, wordEndsOf, wordFill } from "./lrc.js";
+import { steadyPosition } from "./position.js";
 
 /** 用户滚动之后，多久重新接管自动滚动 */
 const USER_SCROLL_PAUSE_MS = 1200;
@@ -98,6 +99,15 @@ export function createLyricsView(host, opts = {}) {
   let baseAt = 0;
   let playing = false;
   let smoothRaf = 0;
+  /**
+   * 上一次真正画出去的位置（单调下限）。
+   *
+   * 引擎的 Position() 是按音频缓冲块推进的（约 20~23ms 一跳），而这里按墙钟
+   * 连续外推；每次收到新进度再对齐时，位置可能比上一帧外推值小半块 —— 不夹一下
+   * 的话，填充边界会倒退，正好压在边界上的那个字会「被取消再重新点亮」。
+   * 规则与宿主 audio.js#livePosition 共用一份（position.js#steadyPosition）。
+   */
+  let paintPos = -1;
 
   const markUserScroll = () => {
     userScrollingUntil = Date.now() + USER_SCROLL_PAUSE_MS;
@@ -306,10 +316,10 @@ export function createLyricsView(host, opts = {}) {
     if (destroyed || !playing || !hasWordLine()) return;
     const extra = nowMs() - baseAt;
     if (extra > SMOOTH_MAX_MS) {
-      paintWords(basePos); // 推送停了：退回最后已知位置并停止外推
+      paintAt(basePos); // 推送停了：退回最后已知位置并停止外推
       return;
     }
-    paintWords(basePos + extra);
+    paintAt(basePos + extra);
     smoothRaf = requestAnimationFrame(smoothTick);
   }
 
@@ -335,7 +345,10 @@ export function createLyricsView(host, opts = {}) {
     if (playing) {
       baseAt = nowMs();
     } else {
-      paintWords(basePos); // 暂停时按最后已知位置落一次（外推值要清掉）
+      // 暂停：把之前外推到「现在」的位置落一次（外推值要清掉，且不许倒退）
+      const extra = Math.min(Math.max(0, nowMs() - baseAt), SMOOTH_MAX_MS);
+      basePos = paintAt(basePos + extra);
+      baseAt = nowMs();
     }
     syncSmooth();
   }
@@ -355,6 +368,7 @@ export function createLyricsView(host, opts = {}) {
     wordEnds = null;
     wordFills = null;
     wordHold = -1;
+    paintPos = -1;
     syncSmooth();
     if (!lines.length) {
       renderEmpty(meta);
@@ -413,7 +427,7 @@ export function createLyricsView(host, opts = {}) {
 
     // 字级（逐字）：离开旧行要还原成纯文本，进入新行才拆字素
     syncWordLine();
-    paintWords(basePos);
+    paintAt(basePos);
 
     // 用户正在手动翻歌词时不抢滚动位置
     if (Date.now() < userScrollingUntil) return;
@@ -428,12 +442,26 @@ export function createLyricsView(host, opts = {}) {
    * @param {{ immediate?: boolean, playing?: boolean }} [o]
    */
   function setPosition(positionMs, o = {}) {
-    basePos = positionMs;
-    baseAt = nowMs();
     if (typeof o.playing === "boolean") playing = o.playing;
-    setActive(findLyricIndex(lines, positionMs), o);
-    paintWords(positionMs);
+    // immediate（mount / 换歌 / 歌词重载后的显式定位）以宿主给的位置为准；
+    // 其余情况过 steadyPosition：小幅回退吸附，大幅回退（seek）照单全收。
+    basePos = o.immediate ? positionMs : steadyPosition(paintPos, positionMs);
+    baseAt = nowMs();
+    paintPos = basePos;
+    setActive(findLyricIndex(lines, basePos), o);
+    paintWords(basePos);
     syncSmooth();
+  }
+
+  /**
+   * 画到某个位置（单调）。逐字填充的写入口只走这里。
+   * @param {number} positionMs
+   * @returns {number} 实际采用的位置
+   */
+  function paintAt(positionMs) {
+    paintPos = steadyPosition(paintPos, positionMs);
+    paintWords(paintPos);
+    return paintPos;
   }
 
   function destroy() {

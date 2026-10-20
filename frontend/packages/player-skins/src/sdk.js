@@ -13,6 +13,7 @@
      ctx.sdk.applyFit(el, "--xxx-fit")      窗口适配比例（桌面背景投屏时等比放大）
      ctx.sdk.marqueeText(el, text)          标题单行 + 放不下时横向跑马灯
      ctx.sdk.parseLrc / findLyricIndex / formatLrcTime / lyricDisplayText / splitGraphemes
+     ctx.sdk.steadyPosition(prev, next)     播放位置防回退：自己外推逐字进度时必须过它
      ctx.sdk.html.{EMPTY_TRACK,escapeHtml,setCoverImage,subtitleOf,lyricsEmptyText}
      ctx.sdk.util.{clamp,esc,debounce}
 
@@ -30,6 +31,7 @@
 
 import { createLyricsView } from "./lyrics-view.js";
 import { createFxLyrics } from "./fx-lyrics.js";
+import { steadyPosition, POSITION_HOLD_MS } from "./position.js";
 import { createCamera, prefersReducedMotion } from "./fx-camera.js";
 import { createBackgroundLayer } from "./background-layer.js";
 import { marqueeText } from "./marquee.js";
@@ -73,6 +75,8 @@ export function createSdk() {
     createCamera,
     createBackgroundLayer,
     marqueeText,
+    steadyPosition,
+    POSITION_HOLD_MS,
     applyFit,
     fitScale,
     fitScaleOf,

@@ -26,6 +26,7 @@ const NODE_MODULES = path.resolve(__dirname, "..", "node_modules");
 /** 工作区包 → 浏览器可取的 URL（与 frontend/package.json 的依赖名保持一致） */
 const BARE_SPECIFIERS = [
   ["@localmusicplayer/player-skins/contract", "/packages/player-skins/src/contract.js"],
+  ["@localmusicplayer/player-skins/position", "/packages/player-skins/src/position.js"],
   ["@localmusicplayer/player-skins", "/packages/player-skins/src/index.js"],
   // 第三方包（拖拽排序 SortableJS）：它的入口在 package.json 的 "module" 里，
   // 不在默认的目录解析路径上，所以单独写一条。

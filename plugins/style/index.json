@@ -6,7 +6,7 @@
       "id": "magic-circle",
       "dir": "magic-circle",
       "name": "魔法阵舞台",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "第三方样式（按「世界地图 + 运镜」设计稿实现）",
       "description": "歌词钉在贯穿全图的巨型魔法阵上，镜头按段落飞过去：平移 / 弧线 / 拉远俯瞰 / 旋转入场 / 穿越白闪，128 段频谱直驱刻度环",
       "apiVersion": "3.0",
@@ -18,8 +18,8 @@
       "files": [
         {
           "path": "magic-circle/README.md",
-          "size": 17357,
-          "sha256": "c56209bfcd70a68b5beeda77d7ebb0b88d137b832b8eb0cc8b4b1adb68dc2487"
+          "size": 17751,
+          "sha256": "ee693e5456022a7ece90765af2352c4dbc4eee966f5257ab7feec3eb8ee09036"
         },
         {
           "path": "magic-circle/assets/icon.svg",
@@ -68,13 +68,13 @@
         },
         {
           "path": "magic-circle/skin.js",
-          "size": 34152,
-          "sha256": "982a606ad03a0106d5527ebf6a8a1c187621144cdd66e2d149769fb98c59724b"
+          "size": 35211,
+          "sha256": "b07b8673c86eadbc85dee1dfbf22b45f2a14dbc5b9ae4c12434f57c3d42f1bfa"
         },
         {
           "path": "magic-circle/skin.json",
           "size": 699,
-          "sha256": "ccb255ab63ea421a80c6a7f2a0c4bedb03fbfeca4688194cf2a16f9ae0236d8d"
+          "sha256": "c92a655531a4ff6e8b97b15b74ddbc86000bfc8c300fa5acb2738329fd242d07"
         }
       ]
     }

@@ -111,6 +111,8 @@ export default {
       position: 0,
       /** 最后一次 progress 补丁的时刻（秒）：位置要在本地按 playing 外推 */
       posAt: 0,
+      /** 上一次外推出来的位置（单调下限，见 estimatePos） */
+      lastEst: -1,
       duration: 0,
       playing: false,
       emptyText: "暂无歌词",
@@ -555,13 +557,39 @@ function frame(ts) {
    动画就“跟不上速度”；把起飞时间提前到开口之前，矛盾就没有了。
    ========================================================================== */
 
-/** 本地估算播放位置（宿主补丁 250ms 才来一次，直接用会一顿一顿） */
+/**
+ * 本地估算播放位置（宿主补丁 250ms 才来一次，直接用会一顿一顿）。
+ *
+ * ★ 必须过 ctx.sdk.steadyPosition：引擎的 Position() 按音频缓冲块推进
+ *（约 20~23ms 一跳），每次补丁重新对齐时可能比上一帧外推值小半块 ——
+ * 不夹的话逐字点亮会「已唱的字被取消、几十毫秒后又重新点亮」（真实报障）。
+ * 老宿主没有这个零件时退回本地实现（同一套规则）。
+ */
 function estimatePos(now) {
-  if (!S.playing) return S.position;
+  if (!S.playing) {
+    S.lastEst = S.position;
+    return S.position;
+  }
   const dt = now - S.posAt;
   // 时钟没对齐（刚挂载 / 补丁断了）就不外推 —— 否则一个 0 时刻会让位置飞到天边
-  if (!(dt > 0) || dt > 4) return S.position;
-  return S.position + dt * 1000;
+  if (!(dt > 0) || dt > 4) {
+    S.lastEst = S.position;
+    return S.position;
+  }
+  const raw = S.position + dt * 1000;
+  const steady = S.ctx?.sdk?.steadyPosition;
+  S.lastEst = steady ? steady(S.lastEst, raw) : steadyFallback(S.lastEst, raw);
+  return S.lastEst;
+}
+
+/** 老宿主兜底：与 player-skins/position.js#steadyPosition 同一规则 */
+function steadyFallback(prev, next) {
+  const p = Number(prev);
+  const n = Number(next);
+  if (!Number.isFinite(n)) return Number.isFinite(p) && p >= 0 ? p : 0;
+  if (!Number.isFinite(p) || p < 0) return n;
+  if (n >= p) return n;
+  return p - n <= 300 ? p : n;
 }
 
 /** 每帧跑一次：focus/sing 有变化就切换状态与运镜 */

@@ -15,6 +15,9 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
 import {
   BUILTIN_SKINS,
@@ -49,6 +52,8 @@ import {
   splitGraphemes,
   wordEndsOf,
   wordFill,
+  steadyPosition,
+  POSITION_HOLD_MS,
 } from "@localmusicplayer/player-skins";
 
 /* --------------------------------------------------------------------------
@@ -106,6 +111,70 @@ test("wordFill：量化到 1%，同一帧内不会反复写同一个值", () => 
 test("wordFill：时值为 0 时按「到点即满」处理（不产生 NaN / Infinity）", () => {
   assert.equal(wordFill(1000, 1000, 999), 0);
   assert.equal(wordFill(1000, 1000, 1000), 1);
+});
+
+/* --------------------------------------------------------------------------
+   位置防回退（position.js#steadyPosition）
+   --------------------------------------------------------------------------
+   真实报障：逐字歌词里已经唱到的那个字会周期性「被取消，然后再次被点亮」。
+
+   根因：引擎的 Position() 按音频缓冲块推进（48kHz / 1024 帧 ≈ 21ms 一跳），
+   渲染侧却按墙钟连续外推。宿主每 250ms 重新对齐一次时，新位置可能比上一帧
+   外推值小半块 —— 填充边界回退，落在边界上的字被取消再重亮。
+   -------------------------------------------------------------------------- */
+
+test("steadyPosition：前进直接采纳", () => {
+  assert.equal(steadyPosition(1000, 1000), 1000);
+  assert.equal(steadyPosition(1000, 1250), 1250);
+  assert.equal(steadyPosition(-1, 0), 0, "第一次（prev 无效）直接采纳");
+});
+
+test("steadyPosition：小幅回退吸附（引擎位置量化抖动）", () => {
+  // 21ms 缓冲块：新补丁的位置比上一帧外推值小半块
+  assert.equal(steadyPosition(10000, 9985), 10000);
+  assert.equal(steadyPosition(10000, 10000 - POSITION_HOLD_MS), 10000, "阈值边界也算抖动");
+});
+
+test("steadyPosition：大幅回退放行（用户 seek / 换歌重来）", () => {
+  assert.equal(steadyPosition(60000, 30000), 30000);
+  assert.equal(steadyPosition(10000, 10000 - POSITION_HOLD_MS - 1), 10000 - POSITION_HOLD_MS - 1);
+});
+
+test("steadyPosition：位置读不出来时沿用上一次，不产生 NaN", () => {
+  assert.equal(steadyPosition(5000, Number.NaN), 5000);
+  assert.equal(steadyPosition(5000, undefined), 5000);
+  assert.equal(steadyPosition(Number.NaN, 900), 900);
+  assert.equal(steadyPosition(-1, 900), 900);
+});
+
+test("steadyPosition：模拟「引擎按缓冲块推进 + 4Hz 对齐」，显示位置绝不回退", () => {
+  const BLOCK = (1024 / 48000) * 1000; // ≈ 21.33ms
+  const raw = (t) => Math.floor(t / BLOCK) * BLOCK; // 引擎 Position() 的台阶
+  let paint = -1;
+  let prevPaint = -1;
+  let regressions = 0;
+  for (let t = 0; t <= 3000; t += 1000 / 60) {
+    // 4Hz 补丁：拿到的是「上一块已经播完」的台阶值，渲染侧再按墙钟外推剩余
+    const patchAt = Math.floor(t / 250) * 250;
+    const pos = raw(patchAt) + (t - patchAt);
+    paint = steadyPosition(paint, pos);
+    if (prevPaint >= 0 && paint < prevPaint) regressions += 1;
+    prevPaint = paint;
+  }
+  assert.equal(regressions, 0, "夹取后显示位置一次都不许回退");
+  assert.ok(paint > 2900, `3 秒后位置应接近 3000ms，实际 ${paint}`);
+});
+
+test("逐字渲染器必须走 steadyPosition（不许各写一份夹取）", () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const read = (rel) => readFileSync(join(root, rel), "utf8");
+  for (const rel of [
+    "frontend/packages/player-skins/src/lyrics-view.js",
+    "frontend/packages/player-skins/src/fx-lyrics.js",
+    "frontend/src/js/ui/desktop-lyrics.js",
+  ]) {
+    assert.match(read(rel), /steadyPosition/, `${rel} 没有用 steadyPosition 夹位置`);
+  }
 });
 
 /* --------------------------------------------------------------------------

@@ -27,6 +27,7 @@
    ========================================================================== */
 
 import { findLyricIndex, splitGraphemes } from "./lrc.js";
+import { steadyPosition } from "./position.js";
 
 export { splitGraphemes };
 
@@ -93,6 +94,15 @@ export function createFxLyrics(host, opts = {}) {
   let resumeTimer = null;
   let destroyed = false;
   let lastWanted = -1;
+  /**
+   * 上一次画出去的位置（单调下限）。
+   *
+   * 引擎 Position() 按音频缓冲块推进（约 20~23ms 一跳），这里却按墙钟连续外推；
+   * 每收到一次新进度再对齐时位置可能比上一帧小半块 —— 不夹一下的话，填充边界
+   * 会倒退，压在边界上的那个字就被「取消再重新点亮」。规则与宿主共用一份
+   * （position.js#steadyPosition）。
+   */
+  let paintPos = -1;
 
   /* 平滑推进：宿主的进度按 250ms 量化（见宿主 audio.js），逐字点亮只吃这个
      节奏会「一跳一跳」。皮肤给过 playing 时按墙钟补齐中间帧；没给的保持原样。 */
@@ -171,6 +181,7 @@ export function createFxLyrics(host, opts = {}) {
     activeIndex = -1;
     holdUnit = -1;
     lastWanted = -1;
+    paintPos = -1;
     syncSmooth();
 
     if (!lines.length) {
@@ -289,13 +300,27 @@ export function createFxLyrics(host, opts = {}) {
    * @param {{ immediate?: boolean, playing?: boolean }} [o]
    */
   function setPosition(positionMs, o = {}) {
-    basePos = positionMs;
-    baseAt = nowMs();
     if (typeof o.playing === "boolean") playing = o.playing;
-    const idx = findLyricIndex(lines, positionMs);
+    // immediate（mount / 换歌 / 歌词重载后的显式定位）以宿主给的位置为准；
+    // 其余情况过 steadyPosition：小幅回退吸附，大幅回退（seek）照单全收。
+    basePos = o.immediate ? positionMs : steadyPosition(paintPos, positionMs);
+    paintPos = basePos;
+    baseAt = nowMs();
+    const idx = findLyricIndex(lines, basePos);
     if (idx !== activeIndex) setActive(idx, o);
-    if (idx >= 0) paintHold(idx, positionMs);
+    if (idx >= 0) paintHold(idx, basePos);
     syncSmooth();
+  }
+
+  /**
+   * 画到某个位置（单调）。逐字点亮的写入口只走这里。
+   * @param {number} positionMs
+   * @returns {number} 实际采用的位置
+   */
+  function paintAt(positionMs) {
+    paintPos = steadyPosition(paintPos, positionMs);
+    if (activeIndex >= 0) paintHold(activeIndex, paintPos);
+    return paintPos;
   }
 
   /** 播放状态（皮肤在 state / progress 补丁里带上）。给了才会开平滑推进。 */
@@ -304,7 +329,10 @@ export function createFxLyrics(host, opts = {}) {
     if (playing) {
       baseAt = nowMs();
     } else if (activeIndex >= 0) {
-      paintHold(activeIndex, basePos); // 暂停：清掉外推值，按最后已知位置落一次
+      // 暂停：把之前外推到「现在」的位置落一次（外推值要清掉，且不许倒退）
+      const extra = Math.min(Math.max(0, nowMs() - baseAt), SMOOTH_MAX_MS);
+      basePos = paintAt(basePos + extra);
+      baseAt = nowMs();
     }
     syncSmooth();
   }
@@ -316,10 +344,10 @@ export function createFxLyrics(host, opts = {}) {
     // 距上次进度推送最多外推这么久：超过说明推送停了（暂停没同步 / 卡缓冲 /
     // 窗口被隐藏），继续外推会让字比声音先唱完 —— 冻住等下一次推送。
     if (extra > SMOOTH_MAX_MS) {
-      paintHold(activeIndex, basePos);
+      paintAt(basePos);
       return;
     }
-    paintHold(activeIndex, basePos + extra);
+    paintAt(basePos + extra);
     smoothRaf = requestAnimationFrame(smoothTick);
   }
 

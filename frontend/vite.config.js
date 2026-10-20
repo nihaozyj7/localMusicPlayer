@@ -149,10 +149,19 @@ export default defineConfig(({ mode }) => ({
     __LM_PREVIEW__: JSON.stringify(mode !== "production"),
   },
   resolve: {
-    alias: {
+    alias: [
+      // 子路径条目必须排在包名之前：alias 按顺序取第一条命中的，包名那条是前缀匹配
+      // （否则会拼成 index.js/position 这种不存在的路径）。
+      {
+        find: "@localmusicplayer/player-skins/position",
+        replacement: path.join(here, "packages", "player-skins", "src", "position.js"),
+      },
       // 皮肤包以工作区包名引入；显式再给一条别名，保证在未跑 npm install 时也能解析
-      "@localmusicplayer/player-skins": path.join(here, "packages", "player-skins", "src", "index.js"),
-    },
+      {
+        find: /^@localmusicplayer\/player-skins$/,
+        replacement: path.join(here, "packages", "player-skins", "src", "index.js"),
+      },
+    ],
   },
   server: {
     port: 5173,

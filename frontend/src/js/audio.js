@@ -51,6 +51,8 @@ import {
 } from "./store.js";
 import { toast } from "./dom.js";
 import { SPECTRUM_BANDS, spectrumSnapshot as pullSpectrum } from "./spectrum.js";
+// 位置防回退的规则与皮肤包共用一份（逐字填充的所有消费方必须口径一致）
+import { steadyPosition } from "@localmusicplayer/player-skins/position";
 
 /* --------------------------------------------------------------------------
    模块状态
@@ -126,6 +128,16 @@ let anchor = null; // { positionMs, atMs, durationMs, playing, at: performance.n
 
 /** 上一次推给 store 的位置，避免每帧都触发渲染 */
 let lastPushedPosition = -1;
+
+/**
+ * livePosition() 已经返回过的最大位置（单调下限）。
+ *
+ * 引擎的 Position() 是按**音频缓冲块**推进的（48kHz / 1024 帧 ≈ 21ms 一跳），
+ * 而这里按墙钟连续外推。每收到一个新锚点重新对齐时，位置可能比上一帧外推值
+ * 小半块 —— 直接吐给消费方就是「逐字填充边界往回跳、已亮的字闪一下」。
+ * 小幅回退吸附、大幅回退（seek / 换歌）照单全收，规则见 position.js。
+ */
+let liveFloor = -1;
 
 /** 上次把进度写进 localStorage 的时刻（5 秒节流） */
 let lastProgressPersistAt = 0;
@@ -349,7 +361,9 @@ function applyAnchor(payload) {
     changed = true;
   }
 
-  pushPosition(positionMs, true);
+  // 用 livePosition 而不是原始锚点：外推 + 单调夹取都在那一个出口里，
+  // 进度条与 noteProgress 拿到的位置因此也不会回退。
+  pushPosition(livePosition(), true);
 
   if (changed) {
     commit();
@@ -396,7 +410,11 @@ function extrapolate() {
  * @returns {number} 毫秒
  */
 export function livePosition() {
-  if (!anchor || !backendReady || switchPending) return state.position;
+  if (!anchor || !backendReady || switchPending) {
+    // 没有可用锚点：退回量化位置，并把单调下限作废（下一次锚点重新起步）
+    liveFloor = -1;
+    return state.position;
+  }
   let pos = anchor.positionMs;
   if (anchor.playing) {
     pos = anchor.positionMs + (performance.now() - anchor.at);
@@ -405,7 +423,10 @@ export function livePosition() {
   if (anchor.durationMs > 0) {
     pos = Math.min(pos, anchor.durationMs);
   }
-  return Math.round(pos);
+  // 单调：引擎位置按缓冲块推进，重新对齐时可能比上一帧外推值小半块。
+  // 不夹这一下，消费方（逐字填充 / 进度条 / 桌面歌词）每 250ms 会看到一次回退。
+  liveFloor = steadyPosition(liveFloor, pos);
+  return Math.round(liveFloor);
 }
 
 /**

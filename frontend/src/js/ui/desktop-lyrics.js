@@ -15,6 +15,7 @@
 
 import { LitElement, html, nothing } from "lit";
 import { backend, connect, on } from "../bridge.js";
+import { steadyPosition } from "@localmusicplayer/player-skins/position";
 import { define } from "./base.js";
 
 /* --------------------------------------------------------------------------
@@ -146,6 +147,8 @@ class MpDesktopLyrics extends LitElement {
     this._wordNodes = null;
     this._fills = null;
     this._raf = 0;
+    /** 上一次画出去的位置（单调下限，见 _paint）；不夹的话边界会随锚点回退闪一下 */
+    this._paintPos = -1;
   }
 
   connectedCallback() {
@@ -203,6 +206,10 @@ class MpDesktopLyrics extends LitElement {
   /** 把每个字素的填充进度写进 `--w`（量化后只写真的变了的那些） */
   _paint(posMs) {
     if (!this._wordsOn) return;
+    // 位置防回退：主窗口给的 posMs 来自引擎，按音频缓冲块推进（约 21ms 一跳），
+    // 而这边按墙钟连续外推；每推送一次重新对齐就可能回退小半块 → 边界闪一下。
+    this._paintPos = steadyPosition(this._paintPos, posMs);
+    posMs = this._paintPos;
     const nodes = this._wordNodes || (this._wordNodes = [...this.querySelectorAll(".dl__word")]);
     if (!this._fills || this._fills.length !== nodes.length) {
       this._fills = new Array(nodes.length).fill(-1);

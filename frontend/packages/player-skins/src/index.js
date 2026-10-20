@@ -51,6 +51,7 @@ export { SKIN_API_VERSION, HOST_API_VERSION, PATCH_TYPES, defineSkin, inspectSki
 export { parseApiVersion, apiStatus };
 export { deriveChrome, applyChromeVars, clearChromeVars, CHROME_VAR_NAMES };
 export { createSdk };
+export { steadyPosition, POSITION_HOLD_MS } from "./position.js";
 export { createLyricsView } from "./lyrics-view.js";
 export { createFxLyrics } from "./fx-lyrics.js";
 export { createCamera } from "./fx-camera.js";
