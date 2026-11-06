@@ -144,7 +144,9 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values
 		return fmt.Errorf("bilibili: 读取响应失败: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("bilibili: HTTP %d: %s", resp.StatusCode, truncateBody(body))
+		// 成型错误（httpStatusError）而非裸 fmt.Errorf：重试判据要按状态码区分
+		// 429/5xx 与其它 4xx，见 retry.go#transient。
+		return &httpStatusError{Status: resp.StatusCode, Body: truncateBody(body)}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("bilibili: 解析 JSON 失败: %w", err)
@@ -170,7 +172,12 @@ func (c *Client) ensureWBI(ctx context.Context) error {
 			} `json:"wbi_img"`
 		} `json:"data"`
 	}
-	if err := c.getJSON(ctx, c.base()+"/x/web-interface/nav", nil, &nav, false); err != nil {
+	// nav 失败 = 搜索请求一次都没发出（用户在界面上看到的就是「立刻失败」），
+	// 所以这里也给一次重试机会。注意 **nav 的 code 不是错误**：未登录时它返回
+	// code=-101，但 data.wbi_img 照样给，密钥能用。
+	if err := retrying(ctx, navAttempts, func() error {
+		return c.getJSON(ctx, c.base()+"/x/web-interface/nav", nil, &nav, false)
+	}); err != nil {
 		return err
 	}
 	img := pathBaseNoExt(nav.Data.WbiImg.ImgURL)

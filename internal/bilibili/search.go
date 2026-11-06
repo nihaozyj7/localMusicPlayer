@@ -91,11 +91,19 @@ func (c *Client) Search(ctx context.Context, keyword string, page, pageSize int)
 			} `json:"result"`
 		} `json:"data"`
 	}
-	if err := c.getJSON(ctx, c.base()+"/x/web-interface/wbi/search/type", params, &resp, true); err != nil {
+	// 一次搜索经常要连发两个请求（先 nav 取密钥、再搜索），任一环节的瞬时失败
+	// 都会被原样报成「搜索失败」—— 用户看到的就是「刚提交就失败，重搜就好」。
+	// GET 幂等，瞬时失败重试即可；每次尝试都会重新 WBI 签名（wts 是新的）。
+	if err := retrying(ctx, searchAttempts, func() error {
+		if err := c.getJSON(ctx, c.base()+"/x/web-interface/wbi/search/type", params, &resp, true); err != nil {
+			return err
+		}
+		if resp.Code != 0 {
+			return codeError("搜索", resp.Code, resp.Message)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
-	}
-	if resp.Code != 0 {
-		return nil, fmt.Errorf("bilibili 搜索失败: code=%d %s", resp.Code, resp.Message)
 	}
 
 	out := &SearchResult{
