@@ -311,8 +311,11 @@ class MpContent extends MpElement {
       const kind = state.query.trim() ? "search" : v === "library" ? "library" : v === "queue" ? "queue" : "playlist";
       return this.empty(kind);
     }
-    // .page 上挂着 fade-in 入场动画：只有「进入另一个列表」才该重建它。
-    // keyed() 表达的正是这件事（key 变了才换节点）。
+    // .page 仍然按「视图 + 歌单」这个 key 重建：切列表时是一份全新的 DOM，
+    // 不带着上一页的滚动位置与窗口化状态。切换动画不在这里做 ——
+    // 它靠 View Transitions 包住那次状态变更（shell.js#withListTransition，
+    // 样式见 content.css 底部），因为动画要看到**旧**列表的像素，而这一步
+    // keyed() 已经把旧节点丢掉了。
     return keyed(`${v}|${state.playlistId ?? ""}`, html`<div class="page"><mp-track-table></mp-track-table></div>`);
   }
 
