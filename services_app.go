@@ -13,7 +13,7 @@ import (
 // 「设置 → 关于」直接展示它。打包元数据里还各有一份同名值
 // （build/config.yml、build/windows/info.json、build/linux/nfpm/fpm.yaml），
 // 发版时一并改；之所以不在构建期注入，是因为这些文件也要能被直接手改核对。
-const appVersion = "1.0.2"
+const appVersion = "1.0.3"
 
 // AppService 提供「设置 → 关于」需要的那点宿主能力：读版本号、
 // 用系统默认浏览器打开外部链接。
