@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="律动方块">
+  <defs>
+    <linearGradient id="cm-top" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9ff7ff" />
+      <stop offset="1" stop-color="#7c86ff" />
+    </linearGradient>
+    <linearGradient id="cm-left" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5f6bff" />
+      <stop offset="1" stop-color="#2a2f7a" />
+    </linearGradient>
+    <linearGradient id="cm-right" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3ad7ff" />
+      <stop offset="1" stop-color="#1b5f8f" />
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="10" fill="#06070f" />
+  <!-- 后排（矮） -->
+  <g opacity="0.65">
+    <path d="M9 21l6-3.4 6 3.4-6 3.4z" fill="url(#cm-top)" />
+    <path d="M9 21v4.6l6 3.4v-4.6z" fill="url(#cm-left)" />
+    <path d="M21 21v4.6l-6 3.4v-4.6z" fill="url(#cm-right)" />
+    <path d="M27 19.5l6-3.4 6 3.4-6 3.4z" fill="url(#cm-top)" />
+    <path d="M27 19.5v4.4l6 3.4v-4.4z" fill="url(#cm-left)" />
+    <path d="M39 19.5v4.4l-6 3.4v-4.4z" fill="url(#cm-right)" />
+  </g>
+  <!-- 前排（高） -->
+  <path d="M14 30l7-4 7 4-7 4z" fill="url(#cm-top)" />
+  <path d="M14 30v8l7 4v-8z" fill="url(#cm-left)" />
+  <path d="M28 30v8l-7 4v-8z" fill="url(#cm-right)" />
+  <path d="M27 26l6-3.4 6 3.4-6 3.4z" fill="url(#cm-top)" opacity="0.9" />
+  <path d="M27 26v7l6 3.4v-7z" fill="url(#cm-left)" opacity="0.9" />
+  <path d="M39 26v7l-6 3.4v-7z" fill="url(#cm-right)" opacity="0.9" />
+  <!-- 高光 -->
+  <path d="M14 30l7-4 7 4-7 4z" fill="none" stroke="#d8fbff" stroke-width="1" stroke-opacity="0.7" />
+</svg>

@@ -1,0 +1,200 @@
+/* ==========================================================================
+   cube-matrix/skin.css — 「律动方块」外观
+   --------------------------------------------------------------------------
+   ★ 选择器是**相对舞台根**写的：宿主把这份 CSS 包成
+
+       @layer skin { @scope (.playerview[data-skin="cube-matrix"],
+                             .skin-bg[data-skin="cube-matrix"]) { … } }
+
+     所以前缀不用自己写（写了反而可能匹配不到），也写不到宿主的标题栏 /
+     底栏 / 浮层 —— 那些地方的配色由清单里的 colors 决定，与本文件无关。
+
+   ★ 给舞台**自身**写规则要用 `:scope`（伪类）。写成 `::scope` 不是合法伪元素，
+     浏览器会把**整条规则**静默丢掉（背景色会一起消失，控制台一声不吭）。
+
+   ★ 颜色是**写死的浅色**，不跟主题令牌走：画布恒为深色夜空（方块靠暗底才立得
+     起来），浅色主题下如果 HUD 用 --text-1 会糊在夜空上看不见。宿主壳
+     （标题栏 / 底栏 / 浮层）仍然跟随主题与 colors 声明，不受这里影响。
+
+   ★ 安全区：清单声明了 capabilities.background，舞台铺满整窗，宿主的
+     「标题栏 + 头部行」「底部播放控件栏」浮在画面上，高度由 --skin-inset-*
+     下发。要给人读的内容一律用 calc(... + Npx) 让开，兜底值必须写 0px
+     （桌面背景歌词窗口没有这两块 chrome）。装饰层（画布 / 暗角）不受限。
+   ========================================================================== */
+
+:scope {
+  position: relative;
+  overflow: hidden;
+  background: #05060c;
+}
+
+.cm {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.cm__canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 暗角：静态覆盖层（画布之上、HUD 之下）。画在 canvas 里要每帧一次整屏径向
+   渐变，换成 CSS 后同样观感、零帧成本。 */
+.cm__vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle farthest-corner at 50% 58%, rgba(0, 0, 0, 0) 34%, rgba(0, 0, 0, 0.5) 132%),
+    linear-gradient(to bottom, rgba(4, 5, 11, 0.55) 0%, rgba(4, 5, 11, 0) 26%, rgba(4, 5, 11, 0) 74%, rgba(4, 5, 11, 0.5) 100%);
+}
+
+/* HUD：绝对定位 + 默认不吃指针事件（点击只会落到画布上），只有歌词那一块可点 */
+.cm__hud {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-sizing: border-box;
+  padding: calc(var(--skin-inset-top, 0px) + 18px) 28px calc(var(--skin-inset-bottom, 0px) + 16px);
+  pointer-events: none;
+}
+
+.cm__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.cm__track {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  max-width: 64%;
+}
+
+.cm__title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: rgba(240, 243, 255, 0.94);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.7);
+}
+
+.cm__artist {
+  font-size: 12.5px;
+  color: rgba(178, 192, 236, 0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.65);
+}
+
+.cm__foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+/* 歌词：整块是一颗按钮（点击跳到本句开头），但视觉上只是一行字 */
+.cm__lyric {
+  pointer-events: auto;
+  display: block;
+  max-width: min(880px, 84%);
+  margin: 0;
+  padding: 8px 20px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 220ms ease;
+}
+
+.cm__lyric:disabled {
+  cursor: default;
+}
+
+.cm__lyric.is-line:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.cm__lyric:focus-visible {
+  outline: 2px solid rgba(140, 217, 255, 0.8);
+  outline-offset: 2px;
+}
+
+.cm__lyric-text {
+  display: block;
+  font-size: clamp(18px, 2.5vw, 28px);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  text-align: center;
+  overflow-wrap: anywhere;
+  color: rgba(236, 244, 255, 0.96);
+  text-shadow:
+    0 0 22px rgba(130, 200, 255, 0.42),
+    0 2px 14px rgba(0, 0, 0, 0.8);
+}
+
+/* 空态 / 加载态：退成小一号的灰字，不和「正在唱的那句」抢注意力 */
+.cm__lyric:not(.is-line) .cm__lyric-text {
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: rgba(186, 198, 232, 0.6);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.7);
+}
+
+/* 换句时重放一次淡入（skin.js 只在真正换行时加这个类） */
+.cm__lyric-text.is-swap {
+  animation: cm-lyric-in 420ms cubic-bezier(0.22, 0.68, 0.35, 1) both;
+}
+
+@keyframes cm-lyric-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .cm__hud {
+    padding: calc(var(--skin-inset-top, 0px) + 12px) 16px calc(var(--skin-inset-bottom, 0px) + 12px);
+  }
+
+  .cm__track {
+    max-width: 82%;
+  }
+
+  .cm__title {
+    font-size: 15px;
+  }
+
+  .cm__lyric {
+    padding: 6px 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm__lyric-text.is-swap {
+    animation: none;
+  }
+}

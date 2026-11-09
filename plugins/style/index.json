@@ -3,6 +3,77 @@
   "kind": "style",
   "items": [
     {
+      "id": "cube-matrix",
+      "dir": "cube-matrix",
+      "name": "律动方块",
+      "version": "1.0.0",
+      "author": "第三方样式（3D 方块矩阵 + 彩虹流动）",
+      "description": "铺在透视地面上的 3D 频谱分析仪：横向 15 列是频率轴、纵深 11 行是时间轴（约 0.7 秒的频谱瀑布），柱高只由 128 段频谱的频段能量驱动（快升慢降包络），色相随质心与时间在紫→青→绿→橙之间流动，节拍时刻整场泛亮",
+      "apiVersion": "3.0",
+      "swatch": [
+        "#06070f",
+        "#f0f3ff",
+        "#8ad9ff"
+      ],
+      "files": [
+        {
+          "path": "cube-matrix/README.md",
+          "size": 7670,
+          "sha256": "990cfb03e01515c2a2226a0a196a06e46486563dc3dd376610936a5eeda816a9"
+        },
+        {
+          "path": "cube-matrix/assets/icon.svg",
+          "size": 1696,
+          "sha256": "1e839865f8fd87f9e9a75e08ff555d3018052d026e3109bdc515db6fd38c6dbe"
+        },
+        {
+          "path": "cube-matrix/lib/config.js",
+          "size": 5861,
+          "sha256": "1ec8984985ff7535071e55325ca5c286b6e052005b495e1e4eee810df63df856"
+        },
+        {
+          "path": "cube-matrix/lib/palette.js",
+          "size": 2175,
+          "sha256": "20f85f48de7c7fc71bf81c791fa5873eca973618a16e01ad08670cb47acc14b7"
+        },
+        {
+          "path": "cube-matrix/lib/render.js",
+          "size": 6489,
+          "sha256": "51c25878979cb665dce77f59ebefa3b7d9ae312b6895e1554cba096133de93ab"
+        },
+        {
+          "path": "cube-matrix/lib/scene.js",
+          "size": 10466,
+          "sha256": "1efce3d29ba18f4c9698152f786e041550daa608874b681d6036ef510c2d6606"
+        },
+        {
+          "path": "cube-matrix/lib/spectrum.js",
+          "size": 5172,
+          "sha256": "a5eb1f111f8380e6bad7501c8331fb1fc4d39cbe09902b5b58d71ad50ccd9b2c"
+        },
+        {
+          "path": "cube-matrix/lib/util.js",
+          "size": 3367,
+          "sha256": "eaa4c36b33e51d2e100f0c3a69cb55b253b58a2379ed35d8a0a87588b31c8267"
+        },
+        {
+          "path": "cube-matrix/skin.css",
+          "size": 5391,
+          "sha256": "9f9c6f151908688a21d4d5785b5aa0127bbec443210702676af990fd73a33b26"
+        },
+        {
+          "path": "cube-matrix/skin.js",
+          "size": 16100,
+          "sha256": "b5be5f5a352cf2cc5c73f36e4cd5a85e6c0022706dcad73eb78260a0a92fdcae"
+        },
+        {
+          "path": "cube-matrix/skin.json",
+          "size": 809,
+          "sha256": "eab0ddad1db63788b5f50ba4b5c0b9145ad7c86a7185702e1b820ac3dac52f1c"
+        }
+      ]
+    },
+    {
       "id": "magic-circle",
       "dir": "magic-circle",
       "name": "魔法阵舞台",

@@ -1,0 +1,25 @@
+{
+  "id": "cube-matrix",
+  "name": "律动方块",
+  "version": "1.0.0",
+  "apiVersion": "3.0",
+  "author": "第三方样式（3D 方块矩阵 + 彩虹流动）",
+  "description": "铺在透视地面上的 3D 频谱分析仪：横向 15 列是频率轴、纵深 11 行是时间轴（约 0.7 秒的频谱瀑布），柱高只由 128 段频谱的频段能量驱动（快升慢降包络），色相随质心与时间在紫→青→绿→橙之间流动，节拍时刻整场泛亮",
+  "entry": "skin.js",
+  "styles": ["skin.css"],
+  "icon": { "file": "assets/icon.svg" },
+  "order": 270,
+  "capabilities": {
+    "spectrum": true,
+    "background": true,
+    "interactive": true
+  },
+  "colors": {
+    "bg": "#06070f",
+    "fg": "#f0f3ff",
+    "accent": "#8ad9ff"
+  },
+  "performance": {
+    "budgetFps": 45
+  }
+}
