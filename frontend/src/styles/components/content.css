@@ -333,7 +333,11 @@
 /* —— 页面容器 —— */
 .page {
   padding: var(--sp-5) var(--sp-5) var(--sp-7);
-  animation: fade-in var(--dur) var(--ease);
+  /* 列表切换的动画走 View Transitions（见 shell.js#withListTransition 与本文件底部）：
+     .page 单独成一「组」，新旧两帧由浏览器做交叉淡化 + 位移。
+     这里**不能**再挂自己的入场动画：快照是在状态落地后立刻拍的，
+     元素自身的 animation 正停在第一帧（opacity: 0），新快照会是空白的。 */
+  view-transition-name: mp-page;
 }
 
 /* —— 空态 —— */
@@ -544,4 +548,50 @@
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* ==========================================================================
+   列表切换动画（View Transitions）
+   --------------------------------------------------------------------------
+   shell.js#withListTransition 把「换列表」那一次状态变更包进
+   document.startViewTransition，浏览器于是在前后两帧之间做交叉淡化。
+   只有 .page 参与（它自带 view-transition-name: mp-page）；
+   根快照（标题栏 / 侧栏 / 播放控件栏）关掉交叉淡化 —— 它们要么没变，
+   要么只是选中态挪一格，整窗淡一下反而像闪屏。
+   时长全部来自 --dur 系列：设置里关掉动效时 --dur 归零，这里自动变 0。
+   ========================================================================== */
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+::view-transition-old(mp-page) {
+  animation: page-leave var(--dur-fast) var(--ease) both;
+}
+
+::view-transition-new(mp-page) {
+  animation: page-enter var(--dur) var(--ease-out) both;
+}
+
+@keyframes page-leave {
+  to {
+    opacity: 0;
+    transform: translateY(calc(var(--rise) * -0.5));
+  }
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--rise));
+  }
+}
+
+/* 伪元素不匹配 base.css 里那条 `*, *::before, *::after` 的减动效规则，单独写一遍 */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(mp-page),
+  ::view-transition-new(mp-page) {
+    animation: none;
+  }
 }

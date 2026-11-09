@@ -22,6 +22,43 @@ export function clearLocalFilter() {
   commit();
 }
 
+/* --------------------------------------------------------------------------
+   列表切换动画（View Transitions API）
+   --------------------------------------------------------------------------
+   只在 navigate() 这一处用：切视图 / 切歌单是**整页换内容**，值得一段过渡；
+   筛选、排序、勾选这些 commit 都不该带动画（会让输入手感变粘）。
+
+   三种情况直接同步落地（行为与旧代码完全一致，只是没有过渡动画）：
+     · 运行环境没有 startViewTransition（老 WebView2、部分浏览器预览）；
+     · 用户开了「减少动态效果」（系统 setreduce motion）；
+     · 上一次切换还没播完 —— 此时再开一个新过渡会把它打断，被跳过的那次
+       更新回调有可能不执行，点击就会「点一下没反应」。所以这一下直接落地。
+   -------------------------------------------------------------------------- */
+let listTransition = null;
+
+function withListTransition(mutate) {
+  const doc = typeof document === "undefined" ? null : document;
+  const reduced = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  if (!doc?.startViewTransition || reduced || listTransition) {
+    mutate();
+    return;
+  }
+  const transition = doc.startViewTransition(async () => {
+    mutate();
+    // Lit 的更新在微任务里落地，等一个宏任务（setTimeout 0）就够。
+    // ★ 这里**不能**用 requestAnimationFrame 等帧：更新回调期间浏览器为了
+    // 不让人看到中间态会暂停渲染，rAF 拿不到回调 → 回调 promise 永不 resolve，
+    // 过渡卡在「待开始」，transition.ready 也不会 resolve。实测（Edge headless）
+    // 就是这么挂住的：动画一次都不播，而且后续切换全被 listTransition 拦掉。
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  listTransition = transition;
+  const done = () => {
+    listTransition = null;
+  };
+  transition.finished.then(done, done);
+}
+
 /**
  * 导航到某个视图。
  *
@@ -33,17 +70,18 @@ export function navigate(view, playlistId = null) {
     openSettings();
     return;
   }
-  state.view = view;
-  state.playlistId = view === "playlist" ? playlistId : null;
-  state.playerOpen = false;
-  // 切视图时清掉本地筛选与歌单多选：否则会出现「切到歌单还被上一页的关键词
-  // 过滤着」「多选模式下换了另一个歌单」这类错位状态。
-  state.query = "";
-  state.playlistSelecting = false;
-  state.selectedIds = new Set();
-  // 换视图时把播放列表面板收起来，避免它孤零零浮在主界面上。
-  state.queueOpen = false;
-  commit();
+  withListTransition(() => {
+    state.view = view;
+    state.playlistId = view === "playlist" ? playlistId : null;
+    state.playerOpen = false;
+    // 切视图时清掉本地筛选与歌单多选：否则会出现「切到歌单还被上一页的关键词
+    // 过滤着」「多选模式下换了另一个歌单」这类错位状态。
+    state.query = "";
+    state.playlistSelecting = false;
+    state.selectedIds = new Set();
+    state.queueOpen = false;
+    commit();
+  });
 }
 
 /* --------------------------------------------------------------------------
