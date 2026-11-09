@@ -16,12 +16,19 @@
    -------------------------------------------------------------------------- */
 .search-overlay {
   position: fixed;
-  inset: var(--h-titlebar) 0 var(--h-playerbar) 0;
+  /* 遮罩铺满「标题栏以下」的整个窗口：**连底部播放控件栏一起盖住**
+     （以前 inset 的底部留了 --h-playerbar，看上去像遮罩缺了一块，
+     而且底栏的按钮还能被点到）。
+     标题栏本身不进遮罩：它是窗口拖拽区，压住它既拖不动窗口也显得像卡住；
+     层级上也轮不到它 —— 标题栏是 --z-titlebar(70)，本来就高于本层 --z-modal(60)。 */
+  inset: var(--h-titlebar) 0 0 0;
   z-index: var(--z-modal);
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding-top: var(--sp-6);
+  /* 下面留出播放控件栏的高度：遮罩盖住它是要求，但面板不该压在它上面 ——
+     试听时用户还要用底栏。 */
+  padding: var(--sp-6) 0 calc(var(--h-playerbar) + var(--sp-5));
   background: var(--scrim-bg);
   backdrop-filter: blur(var(--scrim-blur));
   -webkit-backdrop-filter: blur(var(--scrim-blur));
@@ -50,7 +57,9 @@
   display: flex;
   flex-direction: column;
   width: min(880px, calc(100% - var(--sp-7)));
-  max-height: calc(100% - var(--sp-7));
+  /* 100% 已经扣掉了上面的 padding（含为播放控件栏让出的那一段），
+     再减就是白留一截空隙。 */
+  max-height: 100%;
   border: var(--hairline-strong);
   border-radius: var(--panel-radius);
   background: var(--glass-bg-strong);
