@@ -474,7 +474,6 @@ export class MpTrackTable extends MpElement {
 
     return html`
       <div class="tracks__head" data-mode=${mode}>
-        <div class="col-handle"></div>
         <div class="col-index">#</div>
         <div class="col-cover"></div>
         ${cell("title", "标题")} ${cell("album", "专辑", "col-album")} ${cell("duration", "时长")}
@@ -503,9 +502,11 @@ export class MpTrackTable extends MpElement {
         data-playing=${isCurrent && state.playing ? "true" : "false"}
       >
         ${
+          // 拖拽手柄是**绝对定位**的浮层（见 tracktable.css .track__handle），
+          // 不占网格列：队列的「#」列起点必须与本地歌曲 / 歌单逐像素一致。
           mode === "playlist"
             ? html`<div class="track__handle" data-handle="1" title="拖动排序">${icon("grip")}</div>`
-            : html`<div class="col-handle"></div>`
+            : nothing
         }
         <div class="track__index">${this.indexCell(song, index, selecting)}</div>
         <div class="track__cover">

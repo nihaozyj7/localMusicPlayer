@@ -3,7 +3,6 @@
    ========================================================================== */
 
 .tracks {
-  --col-handle: 26px;
   --col-index: 38px;
   --col-cover: 48px;
   /* 专辑列整条轨道的宽度。写成「轨道尺寸函数」而不是固定值，
@@ -38,7 +37,7 @@
      居中到内容框中间，再叠加 padding 就整体下移约半个行高。 */
   grid-template-rows: 100%;
   grid-template-columns:
-    var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 2.2fr)
+    var(--col-index) var(--col-cover) minmax(0, 2.2fr)
     var(--col-album) var(--col-time) var(--col-heart) var(--col-more);
   align-items: center;
   gap: var(--sp-3);
@@ -59,20 +58,8 @@
   z-index: 2;
 }
 
-.tracks__head[data-mode="library"] {
-  grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 2.2fr) var(--col-album)
-    var(--col-time) var(--col-heart) var(--col-more);
-}
-
-.tracks__head[data-mode="library"] .col-handle,
-.tracks[data-mode="library"] .col-handle {
-  display: none;
-}
-
-.tracks__head[data-mode="playlist"] {
-  grid-template-columns: var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 2.2fr)
-    var(--col-album) var(--col-time) var(--col-heart) var(--col-more);
-}
+/* 队列（playlist 模式）不再有独立的拖拽手柄列：手柄是浮层（见 .track__handle），
+   「#」列的起点因此与本地歌曲 / 歌单完全一致。 */
 
 /* 表头里的爱心图标必须显式给尺寸。
    icon() 生成的 <svg> 不带宽高属性，浏览器会退到 SVG 默认尺寸 300×150；
@@ -161,7 +148,7 @@
 .track {
   display: grid;
   grid-template-columns:
-    var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 2.2fr)
+    var(--col-index) var(--col-cover) minmax(0, 2.2fr)
     var(--col-album) var(--col-time) var(--col-heart) var(--col-more);
   align-items: center;
   gap: var(--sp-3);
@@ -178,11 +165,6 @@
   cursor: default;
   position: relative;
   transition: background-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
-}
-
-.tracks[data-mode="library"] .track {
-  grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 2.2fr) var(--col-album)
-    var(--col-time) var(--col-heart) var(--col-more);
 }
 
 .track + .track::before {
@@ -247,12 +229,19 @@
   scroll-padding-top: calc(34px + var(--sp-4));
 }
 
-/* —— 拖拽 —— */
+/* —— 拖拽 ——
+   手柄是**浮层**，不占网格列：它落在行左内边距（--sp-4）里，悬停才显形。
+   队列的「#」列因此与本地歌曲 / 歌单对齐到同一像素位置。
+   注意它仍然必须带 [data-handle]（Sortable 的 handle 选择器）与真实的
+   盒尺寸 —— 自检脚本要靠它做真实拖拽。 */
 .track__handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--sp-4);
   display: grid;
   place-items: center;
-  width: 100%;
-  height: 100%;
   color: var(--text-3);
   cursor: grab;
   opacity: 0;
@@ -704,21 +693,10 @@
 
   /* 同一媒体查询里**不能**对同一个选择器声明两次 grid-template-columns：
      后一条会覆盖前一条，很容易把某一边写成少一列（这正是本文件曾经的 bug）。
-     每个选择器只声明一次，且表头与对应数据行的列数必须逐字一致。 */
+     每个选择器只声明一次，且表头与对应数据行的列数必须逐字一致。
+     队列与曲库共用同一套模板 —— 拖拽手柄是浮层，不占列。 */
   .tracks__head,
-  .track,
-  .tracks__head[data-mode="playlist"] {
-    grid-template-columns: var(--col-handle) var(--col-index) var(--col-cover) minmax(0, 1fr)
-      var(--col-time) var(--col-heart) var(--col-more);
-  }
-
-  /* 图书馆模式没有拖拽手柄列（列表头与行都要去掉这一列） */
-  .tracks__head[data-mode="library"] {
-    grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 1fr) var(--col-time)
-      var(--col-heart) var(--col-more);
-  }
-
-  .tracks[data-mode="library"] .track {
+  .track {
     grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 1fr) var(--col-time)
       var(--col-heart) var(--col-more);
   }
@@ -729,34 +707,21 @@
   }
 }
 
-/* 第二级：隐藏拖拽手柄列（队列仍可用「更多」菜单中的移除与上下移动） */
+/* 第二级：隐藏拖拽手柄与「更多」列（队列仍可用「更多」菜单中的移除与上下移动） */
 @media (max-width: 1040px) {
   .tracks {
-    --col-handle: 0px;
     --col-more: 0px;
     --col-cover: 44px;
   }
 
-  /* 表头与数据行的网格模板必须逐字一致，否则每个单元格都会错位一格。
-     两者列数不同（行有封面列、表头的封面列是空占位），所以必须分开写。 */
+  /* 表头与数据行的网格模板必须逐字一致，否则每个单元格都会错位一格。 */
   .tracks__head,
-  .track,
-  .tracks__head[data-mode="playlist"] {
-    grid-template-columns: var(--col-index) minmax(0, 1fr) var(--col-time) var(--col-heart);
-  }
-
-  .tracks__head[data-mode="library"] {
-    grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 1fr) var(--col-time)
-      var(--col-heart);
-  }
-
-  .tracks[data-mode="library"] .track {
+  .track {
     grid-template-columns: var(--col-index) var(--col-cover) minmax(0, 1fr) var(--col-time)
       var(--col-heart);
   }
 
   .track__handle,
-  .col-handle,
   .track__more,
   .col-more {
     display: none;
@@ -771,10 +736,7 @@
   }
 
   .tracks__head,
-  .track,
-  .tracks__head[data-mode="library"],
-  .tracks[data-mode="library"] .track,
-  .tracks__head[data-mode="playlist"] {
+  .track {
     grid-template-columns: var(--col-index) minmax(0, 1fr) var(--col-time);
   }
 
